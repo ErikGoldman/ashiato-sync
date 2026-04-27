@@ -251,7 +251,7 @@ inline PacketBreakdown classify_packet(BitBuffer packet) {
         }
 
         result.type = PacketType::ServerUpdate;
-        packet.read_bits(32U);
+        const auto frame = static_cast<std::uint32_t>(packet.read_bits(32U));
         const auto entity_count = static_cast<std::uint16_t>(packet.read_bits(16U));
         for (std::uint16_t entity_index = 0; entity_index < entity_count; ++entity_index) {
             const bool destroy = packet.read_bool();
@@ -264,10 +264,15 @@ inline PacketBreakdown classify_packet(BitBuffer packet) {
             const bool full = packet.read_bool();
             if (full) {
                 ++result.full_upserts;
+                packet.read_bits(32U);
             } else {
                 ++result.delta_upserts;
+                std::uint32_t baseline_frame = 0;
+                if (!protocol::read_baseline_frame(packet, frame, baseline_frame)) {
+                    result = PacketBreakdown{};
+                    return result;
+                }
             }
-            packet.read_bits(32U);
             const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
             for (std::uint16_t component = 0; component < component_count; ++component) {
                 packet.read_bits(16U);

@@ -60,7 +60,7 @@ ServerUpdatePacket read_server_update(kage::sync::BitBuffer packet) {
             entity.archetype =
                 kage::sync::SyncArchetypeId{static_cast<std::uint32_t>(packet.read_bits(32U))};
         } else {
-            entity.baseline_frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
+            REQUIRE(kage::sync::protocol::read_baseline_frame(packet, update.frame, entity.baseline_frame));
         }
         const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
         entity.components.reserve(component_count);
@@ -685,5 +685,7 @@ TEST_CASE("replication server records bandwidth savings for ACKed delta updates"
     registry.write<BandwidthProbe>(entity) = BandwidthProbe{105};
     server.tick(registry);
 
-    REQUIRE(payloads.back().byte_size() == 29);
+    const std::size_t expected_delta_bits = kage::sync::protocol::server_update_header_bits +
+        1U + 64U + 1U + (1U + kage::sync::protocol::baseline_frame_delta_bits) + 16U + 16U + 32U + 9U;
+    REQUIRE(payloads.back().byte_size() == kage::sync::protocol::bytes_for_bits(expected_delta_bits));
 }

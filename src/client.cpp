@@ -168,7 +168,9 @@ bool ReplicationClient::apply_upsert(
         if (frame <= found_state->second.frame) {
             return false;
         }
-        baseline_frame = static_cast<SyncFrame>(packet.read_bits(32U));
+        if (!protocol::read_baseline_frame(packet, frame, baseline_frame)) {
+            return false;
+        }
     }
 
     const SyncArchetype& definition = settings.archetypes[archetype.value];

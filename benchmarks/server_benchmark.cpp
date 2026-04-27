@@ -146,7 +146,9 @@ void ack_packets(
             if (full) {
                 benchmark::DoNotOptimize(packet.read_bits(32U));
             } else {
-                benchmark::DoNotOptimize(packet.read_bits(32U));
+                std::uint32_t baseline_frame = 0;
+                benchmark::DoNotOptimize(kage::sync::protocol::read_baseline_frame(packet, frame, baseline_frame));
+                benchmark::DoNotOptimize(baseline_frame);
             }
             const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
             for (std::uint16_t component = 0; component < component_count; ++component) {

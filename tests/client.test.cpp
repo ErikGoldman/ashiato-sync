@@ -65,7 +65,7 @@ UpdatePacket read_update(kage::sync::BitBuffer packet) {
             if (record.full) {
                 packet.read_bits(32U);
             } else {
-                record.baseline_frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
+                REQUIRE(kage::sync::protocol::read_baseline_frame(packet, update.frame, record.baseline_frame));
             }
 
             const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));

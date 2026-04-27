@@ -633,7 +633,7 @@ void ReplicationServer::write_entity_record(
     if (!delta) {
         out.push_bits(snapshot.archetype.value, 32U);
     } else {
-        out.push_bits(snapshots_[entity_state.baseline].frame, 32U);
+        protocol::write_baseline_frame(out, snapshot.frame, snapshots_[entity_state.baseline].frame);
     }
     out.push_bits(static_cast<std::int64_t>(snapshot.baselines.size()), 16U);
 

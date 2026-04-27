@@ -1,4 +1,5 @@
 #include "kage/sync/bit_buffer.hpp"
+#include "kage/sync/protocol.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -79,4 +80,26 @@ TEST_CASE("bit buffer appends source buffers bit-exactly") {
     REQUIRE(combined.read_bool());
     REQUIRE(combined.read_bits(6U) == 0b010011);
     REQUIRE(combined.remaining_bits() == 0);
+}
+
+TEST_CASE("protocol baseline frame encoding uses relative deltas when possible") {
+    kage::sync::BitBuffer relative;
+    kage::sync::protocol::write_baseline_frame(relative, 40U, 35U);
+    REQUIRE(relative.bit_size() == 1U + kage::sync::protocol::baseline_frame_delta_bits);
+
+    std::uint32_t decoded = 0;
+    REQUIRE(kage::sync::protocol::read_baseline_frame(relative, 40U, decoded));
+    REQUIRE(decoded == 35U);
+    REQUIRE(relative.remaining_bits() == 0U);
+
+    kage::sync::BitBuffer full;
+    kage::sync::protocol::write_baseline_frame(
+        full,
+        40U,
+        40U - kage::sync::protocol::max_baseline_frame_delta - 1U);
+    REQUIRE(full.bit_size() == 33U);
+
+    REQUIRE(kage::sync::protocol::read_baseline_frame(full, 40U, decoded));
+    REQUIRE(decoded == 40U - kage::sync::protocol::max_baseline_frame_delta - 1U);
+    REQUIRE(full.remaining_bits() == 0U);
 }
