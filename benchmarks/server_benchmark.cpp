@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 struct DeltaPosition {
@@ -127,6 +128,33 @@ void add_replication_configs(
     kage::sync::SyncArchetypeId archetype) {
     for (const ecs::Entity entity : entities) {
         registry.add<kage::sync::Replicated>(entity, kage::sync::Replicated{archetype});
+    }
+}
+
+void ack_packets(
+    kage::sync::ReplicationServer& server,
+    const std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>>& packets) {
+    for (const auto& sent : packets) {
+        kage::sync::BitBuffer packet = sent.second;
+        benchmark::DoNotOptimize(packet.read_bits(8U));
+        const auto frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
+        const auto entity_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+        for (std::uint16_t entity_index = 0; entity_index < entity_count; ++entity_index) {
+            const ecs::Entity entity{packet.read_unsigned_bits(64U)};
+            const bool full = packet.read_bool();
+            if (full) {
+                benchmark::DoNotOptimize(packet.read_bits(32U));
+            }
+            const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+            for (std::uint16_t component = 0; component < component_count; ++component) {
+                benchmark::DoNotOptimize(packet.read_bits(16U));
+                const auto payload_bits = static_cast<std::uint32_t>(packet.read_bits(32U));
+                for (std::uint32_t bit = 0; bit < payload_bits; ++bit) {
+                    benchmark::DoNotOptimize(packet.read_bool());
+                }
+            }
+            benchmark::DoNotOptimize(server.acknowledge_entity(sent.first, entity, frame));
+        }
     }
 }
 
@@ -324,6 +352,103 @@ void BM_ServerTickSerializedBudgetLimited(benchmark::State& state) {
         state.iterations() * static_cast<std::int64_t>(sends_per_client) * static_cast<std::int64_t>(client_count));
 }
 
+void BM_ServerTickPackedFullBudget(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int client_count = static_cast<int>(state.range(1));
+
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
+    const std::vector<ecs::Entity> entities = create_position_entities(registry, entity_count);
+
+    std::uint64_t sent = 0;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(Position) * 4U;
+    options.mtu_bytes = 1200;
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        sent += client + payload.byte_size();
+        benchmark::DoNotOptimize(sent);
+    };
+
+    kage::sync::ReplicationServer server(options);
+    add_clients(server, client_count);
+    add_replication_configs(registry, entities, archetype);
+    server.refresh_replicated(registry);
+
+    for (auto _ : state) {
+        server.tick(registry);
+    }
+
+    state.SetItemsProcessed(
+        state.iterations() * static_cast<std::int64_t>(entity_count) * static_cast<std::int64_t>(client_count));
+}
+
+void BM_ServerTickPackedAckedDeltaShared(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int client_count = static_cast<int>(state.range(1));
+
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
+    const std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
+
+    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    packets.reserve(static_cast<std::size_t>(entity_count) * static_cast<std::size_t>(client_count));
+
+    std::uint64_t sent = 0;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition) * 4U;
+    options.mtu_bytes = 1200;
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        packets.push_back({client, payload});
+        sent += client + payload.byte_size();
+        benchmark::DoNotOptimize(sent);
+    };
+
+    kage::sync::ReplicationServer server(options);
+    add_clients(server, client_count);
+    add_replication_configs(registry, entities, archetype);
+    server.tick(registry);
+    ack_packets(server, packets);
+    packets.clear();
+
+    for (auto _ : state) {
+        server.tick(registry);
+        packets.clear();
+    }
+
+    state.SetItemsProcessed(
+        state.iterations() * static_cast<std::int64_t>(entity_count) * static_cast<std::int64_t>(client_count));
+}
+
+void BM_ServerTickPackedMtuLimited(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int client_count = static_cast<int>(state.range(1));
+
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
+    const std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
+
+    std::uint64_t sent = 0;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition) * 4U;
+    options.mtu_bytes = 256;
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        sent += client + payload.byte_size();
+        benchmark::DoNotOptimize(sent);
+    };
+
+    kage::sync::ReplicationServer server(options);
+    add_clients(server, client_count);
+    add_replication_configs(registry, entities, archetype);
+    server.refresh_replicated(registry);
+
+    for (auto _ : state) {
+        server.tick(registry);
+    }
+
+    state.SetItemsProcessed(
+        state.iterations() * static_cast<std::int64_t>(entity_count) * static_cast<std::int64_t>(client_count));
+}
+
 void TickArgs(benchmark::internal::Benchmark* benchmark) {
     benchmark->Args({1024, 1})->Args({16384, 1})->Args({16384, 8})->Args({65536, 8});
 }
@@ -347,5 +472,8 @@ BENCHMARK(BM_ServerAddClientsAfterReplicated)->Apply(AddClientArgs);
 BENCHMARK(BM_ServerTickSerializedFullBudget)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickSerializedDelta)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickSerializedBudgetLimited)->Apply(LimitedTickArgs);
+BENCHMARK(BM_ServerTickPackedFullBudget)->Apply(TickArgs);
+BENCHMARK(BM_ServerTickPackedAckedDeltaShared)->Apply(TickArgs);
+BENCHMARK(BM_ServerTickPackedMtuLimited)->Apply(TickArgs);
 
 }  // namespace

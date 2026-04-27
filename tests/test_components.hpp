@@ -31,6 +31,10 @@ struct NetworkedPayload {
     std::int64_t y = 0;
 };
 
+struct BandwidthProbe {
+    std::int32_t value = 0;
+};
+
 inline NetworkedPayload read_networked_payload(kage::sync::BitBuffer payload) {
     return NetworkedPayload{
         payload.read_bool(),
@@ -91,6 +95,41 @@ struct SyncComponentTraits<kage_sync_tests::NetworkedPosition> {
             return true;
         }
         return false;
+    }
+};
+
+template <>
+struct SyncComponentTraits<kage_sync_tests::BandwidthProbe> {
+    using Quantized = std::int32_t;
+
+    static Quantized quantize(const kage_sync_tests::BandwidthProbe& value) {
+        return value.value;
+    }
+
+    static kage_sync_tests::BandwidthProbe dequantize(const Quantized& value) {
+        return kage_sync_tests::BandwidthProbe{value};
+    }
+
+    static void serialize(const Quantized* previous, const Quantized& current, BitBuffer& out) {
+        out.push_bool(previous != nullptr);
+        if (previous == nullptr) {
+            out.push_bits(current, 32U);
+            return;
+        }
+        out.push_bits(current - *previous, 8U);
+    }
+
+    static bool deserialize(BitBuffer& in, const Quantized* previous, Quantized& out) {
+        const bool delta = in.read_bool();
+        if (!delta) {
+            out = static_cast<std::int32_t>(in.read_bits(32U));
+            return true;
+        }
+        if (previous == nullptr) {
+            return false;
+        }
+        out = *previous + static_cast<std::int32_t>(in.read_bits(8U));
+        return true;
     }
 };
 

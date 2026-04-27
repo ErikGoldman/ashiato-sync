@@ -40,6 +40,10 @@ public:
         return bytes_.data();
     }
 
+    void reserve_bytes(std::size_t capacity) {
+        bytes_.reserve(capacity);
+    }
+
     std::size_t read_offset_bits() const noexcept {
         return read_bit_;
     }
@@ -63,13 +67,16 @@ public:
     }
 
     void push_bits(std::int64_t value, std::size_t num_bits) {
+        push_unsigned_bits(static_cast<std::uint64_t>(value), num_bits);
+    }
+
+    void push_unsigned_bits(std::uint64_t value, std::size_t num_bits) {
         if (num_bits > 64U) {
             throw std::invalid_argument("bit buffer cannot push more than 64 bits at once");
         }
 
-        const std::uint64_t bits = static_cast<std::uint64_t>(value);
         for (std::size_t bit = 0; bit < num_bits; ++bit) {
-            push_bool(((bits >> bit) & 1U) != 0);
+            push_bool(((value >> bit) & 1U) != 0);
         }
     }
 
@@ -93,6 +100,14 @@ public:
         }
     }
 
+    void push_buffer_bits(const BitBuffer& source) {
+        for (std::size_t bit = 0; bit < source.bit_size_; ++bit) {
+            const bool value =
+                (source.bytes_[bit / 8U] & static_cast<std::uint8_t>(1U << (bit % 8U))) != 0;
+            push_bool(value);
+        }
+    }
+
     bool read_bool() {
         ensure_can_read(1U);
         const bool value = (bytes_[read_bit_ / 8U] & static_cast<std::uint8_t>(1U << (read_bit_ % 8U))) != 0;
@@ -101,6 +116,10 @@ public:
     }
 
     std::int64_t read_bits(std::size_t num_bits) {
+        return static_cast<std::int64_t>(read_unsigned_bits(num_bits));
+    }
+
+    std::uint64_t read_unsigned_bits(std::size_t num_bits) {
         if (num_bits > 64U) {
             throw std::invalid_argument("bit buffer cannot read more than 64 bits at once");
         }
@@ -112,7 +131,7 @@ public:
                 value |= (std::uint64_t{1} << bit);
             }
         }
-        return static_cast<std::int64_t>(value);
+        return value;
     }
 
     void read_bytes(char* out, std::size_t num_bytes) {
