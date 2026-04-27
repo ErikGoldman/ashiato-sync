@@ -2,7 +2,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 using kage_sync_tests::NetworkedPosition;
@@ -78,6 +80,16 @@ UpdatePacket read_update(kage::sync::BitBuffer packet) {
         update.records.push_back(record);
     }
     return update;
+}
+
+const kage::sync::BitBuffer& packet_for(
+    const std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>>& packets,
+    kage::sync::ClientId client) {
+    const auto found = std::find_if(packets.begin(), packets.end(), [&](const auto& sent) {
+        return sent.first == client;
+    });
+    REQUIRE(found != packets.end());
+    return found->second;
 }
 
 }  // namespace
@@ -515,6 +527,171 @@ TEST_CASE("replication client rejects duplicate full updates without ACKing agai
     REQUIRE(client.drain_ack_packets().size() == 1);
     REQUIRE_FALSE(client.receive(client_registry, packets.back()));
     REQUIRE(client.pending_ack_count() == 0);
+}
+
+TEST_CASE("replication clients recover independently when one misses ACK processing") {
+    ecs::Registry server_registry;
+    const ecs::Entity server_position =
+        kage::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
+    const kage::sync::SyncArchetypeId server_archetype = kage::sync::define_archetype(
+        server_registry,
+        "NetworkedActor",
+        {{server_position, kage::sync::ReplicationAudience::All}});
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<NetworkedPosition>(server_entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
+
+    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.bandwidth_limit_bytes_per_tick = 1024;
+    server_options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& packet) {
+        packets.push_back({client, packet});
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(server.add_client(2));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+    ecs::Registry client_one_registry;
+    const ecs::Entity client_one_position =
+        kage::sync::register_sync_component<NetworkedPosition>(client_one_registry, "NetworkedPosition");
+    const kage::sync::SyncArchetypeId client_one_archetype = kage::sync::define_archetype(
+        client_one_registry,
+        "NetworkedActor",
+        {{client_one_position, kage::sync::ReplicationAudience::All}});
+    REQUIRE(client_one_archetype == server_archetype);
+    kage::sync::configure_client(client_one_registry, 1);
+
+    ecs::Registry client_two_registry;
+    const ecs::Entity client_two_position =
+        kage::sync::register_sync_component<NetworkedPosition>(client_two_registry, "NetworkedPosition");
+    const kage::sync::SyncArchetypeId client_two_archetype = kage::sync::define_archetype(
+        client_two_registry,
+        "NetworkedActor",
+        {{client_two_position, kage::sync::ReplicationAudience::All}});
+    REQUIRE(client_two_archetype == server_archetype);
+    kage::sync::configure_client(client_two_registry, 2);
+
+    kage::sync::ReplicationClient client_one;
+    kage::sync::ReplicationClient client_two;
+
+    server.tick(server_registry);
+    REQUIRE(packets.size() == 2);
+    REQUIRE(client_one.receive(client_one_registry, packet_for(packets, 1)));
+    REQUIRE(client_two.receive(client_two_registry, packet_for(packets, 2)));
+    for (const kage::sync::BitBuffer& ack : client_one.drain_ack_packets()) {
+        REQUIRE(server.process_packet(1, ack));
+    }
+    REQUIRE(client_two.drain_ack_packets().size() == 1);
+
+    server_registry.write<NetworkedPosition>(server_entity) = NetworkedPosition{2.0f, 3.0f};
+    packets.clear();
+    server.tick(server_registry);
+    REQUIRE(packets.size() == 2);
+
+    const UpdatePacket client_one_update = read_update(packet_for(packets, 1));
+    const UpdatePacket client_two_update = read_update(packet_for(packets, 2));
+    REQUIRE(client_one_update.records.size() == 1);
+    REQUIRE(client_two_update.records.size() == 1);
+    REQUIRE_FALSE(client_one_update.records[0].full);
+    REQUIRE(client_two_update.records[0].full);
+    REQUIRE(client_one.receive(client_one_registry, packet_for(packets, 1)));
+    REQUIRE(client_two.receive(client_two_registry, packet_for(packets, 2)));
+
+    for (const kage::sync::BitBuffer& ack : client_one.drain_ack_packets()) {
+        REQUIRE(server.process_packet(1, ack));
+    }
+    for (const kage::sync::BitBuffer& ack : client_two.drain_ack_packets()) {
+        REQUIRE(server.process_packet(2, ack));
+    }
+
+    const ecs::Entity client_one_local = client_one.local_entity(server_entity);
+    const ecs::Entity client_two_local = client_two.local_entity(server_entity);
+    REQUIRE(client_one_registry.get<NetworkedPosition>(client_one_local).x == 2.0f);
+    REQUIRE(client_one_registry.get<NetworkedPosition>(client_one_local).y == 3.0f);
+    REQUIRE(client_two_registry.get<NetworkedPosition>(client_two_local).x == 2.0f);
+    REQUIRE(client_two_registry.get<NetworkedPosition>(client_two_local).y == 3.0f);
+
+    server_registry.write<NetworkedPosition>(server_entity) = NetworkedPosition{4.0f, 5.0f};
+    packets.clear();
+    server.tick(server_registry);
+    REQUIRE(packets.size() == 2);
+    REQUIRE_FALSE(read_update(packet_for(packets, 1)).records[0].full);
+    REQUIRE_FALSE(read_update(packet_for(packets, 2)).records[0].full);
+}
+
+TEST_CASE("replication clients ACK destroy records independently") {
+    ecs::Registry server_registry;
+    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
+
+    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.bandwidth_limit_bytes_per_tick = 1024;
+    server_options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& packet) {
+        packets.push_back({client, packet});
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(server.add_client(2));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+    ecs::Registry client_one_registry;
+    const kage::sync::SyncArchetypeId client_one_archetype =
+        kage_sync_tests::define_position_archetype(client_one_registry);
+    REQUIRE(client_one_archetype == server_archetype);
+    kage::sync::configure_client(client_one_registry, 1);
+
+    ecs::Registry client_two_registry;
+    const kage::sync::SyncArchetypeId client_two_archetype =
+        kage_sync_tests::define_position_archetype(client_two_registry);
+    REQUIRE(client_two_archetype == server_archetype);
+    kage::sync::configure_client(client_two_registry, 2);
+
+    kage::sync::ReplicationClient client_one;
+    kage::sync::ReplicationClient client_two;
+
+    server.tick(server_registry);
+    REQUIRE(packets.size() == 2);
+    REQUIRE(client_one.receive(client_one_registry, packet_for(packets, 1)));
+    REQUIRE(client_two.receive(client_two_registry, packet_for(packets, 2)));
+    const ecs::Entity client_one_local = client_one.local_entity(server_entity);
+    const ecs::Entity client_two_local = client_two.local_entity(server_entity);
+    REQUIRE(client_one_local);
+    REQUIRE(client_two_local);
+    for (const kage::sync::BitBuffer& ack : client_one.drain_ack_packets()) {
+        REQUIRE(server.process_packet(1, ack));
+    }
+    for (const kage::sync::BitBuffer& ack : client_two.drain_ack_packets()) {
+        REQUIRE(server.process_packet(2, ack));
+    }
+
+    REQUIRE(server_registry.destroy(server_entity));
+    packets.clear();
+    server.tick(server_registry);
+    REQUIRE(packets.size() == 2);
+    REQUIRE(client_one.receive(client_one_registry, packet_for(packets, 1)));
+    REQUIRE(client_two.receive(client_two_registry, packet_for(packets, 2)));
+    REQUIRE_FALSE(client_one_registry.alive(client_one_local));
+    REQUIRE_FALSE(client_two_registry.alive(client_two_local));
+
+    std::vector<kage::sync::BitBuffer> client_one_acks = client_one.drain_ack_packets();
+    std::vector<kage::sync::BitBuffer> client_two_acks = client_two.drain_ack_packets();
+    REQUIRE(client_one_acks.size() == 1);
+    REQUIRE(client_two_acks.size() == 1);
+    REQUIRE(read_acks(client_one_acks[0])[0].destroy);
+    REQUIRE(read_acks(client_two_acks[0])[0].destroy);
+    REQUIRE(server.process_packet(1, client_one_acks[0]));
+
+    packets.clear();
+    server.tick(server_registry);
+    REQUIRE(packets.size() == 1);
+    REQUIRE(packets[0].first == 2);
+    REQUIRE(server.process_packet(2, client_two_acks[0]));
+
+    packets.clear();
+    server.tick(server_registry);
+    REQUIRE(packets.empty());
 }
 
 TEST_CASE("replication client reconciles components when owner visibility changes") {

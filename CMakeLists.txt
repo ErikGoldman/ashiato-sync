@@ -10,6 +10,11 @@ include(CTest)
 
 option(KAGE_SYNC_BUILD_BENCHMARKS "Build kage-sync Google Benchmark suites" OFF)
 option(KAGE_SYNC_BUILD_EXAMPLES "Build kage-sync examples" OFF)
+option(KAGE_SYNC_ENABLE_GPROF "Build kage-sync benchmark tools with gprof instrumentation" OFF)
+set(KAGE_SYNC_BALL_STRESS_RUN_MODE "none" CACHE STRING "How run_kage_sync_ball_stress invokes the stress tool: none, gprof, memcheck, or massif")
+set_property(CACHE KAGE_SYNC_BALL_STRESS_RUN_MODE PROPERTY STRINGS none gprof memcheck massif)
+set(KAGE_SYNC_BALL_STRESS_RUN_ARGS "--duration-seconds 10 --report text" CACHE STRING "Command-line arguments passed by run_kage_sync_ball_stress")
+set(KAGE_SYNC_BALL_STRESS_GPROF_OUT "/tmp/kage_sync_ball_stress_gprof.txt" CACHE FILEPATH "gprof report path for run_kage_sync_ball_stress")
 
 set(KAGE_SYNC_BUILD_TESTING ${BUILD_TESTING})
 
@@ -61,6 +66,7 @@ if(KAGE_SYNC_BUILD_TESTING)
     FetchContent_MakeAvailable(Catch2)
 
     add_executable(kage_sync_tests
+        tests/ball_stress.test.cpp
         tests/bit_buffer.test.cpp
         tests/client.test.cpp
         tests/components.test.cpp
@@ -121,11 +127,93 @@ if(KAGE_SYNC_BUILD_BENCHMARKS)
         benchmarks/server_benchmark.cpp
     )
 
+    add_executable(kage_sync_ball_stress
+        benchmarks/ball_stress.cpp
+    )
+
     target_link_libraries(kage_sync_benchmark
         PRIVATE
             kage::sync
             benchmark::benchmark_main
     )
 
+    target_link_libraries(kage_sync_ball_stress
+        PRIVATE
+            kage::sync
+    )
+
     target_compile_features(kage_sync_benchmark PRIVATE cxx_std_17)
+    target_compile_features(kage_sync_ball_stress PRIVATE cxx_std_17)
+
+    if(KAGE_SYNC_ENABLE_GPROF)
+        if(MSVC)
+            message(WARNING "KAGE_SYNC_ENABLE_GPROF is ignored for MSVC")
+        else()
+            target_compile_options(kage_sync PRIVATE -pg -g -fno-omit-frame-pointer)
+            target_link_options(kage_sync PRIVATE -pg)
+            target_compile_options(kage_sync_ball_stress PRIVATE -pg -g -fno-omit-frame-pointer)
+            target_link_options(kage_sync_ball_stress PRIVATE -pg)
+            target_compile_options(ecs PRIVATE -pg -g -fno-omit-frame-pointer)
+            target_link_options(ecs PRIVATE -pg)
+        endif()
+    endif()
+
+    separate_arguments(KAGE_SYNC_BALL_STRESS_RUN_ARGS_LIST NATIVE_COMMAND "${KAGE_SYNC_BALL_STRESS_RUN_ARGS}")
+
+    if(KAGE_SYNC_BALL_STRESS_RUN_MODE STREQUAL "none")
+        add_custom_target(run_kage_sync_ball_stress
+            COMMAND $<TARGET_FILE:kage_sync_ball_stress> ${KAGE_SYNC_BALL_STRESS_RUN_ARGS_LIST}
+            DEPENDS kage_sync_ball_stress
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+            USES_TERMINAL
+        )
+    elseif(KAGE_SYNC_BALL_STRESS_RUN_MODE STREQUAL "gprof")
+        if(NOT KAGE_SYNC_ENABLE_GPROF)
+            message(FATAL_ERROR "KAGE_SYNC_BALL_STRESS_RUN_MODE=gprof requires -DKAGE_SYNC_ENABLE_GPROF=ON")
+        endif()
+        if(MSVC)
+            message(FATAL_ERROR "KAGE_SYNC_BALL_STRESS_RUN_MODE=gprof is not supported with MSVC")
+        endif()
+        find_program(GPROF_EXECUTABLE gprof)
+        if(NOT GPROF_EXECUTABLE)
+            message(FATAL_ERROR "KAGE_SYNC_BALL_STRESS_RUN_MODE=gprof requires gprof on PATH")
+        endif()
+        add_custom_target(run_kage_sync_ball_stress
+            COMMAND ${CMAKE_COMMAND} -E remove -f gmon.out
+            COMMAND $<TARGET_FILE:kage_sync_ball_stress> ${KAGE_SYNC_BALL_STRESS_RUN_ARGS_LIST}
+            COMMAND ${CMAKE_COMMAND}
+                -DGPROF_EXECUTABLE=${GPROF_EXECUTABLE}
+                -DSTRESS_EXECUTABLE=$<TARGET_FILE:kage_sync_ball_stress>
+                -DGPROF_OUTPUT=${KAGE_SYNC_BALL_STRESS_GPROF_OUT}
+                -DPROFILE_DATA=${CMAKE_CURRENT_BINARY_DIR}/gmon.out
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunGprof.cmake
+            DEPENDS kage_sync_ball_stress
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+            USES_TERMINAL
+        )
+    elseif(KAGE_SYNC_BALL_STRESS_RUN_MODE STREQUAL "memcheck")
+        find_program(VALGRIND_EXECUTABLE valgrind)
+        if(NOT VALGRIND_EXECUTABLE)
+            message(FATAL_ERROR "KAGE_SYNC_BALL_STRESS_RUN_MODE=memcheck requires valgrind on PATH")
+        endif()
+        add_custom_target(run_kage_sync_ball_stress
+            COMMAND ${VALGRIND_EXECUTABLE} --leak-check=full --track-origins=yes --error-exitcode=42 $<TARGET_FILE:kage_sync_ball_stress> ${KAGE_SYNC_BALL_STRESS_RUN_ARGS_LIST}
+            DEPENDS kage_sync_ball_stress
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+            USES_TERMINAL
+        )
+    elseif(KAGE_SYNC_BALL_STRESS_RUN_MODE STREQUAL "massif")
+        find_program(VALGRIND_EXECUTABLE valgrind)
+        if(NOT VALGRIND_EXECUTABLE)
+            message(FATAL_ERROR "KAGE_SYNC_BALL_STRESS_RUN_MODE=massif requires valgrind on PATH")
+        endif()
+        add_custom_target(run_kage_sync_ball_stress
+            COMMAND ${VALGRIND_EXECUTABLE} --tool=massif $<TARGET_FILE:kage_sync_ball_stress> ${KAGE_SYNC_BALL_STRESS_RUN_ARGS_LIST}
+            DEPENDS kage_sync_ball_stress
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+            USES_TERMINAL
+        )
+    else()
+        message(FATAL_ERROR "KAGE_SYNC_BALL_STRESS_RUN_MODE must be one of: none, gprof, memcheck, massif")
+    endif()
 endif()

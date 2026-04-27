@@ -150,6 +150,95 @@ Current benchmark coverage includes full-budget server ticks, budget-limited
 server ticks, replicated component refresh churn, and adding clients after
 entities are already configured for replication.
 
+### Ball Stress Harness
+
+`kage_sync_ball_stress` is a deterministic headless stress scenario with
+server-side 3D balls, poison-on-bounce, health drain, despawns, simulated
+clients, in-memory latency/loss, timing counters, memory counters, and bandwidth
+breakdowns.
+
+```sh
+cmake -S . -B build-bench \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DKAGE_SYNC_BUILD_BENCHMARKS=ON \
+  -DBUILD_TESTING=OFF
+cmake --build build-bench --target kage_sync_ball_stress
+./build-bench/kage_sync_ball_stress \
+  --duration-seconds 10 \
+  --clients 4 \
+  --max-balls 4096 \
+  --spawn-interval-ms 5 \
+  --poison-min 1 \
+  --poison-max 8 \
+  --health-min 20 \
+  --health-max 80 \
+  --latency-ms 50 \
+  --loss-percent 1 \
+  --report json
+```
+
+Use `--server-to-client-latency-ms`, `--client-to-server-latency-ms`,
+`--server-to-client-loss-percent`, and `--client-to-server-loss-percent` to
+override the shared bidirectional link settings. The report includes total bytes
+and packets split by direction, packet type, update record kind, and dropped
+traffic.
+
+You can also configure the `run_kage_sync_ball_stress` target to run the same
+scenario normally, through gprof, or through Valgrind memory tools:
+
+```sh
+cmake -S . -B build-bench \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DKAGE_SYNC_BUILD_BENCHMARKS=ON \
+  -DBUILD_TESTING=OFF \
+  -DKAGE_SYNC_BALL_STRESS_RUN_MODE=none \
+  -DKAGE_SYNC_BALL_STRESS_RUN_ARGS="--duration-seconds 10 --clients 4 --max-balls 4096 --report text"
+cmake --build build-bench --target run_kage_sync_ball_stress
+```
+
+Set `KAGE_SYNC_BALL_STRESS_RUN_MODE` to `none`, `gprof`, `memcheck`, or
+`massif`. `memcheck` runs `valgrind --leak-check=full --track-origins=yes`, and
+`massif` runs `valgrind --tool=massif`.
+
+For gprof, enable instrumentation and select the gprof run mode:
+
+```sh
+cmake -S . -B build-bench-gprof \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DKAGE_SYNC_BUILD_BENCHMARKS=ON \
+  -DKAGE_SYNC_ENABLE_GPROF=ON \
+  -DBUILD_TESTING=OFF \
+  -DKAGE_SYNC_BALL_STRESS_RUN_MODE=gprof \
+  -DKAGE_SYNC_BALL_STRESS_RUN_ARGS="--duration-seconds 30 --report text" \
+  -DKAGE_SYNC_BALL_STRESS_GPROF_OUT=/tmp/kage_sync_ball_stress_gprof.txt
+cmake --build build-bench-gprof --target run_kage_sync_ball_stress
+```
+
+For memory checking:
+
+```sh
+cmake -S . -B build-bench-memcheck \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DKAGE_SYNC_BUILD_BENCHMARKS=ON \
+  -DBUILD_TESTING=OFF \
+  -DKAGE_SYNC_BALL_STRESS_RUN_MODE=memcheck \
+  -DKAGE_SYNC_BALL_STRESS_RUN_ARGS="--duration-seconds 5 --report text"
+cmake --build build-bench-memcheck --target run_kage_sync_ball_stress
+```
+
+For sanitizer smoke checks:
+
+```sh
+cmake -S . -B build-asan \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DKAGE_SYNC_BUILD_BENCHMARKS=ON \
+  -DBUILD_TESTING=OFF \
+  -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+  -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+cmake --build build-asan --target kage_sync_ball_stress
+./build-asan/kage_sync_ball_stress --duration-seconds 5
+```
+
 When reporting benchmark results, include the exact command, build type, and
 artifact path. Debug timings are useful smoke tests, but use `RelWithDebInfo`
 numbers for performance decisions. Use gprof or a comparable profiler to confirm
