@@ -123,7 +123,7 @@ TEST_CASE("sync component traits provide type-erased quantization and serializat
     REQUIRE(dequantized.y == 2.0f);
 }
 
-TEST_CASE("entities can be marked and unmarked as replicated") {
+TEST_CASE("replication configuration is a direct ecs component") {
     ecs::Registry registry;
     const ecs::Entity position_component = kage::sync::register_sync_component<Position>(registry, "Position");
     const kage::sync::SyncArchetypeId actor = kage::sync::define_archetype(
@@ -132,16 +132,20 @@ TEST_CASE("entities can be marked and unmarked as replicated") {
         {{position_component, kage::sync::ReplicationAudience::All}});
     const ecs::Entity entity = registry.create();
 
-    REQUIRE_FALSE(kage::sync::mark_replicated(registry, ecs::Entity{}, actor));
-    REQUIRE_FALSE(kage::sync::mark_replicated(registry, entity, kage::sync::SyncArchetypeId{22}));
+    REQUIRE(registry.add<kage::sync::Replicated>(ecs::Entity{}, kage::sync::Replicated{actor}) == nullptr);
 
-    REQUIRE(kage::sync::mark_replicated(registry, entity, actor));
+    REQUIRE(registry.add<kage::sync::Replicated>(entity, kage::sync::Replicated{actor}) != nullptr);
     REQUIRE(registry.contains<kage::sync::Replicated>(entity));
     REQUIRE(registry.get<kage::sync::Replicated>(entity).archetype == actor);
 
-    REQUIRE(kage::sync::unmark_replicated(registry, entity));
+    REQUIRE(registry.add<kage::sync::Replicated>(
+                entity,
+                kage::sync::Replicated{kage::sync::SyncArchetypeId{22}}) != nullptr);
+    REQUIRE(registry.get<kage::sync::Replicated>(entity).archetype == kage::sync::SyncArchetypeId{22});
+
+    REQUIRE(registry.remove<kage::sync::Replicated>(entity));
     REQUIRE_FALSE(registry.contains<kage::sync::Replicated>(entity));
-    REQUIRE_FALSE(kage::sync::unmark_replicated(registry, entity));
+    REQUIRE_FALSE(registry.remove<kage::sync::Replicated>(entity));
 }
 
 TEST_CASE("owners can be assigned and replaced independently of replication marker") {

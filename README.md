@@ -77,7 +77,7 @@ int main() {
     });
 
     server.add_client(1);
-    server.add_replicated(registry, entity, actor);
+    registry.add<kage::sync::Replicated>(entity, {actor});
 
     server.tick(registry, [&](kage::sync::ClientId client, ecs::Entity replicated) {
         // Serialize and enqueue `replicated` for `client` here.
@@ -95,9 +95,14 @@ client, so bandwidth-limited clients naturally receive older unsent state first.
   `configure_client` before using sync components directly.
 - Define archetypes with registered ECS component ids. Unregistered component ids
   throw `std::invalid_argument`.
-- Use `mark_replicated` and `set_owner` when working directly with ECS markers.
-  Use `ReplicationServer::add_replicated` when the server scheduler should also
-  track the entity.
+- Add `kage::sync::Replicated` directly to an ECS entity to start server
+  replication, and remove that component to stop replication. The server
+  monitors `Replicated` component additions, replacements, removals, and entity
+  destruction at the start of each tick. Call `ReplicationServer::refresh_replicated`
+  before querying `is_replicated` or `replicated_count` if marker changes happened
+  since the last tick.
+- Use `set_owner` or add `NetworkOwner` directly when assigning owner-only
+  replicated state.
 - `ReplicationAudience::All` and `ReplicationAudience::Owner` are stored as
   archetype metadata. The current scheduler callback receives every scheduled
   entity; audience filtering and serialization policy should be applied by the
@@ -124,8 +129,8 @@ Run focused benchmark filters serially when collecting numbers:
 ```
 
 Current benchmark coverage includes full-budget server ticks, budget-limited
-server ticks, replicated entity add/remove churn, and adding clients after
-entities are already replicated.
+server ticks, replicated component refresh churn, and adding clients after
+entities are already configured for replication.
 
 When reporting benchmark results, include the exact command, build type, and
 artifact path. Debug timings are useful smoke tests, but use `RelWithDebInfo`

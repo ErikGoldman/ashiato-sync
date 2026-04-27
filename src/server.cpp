@@ -64,50 +64,26 @@ std::size_t ReplicationServer::client_count() const noexcept {
     return clients_.size();
 }
 
-bool ReplicationServer::add_replicated(ecs::Registry& registry, ecs::Entity entity, SyncArchetypeId archetype) {
-    if (!mark_replicated(registry, entity, archetype)) {
-        return false;
-    }
-
-    const EntityKey key = entity.value;
-    const auto found = entity_to_slot_.find(key);
-    if (found != entity_to_slot_.end()) {
-        replicated_[found->second].archetype = archetype;
-        for (ClientState& client : clients_) {
-            if (found->second < client.baselines.size()) {
-                client.baselines[found->second].clear();
-            }
-        }
-        return true;
-    }
-
-    const std::uint32_t slot = allocate_slot(entity, archetype);
-    entity_to_slot_[key] = slot;
-    for (ClientState& client : clients_) {
-        if (client.reset_epochs.size() < replicated_.size()) {
-            client.reset_epochs.resize(replicated_.size(), client.epoch);
-            client.baselines.resize(replicated_.size());
-        }
-        client.reset_epochs[slot] = client.epoch;
-        client.baselines[slot].clear();
-        client.order.push_back(slot);
-    }
-
-    ++active_replicated_count_;
-    return true;
-}
-
-bool ReplicationServer::remove_replicated(ecs::Registry& registry, ecs::Entity entity) {
+void ReplicationServer::refresh_replicated(ecs::Registry& registry) {
     register_components(registry);
 
-    const auto found = entity_to_slot_.find(entity.value);
-    if (found == entity_to_slot_.end()) {
-        return false;
+    if (!replicated_initialized_) {
+        registry.view<const Replicated>().each([&](ecs::Entity entity, const Replicated& replicated) {
+            upsert_replicated(registry, entity, replicated.archetype);
+        });
+        replicated_initialized_ = true;
+        registry.clear_all_dirty<Replicated>();
+        return;
     }
 
-    const bool removed = unmark_replicated(registry, entity);
-    deactivate_slot(found->second);
-    return removed;
+    registry.each_removed<Replicated>([&](ecs::Registry::ComponentRemoval removal) {
+        deactivate_entity_index(removal.entity_index);
+    });
+
+    registry.each_dirty<Replicated>([&](ecs::Entity entity, const void* value) {
+        upsert_replicated(registry, entity, static_cast<const Replicated*>(value)->archetype);
+    });
+    registry.clear_all_dirty<Replicated>();
 }
 
 bool ReplicationServer::is_replicated(ecs::Entity entity) const {
@@ -144,7 +120,7 @@ void ReplicationServer::tick(ecs::Registry& registry) {
 }
 
 void ReplicationServer::tick(ecs::Registry& registry, const ReplicateFn& replicate) {
-    register_components(registry);
+    refresh_replicated(registry);
 
     std::vector<std::uint32_t> sent;
     std::vector<std::uint32_t> next_order;
@@ -187,7 +163,7 @@ void ReplicationServer::tick(ecs::Registry& registry, const ReplicateFn& replica
 }
 
 void ReplicationServer::tick_serialized(ecs::Registry& registry) {
-    register_components(registry);
+    refresh_replicated(registry);
 
     const SyncSettings& settings = registry.get<SyncSettings>();
     std::vector<std::uint32_t> sent;
@@ -297,6 +273,48 @@ bool ReplicationServer::serialize_entity(
     return serialized_component;
 }
 
+bool ReplicationServer::valid_archetype(const ecs::Registry& registry, SyncArchetypeId archetype) const {
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    return archetype.value < settings.archetypes.size();
+}
+
+bool ReplicationServer::upsert_replicated(ecs::Registry& registry, ecs::Entity entity, SyncArchetypeId archetype) {
+    if (!registry.alive(entity) || !valid_archetype(registry, archetype)) {
+        deactivate_entity_index(ecs::Registry::entity_index(entity));
+        return false;
+    }
+
+    const EntityKey key = entity.value;
+    const auto found = entity_to_slot_.find(key);
+    if (found != entity_to_slot_.end()) {
+        replicated_[found->second].archetype = archetype;
+        for (ClientState& client : clients_) {
+            if (found->second < client.baselines.size()) {
+                client.baselines[found->second].clear();
+            }
+        }
+        return true;
+    }
+
+    deactivate_entity_index(ecs::Registry::entity_index(entity));
+
+    const std::uint32_t slot = allocate_slot(entity, archetype);
+    entity_to_slot_[key] = slot;
+    entity_index_to_slot_[ecs::Registry::entity_index(entity)] = slot;
+    for (ClientState& client : clients_) {
+        if (client.reset_epochs.size() < replicated_.size()) {
+            client.reset_epochs.resize(replicated_.size(), client.epoch);
+            client.baselines.resize(replicated_.size());
+        }
+        client.reset_epochs[slot] = client.epoch;
+        client.baselines[slot].clear();
+        client.order.push_back(slot);
+    }
+
+    ++active_replicated_count_;
+    return true;
+}
+
 std::uint32_t ReplicationServer::allocate_slot(ecs::Entity entity, SyncArchetypeId archetype) {
     if (!free_replicated_slots_.empty()) {
         const std::uint32_t slot = free_replicated_slots_.back();
@@ -320,6 +338,7 @@ void ReplicationServer::deactivate_slot(std::uint32_t slot) {
     }
 
     entity_to_slot_.erase(replicated_[slot].entity.value);
+    entity_index_to_slot_.erase(ecs::Registry::entity_index(replicated_[slot].entity));
     replicated_[slot].active = false;
     free_replicated_slots_.push_back(slot);
     --active_replicated_count_;
@@ -329,6 +348,15 @@ void ReplicationServer::deactivate_slot(std::uint32_t slot) {
         }
     }
     remove_slot_from_client_orders(slot);
+}
+
+void ReplicationServer::deactivate_entity_index(std::uint32_t entity_index) {
+    const auto found = entity_index_to_slot_.find(entity_index);
+    if (found == entity_index_to_slot_.end()) {
+        return;
+    }
+
+    deactivate_slot(found->second);
 }
 
 void ReplicationServer::remove_slot_from_client_orders(std::uint32_t slot) {

@@ -132,8 +132,6 @@ SyncArchetypeId define_archetype(
 
 const SyncArchetype* find_archetype(const ecs::Registry& registry, SyncArchetypeId id);
 
-bool mark_replicated(ecs::Registry& registry, ecs::Entity entity, SyncArchetypeId archetype);
-bool unmark_replicated(ecs::Registry& registry, ecs::Entity entity);
 bool set_owner(ecs::Registry& registry, ecs::Entity entity, ClientId client);
 
 }  // namespace kage::sync

@@ -121,13 +121,12 @@ void add_clients(kage::sync::ReplicationServer& server, int count) {
     }
 }
 
-void add_replicated_entities(
-    kage::sync::ReplicationServer& server,
+void add_replication_configs(
     ecs::Registry& registry,
     const std::vector<ecs::Entity>& entities,
     kage::sync::SyncArchetypeId archetype) {
     for (const ecs::Entity entity : entities) {
-        server.add_replicated(registry, entity, archetype);
+        registry.add<kage::sync::Replicated>(entity, kage::sync::Replicated{archetype});
     }
 }
 
@@ -144,7 +143,8 @@ void BM_ServerTickFullBudget(benchmark::State& state) {
         128U,
     });
     add_clients(server, client_count);
-    add_replicated_entities(server, registry, entities, archetype);
+    add_replication_configs(registry, entities, archetype);
+    server.refresh_replicated(registry);
 
     std::uint64_t sent = 0;
     for (auto _ : state) {
@@ -172,7 +172,8 @@ void BM_ServerTickBudgetLimited(benchmark::State& state) {
         128U,
     });
     add_clients(server, client_count);
-    add_replicated_entities(server, registry, entities, archetype);
+    add_replication_configs(registry, entities, archetype);
+    server.refresh_replicated(registry);
 
     std::uint64_t sent = 0;
     for (auto _ : state) {
@@ -186,7 +187,7 @@ void BM_ServerTickBudgetLimited(benchmark::State& state) {
         state.iterations() * static_cast<std::int64_t>(sends_per_client) * static_cast<std::int64_t>(client_count));
 }
 
-void BM_ServerAddRemoveReplicated(benchmark::State& state) {
+void BM_ServerRefreshReplicatedChanges(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
 
     ecs::Registry registry;
@@ -197,11 +198,15 @@ void BM_ServerAddRemoveReplicated(benchmark::State& state) {
 
     for (auto _ : state) {
         for (const ecs::Entity entity : entities) {
-            benchmark::DoNotOptimize(server.add_replicated(registry, entity, archetype));
+            benchmark::DoNotOptimize(registry.add<kage::sync::Replicated>(
+                entity,
+                kage::sync::Replicated{archetype}));
         }
+        server.refresh_replicated(registry);
         for (const ecs::Entity entity : entities) {
-            benchmark::DoNotOptimize(server.remove_replicated(registry, entity));
+            benchmark::DoNotOptimize(registry.remove<kage::sync::Replicated>(entity));
         }
+        server.refresh_replicated(registry);
     }
 
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(entity_count) * 2);
@@ -217,10 +222,15 @@ void BM_ServerAddClientsAfterReplicated(benchmark::State& state) {
 
     for (auto _ : state) {
         kage::sync::ReplicationServer server;
-        add_replicated_entities(server, registry, entities, archetype);
+        add_replication_configs(registry, entities, archetype);
+        server.refresh_replicated(registry);
         for (int i = 0; i < client_count; ++i) {
             benchmark::DoNotOptimize(server.add_client(static_cast<kage::sync::ClientId>(i + 1)));
         }
+        for (const ecs::Entity entity : entities) {
+            registry.remove<kage::sync::Replicated>(entity);
+        }
+        server.refresh_replicated(registry);
     }
 
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(entity_count) * client_count);
@@ -244,7 +254,8 @@ void BM_ServerTickSerializedFullBudget(benchmark::State& state) {
 
     kage::sync::ReplicationServer server(options);
     add_clients(server, client_count);
-    add_replicated_entities(server, registry, entities, archetype);
+    add_replication_configs(registry, entities, archetype);
+    server.refresh_replicated(registry);
 
     for (auto _ : state) {
         server.tick(registry);
@@ -272,7 +283,7 @@ void BM_ServerTickSerializedDelta(benchmark::State& state) {
 
     kage::sync::ReplicationServer server(options);
     add_clients(server, client_count);
-    add_replicated_entities(server, registry, entities, archetype);
+    add_replication_configs(registry, entities, archetype);
     server.tick(registry);
 
     for (auto _ : state) {
@@ -302,7 +313,8 @@ void BM_ServerTickSerializedBudgetLimited(benchmark::State& state) {
 
     kage::sync::ReplicationServer server(options);
     add_clients(server, client_count);
-    add_replicated_entities(server, registry, entities, archetype);
+    add_replication_configs(registry, entities, archetype);
+    server.refresh_replicated(registry);
 
     for (auto _ : state) {
         server.tick(registry);
@@ -330,7 +342,7 @@ void AddClientArgs(benchmark::internal::Benchmark* benchmark) {
 
 BENCHMARK(BM_ServerTickFullBudget)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickBudgetLimited)->Apply(LimitedTickArgs);
-BENCHMARK(BM_ServerAddRemoveReplicated)->Apply(ChurnArgs);
+BENCHMARK(BM_ServerRefreshReplicatedChanges)->Apply(ChurnArgs);
 BENCHMARK(BM_ServerAddClientsAfterReplicated)->Apply(AddClientArgs);
 BENCHMARK(BM_ServerTickSerializedFullBudget)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickSerializedDelta)->Apply(TickArgs);

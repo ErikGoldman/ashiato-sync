@@ -13,7 +13,15 @@ using kage_sync_tests::NetworkedPosition;
 using kage_sync_tests::define_position_archetype;
 using kage_sync_tests::read_networked_payload;
 
-TEST_CASE("replication server tracks clients and explicit replicated entities") {
+namespace {
+
+bool start_sync(ecs::Registry& registry, ecs::Entity entity, kage::sync::SyncArchetypeId archetype) {
+    return registry.add<kage::sync::Replicated>(entity, kage::sync::Replicated{archetype}) != nullptr;
+}
+
+}  // namespace
+
+TEST_CASE("replication server tracks clients and replicated component changes") {
     ecs::Registry registry;
     const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
     const ecs::Entity entity = registry.create();
@@ -26,18 +34,22 @@ TEST_CASE("replication server tracks clients and explicit replicated entities") 
     REQUIRE(server.has_client(7));
     REQUIRE(server.client_count() == 1);
 
-    REQUIRE_FALSE(server.add_replicated(registry, ecs::Entity{}, archetype));
-    REQUIRE_FALSE(server.add_replicated(registry, entity, kage::sync::SyncArchetypeId{999}));
-    REQUIRE(server.add_replicated(registry, entity, archetype));
+    REQUIRE_FALSE(start_sync(registry, ecs::Entity{}, archetype));
+    REQUIRE(start_sync(registry, entity, kage::sync::SyncArchetypeId{999}));
+    server.refresh_replicated(registry);
+    REQUIRE_FALSE(server.is_replicated(entity));
+    REQUIRE(start_sync(registry, entity, archetype));
+    server.refresh_replicated(registry);
     REQUIRE(server.is_replicated(entity));
     REQUIRE(server.replicated_count() == 1);
     REQUIRE(registry.contains<kage::sync::Replicated>(entity));
 
-    REQUIRE(server.remove_replicated(registry, entity));
+    REQUIRE(registry.remove<kage::sync::Replicated>(entity));
+    server.refresh_replicated(registry);
     REQUIRE_FALSE(server.is_replicated(entity));
     REQUIRE(server.replicated_count() == 0);
     REQUIRE_FALSE(registry.contains<kage::sync::Replicated>(entity));
-    REQUIRE_FALSE(server.remove_replicated(registry, entity));
+    REQUIRE_FALSE(registry.remove<kage::sync::Replicated>(entity));
 
     REQUIRE(server.remove_client(7));
     REQUIRE_FALSE(server.has_client(7));
@@ -54,7 +66,7 @@ TEST_CASE("replication server respects per-client bandwidth limits") {
     kage::sync::ReplicationServer server(kage::sync::ReplicationServerOptions{256, 128});
     REQUIRE(server.add_client(1));
     for (const ecs::Entity entity : entities) {
-        REQUIRE(server.add_replicated(registry, entity, archetype));
+        REQUIRE(start_sync(registry, entity, archetype));
     }
 
     std::vector<ecs::Entity> sent;
@@ -86,7 +98,7 @@ TEST_CASE("replication server rotates budget-limited sends by priority") {
     kage::sync::ReplicationServer server(kage::sync::ReplicationServerOptions{128, 128});
     REQUIRE(server.add_client(1));
     for (const ecs::Entity entity : entities) {
-        REQUIRE(server.add_replicated(registry, entity, archetype));
+        REQUIRE(start_sync(registry, entity, archetype));
     }
 
     std::vector<ecs::Entity> sent;
@@ -111,8 +123,8 @@ TEST_CASE("replication server keeps per-client priorities independent") {
 
     kage::sync::ReplicationServer server(kage::sync::ReplicationServerOptions{128, 128});
     REQUIRE(server.add_client(1));
-    REQUIRE(server.add_replicated(registry, first, archetype));
-    REQUIRE(server.add_replicated(registry, second, archetype));
+    REQUIRE(start_sync(registry, first, archetype));
+    REQUIRE(start_sync(registry, second, archetype));
     REQUIRE(server.add_client(2));
 
     std::vector<std::pair<kage::sync::ClientId, ecs::Entity>> sent;
@@ -141,12 +153,12 @@ TEST_CASE("replication server skips destroyed and externally unmarked entities")
 
     kage::sync::ReplicationServer server(kage::sync::ReplicationServerOptions{512, 128});
     REQUIRE(server.add_client(1));
-    REQUIRE(server.add_replicated(registry, destroyed, archetype));
-    REQUIRE(server.add_replicated(registry, unmarked, archetype));
-    REQUIRE(server.add_replicated(registry, live, archetype));
+    REQUIRE(start_sync(registry, destroyed, archetype));
+    REQUIRE(start_sync(registry, unmarked, archetype));
+    REQUIRE(start_sync(registry, live, archetype));
 
     REQUIRE(registry.destroy(destroyed));
-    REQUIRE(kage::sync::unmark_replicated(registry, unmarked));
+    REQUIRE(registry.remove<kage::sync::Replicated>(unmarked));
 
     std::vector<ecs::Entity> sent;
     server.tick(registry, [&](kage::sync::ClientId, ecs::Entity entity) {
@@ -167,7 +179,7 @@ TEST_CASE("replication server sends nothing when bandwidth cannot cover the fixe
 
     kage::sync::ReplicationServer server(kage::sync::ReplicationServerOptions{127, 128});
     REQUIRE(server.add_client(1));
-    REQUIRE(server.add_replicated(registry, entity, archetype));
+    REQUIRE(start_sync(registry, entity, archetype));
 
     int sends = 0;
     server.tick(registry, [&](kage::sync::ClientId, ecs::Entity) {
@@ -199,7 +211,7 @@ TEST_CASE("replication server serializes full and delta component payloads throu
 
     kage::sync::ReplicationServer server(options);
     REQUIRE(server.add_client(1));
-    REQUIRE(server.add_replicated(registry, entity, archetype));
+    REQUIRE(start_sync(registry, entity, archetype));
 
     server.tick(registry);
     REQUIRE(payloads.size() == 1);
@@ -240,8 +252,8 @@ TEST_CASE("replication server applies bandwidth limits to actual serialized byte
 
     kage::sync::ReplicationServer server(options);
     REQUIRE(server.add_client(1));
-    REQUIRE(server.add_replicated(registry, first, archetype));
-    REQUIRE(server.add_replicated(registry, second, archetype));
+    REQUIRE(start_sync(registry, first, archetype));
+    REQUIRE(start_sync(registry, second, archetype));
 
     server.tick(registry);
 
@@ -291,7 +303,7 @@ TEST_CASE("replication server filters owner-only serialized components") {
     kage::sync::ReplicationServer server(options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
-    REQUIRE(server.add_replicated(registry, entity, archetype));
+    REQUIRE(start_sync(registry, entity, archetype));
 
     server.tick(registry);
 

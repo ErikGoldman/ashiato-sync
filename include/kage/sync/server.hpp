@@ -27,8 +27,7 @@ public:
     bool has_client(ClientId client) const;
     std::size_t client_count() const noexcept;
 
-    bool add_replicated(ecs::Registry& registry, ecs::Entity entity, SyncArchetypeId archetype);
-    bool remove_replicated(ecs::Registry& registry, ecs::Entity entity);
+    void refresh_replicated(ecs::Registry& registry);
     bool is_replicated(ecs::Entity entity) const;
     std::size_t replicated_count() const noexcept;
 
@@ -59,8 +58,11 @@ private:
 
     using EntityKey = std::uint64_t;
 
+    bool valid_archetype(const ecs::Registry& registry, SyncArchetypeId archetype) const;
+    bool upsert_replicated(ecs::Registry& registry, ecs::Entity entity, SyncArchetypeId archetype);
     std::uint32_t allocate_slot(ecs::Entity entity, SyncArchetypeId archetype);
     void deactivate_slot(std::uint32_t slot);
+    void deactivate_entity_index(std::uint32_t entity_index);
     void remove_slot_from_client_orders(std::uint32_t slot);
     bool slot_is_replicable(const ecs::Registry& registry, std::uint32_t slot) const;
     void tick_serialized(ecs::Registry& registry);
@@ -76,9 +78,11 @@ private:
     std::vector<ReplicatedSlot> replicated_;
     std::vector<std::uint32_t> free_replicated_slots_;
     std::unordered_map<EntityKey, std::uint32_t> entity_to_slot_;
+    std::unordered_map<std::uint32_t, std::uint32_t> entity_index_to_slot_;
     std::vector<ClientState> clients_;
     std::unordered_map<ClientId, std::size_t> client_to_index_;
     std::size_t active_replicated_count_ = 0;
+    bool replicated_initialized_ = false;
 };
 
 }  // namespace kage::sync

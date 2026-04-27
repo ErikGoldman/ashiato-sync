@@ -75,26 +75,6 @@ const SyncArchetype* find_archetype(const ecs::Registry& registry, SyncArchetype
     return &settings.archetypes[id.value];
 }
 
-bool mark_replicated(ecs::Registry& registry, ecs::Entity entity, SyncArchetypeId archetype) {
-    register_components(registry);
-
-    if (!registry.alive(entity)) {
-        return false;
-    }
-
-    const SyncSettings& settings = registry.get<SyncSettings>();
-    if (!valid_archetype_id(settings, archetype)) {
-        return false;
-    }
-
-    return registry.add<Replicated>(entity, Replicated{archetype}) != nullptr;
-}
-
-bool unmark_replicated(ecs::Registry& registry, ecs::Entity entity) {
-    register_components(registry);
-    return registry.remove<Replicated>(entity);
-}
-
 bool set_owner(ecs::Registry& registry, ecs::Entity entity, ClientId client) {
     register_components(registry);
 
