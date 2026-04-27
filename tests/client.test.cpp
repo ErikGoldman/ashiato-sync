@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -91,6 +92,39 @@ const kage::sync::BitBuffer& packet_for(
     });
     REQUIRE(found != packets.end());
     return found->second;
+}
+
+kage::sync::BitBuffer make_position_packet(
+    kage::sync::SyncFrame frame,
+    const std::vector<std::pair<ecs::Entity, Position>>& records) {
+    kage::sync::BitBuffer packet;
+    packet.push_bits(kage::sync::protocol::server_update_message, 8U);
+    packet.push_bits(frame, 32U);
+    packet.push_bits(static_cast<std::uint16_t>(records.size()), 16U);
+    for (const auto& record : records) {
+        packet.push_bool(false);
+        packet.push_unsigned_bits(record.first.value, 64U);
+        packet.push_bool(true);
+        packet.push_bits(0, 32U);
+        packet.push_bits(1, 16U);
+        packet.push_bits(0, 16U);
+
+        kage::sync::BitBuffer payload;
+        payload.push_bytes(reinterpret_cast<const char*>(&record.second), sizeof(Position));
+        packet.push_bits(static_cast<std::uint32_t>(payload.bit_size()), 32U);
+        packet.push_buffer_bits(payload);
+    }
+    return packet;
+}
+
+kage::sync::BitBuffer make_destroy_packet(kage::sync::SyncFrame frame, ecs::Entity server_entity) {
+    kage::sync::BitBuffer packet;
+    packet.push_bits(kage::sync::protocol::server_update_message, 8U);
+    packet.push_bits(frame, 32U);
+    packet.push_bits(1, 16U);
+    packet.push_bool(true);
+    packet.push_unsigned_bits(server_entity.value, 64U);
+    return packet;
 }
 
 }  // namespace
@@ -1003,4 +1037,436 @@ TEST_CASE("buffered interpolation rejects interpolated components without trait 
     REQUIRE_FALSE(client.receive(client_registry, packets.back()));
     REQUIRE(client.pending_ack_count() == 0);
     REQUIRE_FALSE(client.local_entity(server_entity));
+}
+
+TEST_CASE("buffered interpolation keeps step components held between interpolated samples") {
+    ecs::Registry server_registry;
+    const ecs::Entity server_position =
+        kage::sync::register_sync_component<SmoothPosition>(server_registry, "SmoothPosition");
+    const ecs::Entity server_health = kage::sync::register_sync_component<Health>(server_registry, "Health");
+    const kage::sync::SyncArchetypeId server_archetype = kage::sync::define_archetype(
+        server_registry,
+        "MixedActor",
+        {
+            {server_position, kage::sync::ReplicationAudience::All},
+            {server_health, kage::sync::ReplicationAudience::All},
+        });
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<SmoothPosition>(server_entity, SmoothPosition{0.0f, 0.0f}) != nullptr);
+    REQUIRE(server_registry.add<Health>(server_entity, Health{10}) != nullptr);
+
+    std::vector<kage::sync::BitBuffer> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+    ecs::Registry client_registry;
+    const ecs::Entity client_position =
+        kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
+    const ecs::Entity client_health = kage::sync::register_sync_component<Health>(client_registry, "Health");
+    const kage::sync::SyncArchetypeId client_archetype = kage::sync::define_archetype(
+        client_registry,
+        "MixedActor",
+        {
+            {client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate},
+            {client_health, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Step},
+        });
+    REQUIRE(client_archetype == server_archetype);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        2,
+        8});
+    server.tick(server_registry);
+    REQUIRE(client.receive(client_registry, packets.back()));
+    for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
+        REQUIRE(server.process_packet(1, ack));
+    }
+    REQUIRE(client.apply_frame(client_registry, 3));
+    const ecs::Entity local = client.local_entity(server_entity);
+    REQUIRE(local);
+
+    packets.clear();
+    server_registry.write<SmoothPosition>(server_entity) = SmoothPosition{10.0f, 0.0f};
+    server_registry.write<Health>(server_entity) = Health{20};
+    server.tick(server_registry);
+    packets.clear();
+    server_registry.write<SmoothPosition>(server_entity) = SmoothPosition{20.0f, 0.0f};
+    server_registry.write<Health>(server_entity) = Health{30};
+    server.tick(server_registry);
+    packets.clear();
+    server_registry.write<SmoothPosition>(server_entity) = SmoothPosition{30.0f, 0.0f};
+    server_registry.write<Health>(server_entity) = Health{40};
+    server.tick(server_registry);
+    REQUIRE(client.receive(client_registry, packets.back()));
+
+    REQUIRE(client.apply_frame(client_registry, 4));
+    REQUIRE(client_registry.get<SmoothPosition>(local).x == 10.0f);
+    REQUIRE(client_registry.get<Health>(local).value == 10);
+    REQUIRE(client.apply_frame(client_registry, 5));
+    REQUIRE(client_registry.get<SmoothPosition>(local).x == 20.0f);
+    REQUIRE(client_registry.get<Health>(local).value == 10);
+    REQUIRE(client.apply_frame(client_registry, 6));
+    REQUIRE(client_registry.get<SmoothPosition>(local).x == 30.0f);
+    REQUIRE(client_registry.get<Health>(local).value == 40);
+}
+
+TEST_CASE("buffered interpolation validates wrapped buffer samples by frame") {
+    ecs::Registry server_registry;
+    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 0.0f}) != nullptr);
+
+    std::vector<kage::sync::BitBuffer> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype == server_archetype);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        1,
+        4});
+
+    for (int frame = 1; frame <= 6; ++frame) {
+        packets.clear();
+        server_registry.write<Position>(server_entity) = Position{static_cast<float>(frame), 0.0f};
+        server.tick(server_registry);
+        REQUIRE(client.receive(client_registry, packets.back()));
+        for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
+            REQUIRE(server.process_packet(1, ack));
+        }
+    }
+
+    REQUIRE_FALSE(client.apply_frame(client_registry, 3));
+    REQUIRE_FALSE(client.local_entity(server_entity));
+    REQUIRE(client.apply_frame(client_registry, 7));
+
+    const ecs::Entity local = client.local_entity(server_entity);
+    REQUIRE(local);
+    REQUIRE(client_registry.get<Position>(local).x == 6.0f);
+}
+
+TEST_CASE("buffered interpolation rejects stale duplicate packets without ACKing") {
+    ecs::Registry server_registry;
+    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
+
+    std::vector<kage::sync::BitBuffer> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype == server_archetype);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        1,
+        8});
+
+    server.tick(server_registry);
+    const kage::sync::BitBuffer full_packet = packets.back();
+    REQUIRE(client.receive(client_registry, full_packet));
+    REQUIRE(client.drain_ack_packets().size() == 1);
+    REQUIRE_FALSE(client.receive(client_registry, full_packet));
+    REQUIRE(client.pending_ack_count() == 0);
+
+    server_registry.write<Position>(server_entity) = Position{3.0f, 4.0f};
+    packets.clear();
+    server.tick(server_registry);
+    const kage::sync::BitBuffer stale_full_packet = full_packet;
+    REQUIRE(client.receive(client_registry, packets.back()));
+    REQUIRE(client.drain_ack_packets().size() == 1);
+    REQUIRE_FALSE(client.receive(client_registry, stale_full_packet));
+    REQUIRE(client.pending_ack_count() == 0);
+
+    REQUIRE(server_registry.destroy(server_entity));
+    packets.clear();
+    server.tick(server_registry);
+    const kage::sync::BitBuffer destroy_packet = packets.back();
+    REQUIRE(client.receive(client_registry, destroy_packet));
+    REQUIRE(client.drain_ack_packets().size() == 1);
+    REQUIRE_FALSE(client.receive(client_registry, destroy_packet));
+    REQUIRE(client.pending_ack_count() == 0);
+}
+
+TEST_CASE("buffered interpolation delays component additions from full updates") {
+    ecs::Registry server_registry;
+    const ecs::Entity server_position = kage::sync::register_sync_component<Position>(server_registry, "Position");
+    const ecs::Entity server_health = kage::sync::register_sync_component<Health>(server_registry, "Health");
+    const kage::sync::SyncArchetypeId position_archetype = kage::sync::define_archetype(
+        server_registry,
+        "PositionActor",
+        {{server_position, kage::sync::ReplicationAudience::All}});
+    const kage::sync::SyncArchetypeId health_archetype = kage::sync::define_archetype(
+        server_registry,
+        "HealthActor",
+        {
+            {server_position, kage::sync::ReplicationAudience::All},
+            {server_health, kage::sync::ReplicationAudience::All},
+        });
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
+
+    std::vector<kage::sync::BitBuffer> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(server_registry, server_entity, position_archetype));
+
+    ecs::Registry client_registry;
+    const ecs::Entity client_position = kage::sync::register_sync_component<Position>(client_registry, "Position");
+    const ecs::Entity client_health = kage::sync::register_sync_component<Health>(client_registry, "Health");
+    REQUIRE(kage::sync::define_archetype(
+                client_registry,
+                "PositionActor",
+                {{client_position, kage::sync::ReplicationAudience::All}}) == position_archetype);
+    REQUIRE(kage::sync::define_archetype(
+                client_registry,
+                "HealthActor",
+                {
+                    {client_position, kage::sync::ReplicationAudience::All},
+                    {client_health, kage::sync::ReplicationAudience::All},
+                }) == health_archetype);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        1,
+        8});
+    server.tick(server_registry);
+    REQUIRE(client.receive(client_registry, packets.back()));
+    REQUIRE(client.apply_frame(client_registry, 2));
+    const ecs::Entity local = client.local_entity(server_entity);
+    REQUIRE(local);
+    REQUIRE_FALSE(client_registry.contains<Health>(local));
+    for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
+        REQUIRE(server.process_packet(1, ack));
+    }
+
+    REQUIRE(server_registry.add<Health>(server_entity, Health{7}) != nullptr);
+    REQUIRE(start_sync(server_registry, server_entity, health_archetype));
+    packets.clear();
+    server.tick(server_registry);
+    REQUIRE(client.receive(client_registry, packets.back()));
+    REQUIRE(client.apply_frame(client_registry, 2));
+    REQUIRE_FALSE(client_registry.contains<Health>(local));
+    REQUIRE(client.apply_frame(client_registry, 3));
+    REQUIRE(client_registry.get<Health>(local).value == 7);
+}
+
+TEST_CASE("buffered interpolation delays owner visibility reconciliation") {
+    ecs::Registry server_registry;
+    const ecs::Entity server_position =
+        kage::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
+    const ecs::Entity server_health = kage::sync::register_sync_component<Health>(server_registry, "Health");
+    const kage::sync::SyncArchetypeId server_archetype = kage::sync::define_archetype(
+        server_registry,
+        "OwnedActor",
+        {
+            {server_position, kage::sync::ReplicationAudience::All},
+            {server_health, kage::sync::ReplicationAudience::Owner},
+        });
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<NetworkedPosition>(server_entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
+    REQUIRE(server_registry.add<Health>(server_entity, Health{42}) != nullptr);
+    REQUIRE(kage::sync::set_owner(server_registry, server_entity, 1));
+
+    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId client_id, const kage::sync::BitBuffer& packet) {
+        packets.push_back({client_id, packet});
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(server.add_client(2));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+    ecs::Registry client_one_registry;
+    const ecs::Entity client_one_position =
+        kage::sync::register_sync_component<NetworkedPosition>(client_one_registry, "NetworkedPosition");
+    const ecs::Entity client_one_health = kage::sync::register_sync_component<Health>(client_one_registry, "Health");
+    REQUIRE(kage::sync::define_archetype(
+                client_one_registry,
+                "OwnedActor",
+                {
+                    {client_one_position, kage::sync::ReplicationAudience::All},
+                    {client_one_health, kage::sync::ReplicationAudience::Owner},
+                }) == server_archetype);
+    kage::sync::configure_client(client_one_registry, 1);
+
+    ecs::Registry client_two_registry;
+    const ecs::Entity client_two_position =
+        kage::sync::register_sync_component<NetworkedPosition>(client_two_registry, "NetworkedPosition");
+    const ecs::Entity client_two_health = kage::sync::register_sync_component<Health>(client_two_registry, "Health");
+    REQUIRE(kage::sync::define_archetype(
+                client_two_registry,
+                "OwnedActor",
+                {
+                    {client_two_position, kage::sync::ReplicationAudience::All},
+                    {client_two_health, kage::sync::ReplicationAudience::Owner},
+                }) == server_archetype);
+    kage::sync::configure_client(client_two_registry, 2);
+
+    kage::sync::ReplicationClient client_one(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        1,
+        8});
+    kage::sync::ReplicationClient client_two(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        1,
+        8});
+
+    server.tick(server_registry);
+    REQUIRE(client_one.receive(client_one_registry, packet_for(packets, 1)));
+    REQUIRE(client_two.receive(client_two_registry, packet_for(packets, 2)));
+    REQUIRE(client_one.apply_frame(client_one_registry, 2));
+    REQUIRE(client_two.apply_frame(client_two_registry, 2));
+    const ecs::Entity client_one_local = client_one.local_entity(server_entity);
+    const ecs::Entity client_two_local = client_two.local_entity(server_entity);
+    REQUIRE(client_one_registry.contains<Health>(client_one_local));
+    REQUIRE_FALSE(client_two_registry.contains<Health>(client_two_local));
+    for (const kage::sync::BitBuffer& ack : client_one.drain_ack_packets()) {
+        REQUIRE(server.process_packet(1, ack));
+    }
+    for (const kage::sync::BitBuffer& ack : client_two.drain_ack_packets()) {
+        REQUIRE(server.process_packet(2, ack));
+    }
+
+    REQUIRE(kage::sync::set_owner(server_registry, server_entity, 2));
+    packets.clear();
+    server.tick(server_registry);
+    REQUIRE(client_one.receive(client_one_registry, packet_for(packets, 1)));
+    REQUIRE(client_two.receive(client_two_registry, packet_for(packets, 2)));
+    REQUIRE(client_one.apply_frame(client_one_registry, 2));
+    REQUIRE(client_two.apply_frame(client_two_registry, 2));
+    REQUIRE(client_one_registry.contains<Health>(client_one_local));
+    REQUIRE_FALSE(client_two_registry.contains<Health>(client_two_local));
+
+    REQUIRE(client_one.apply_frame(client_one_registry, 3));
+    REQUIRE(client_two.apply_frame(client_two_registry, 3));
+    REQUIRE_FALSE(client_one_registry.contains<Health>(client_one_local));
+    REQUIRE(client_two_registry.get<Health>(client_two_local).value == 42);
+}
+
+TEST_CASE("buffered interpolation applies valid entities when another target sample is missing") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        1,
+        8});
+
+    const ecs::Entity first{101};
+    const ecs::Entity second{102};
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{first, Position{1.0f, 0.0f}}, {second, Position{2.0f, 0.0f}}})));
+    REQUIRE(client.drain_ack_packets().size() == 1);
+    REQUIRE(client.receive(client_registry, make_position_packet(2, {{first, Position{3.0f, 0.0f}}})));
+
+    REQUIRE_FALSE(client.apply_frame(client_registry, 3));
+    REQUIRE(client.local_entity(first));
+    REQUIRE_FALSE(client.local_entity(second));
+    REQUIRE(client_registry.get<Position>(client.local_entity(first)).x == 3.0f);
+}
+
+TEST_CASE("buffered interpolation validates client buffer options") {
+    REQUIRE_THROWS_AS(
+        kage::sync::ReplicationClient(kage::sync::ReplicationClientOptions{
+            1200,
+            kage::sync::ReplicationClientMode::BufferedInterpolation,
+            1,
+            0}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        kage::sync::ReplicationClient(kage::sync::ReplicationClientOptions{
+            1200,
+            kage::sync::ReplicationClientMode::BufferedInterpolation,
+            1,
+            3}),
+        std::invalid_argument);
+    REQUIRE_THROWS_AS(
+        kage::sync::ReplicationClient(kage::sync::ReplicationClientOptions{
+            1200,
+            kage::sync::ReplicationClientMode::BufferedInterpolation,
+            4,
+            4}),
+        std::invalid_argument);
+
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        1,
+        4});
+    REQUIRE(client.set_interpolation_buffer_frames(3));
+    REQUIRE_FALSE(client.set_interpolation_buffer_frames(4));
+    REQUIRE(client.options().interpolation_buffer_frames == 3);
+}
+
+TEST_CASE("buffered interpolation does not recreate destroyed entities before the new target frame") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        2,
+        8});
+    const ecs::Entity server_entity{42};
+
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
+    REQUIRE(client.apply_frame(client_registry, 3));
+    const ecs::Entity first_local = client.local_entity(server_entity);
+    REQUIRE(first_local);
+    REQUIRE(client.drain_ack_packets().size() == 1);
+
+    REQUIRE(client.receive(client_registry, make_destroy_packet(2, server_entity)));
+    REQUIRE(client.apply_frame(client_registry, 4));
+    REQUIRE_FALSE(client_registry.alive(first_local));
+    REQUIRE(client.drain_ack_packets().size() == 1);
+
+    REQUIRE(client.receive(client_registry, make_position_packet(4, {{server_entity, Position{5.0f, 6.0f}}})));
+
+    REQUIRE(client.apply_frame(client_registry, 5));
+    REQUIRE_FALSE(client.local_entity(server_entity));
+    REQUIRE(client.apply_frame(client_registry, 6));
+    const ecs::Entity second_local = client.local_entity(server_entity);
+    REQUIRE(second_local);
+    REQUIRE(second_local != first_local);
+    REQUIRE(client_registry.get<Position>(second_local).x == 5.0f);
+    REQUIRE(client_registry.get<Position>(second_local).y == 6.0f);
 }

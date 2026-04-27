@@ -445,10 +445,11 @@ bool ReplicationClient::fill_buffered_frames(
     }
 
     const std::vector<ComponentBaseline>* from = state.frame != 0 ? &state.baselines : nullptr;
+    const bool from_entity_present = state.local || (from != nullptr && !from->empty());
     const SyncFrame from_frame = state.frame;
     const SyncFrame begin = state.frame != 0 ? state.frame + 1U : frame;
     for (SyncFrame current = begin; current <= frame; ++current) {
-        const bool current_present = current == frame ? entity_present : state.local || from != nullptr;
+        const bool current_present = current == frame ? entity_present : from_entity_present;
         const std::vector<ComponentBaseline>* to = entity_present ? &decoded : nullptr;
         const bool final_absent = current == frame && !entity_present;
         if (!write_buffered_frame(
