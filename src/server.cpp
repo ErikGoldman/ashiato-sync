@@ -1,28 +1,20 @@
-#include "kage/sync/sync.hpp"
+#include "kage/sync/server.hpp"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
 namespace kage::sync {
-namespace {
-
-bool valid_archetype_id(const SyncSettings& settings, SyncArchetypeId id) {
-    return id.value < settings.archetypes.size();
-}
-
-void validate_component_replication(const ecs::Registry& registry, const ComponentReplication& replication) {
-    if (!replication.component || registry.component_info(replication.component) == nullptr) {
-        throw std::invalid_argument("sync archetype references an unregistered component");
-    }
-}
-
-}  // namespace
 
 ReplicationServer::ReplicationServer(ReplicationServerOptions options)
     : options_(options) {}
+
+void ReplicationServer::set_transport(TransportFn transport) {
+    options_.transport = std::move(transport);
+}
 
 bool ReplicationServer::add_client(ClientId client) {
     if (client == invalid_client_id || client_to_index_.find(client) != client_to_index_.end()) {
@@ -32,6 +24,7 @@ bool ReplicationServer::add_client(ClientId client) {
     ClientState state;
     state.id = client;
     state.reset_epochs.resize(replicated_.size(), state.epoch);
+    state.baselines.resize(replicated_.size());
     state.order.reserve(active_replicated_count_);
     for (std::uint32_t slot = 0; slot < replicated_.size(); ++slot) {
         if (replicated_[slot].active) {
@@ -80,6 +73,11 @@ bool ReplicationServer::add_replicated(ecs::Registry& registry, ecs::Entity enti
     const auto found = entity_to_slot_.find(key);
     if (found != entity_to_slot_.end()) {
         replicated_[found->second].archetype = archetype;
+        for (ClientState& client : clients_) {
+            if (found->second < client.baselines.size()) {
+                client.baselines[found->second].clear();
+            }
+        }
         return true;
     }
 
@@ -88,8 +86,10 @@ bool ReplicationServer::add_replicated(ecs::Registry& registry, ecs::Entity enti
     for (ClientState& client : clients_) {
         if (client.reset_epochs.size() < replicated_.size()) {
             client.reset_epochs.resize(replicated_.size(), client.epoch);
+            client.baselines.resize(replicated_.size());
         }
         client.reset_epochs[slot] = client.epoch;
+        client.baselines[slot].clear();
         client.order.push_back(slot);
     }
 
@@ -135,6 +135,11 @@ std::uint64_t ReplicationServer::priority(ClientId client, ecs::Entity entity) c
 }
 
 void ReplicationServer::tick(ecs::Registry& registry) {
+    if (options_.transport) {
+        tick_serialized(registry);
+        return;
+    }
+
     tick(registry, ReplicateFn{});
 }
 
@@ -181,6 +186,117 @@ void ReplicationServer::tick(ecs::Registry& registry, const ReplicateFn& replica
     }
 }
 
+void ReplicationServer::tick_serialized(ecs::Registry& registry) {
+    register_components(registry);
+
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    std::vector<std::uint32_t> sent;
+    std::vector<std::uint32_t> next_order;
+    BitBuffer buffer;
+    std::vector<QuantizedBaseline> current_baselines;
+
+    sent.reserve(active_replicated_count_);
+    next_order.reserve(active_replicated_count_);
+
+    for (ClientState& client : clients_) {
+        ++client.epoch;
+
+        std::size_t remaining = options_.bandwidth_limit_bytes_per_tick;
+        std::vector<std::uint32_t> order = std::move(client.order);
+        sent.clear();
+        next_order.clear();
+        next_order.reserve(order.size());
+
+        for (const std::uint32_t slot : order) {
+            if (!slot_is_replicable(registry, slot)) {
+                if (slot < replicated_.size() && replicated_[slot].active) {
+                    deactivate_slot(slot);
+                }
+                continue;
+            }
+
+            buffer.clear();
+            current_baselines.clear();
+            if (!serialize_entity(registry, settings, client, slot, buffer, current_baselines)) {
+                next_order.push_back(slot);
+                continue;
+            }
+
+            if (buffer.byte_size() > remaining) {
+                next_order.push_back(slot);
+                continue;
+            }
+
+            options_.transport(client.id, buffer);
+            remaining -= buffer.byte_size();
+            client.reset_epochs[slot] = client.epoch;
+            client.baselines[slot] = current_baselines;
+            sent.push_back(slot);
+        }
+
+        next_order.insert(next_order.end(), sent.begin(), sent.end());
+        client.order = std::move(next_order);
+    }
+}
+
+bool ReplicationServer::serialize_entity(
+    const ecs::Registry& registry,
+    const SyncSettings& settings,
+    const ClientState& client,
+    std::uint32_t slot,
+    BitBuffer& out,
+    std::vector<QuantizedBaseline>& current) const {
+    if (slot >= replicated_.size() || slot >= client.baselines.size()) {
+        return false;
+    }
+
+    const ReplicatedSlot& replicated = replicated_[slot];
+    if (replicated.archetype.value >= settings.archetypes.size()) {
+        return false;
+    }
+
+    const SyncArchetype& archetype = settings.archetypes[replicated.archetype.value];
+    const NetworkOwner* owner = registry.try_get<NetworkOwner>(replicated.entity);
+    const std::vector<QuantizedBaseline>& previous_baselines = client.baselines[slot];
+    bool serialized_component = false;
+
+    current.reserve(archetype.components.size());
+    for (const ComponentReplication& replication : archetype.components) {
+        if (replication.audience == ReplicationAudience::Owner &&
+            (owner == nullptr || owner->client != client.id)) {
+            continue;
+        }
+
+        const void* component_value = registry.get(replicated.entity, replication.component);
+        if (component_value == nullptr) {
+            continue;
+        }
+
+        const auto found_ops = settings.component_ops.find(replication.component.value);
+        if (found_ops == settings.component_ops.end()) {
+            throw std::logic_error("sync component traits are not registered for replicated component");
+        }
+
+        QuantizedBaseline quantized;
+        quantized.component = replication.component;
+        found_ops->second.quantize(component_value, quantized.bytes);
+
+        const auto previous_found = std::find_if(
+            previous_baselines.begin(),
+            previous_baselines.end(),
+            [&replication](const QuantizedBaseline& baseline) {
+                return baseline.component == replication.component;
+            });
+        const SyncComponentOps::QuantizedBytes* previous =
+            previous_found != previous_baselines.end() ? &previous_found->bytes : nullptr;
+        found_ops->second.serialize(previous, quantized.bytes, out);
+        current.push_back(std::move(quantized));
+        serialized_component = true;
+    }
+
+    return serialized_component;
+}
+
 std::uint32_t ReplicationServer::allocate_slot(ecs::Entity entity, SyncArchetypeId archetype) {
     if (!free_replicated_slots_.empty()) {
         const std::uint32_t slot = free_replicated_slots_.back();
@@ -207,6 +323,11 @@ void ReplicationServer::deactivate_slot(std::uint32_t slot) {
     replicated_[slot].active = false;
     free_replicated_slots_.push_back(slot);
     --active_replicated_count_;
+    for (ClientState& client : clients_) {
+        if (slot < client.baselines.size()) {
+            client.baselines[slot].clear();
+        }
+    }
     remove_slot_from_client_orders(slot);
 }
 
@@ -223,83 +344,6 @@ bool ReplicationServer::slot_is_replicable(const ecs::Registry& registry, std::u
 
     const ecs::Entity entity = replicated_[slot].entity;
     return registry.alive(entity) && registry.contains<Replicated>(entity);
-}
-
-void register_components(ecs::Registry& registry) {
-    registry.register_component<SyncSettings>("kage.sync.SyncSettings");
-    registry.register_component<Replicated>("kage.sync.Replicated");
-    registry.register_component<NetworkOwner>("kage.sync.NetworkOwner");
-}
-
-void configure_server(ecs::Registry& registry) {
-    register_components(registry);
-
-    SyncSettings& settings = registry.write<SyncSettings>();
-    settings.role = SyncRole::Server;
-    settings.local_client = invalid_client_id;
-}
-
-void configure_client(ecs::Registry& registry, ClientId local_client) {
-    register_components(registry);
-
-    SyncSettings& settings = registry.write<SyncSettings>();
-    settings.role = SyncRole::Client;
-    settings.local_client = local_client;
-}
-
-SyncArchetypeId define_archetype(
-    ecs::Registry& registry,
-    std::string name,
-    std::vector<ComponentReplication> components) {
-    register_components(registry);
-
-    for (const ComponentReplication& replication : components) {
-        validate_component_replication(registry, replication);
-    }
-
-    SyncSettings& settings = registry.write<SyncSettings>();
-    const SyncArchetypeId id{static_cast<std::uint32_t>(settings.archetypes.size())};
-    settings.archetypes.push_back(SyncArchetype{std::move(name), std::move(components)});
-    return id;
-}
-
-const SyncArchetype* find_archetype(const ecs::Registry& registry, SyncArchetypeId id) {
-    const SyncSettings& settings = registry.get<SyncSettings>();
-    if (!valid_archetype_id(settings, id)) {
-        return nullptr;
-    }
-
-    return &settings.archetypes[id.value];
-}
-
-bool mark_replicated(ecs::Registry& registry, ecs::Entity entity, SyncArchetypeId archetype) {
-    register_components(registry);
-
-    if (!registry.alive(entity)) {
-        return false;
-    }
-
-    const SyncSettings& settings = registry.get<SyncSettings>();
-    if (!valid_archetype_id(settings, archetype)) {
-        return false;
-    }
-
-    return registry.add<Replicated>(entity, Replicated{archetype}) != nullptr;
-}
-
-bool unmark_replicated(ecs::Registry& registry, ecs::Entity entity) {
-    register_components(registry);
-    return registry.remove<Replicated>(entity);
-}
-
-bool set_owner(ecs::Registry& registry, ecs::Entity entity, ClientId client) {
-    register_components(registry);
-
-    if (!registry.alive(entity)) {
-        return false;
-    }
-
-    return registry.add<NetworkOwner>(entity, NetworkOwner{client}) != nullptr;
 }
 
 }  // namespace kage::sync

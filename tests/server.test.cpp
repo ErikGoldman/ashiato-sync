@@ -1,142 +1,17 @@
-#include "kage/sync/sync.hpp"
+#include "test_components.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
-#include <cstdint>
-#include <stdexcept>
+#include <cstddef>
 #include <utility>
 #include <vector>
 
-namespace {
-
-struct Position {
-    float x = 0.0f;
-    float y = 0.0f;
-};
-
-struct Health {
-    std::int32_t value = 100;
-};
-
-kage::sync::SyncArchetypeId define_position_archetype(ecs::Registry& registry) {
-    const ecs::Entity position_component = registry.register_component<Position>("Position");
-    return kage::sync::define_archetype(
-        registry,
-        "PositionActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
-}
-
-}  // namespace
-
-TEST_CASE("sync components register into the ecs registry") {
-    ecs::Registry registry;
-
-    kage::sync::register_components(registry);
-
-    REQUIRE(registry.component<kage::sync::SyncSettings>());
-    REQUIRE(registry.component<kage::sync::Replicated>());
-    REQUIRE(registry.component<kage::sync::NetworkOwner>());
-
-    const kage::sync::SyncSettings& settings = registry.get<kage::sync::SyncSettings>();
-    REQUIRE(settings.role == kage::sync::SyncRole::Server);
-    REQUIRE(settings.local_client == kage::sync::invalid_client_id);
-    REQUIRE(settings.archetypes.empty());
-}
-
-TEST_CASE("server and client configuration update singleton settings") {
-    ecs::Registry registry;
-
-    kage::sync::configure_client(registry, 42);
-
-    REQUIRE(registry.get<kage::sync::SyncSettings>().role == kage::sync::SyncRole::Client);
-    REQUIRE(registry.get<kage::sync::SyncSettings>().local_client == 42);
-
-    kage::sync::configure_server(registry);
-
-    REQUIRE(registry.get<kage::sync::SyncSettings>().role == kage::sync::SyncRole::Server);
-    REQUIRE(registry.get<kage::sync::SyncSettings>().local_client == kage::sync::invalid_client_id);
-}
-
-TEST_CASE("sync archetypes store component replication settings in the singleton") {
-    ecs::Registry registry;
-    const ecs::Entity position_component = registry.register_component<Position>("Position");
-    const ecs::Entity health_component = registry.register_component<Health>("Health");
-
-    const kage::sync::SyncArchetypeId actor = kage::sync::define_archetype(
-        registry,
-        "Actor",
-        {
-            {position_component, kage::sync::ReplicationAudience::All},
-            {health_component, kage::sync::ReplicationAudience::Owner},
-        });
-
-    const kage::sync::SyncArchetypeId projectile = kage::sync::define_archetype(
-        registry,
-        "Projectile",
-        {{position_component, kage::sync::ReplicationAudience::All}});
-
-    REQUIRE(actor.value == 0);
-    REQUIRE(projectile.value == 1);
-
-    const kage::sync::SyncArchetype* found_actor = kage::sync::find_archetype(registry, actor);
-    REQUIRE(found_actor != nullptr);
-    REQUIRE(found_actor->name == "Actor");
-    REQUIRE(found_actor->components.size() == 2);
-    REQUIRE(found_actor->components[0].component == position_component);
-    REQUIRE(found_actor->components[0].audience == kage::sync::ReplicationAudience::All);
-    REQUIRE(found_actor->components[1].component == health_component);
-    REQUIRE(found_actor->components[1].audience == kage::sync::ReplicationAudience::Owner);
-
-    REQUIRE(kage::sync::find_archetype(registry, kage::sync::SyncArchetypeId{99}) == nullptr);
-}
-
-TEST_CASE("sync archetypes reject unregistered component ids") {
-    ecs::Registry registry;
-
-    REQUIRE_THROWS_AS(
-        kage::sync::define_archetype(
-            registry,
-            "Invalid",
-            {{ecs::Entity{123}, kage::sync::ReplicationAudience::All}}),
-        std::invalid_argument);
-}
-
-TEST_CASE("entities can be marked and unmarked as replicated") {
-    ecs::Registry registry;
-    const ecs::Entity position_component = registry.register_component<Position>("Position");
-    const kage::sync::SyncArchetypeId actor = kage::sync::define_archetype(
-        registry,
-        "Actor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
-    const ecs::Entity entity = registry.create();
-
-    REQUIRE_FALSE(kage::sync::mark_replicated(registry, ecs::Entity{}, actor));
-    REQUIRE_FALSE(kage::sync::mark_replicated(registry, entity, kage::sync::SyncArchetypeId{22}));
-
-    REQUIRE(kage::sync::mark_replicated(registry, entity, actor));
-    REQUIRE(registry.contains<kage::sync::Replicated>(entity));
-    REQUIRE(registry.get<kage::sync::Replicated>(entity).archetype == actor);
-
-    REQUIRE(kage::sync::unmark_replicated(registry, entity));
-    REQUIRE_FALSE(registry.contains<kage::sync::Replicated>(entity));
-    REQUIRE_FALSE(kage::sync::unmark_replicated(registry, entity));
-}
-
-TEST_CASE("owners can be assigned and replaced independently of replication marker") {
-    ecs::Registry registry;
-    const ecs::Entity entity = registry.create();
-
-    REQUIRE_FALSE(kage::sync::set_owner(registry, ecs::Entity{}, 7));
-
-    REQUIRE(kage::sync::set_owner(registry, entity, 7));
-    REQUIRE(registry.contains<kage::sync::NetworkOwner>(entity));
-    REQUIRE(registry.get<kage::sync::NetworkOwner>(entity).client == 7);
-    REQUIRE_FALSE(registry.contains<kage::sync::Replicated>(entity));
-
-    REQUIRE(kage::sync::set_owner(registry, entity, 11));
-    REQUIRE(registry.get<kage::sync::NetworkOwner>(entity).client == 11);
-}
+using kage_sync_tests::Health;
+using kage_sync_tests::NetworkedPayload;
+using kage_sync_tests::NetworkedPosition;
+using kage_sync_tests::define_position_archetype;
+using kage_sync_tests::read_networked_payload;
 
 TEST_CASE("replication server tracks clients and explicit replicated entities") {
     ecs::Registry registry;
@@ -301,4 +176,126 @@ TEST_CASE("replication server sends nothing when bandwidth cannot cover the fixe
 
     REQUIRE(sends == 0);
     REQUIRE(server.priority(1, entity) == 1);
+}
+
+TEST_CASE("replication server serializes full and delta component payloads through transport") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "NetworkedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    const ecs::Entity entity = registry.create();
+    REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
+
+    std::vector<kage::sync::BitBuffer> payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 1024;
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        REQUIRE(client == 1);
+        payloads.push_back(payload);
+    };
+
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(server.add_replicated(registry, entity, archetype));
+
+    server.tick(registry);
+    REQUIRE(payloads.size() == 1);
+    NetworkedPayload fields = read_networked_payload(payloads[0]);
+    REQUIRE_FALSE(fields.delta);
+    REQUIRE(fields.x == 10);
+    REQUIRE(fields.y == 20);
+
+    registry.write<NetworkedPosition>(entity) = NetworkedPosition{2.0f, 3.0f};
+    server.tick(registry);
+
+    REQUIRE(payloads.size() == 2);
+    fields = read_networked_payload(payloads[1]);
+    REQUIRE(fields.delta);
+    REQUIRE(fields.x == 10);
+    REQUIRE(fields.y == 10);
+}
+
+TEST_CASE("replication server applies bandwidth limits to actual serialized byte counts") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "NetworkedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    const ecs::Entity first = registry.create();
+    const ecs::Entity second = registry.create();
+    REQUIRE(registry.add<NetworkedPosition>(first, NetworkedPosition{1.0f, 1.0f}) != nullptr);
+    REQUIRE(registry.add<NetworkedPosition>(second, NetworkedPosition{2.0f, 2.0f}) != nullptr);
+
+    std::vector<kage::sync::BitBuffer> payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 3;
+    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+        payloads.push_back(payload);
+    };
+
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(server.add_replicated(registry, first, archetype));
+    REQUIRE(server.add_replicated(registry, second, archetype));
+
+    server.tick(registry);
+
+    REQUIRE(payloads.size() == 1);
+    NetworkedPayload fields = read_networked_payload(payloads[0]);
+    REQUIRE_FALSE(fields.delta);
+    REQUIRE(fields.x == 10);
+    REQUIRE(fields.y == 10);
+    REQUIRE(server.priority(1, first) == 0);
+    REQUIRE(server.priority(1, second) == 1);
+
+    registry.write<NetworkedPosition>(second) = NetworkedPosition{7.0f, 8.0f};
+    server.tick(registry);
+
+    REQUIRE(payloads.size() == 2);
+    fields = read_networked_payload(payloads[1]);
+    REQUIRE_FALSE(fields.delta);
+    REQUIRE(fields.x == 70);
+    REQUIRE(fields.y == 80);
+    REQUIRE(server.priority(1, second) == 0);
+}
+
+TEST_CASE("replication server filters owner-only serialized components") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const ecs::Entity health_component = kage::sync::register_sync_component<Health>(registry, "Health");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "OwnedActor",
+        {
+            {position_component, kage::sync::ReplicationAudience::All},
+            {health_component, kage::sync::ReplicationAudience::Owner},
+        });
+    const ecs::Entity entity = registry.create();
+    REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
+    REQUIRE(registry.add<Health>(entity, Health{42}) != nullptr);
+    REQUIRE(kage::sync::set_owner(registry, entity, 2));
+
+    std::vector<std::pair<kage::sync::ClientId, std::size_t>> sends;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 1024;
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        sends.push_back({client, payload.byte_size()});
+    };
+
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(server.add_client(2));
+    REQUIRE(server.add_replicated(registry, entity, archetype));
+
+    server.tick(registry);
+
+    REQUIRE(sends.size() == 2);
+    REQUIRE(sends[0] == std::pair<kage::sync::ClientId, std::size_t>{1, 3});
+    REQUIRE(sends[1] == std::pair<kage::sync::ClientId, std::size_t>{2, 3 + sizeof(Health)});
 }

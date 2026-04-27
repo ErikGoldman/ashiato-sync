@@ -3,7 +3,55 @@
 #include <benchmark/benchmark.h>
 
 #include <cstdint>
+#include <cstring>
 #include <vector>
+
+struct DeltaPosition {
+    std::int32_t x = 0;
+    std::int32_t y = 0;
+};
+
+namespace kage::sync {
+
+template <>
+struct SyncComponentTraits<DeltaPosition> {
+    using Quantized = DeltaPosition;
+
+    static Quantized quantize(const DeltaPosition& value) {
+        return value;
+    }
+
+    static DeltaPosition dequantize(const Quantized& value) {
+        return value;
+    }
+
+    static void serialize(const Quantized* previous, const Quantized& current, BitBuffer& out) {
+        if (previous == nullptr) {
+            out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
+            return;
+        }
+
+        out.push_bits(current.x - previous->x, 8U);
+        out.push_bits(current.y - previous->y, 8U);
+    }
+
+    static bool deserialize(BitBuffer& in, const Quantized* previous, Quantized& out) {
+        if (in.remaining_bits() == sizeof(Quantized) * 8U) {
+            in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
+            return true;
+        }
+        if (in.remaining_bits() == 16U && previous != nullptr) {
+            out = Quantized{
+                previous->x + static_cast<std::int32_t>(in.read_bits(8U)),
+                previous->y + static_cast<std::int32_t>(in.read_bits(8U)),
+            };
+            return true;
+        }
+        return false;
+    }
+};
+
+}  // namespace kage::sync
 
 namespace {
 
@@ -17,8 +65,8 @@ struct Health {
 };
 
 kage::sync::SyncArchetypeId define_archetype(ecs::Registry& registry) {
-    const ecs::Entity position = registry.register_component<Position>("Position");
-    const ecs::Entity health = registry.register_component<Health>("Health");
+    const ecs::Entity position = kage::sync::register_sync_component<Position>(registry, "Position");
+    const ecs::Entity health = kage::sync::register_sync_component<Health>(registry, "Health");
     return kage::sync::define_archetype(
         registry,
         "Actor",
@@ -28,11 +76,41 @@ kage::sync::SyncArchetypeId define_archetype(ecs::Registry& registry) {
         });
 }
 
+kage::sync::SyncArchetypeId define_delta_archetype(ecs::Registry& registry) {
+    const ecs::Entity position = kage::sync::register_sync_component<DeltaPosition>(registry, "DeltaPosition");
+    return kage::sync::define_archetype(
+        registry,
+        "DeltaActor",
+        {{position, kage::sync::ReplicationAudience::All}});
+}
+
 std::vector<ecs::Entity> create_entities(ecs::Registry& registry, int count) {
     std::vector<ecs::Entity> entities;
     entities.reserve(static_cast<std::size_t>(count));
     for (int i = 0; i < count; ++i) {
         entities.push_back(registry.create());
+    }
+    return entities;
+}
+
+std::vector<ecs::Entity> create_position_entities(ecs::Registry& registry, int count) {
+    std::vector<ecs::Entity> entities;
+    entities.reserve(static_cast<std::size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        const ecs::Entity entity = registry.create();
+        registry.add<Position>(entity, Position{static_cast<float>(i), static_cast<float>(i + 1)});
+        entities.push_back(entity);
+    }
+    return entities;
+}
+
+std::vector<ecs::Entity> create_delta_entities(ecs::Registry& registry, int count) {
+    std::vector<ecs::Entity> entities;
+    entities.reserve(static_cast<std::size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        const ecs::Entity entity = registry.create();
+        registry.add<DeltaPosition>(entity, DeltaPosition{i, i + 1});
+        entities.push_back(entity);
     }
     return entities;
 }
@@ -148,6 +226,92 @@ void BM_ServerAddClientsAfterReplicated(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(entity_count) * client_count);
 }
 
+void BM_ServerTickSerializedFullBudget(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int client_count = static_cast<int>(state.range(1));
+
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
+    const std::vector<ecs::Entity> entities = create_position_entities(registry, entity_count);
+
+    std::uint64_t sent = 0;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(Position);
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        sent += client + payload.byte_size();
+        benchmark::DoNotOptimize(sent);
+    };
+
+    kage::sync::ReplicationServer server(options);
+    add_clients(server, client_count);
+    add_replicated_entities(server, registry, entities, archetype);
+
+    for (auto _ : state) {
+        server.tick(registry);
+    }
+
+    state.SetItemsProcessed(
+        state.iterations() * static_cast<std::int64_t>(entity_count) * static_cast<std::int64_t>(client_count));
+}
+
+void BM_ServerTickSerializedDelta(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int client_count = static_cast<int>(state.range(1));
+
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
+    const std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
+
+    std::uint64_t sent = 0;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition);
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        sent += client + payload.byte_size();
+        benchmark::DoNotOptimize(sent);
+    };
+
+    kage::sync::ReplicationServer server(options);
+    add_clients(server, client_count);
+    add_replicated_entities(server, registry, entities, archetype);
+    server.tick(registry);
+
+    for (auto _ : state) {
+        server.tick(registry);
+    }
+
+    state.SetItemsProcessed(
+        state.iterations() * static_cast<std::int64_t>(entity_count) * static_cast<std::int64_t>(client_count));
+}
+
+void BM_ServerTickSerializedBudgetLimited(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int client_count = static_cast<int>(state.range(1));
+    const int sends_per_client = static_cast<int>(state.range(2));
+
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
+    const std::vector<ecs::Entity> entities = create_position_entities(registry, entity_count);
+
+    std::uint64_t sent = 0;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(sends_per_client) * sizeof(Position);
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        sent += client + payload.byte_size();
+        benchmark::DoNotOptimize(sent);
+    };
+
+    kage::sync::ReplicationServer server(options);
+    add_clients(server, client_count);
+    add_replicated_entities(server, registry, entities, archetype);
+
+    for (auto _ : state) {
+        server.tick(registry);
+    }
+
+    state.SetItemsProcessed(
+        state.iterations() * static_cast<std::int64_t>(sends_per_client) * static_cast<std::int64_t>(client_count));
+}
+
 void TickArgs(benchmark::internal::Benchmark* benchmark) {
     benchmark->Args({1024, 1})->Args({16384, 1})->Args({16384, 8})->Args({65536, 8});
 }
@@ -168,5 +332,8 @@ BENCHMARK(BM_ServerTickFullBudget)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickBudgetLimited)->Apply(LimitedTickArgs);
 BENCHMARK(BM_ServerAddRemoveReplicated)->Apply(ChurnArgs);
 BENCHMARK(BM_ServerAddClientsAfterReplicated)->Apply(AddClientArgs);
+BENCHMARK(BM_ServerTickSerializedFullBudget)->Apply(TickArgs);
+BENCHMARK(BM_ServerTickSerializedDelta)->Apply(TickArgs);
+BENCHMARK(BM_ServerTickSerializedBudgetLimited)->Apply(LimitedTickArgs);
 
 }  // namespace

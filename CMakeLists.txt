@@ -20,7 +20,8 @@ add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../main" "${CMAKE_CURRENT_BINARY_D
 set(BUILD_TESTING ${KAGE_SYNC_BUILD_TESTING} CACHE BOOL "" FORCE)
 
 add_library(kage_sync
-    src/sync.cpp
+    src/components.cpp
+    src/server.cpp
 )
 
 add_library(kage::sync ALIAS kage_sync)
@@ -58,7 +59,9 @@ if(KAGE_SYNC_BUILD_TESTING)
     FetchContent_MakeAvailable(Catch2)
 
     add_executable(kage_sync_tests
-        tests/sync.test.cpp
+        tests/bit_buffer.test.cpp
+        tests/components.test.cpp
+        tests/server.test.cpp
     )
 
     target_link_libraries(kage_sync_tests
