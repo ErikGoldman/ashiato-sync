@@ -24,6 +24,7 @@ struct ComponentRecord {
 
 struct EntityRecord {
     ecs::Entity entity;
+    bool destroy = false;
     bool full = false;
     kage::sync::SyncArchetypeId archetype;
     std::vector<ComponentRecord> components;
@@ -47,7 +48,12 @@ ServerUpdatePacket read_server_update(kage::sync::BitBuffer packet) {
     update.entities.reserve(entity_count);
     for (std::uint16_t entity_index = 0; entity_index < entity_count; ++entity_index) {
         EntityRecord entity;
+        entity.destroy = packet.read_bool();
         entity.entity = ecs::Entity{packet.read_unsigned_bits(64U)};
+        if (entity.destroy) {
+            update.entities.push_back(std::move(entity));
+            continue;
+        }
         entity.full = packet.read_bool();
         if (entity.full) {
             entity.archetype =
@@ -448,7 +454,7 @@ TEST_CASE("replication server splits packed updates at the mtu boundary") {
     }
 }
 
-TEST_CASE("replication server advances delta baselines only from exact entity ACKs") {
+TEST_CASE("replication server accepts delayed entity ACKs for retained snapshots") {
     ecs::Registry registry;
     const ecs::Entity position_component =
         kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
@@ -475,6 +481,7 @@ TEST_CASE("replication server advances delta baselines only from exact entity AC
     registry.write<NetworkedPosition>(entity) = NetworkedPosition{2.0f, 3.0f};
     server.tick(registry);
     REQUIRE(read_first_networked_payload(payloads.back()).delta == false);
+    REQUIRE(server.acknowledge_entity(1, entity, first_frame));
     REQUIRE_FALSE(server.acknowledge_entity(1, entity, first_frame));
 
     const kage::sync::SyncFrame second_frame = read_server_update(payloads.back()).frame;

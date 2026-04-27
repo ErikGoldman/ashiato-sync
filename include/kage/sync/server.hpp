@@ -34,6 +34,7 @@ public:
 
     std::uint64_t priority(ClientId client, ecs::Entity entity) const;
     bool acknowledge_entity(ClientId client, ecs::Entity entity, SyncFrame frame);
+    bool process_packet(ClientId client, BitBuffer packet);
     std::size_t retained_snapshot_count() const noexcept;
     std::size_t retained_snapshot_bytes() const noexcept;
 
@@ -65,9 +66,18 @@ private:
     };
 
     struct ClientEntityState {
+        struct PendingSnapshot {
+            std::uint32_t snapshot = invalid_snapshot_id;
+            SyncFrame frame = 0;
+        };
+
         std::uint32_t baseline = invalid_snapshot_id;
-        std::uint32_t pending = invalid_snapshot_id;
-        SyncFrame pending_frame = 0;
+        std::vector<PendingSnapshot> pending;
+    };
+
+    struct ClientDestroyState {
+        ecs::Entity entity;
+        SyncFrame frame = 0;
     };
 
     struct ClientState {
@@ -76,6 +86,7 @@ private:
         std::vector<std::uint32_t> order;
         std::vector<std::uint64_t> reset_epochs;
         std::vector<ClientEntityState> entity_states;
+        std::vector<ClientDestroyState> pending_destroys;
     };
 
     using EntityKey = std::uint64_t;
@@ -111,6 +122,7 @@ private:
     void retain_snapshot(std::uint32_t snapshot);
     void release_snapshot(std::uint32_t snapshot);
     void clear_client_entity_state(ClientEntityState& state);
+    bool acknowledge_destroy(ClientState& client, ecs::Entity entity, SyncFrame frame);
     const SyncComponentOps::QuantizedBytes* find_baseline_component(
         std::uint32_t snapshot,
         ecs::Entity component) const;

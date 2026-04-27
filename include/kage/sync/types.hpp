@@ -58,12 +58,14 @@ struct SyncComponentOps {
     using QuantizedBytes = std::vector<std::uint8_t>;
     using QuantizeFn = void (*)(const void*, QuantizedBytes&);
     using DequantizeFn = void (*)(const QuantizedBytes&, void*);
+    using ApplyFn = bool (*)(ecs::Registry&, ecs::Entity, const QuantizedBytes&);
     using SerializeFn = void (*)(const QuantizedBytes*, const QuantizedBytes&, BitBuffer&);
     using DeserializeFn = bool (*)(BitBuffer&, const QuantizedBytes*, QuantizedBytes&);
 
     std::size_t quantized_size = 0;
     QuantizeFn quantize = nullptr;
     DequantizeFn dequantize = nullptr;
+    ApplyFn apply = nullptr;
     SerializeFn serialize = nullptr;
     DeserializeFn deserialize = nullptr;
 };

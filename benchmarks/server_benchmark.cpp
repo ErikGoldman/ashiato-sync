@@ -140,6 +140,7 @@ void ack_packets(
         const auto frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
         const auto entity_count = static_cast<std::uint16_t>(packet.read_bits(16U));
         for (std::uint16_t entity_index = 0; entity_index < entity_count; ++entity_index) {
+            benchmark::DoNotOptimize(packet.read_bool());
             const ecs::Entity entity{packet.read_unsigned_bits(64U)};
             const bool full = packet.read_bool();
             if (full) {

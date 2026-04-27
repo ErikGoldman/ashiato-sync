@@ -4,8 +4,7 @@ Kage Sync is a C++17 library for fixed-tick, predictive networking on top of the
 kagesoko ECS. The project is separate from the ECS implementation in
 `../main`; sync code, tests, and benchmarks live here.
 
-The current implementation provides the server-side replication scheduling
-foundation:
+The current implementation provides the v0 replication foundation:
 
 - sync component registration for `SyncSettings`, `Replicated`, and
   `NetworkOwner`
@@ -14,8 +13,11 @@ foundation:
 - replicated entity and network owner markers
 - a bandwidth-limited `ReplicationServer` that rotates sends by per-client
   priority
+- serialized server update packets with full, delta, and destroy records
+- a snap-mode `ReplicationClient` that creates local entities, overwrites
+  replicated components, and packs ACK packets up to a configured MTU
 
-Client-side interpolation, prediction, rollback, serialization, and transport
+Client-side interpolation, prediction, rollback, and production transport
 integration are planned surface area rather than complete behavior in this
 snapshot.
 
@@ -36,6 +38,22 @@ cmake --build build
 ```
 
 The library target is `kage_sync`, with the alias target `kage::sync`.
+
+## Examples
+
+The optional examples target fetches raylib and is disabled by default:
+
+```sh
+cmake -S . -B build-examples \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DBUILD_TESTING=OFF \
+  -DKAGE_SYNC_BUILD_EXAMPLES=ON
+cmake --build build-examples --target kage_sync_balls_example
+./build-examples/kage_sync_balls_example
+```
+
+`kage_sync_balls_example` runs a UDP localhost server and snap client in one
+process and renders replicated moving balls with raylib.
 
 ## Tests
 

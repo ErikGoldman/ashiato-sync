@@ -9,6 +9,7 @@ project(KageSync
 include(CTest)
 
 option(KAGE_SYNC_BUILD_BENCHMARKS "Build kage-sync Google Benchmark suites" OFF)
+option(KAGE_SYNC_BUILD_EXAMPLES "Build kage-sync examples" OFF)
 
 set(KAGE_SYNC_BUILD_TESTING ${BUILD_TESTING})
 
@@ -20,6 +21,7 @@ add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../main" "${CMAKE_CURRENT_BINARY_D
 set(BUILD_TESTING ${KAGE_SYNC_BUILD_TESTING} CACHE BOOL "" FORCE)
 
 add_library(kage_sync
+    src/client.cpp
     src/components.cpp
     src/server.cpp
 )
@@ -45,7 +47,7 @@ else()
     target_compile_options(kage_sync PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-if(KAGE_SYNC_BUILD_TESTING OR KAGE_SYNC_BUILD_BENCHMARKS)
+if(KAGE_SYNC_BUILD_TESTING OR KAGE_SYNC_BUILD_BENCHMARKS OR KAGE_SYNC_BUILD_EXAMPLES)
     include(FetchContent)
 endif()
 
@@ -60,6 +62,7 @@ if(KAGE_SYNC_BUILD_TESTING)
 
     add_executable(kage_sync_tests
         tests/bit_buffer.test.cpp
+        tests/client.test.cpp
         tests/components.test.cpp
         tests/server.test.cpp
     )
@@ -72,6 +75,33 @@ if(KAGE_SYNC_BUILD_TESTING)
 
     include(Catch)
     catch_discover_tests(kage_sync_tests)
+endif()
+
+if(KAGE_SYNC_BUILD_EXAMPLES)
+    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(RAYLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        raylib
+        GIT_REPOSITORY https://github.com/raysan5/raylib.git
+        GIT_TAG 5.5
+    )
+    FetchContent_MakeAvailable(raylib)
+
+    add_executable(kage_sync_balls_example
+        examples/balls.cpp
+    )
+
+    target_link_libraries(kage_sync_balls_example
+        PRIVATE
+            kage::sync
+            raylib
+    )
+
+    target_compile_features(kage_sync_balls_example PRIVATE cxx_std_17)
+
+    if(WIN32)
+        target_link_libraries(kage_sync_balls_example PRIVATE ws2_32)
+    endif()
 endif()
 
 if(KAGE_SYNC_BUILD_BENCHMARKS)

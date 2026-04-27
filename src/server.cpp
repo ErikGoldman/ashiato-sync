@@ -1,5 +1,7 @@
 #include "kage/sync/server.hpp"
 
+#include "kage/sync/protocol.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -10,12 +12,8 @@
 namespace kage::sync {
 namespace {
 
-constexpr std::uint8_t server_update_message = 1;
-constexpr std::size_t packet_header_bits = 8U + 32U + 16U;
-
-std::size_t bytes_for_bits(std::size_t bits) noexcept {
-    return (bits + 7U) / 8U;
-}
+constexpr std::size_t destroy_record_bits = 1U + 64U;
+constexpr std::size_t max_pending_snapshots_per_entity = 64;
 
 }  // namespace
 
@@ -138,20 +136,69 @@ bool ReplicationServer::acknowledge_entity(ClientId client, ecs::Entity entity, 
     }
 
     ClientEntityState& entity_state = state.entity_states[slot];
-    if (entity_state.pending == invalid_snapshot_id || entity_state.pending_frame != frame) {
+    const auto found_pending = std::find_if(
+        entity_state.pending.begin(),
+        entity_state.pending.end(),
+        [frame](const ClientEntityState::PendingSnapshot& pending) {
+            return pending.frame == frame;
+        });
+    if (found_pending == entity_state.pending.end()) {
         return false;
     }
 
-    if (entity_state.baseline != entity_state.pending) {
+    const std::uint32_t acked_snapshot = found_pending->snapshot;
+    if (acked_snapshot == invalid_snapshot_id || acked_snapshot >= snapshots_.size() || !snapshots_[acked_snapshot].active) {
+        return false;
+    }
+
+    if (entity_state.baseline != acked_snapshot) {
         release_snapshot(entity_state.baseline);
-        entity_state.baseline = entity_state.pending;
+        entity_state.baseline = acked_snapshot;
         retain_snapshot(entity_state.baseline);
     }
 
-    release_snapshot(entity_state.pending);
-    entity_state.pending = invalid_snapshot_id;
-    entity_state.pending_frame = 0;
+    for (auto pending = entity_state.pending.begin(); pending != entity_state.pending.end();) {
+        if (pending->frame <= frame) {
+            release_snapshot(pending->snapshot);
+            pending = entity_state.pending.erase(pending);
+        } else {
+            ++pending;
+        }
+    }
     return true;
+}
+
+bool ReplicationServer::process_packet(ClientId client, BitBuffer packet) {
+    const auto client_found = client_to_index_.find(client);
+    if (client_found == client_to_index_.end()) {
+        return false;
+    }
+
+    try {
+        if (packet.remaining_bits() < 24U) {
+            return false;
+        }
+        const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
+        if (message != protocol::client_ack_message) {
+            return false;
+        }
+
+        ClientState& state = clients_[client_found->second];
+        const auto ack_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+        bool all_valid = true;
+        for (std::uint16_t ack = 0; ack < ack_count; ++ack) {
+            const bool destroy = packet.read_bool();
+            const auto frame = static_cast<SyncFrame>(packet.read_bits(32U));
+            const ecs::Entity entity{packet.read_unsigned_bits(64U)};
+            const bool accepted = destroy
+                ? acknowledge_destroy(state, entity, frame)
+                : acknowledge_entity(client, entity, frame);
+            all_valid = all_valid && accepted;
+        }
+        return all_valid;
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 std::size_t ReplicationServer::retained_snapshot_count() const noexcept {
@@ -270,9 +317,11 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
                 continue;
             }
 
-            const std::size_t next_packet_bits = packet_header_bits + records.bit_size() + serialized.payload.bit_size();
-            if (!records.empty() && bytes_for_bits(next_packet_bits) > options_.mtu_bytes) {
-                const std::size_t packet_bytes = bytes_for_bits(packet_header_bits + records.bit_size());
+            const std::size_t next_packet_bits =
+                protocol::server_update_header_bits + records.bit_size() + 1U + serialized.payload.bit_size();
+            if (!records.empty() && protocol::bytes_for_bits(next_packet_bits) > options_.mtu_bytes) {
+                const std::size_t packet_bytes =
+                    protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
                 if (packet_bytes > remaining) {
                     release_snapshot(serialized.snapshot);
                     next_order.push_back(slot);
@@ -284,27 +333,71 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
                 packet_entities = 0;
             }
 
-            const std::size_t single_packet_bits = packet_header_bits + records.bit_size() + serialized.payload.bit_size();
-            const std::size_t packet_bytes = bytes_for_bits(single_packet_bits);
+            const std::size_t single_packet_bits =
+                protocol::server_update_header_bits + records.bit_size() + 1U + serialized.payload.bit_size();
+            const std::size_t packet_bytes = protocol::bytes_for_bits(single_packet_bits);
             if (packet_bytes > options_.mtu_bytes || packet_bytes > remaining) {
                 release_snapshot(serialized.snapshot);
                 next_order.push_back(slot);
                 continue;
             }
 
+            records.push_bool(false);
             records.push_buffer_bits(serialized.payload);
             ++packet_entities;
             client.reset_epochs[slot] = client.epoch;
             ClientEntityState& entity_state = client.entity_states[slot];
-            release_snapshot(entity_state.pending);
-            entity_state.pending = serialized.snapshot;
-            entity_state.pending_frame = frame_;
-            retain_snapshot(entity_state.pending);
+            entity_state.pending.push_back(ClientEntityState::PendingSnapshot{serialized.snapshot, frame_});
+            retain_snapshot(serialized.snapshot);
+            while (entity_state.pending.size() > max_pending_snapshots_per_entity) {
+                release_snapshot(entity_state.pending.front().snapshot);
+                entity_state.pending.erase(entity_state.pending.begin());
+            }
             sent.push_back(slot);
         }
 
         if (!records.empty()) {
-            const std::size_t packet_bytes = bytes_for_bits(packet_header_bits + records.bit_size());
+            const std::size_t packet_bytes =
+                protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
+            if (packet_bytes <= remaining) {
+                send_packet(client.id, frame_, packet_entities, records);
+                remaining -= packet_bytes;
+            }
+        }
+
+        records.clear();
+        packet_entities = 0;
+        for (auto destroy = client.pending_destroys.begin(); destroy != client.pending_destroys.end();) {
+            const std::size_t next_packet_bits =
+                protocol::server_update_header_bits + records.bit_size() + destroy_record_bits;
+            if (!records.empty() && protocol::bytes_for_bits(next_packet_bits) > options_.mtu_bytes) {
+                const std::size_t packet_bytes =
+                    protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
+                if (packet_bytes > remaining) {
+                    break;
+                }
+                send_packet(client.id, frame_, packet_entities, records);
+                remaining -= packet_bytes;
+                records.clear();
+                packet_entities = 0;
+            }
+
+            const std::size_t packet_bytes = protocol::bytes_for_bits(
+                protocol::server_update_header_bits + records.bit_size() + destroy_record_bits);
+            if (packet_bytes > options_.mtu_bytes || packet_bytes > remaining) {
+                break;
+            }
+
+            destroy->frame = frame_;
+            records.push_bool(true);
+            records.push_unsigned_bits(destroy->entity.value, 64U);
+            ++packet_entities;
+            ++destroy;
+        }
+
+        if (!records.empty()) {
+            const std::size_t packet_bytes =
+                protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
             if (packet_bytes <= remaining) {
                 send_packet(client.id, frame_, packet_entities, records);
             }
@@ -460,10 +553,26 @@ void ReplicationServer::release_snapshot(std::uint32_t snapshot) {
 
 void ReplicationServer::clear_client_entity_state(ClientEntityState& state) {
     release_snapshot(state.baseline);
-    release_snapshot(state.pending);
+    for (const ClientEntityState::PendingSnapshot& pending : state.pending) {
+        release_snapshot(pending.snapshot);
+    }
     state.baseline = invalid_snapshot_id;
-    state.pending = invalid_snapshot_id;
-    state.pending_frame = 0;
+    state.pending.clear();
+}
+
+bool ReplicationServer::acknowledge_destroy(ClientState& client, ecs::Entity entity, SyncFrame frame) {
+    const auto found = std::find_if(
+        client.pending_destroys.begin(),
+        client.pending_destroys.end(),
+        [entity, frame](const ClientDestroyState& pending) {
+            return pending.entity == entity && frame <= pending.frame;
+        });
+    if (found == client.pending_destroys.end()) {
+        return false;
+    }
+
+    client.pending_destroys.erase(found);
+    return true;
 }
 
 const SyncComponentOps::QuantizedBytes* ReplicationServer::find_baseline_component(
@@ -563,7 +672,7 @@ void ReplicationServer::send_packet(
 
     BitBuffer packet;
     packet.reserve_bytes(options_.mtu_bytes);
-    packet.push_bits(server_update_message, 8U);
+    packet.push_bits(protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
     packet.push_bits(entity_count, 16U);
     packet.push_buffer_bits(records);
@@ -634,8 +743,9 @@ void ReplicationServer::deactivate_slot(std::uint32_t slot) {
         return;
     }
 
-    entity_to_slot_.erase(replicated_[slot].entity.value);
-    entity_index_to_slot_.erase(ecs::Registry::entity_index(replicated_[slot].entity));
+    const ecs::Entity entity = replicated_[slot].entity;
+    entity_to_slot_.erase(entity.value);
+    entity_index_to_slot_.erase(ecs::Registry::entity_index(entity));
     replicated_[slot].active = false;
     replicated_[slot].snapshots.clear();
     free_replicated_slots_.push_back(slot);
@@ -643,6 +753,15 @@ void ReplicationServer::deactivate_slot(std::uint32_t slot) {
     for (ClientState& client : clients_) {
         if (slot < client.entity_states.size()) {
             clear_client_entity_state(client.entity_states[slot]);
+        }
+        const auto found_destroy = std::find_if(
+            client.pending_destroys.begin(),
+            client.pending_destroys.end(),
+            [entity](const ClientDestroyState& pending) {
+                return pending.entity == entity;
+            });
+        if (found_destroy == client.pending_destroys.end()) {
+            client.pending_destroys.push_back(ClientDestroyState{entity, frame_});
         }
     }
     remove_slot_from_client_orders(slot);

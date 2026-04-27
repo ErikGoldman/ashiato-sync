@@ -83,6 +83,14 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
         std::memcpy(&quantized, quantized_bytes.data(), sizeof(Quantized));
         *static_cast<T*>(out) = Traits::dequantize(quantized);
     };
+    ops.apply = [](ecs::Registry& registry, ecs::Entity entity, const SyncComponentOps::QuantizedBytes& quantized_bytes) {
+        if (quantized_bytes.size() != sizeof(Quantized)) {
+            return false;
+        }
+        Quantized quantized{};
+        std::memcpy(&quantized, quantized_bytes.data(), sizeof(Quantized));
+        return registry.add<T>(entity, Traits::dequantize(quantized)) != nullptr;
+    };
     ops.serialize = [](const SyncComponentOps::QuantizedBytes* previous_bytes,
                        const SyncComponentOps::QuantizedBytes& current_bytes,
                        BitBuffer& out) {
