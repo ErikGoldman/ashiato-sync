@@ -21,3 +21,62 @@ TEST_CASE("bit buffer pushes and reads bits, bytes, and bools") {
     REQUIRE(bytes[1] == 'Z');
     REQUIRE_THROWS_AS(buffer.read_bool(), std::out_of_range);
 }
+
+TEST_CASE("bit buffer handles unaligned byte payloads") {
+    kage::sync::BitBuffer buffer;
+    buffer.push_bits(0b11, 2U);
+    buffer.push_bytes("BC", 2U);
+
+    REQUIRE(buffer.bit_size() == 18);
+    REQUIRE(buffer.read_bits(2U) == 0b11);
+
+    char bytes[2]{};
+    buffer.read_bytes(bytes, 2U);
+    REQUIRE(bytes[0] == 'B');
+    REQUIRE(bytes[1] == 'C');
+    REQUIRE(buffer.remaining_bits() == 0);
+}
+
+TEST_CASE("bit buffer reset and clear preserve expected offsets") {
+    kage::sync::BitBuffer buffer;
+    buffer.push_unsigned_bits(0xfeedfaceULL, 32U);
+    REQUIRE(buffer.read_unsigned_bits(16U) == 0xfaceU);
+    REQUIRE(buffer.read_offset_bits() == 16);
+
+    buffer.reset_read();
+    REQUIRE(buffer.read_unsigned_bits(32U) == 0xfeedfaceULL);
+
+    buffer.clear();
+    REQUIRE(buffer.empty());
+    REQUIRE(buffer.bit_size() == 0);
+    REQUIRE(buffer.read_offset_bits() == 0);
+}
+
+TEST_CASE("bit buffer validates invalid read and write requests") {
+    kage::sync::BitBuffer buffer;
+
+    REQUIRE_NOTHROW(buffer.push_bytes(nullptr, 0U));
+    REQUIRE_THROWS_AS(buffer.push_bytes(nullptr, 1U), std::invalid_argument);
+    REQUIRE_THROWS_AS(buffer.push_bits(0, 65U), std::invalid_argument);
+
+    char out = 0;
+    REQUIRE_NOTHROW(buffer.read_bytes(nullptr, 0U));
+    REQUIRE_THROWS_AS(buffer.read_bytes(nullptr, 1U), std::invalid_argument);
+    REQUIRE_THROWS_AS(buffer.read_unsigned_bits(65U), std::invalid_argument);
+    REQUIRE_THROWS_AS(buffer.read_bytes(&out, 1U), std::out_of_range);
+}
+
+TEST_CASE("bit buffer appends source buffers bit-exactly") {
+    kage::sync::BitBuffer source;
+    source.push_bool(true);
+    source.push_bits(0b010011, 6U);
+
+    kage::sync::BitBuffer combined;
+    combined.push_bool(false);
+    combined.push_buffer_bits(source);
+
+    REQUIRE_FALSE(combined.read_bool());
+    REQUIRE(combined.read_bool());
+    REQUIRE(combined.read_bits(6U) == 0b010011);
+    REQUIRE(combined.remaining_bits() == 0);
+}

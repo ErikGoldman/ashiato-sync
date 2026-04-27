@@ -33,10 +33,16 @@ private:
     };
 
     struct EntityState {
+        struct FrameBaseline {
+            SyncFrame frame = 0;
+            std::vector<ComponentBaseline> baselines;
+        };
+
         ecs::Entity local;
         SyncArchetypeId archetype;
         SyncFrame frame = 0;
         std::vector<ComponentBaseline> baselines;
+        std::vector<FrameBaseline> history;
     };
 
     struct AckRecord {
@@ -54,8 +60,9 @@ private:
         BitBuffer& packet);
     bool apply_destroy(ecs::Registry& registry, SyncFrame frame, ecs::Entity server_entity);
     const SyncComponentOps::QuantizedBytes* baseline_for(
-        const EntityState& state,
+        const std::vector<ComponentBaseline>& baselines,
         ecs::Entity component) const;
+    void remember_baseline(EntityState& state);
     void queue_ack(ecs::Entity entity, SyncFrame frame, bool destroy);
 
     ReplicationClientOptions options_;

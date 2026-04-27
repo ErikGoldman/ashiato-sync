@@ -616,15 +616,24 @@ void ReplicationServer::write_entity_record(
     BitBuffer& out) const {
     const ReplicatedSlot& replicated = replicated_[slot];
     const ClientEntityState& entity_state = client.entity_states[slot];
-    const bool delta = entity_state.baseline != invalid_snapshot_id &&
+    bool delta = entity_state.baseline != invalid_snapshot_id &&
         entity_state.baseline < snapshots_.size() &&
         snapshots_[entity_state.baseline].active &&
         snapshots_[entity_state.baseline].archetype == snapshot.archetype;
+    if (delta) {
+        const QuantizedSnapshot& baseline = snapshots_[entity_state.baseline];
+        delta = baseline.baselines.size() == snapshot.baselines.size();
+        for (std::size_t index = 0; delta && index < snapshot.baselines.size(); ++index) {
+            delta = baseline.baselines[index].component == snapshot.baselines[index].component;
+        }
+    }
 
     out.push_unsigned_bits(replicated.entity.value, 64U);
     out.push_bool(!delta);
     if (!delta) {
         out.push_bits(snapshot.archetype.value, 32U);
+    } else {
+        out.push_bits(snapshots_[entity_state.baseline].frame, 32U);
     }
     out.push_bits(static_cast<std::int64_t>(snapshot.baselines.size()), 16U);
 

@@ -145,6 +145,8 @@ void ack_packets(
             const bool full = packet.read_bool();
             if (full) {
                 benchmark::DoNotOptimize(packet.read_bits(32U));
+            } else {
+                benchmark::DoNotOptimize(packet.read_bits(32U));
             }
             const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
             for (std::uint16_t component = 0; component < component_count; ++component) {
@@ -450,6 +452,39 @@ void BM_ServerTickPackedMtuLimited(benchmark::State& state) {
         state.iterations() * static_cast<std::int64_t>(entity_count) * static_cast<std::int64_t>(client_count));
 }
 
+void BM_BitBufferUnalignedBytes(benchmark::State& state) {
+    const int byte_count = static_cast<int>(state.range(0));
+    std::vector<char> bytes(static_cast<std::size_t>(byte_count), 'x');
+
+    for (auto _ : state) {
+        kage::sync::BitBuffer buffer;
+        buffer.reserve_bytes(static_cast<std::size_t>(byte_count) + 1U);
+        buffer.push_bool(true);
+        buffer.push_bytes(bytes.data(), bytes.size());
+        benchmark::DoNotOptimize(buffer.byte_size());
+    }
+
+    state.SetBytesProcessed(state.iterations() * static_cast<std::int64_t>(byte_count));
+}
+
+void BM_BitBufferAppendBits(benchmark::State& state) {
+    const int bit_count = static_cast<int>(state.range(0));
+    kage::sync::BitBuffer source;
+    source.reserve_bytes(kage::sync::protocol::bytes_for_bits(static_cast<std::size_t>(bit_count)));
+    for (int bit = 0; bit < bit_count; ++bit) {
+        source.push_bool((bit & 1) != 0);
+    }
+
+    for (auto _ : state) {
+        kage::sync::BitBuffer destination;
+        destination.reserve_bytes(source.byte_size());
+        destination.push_buffer_bits(source);
+        benchmark::DoNotOptimize(destination.byte_size());
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(bit_count));
+}
+
 void TickArgs(benchmark::internal::Benchmark* benchmark) {
     benchmark->Args({1024, 1})->Args({16384, 1})->Args({16384, 8})->Args({65536, 8});
 }
@@ -476,5 +511,7 @@ BENCHMARK(BM_ServerTickSerializedBudgetLimited)->Apply(LimitedTickArgs);
 BENCHMARK(BM_ServerTickPackedFullBudget)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickPackedAckedDeltaShared)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickPackedMtuLimited)->Apply(TickArgs);
+BENCHMARK(BM_BitBufferUnalignedBytes)->Arg(64)->Arg(1024)->Arg(16384);
+BENCHMARK(BM_BitBufferAppendBits)->Arg(512)->Arg(8192)->Arg(131072);
 
 }  // namespace

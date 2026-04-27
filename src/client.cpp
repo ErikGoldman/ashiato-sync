@@ -8,6 +8,11 @@
 #include <utility>
 
 namespace kage::sync {
+namespace {
+
+constexpr std::size_t max_baseline_history_per_entity = 64;
+
+}  // namespace
 
 ReplicationClient::ReplicationClient(ReplicationClientOptions options)
     : options_(options) {}
@@ -36,6 +41,7 @@ std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
     BitBuffer packet;
     packet.reserve_bytes(options_.mtu_bytes);
     std::uint16_t packet_acks = 0;
+    std::vector<AckRecord> retained_acks;
 
     auto flush = [&]() {
         if (packet_acks == 0) {
@@ -48,6 +54,12 @@ std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
     };
 
     for (const AckRecord& ack : pending_acks_) {
+        if (protocol::bytes_for_bits(protocol::client_ack_header_bits + protocol::client_ack_record_bits) >
+            options_.mtu_bytes) {
+            retained_acks.push_back(ack);
+            continue;
+        }
+
         if (packet_acks == 0) {
             packet.push_bits(protocol::client_ack_message, 8U);
             packet.push_bits(0, 16U);
@@ -61,6 +73,7 @@ std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
         }
 
         if (protocol::bytes_for_bits(packet.bit_size() + protocol::client_ack_record_bits) > options_.mtu_bytes) {
+            retained_acks.push_back(ack);
             continue;
         }
 
@@ -90,7 +103,7 @@ std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
         ack_packet = std::move(rewritten);
     }
 
-    pending_acks_.clear();
+    pending_acks_ = std::move(retained_acks);
     return packets;
 }
 
@@ -136,6 +149,7 @@ bool ReplicationClient::apply_upsert(
     BitBuffer& packet) {
     const bool full = packet.read_bool();
     SyncArchetypeId archetype = invalid_sync_archetype_id;
+    SyncFrame baseline_frame = 0;
 
     auto found_state = entities_.find(server_entity.value);
     if (full) {
@@ -154,6 +168,7 @@ bool ReplicationClient::apply_upsert(
         if (frame <= found_state->second.frame) {
             return false;
         }
+        baseline_frame = static_cast<SyncFrame>(packet.read_bits(32U));
     }
 
     const SyncArchetype& definition = settings.archetypes[archetype.value];
@@ -162,6 +177,20 @@ bool ReplicationClient::apply_upsert(
     decoded.reserve(component_count);
 
     EntityState* previous_state = found_state != entities_.end() ? &found_state->second : nullptr;
+    const std::vector<ComponentBaseline>* previous_baselines = nullptr;
+    if (!full && previous_state != nullptr) {
+        const auto found_baseline = std::find_if(
+            previous_state->history.begin(),
+            previous_state->history.end(),
+            [baseline_frame](const EntityState::FrameBaseline& candidate) {
+                return candidate.frame == baseline_frame;
+            });
+        if (found_baseline == previous_state->history.end()) {
+            return false;
+        }
+        previous_baselines = &found_baseline->baselines;
+    }
+
     for (std::uint16_t component = 0; component < component_count; ++component) {
         const auto component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
         const auto payload_bits = static_cast<std::uint32_t>(packet.read_bits(32U));
@@ -185,7 +214,7 @@ bool ReplicationClient::apply_upsert(
         ComponentBaseline baseline;
         baseline.component = component_entity;
         const SyncComponentOps::QuantizedBytes* previous =
-            (!full && previous_state != nullptr) ? baseline_for(*previous_state, component_entity) : nullptr;
+            previous_baselines != nullptr ? baseline_for(*previous_baselines, component_entity) : nullptr;
         if (!found_ops->second.deserialize(payload, previous, baseline.bytes)) {
             return false;
         }
@@ -201,6 +230,36 @@ bool ReplicationClient::apply_upsert(
         state.local = registry.create();
     }
     state.archetype = archetype;
+
+    if (full && previous_state != nullptr) {
+        for (const ComponentBaseline& existing : previous_state->baselines) {
+            const auto still_visible = std::find_if(
+                decoded.begin(),
+                decoded.end(),
+                [&](const ComponentBaseline& baseline) {
+                    return baseline.component == existing.component;
+                });
+            if (still_visible != decoded.end()) {
+                continue;
+            }
+
+            registry.remove(state.local, existing.component);
+        }
+
+        state.baselines.erase(
+            std::remove_if(
+                state.baselines.begin(),
+                state.baselines.end(),
+                [&](const ComponentBaseline& existing) {
+                    return std::find_if(
+                        decoded.begin(),
+                        decoded.end(),
+                        [&](const ComponentBaseline& baseline) {
+                            return baseline.component == existing.component;
+                        }) == decoded.end();
+                }),
+            state.baselines.end());
+    }
 
     for (const ComponentBaseline& baseline : decoded) {
         const auto found_ops = settings.component_ops.find(baseline.component.value);
@@ -223,6 +282,7 @@ bool ReplicationClient::apply_upsert(
     }
 
     state.frame = frame;
+    remember_baseline(state);
     queue_ack(server_entity, frame, false);
     return true;
 }
@@ -243,15 +303,30 @@ bool ReplicationClient::apply_destroy(ecs::Registry& registry, SyncFrame frame, 
 }
 
 const SyncComponentOps::QuantizedBytes* ReplicationClient::baseline_for(
-    const EntityState& state,
+    const std::vector<ComponentBaseline>& baselines,
     ecs::Entity component) const {
     const auto found = std::find_if(
-        state.baselines.begin(),
-        state.baselines.end(),
+        baselines.begin(),
+        baselines.end(),
         [component](const ComponentBaseline& baseline) {
             return baseline.component == component;
         });
-    return found != state.baselines.end() ? &found->bytes : nullptr;
+    return found != baselines.end() ? &found->bytes : nullptr;
+}
+
+void ReplicationClient::remember_baseline(EntityState& state) {
+    state.history.erase(
+        std::remove_if(
+            state.history.begin(),
+            state.history.end(),
+            [frame = state.frame](const EntityState::FrameBaseline& baseline) {
+                return baseline.frame == frame;
+            }),
+        state.history.end());
+    state.history.push_back(EntityState::FrameBaseline{state.frame, state.baselines});
+    while (state.history.size() > max_baseline_history_per_entity) {
+        state.history.erase(state.history.begin());
+    }
 }
 
 void ReplicationClient::queue_ack(ecs::Entity entity, SyncFrame frame, bool destroy) {
