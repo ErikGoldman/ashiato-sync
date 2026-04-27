@@ -44,9 +44,20 @@ enum class ReplicationAudience {
     All
 };
 
+enum class ComponentInterpolation {
+    Step,
+    Interpolate
+};
+
+enum class ReplicationClientMode {
+    Snap,
+    BufferedInterpolation
+};
+
 struct ComponentReplication {
     ecs::Entity component;
     ReplicationAudience audience = ReplicationAudience::All;
+    ComponentInterpolation interpolation = ComponentInterpolation::Step;
 };
 
 struct SyncArchetype {
@@ -61,6 +72,7 @@ struct SyncComponentOps {
     using ApplyFn = bool (*)(ecs::Registry&, ecs::Entity, const QuantizedBytes&);
     using SerializeFn = void (*)(const QuantizedBytes*, const QuantizedBytes&, BitBuffer&);
     using DeserializeFn = bool (*)(BitBuffer&, const QuantizedBytes*, QuantizedBytes&);
+    using InterpolateFn = bool (*)(const QuantizedBytes&, const QuantizedBytes&, float, QuantizedBytes&);
 
     std::size_t quantized_size = 0;
     QuantizeFn quantize = nullptr;
@@ -68,6 +80,7 @@ struct SyncComponentOps {
     ApplyFn apply = nullptr;
     SerializeFn serialize = nullptr;
     DeserializeFn deserialize = nullptr;
+    InterpolateFn interpolate = nullptr;
 };
 
 struct SyncSettings {

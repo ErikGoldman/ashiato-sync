@@ -14,12 +14,12 @@ The current implementation provides the v0 replication foundation:
 - a bandwidth-limited `ReplicationServer` that rotates sends by per-client
   priority
 - serialized server update packets with full, delta, and destroy records
-- a snap-mode `ReplicationClient` that creates local entities, overwrites
-  replicated components, and packs ACK packets up to a configured MTU
+- a `ReplicationClient` with snap mode and client-side buffered interpolation,
+  including delayed create/remove/destroy application and ACK packets packed up
+  to a configured MTU
 
-Client-side interpolation, prediction, rollback, and production transport
-integration are planned surface area rather than complete behavior in this
-snapshot.
+Prediction, rollback, and production transport integration are planned surface
+area rather than complete behavior in this snapshot.
 
 ## Requirements
 
@@ -52,8 +52,10 @@ cmake --build build-examples --target kage_sync_balls_example
 ./build-examples/kage_sync_balls_example
 ```
 
-`kage_sync_balls_example` runs a UDP localhost server and snap client in one
-process and renders replicated moving balls with raylib.
+`kage_sync_balls_example` runs a UDP localhost server and client in one process
+and renders replicated moving balls with raylib. Use `--client-mode snap` or
+`--client-mode buffered-interpolation --interpolation-buffer-frames 2` to choose
+the client application mode.
 
 ## Tests
 
@@ -121,6 +123,19 @@ client, so bandwidth-limited clients naturally receive older unsent state first.
   since the last tick.
 - Use `set_owner` or add `NetworkOwner` directly when assigning owner-only
   replicated state.
+- `ReplicationClientOptions::client_mode` selects snap or buffered
+  interpolation globally for now. Buffered mode is implemented with per-entity
+  bookkeeping so later policy can choose modes per entity without changing the
+  storage model.
+- Buffered clients call `ReplicationClient::apply_frame(registry, client_frame)`
+  each client tick. The ECS reflects server frame
+  `client_frame - interpolation_buffer_frames`; create, component add/remove,
+  and destroy records are delayed through the same buffer.
+- Mark client-side `ComponentReplication::interpolation` as `Interpolate` for
+  components that should be filled between received frames. The corresponding
+  `SyncComponentTraits<T>` must provide `static Quantized interpolate(...)`;
+  otherwise buffered receive rejects the update without ACKing it. Components
+  left as `Step` hold the previous value until the received frame.
 - `ReplicationAudience::All` and `ReplicationAudience::Owner` are stored as
   archetype metadata. The current scheduler callback receives every scheduled
   entity; audience filtering and serialization policy should be applied by the
@@ -147,8 +162,9 @@ Run focused benchmark filters serially when collecting numbers:
 ```
 
 Current benchmark coverage includes full-budget server ticks, budget-limited
-server ticks, replicated component refresh churn, and adding clients after
-entities are already configured for replication.
+server ticks, replicated component refresh churn, adding clients after entities
+are already configured for replication, and client receive/apply paths for snap
+and buffered interpolation.
 
 ### Ball Stress Harness
 
@@ -174,6 +190,8 @@ cmake --build build-bench --target kage_sync_ball_stress
   --health-max 80 \
   --latency-ms 50 \
   --loss-percent 1 \
+  --client-mode buffered-interpolation \
+  --interpolation-buffer-frames 2 \
   --report json
 ```
 
@@ -181,7 +199,7 @@ Use `--server-to-client-latency-ms`, `--client-to-server-latency-ms`,
 `--server-to-client-loss-percent`, and `--client-to-server-loss-percent` to
 override the shared bidirectional link settings. The report includes total bytes
 and packets split by direction, packet type, update record kind, and dropped
-traffic.
+traffic, plus the selected client mode and interpolation buffer settings.
 
 You can also configure the `run_kage_sync_ball_stress` target to run the same
 scenario normally, through gprof, or through Valgrind memory tools:

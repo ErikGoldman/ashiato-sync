@@ -247,3 +247,16 @@ TEST_CASE("ball stress runs multiple clients through replication and ACKs") {
     REQUIRE(report.memory.client_pending_acks == 0);
     REQUIRE(report.memory.client_local_entities >= report.config.clients);
 }
+
+TEST_CASE("ball stress runs with buffered interpolation clients") {
+    stress::StressConfig config = test_config();
+    config.client_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    config.interpolation_buffer_frames = 2;
+    config.interpolation_buffer_capacity_frames = 8;
+
+    const stress::StressReport report = stress::run_stress(config);
+
+    REQUIRE(report.config.client_mode == kage::sync::ReplicationClientMode::BufferedInterpolation);
+    REQUIRE(report.memory.client_pending_acks == 0);
+    REQUIRE(report.server_to_clients.server_update_packets >= 1);
+}

@@ -45,6 +45,52 @@ void register_components(ecs::Registry& registry);
 
 const SyncComponentOps* find_component_ops(const ecs::Registry& registry, ecs::Entity component);
 
+namespace detail {
+
+template <typename Traits, typename Quantized, typename = void>
+struct has_interpolate : std::false_type {};
+
+template <typename Traits, typename Quantized>
+struct has_interpolate<
+    Traits,
+    Quantized,
+    std::void_t<decltype(Traits::interpolate(
+        std::declval<const Quantized&>(),
+        std::declval<const Quantized&>(),
+        std::declval<float>()))>> : std::true_type {};
+
+template <typename Traits, typename Quantized>
+typename std::enable_if<has_interpolate<Traits, Quantized>::value, bool>::type interpolate_quantized(
+    const SyncComponentOps::QuantizedBytes& from_bytes,
+    const SyncComponentOps::QuantizedBytes& to_bytes,
+    float alpha,
+    SyncComponentOps::QuantizedBytes& out) {
+    if (from_bytes.size() != sizeof(Quantized) || to_bytes.size() != sizeof(Quantized)) {
+        return false;
+    }
+
+    Quantized from{};
+    Quantized to{};
+    std::memcpy(&from, from_bytes.data(), sizeof(Quantized));
+    std::memcpy(&to, to_bytes.data(), sizeof(Quantized));
+    const Quantized interpolated = Traits::interpolate(from, to, alpha);
+
+    out.resize(sizeof(Quantized));
+    std::memcpy(out.data(), &interpolated, sizeof(Quantized));
+    return true;
+}
+
+template <typename Traits, typename Quantized>
+typename std::enable_if<!has_interpolate<Traits, Quantized>::value, bool>::type interpolate_quantized(
+    const SyncComponentOps::QuantizedBytes&,
+    const SyncComponentOps::QuantizedBytes&,
+    float,
+    SyncComponentOps::QuantizedBytes&) {
+    return false;
+}
+
+}  // namespace detail
+
 }  // namespace kage::sync
 
 namespace ecs {
@@ -125,6 +171,9 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
         std::memcpy(out.data(), &quantized, sizeof(Quantized));
         return true;
     };
+    if constexpr (detail::has_interpolate<Traits, Quantized>::value) {
+        ops.interpolate = &detail::interpolate_quantized<Traits, Quantized>;
+    }
 
     registry.write<SyncSettings>().component_ops[component.value] = ops;
     return component;

@@ -31,6 +31,11 @@ struct NetworkedPayload {
     std::int64_t y = 0;
 };
 
+struct SmoothPosition {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
 struct BandwidthProbe {
     std::int32_t value = 0;
 };
@@ -95,6 +100,35 @@ struct SyncComponentTraits<kage_sync_tests::NetworkedPosition> {
             return true;
         }
         return false;
+    }
+};
+
+template <>
+struct SyncComponentTraits<kage_sync_tests::SmoothPosition> {
+    using Quantized = kage_sync_tests::SmoothPosition;
+
+    static Quantized quantize(const kage_sync_tests::SmoothPosition& value) {
+        return value;
+    }
+
+    static kage_sync_tests::SmoothPosition dequantize(const Quantized& value) {
+        return value;
+    }
+
+    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+        out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
+    }
+
+    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+        in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
+        return true;
+    }
+
+    static Quantized interpolate(const Quantized& from, const Quantized& to, float alpha) {
+        return Quantized{
+            from.x + (to.x - from.x) * alpha,
+            from.y + (to.y - from.y) * alpha,
+        };
     }
 };
 

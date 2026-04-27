@@ -26,6 +26,44 @@ struct BallPosition {
     float z = 0.0f;
 };
 
+}  // namespace kage::sync::stress
+
+namespace kage::sync {
+
+template <>
+struct SyncComponentTraits<stress::BallPosition> {
+    using Quantized = stress::BallPosition;
+
+    static Quantized quantize(const stress::BallPosition& value) {
+        return value;
+    }
+
+    static stress::BallPosition dequantize(const Quantized& value) {
+        return value;
+    }
+
+    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+        out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
+    }
+
+    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+        in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
+        return true;
+    }
+
+    static Quantized interpolate(const Quantized& from, const Quantized& to, float alpha) {
+        return Quantized{
+            from.x + (to.x - from.x) * alpha,
+            from.y + (to.y - from.y) * alpha,
+            from.z + (to.z - from.z) * alpha,
+        };
+    }
+};
+
+}  // namespace kage::sync
+
+namespace kage::sync::stress {
+
 struct BallVisual {
     float radius = 0.25f;
     std::uint8_t r = 255;
@@ -66,6 +104,9 @@ struct StressConfig {
     double client_to_server_latency_ms = -1.0;
     double server_to_client_loss_percent = -1.0;
     double client_to_server_loss_percent = -1.0;
+    ReplicationClientMode client_mode = ReplicationClientMode::Snap;
+    SyncFrame interpolation_buffer_frames = 2;
+    std::size_t interpolation_buffer_capacity_frames = 64;
     bool json = false;
 };
 
@@ -189,6 +230,16 @@ inline const char* packet_type_name(PacketType type) {
         return "unknown";
     }
     return "unknown";
+}
+
+inline const char* client_mode_name(ReplicationClientMode mode) {
+    switch (mode) {
+    case ReplicationClientMode::Snap:
+        return "snap";
+    case ReplicationClientMode::BufferedInterpolation:
+        return "buffered-interpolation";
+    }
+    return "snap";
 }
 
 inline std::size_t current_rss_bytes() {
@@ -330,7 +381,7 @@ void deliver_ready(SimulatedLink& link, DirectionStats& stats, double now_second
     }
 }
 
-inline SyncSchema define_schema(ecs::Registry& registry) {
+inline SyncSchema define_schema(ecs::Registry& registry, bool interpolate_position = false) {
     const ecs::Entity position = register_sync_component<BallPosition>(registry, "BallPosition");
     const ecs::Entity visual = register_sync_component<BallVisual>(registry, "BallVisual");
     const ecs::Entity health = register_sync_component<BallHealth>(registry, "BallHealth");
@@ -339,7 +390,9 @@ inline SyncSchema define_schema(ecs::Registry& registry) {
         registry,
         "StressBall",
         {
-            {position, ReplicationAudience::All},
+            {position,
+             ReplicationAudience::All,
+             interpolate_position ? ComponentInterpolation::Interpolate : ComponentInterpolation::Step},
             {visual, ReplicationAudience::All},
             {health, ReplicationAudience::All},
             {poison, ReplicationAudience::All},
@@ -370,6 +423,13 @@ inline void validate_config(const StressConfig& config) {
     }
     if (config.mtu == 0 || config.bandwidth_limit == 0) {
         throw std::invalid_argument("--mtu and --bandwidth-limit must be greater than zero");
+    }
+    if (config.interpolation_buffer_capacity_frames == 0 ||
+        (config.interpolation_buffer_capacity_frames & (config.interpolation_buffer_capacity_frames - 1U)) != 0U) {
+        throw std::invalid_argument("--interpolation-buffer-capacity-frames must be a nonzero power of two");
+    }
+    if (config.interpolation_buffer_frames >= config.interpolation_buffer_capacity_frames) {
+        throw std::invalid_argument("--interpolation-buffer-frames must be smaller than capacity");
     }
 }
 
@@ -566,7 +626,9 @@ inline StressReport run_stress(const StressConfig& input_config) {
     std::vector<ecs::Registry> client_registries(config.clients);
     for (std::uint32_t client_index = 0; client_index < config.clients; ++client_index) {
         configure_client(client_registries[client_index], static_cast<ClientId>(client_index + 1U));
-        define_schema(client_registries[client_index]);
+        define_schema(
+            client_registries[client_index],
+            config.client_mode == ReplicationClientMode::BufferedInterpolation);
     }
 
     SimulatedLink server_to_clients;
@@ -593,7 +655,11 @@ inline StressReport run_stress(const StressConfig& input_config) {
     std::vector<ReplicationClient> clients;
     clients.reserve(config.clients);
     for (std::uint32_t client_index = 0; client_index < config.clients; ++client_index) {
-        clients.emplace_back(ReplicationClientOptions{config.mtu});
+        clients.emplace_back(ReplicationClientOptions{
+            config.mtu,
+            config.client_mode,
+            config.interpolation_buffer_frames,
+            config.interpolation_buffer_capacity_frames});
     }
 
     std::vector<ServerBall> balls;
@@ -616,6 +682,11 @@ inline StressReport run_stress(const StressConfig& input_config) {
                     clients[index].receive(client_registries[index], packet);
                 }
             });
+            if (config.client_mode == ReplicationClientMode::BufferedInterpolation) {
+                for (std::size_t index = 0; index < clients.size(); ++index) {
+                    clients[index].apply_frame(client_registries[index], static_cast<SyncFrame>(tick));
+                }
+            }
         }
 
         {
@@ -655,6 +726,9 @@ inline StressReport run_stress(const StressConfig& input_config) {
         const std::size_t index = static_cast<std::size_t>(client_id - 1U);
         if (index < clients.size()) {
             clients[index].receive(client_registries[index], packet);
+            if (config.client_mode == ReplicationClientMode::BufferedInterpolation) {
+                clients[index].apply_frame(client_registries[index], static_cast<SyncFrame>(total_ticks));
+            }
         }
     });
     for (std::size_t index = 0; index < clients.size(); ++index) {
@@ -705,6 +779,9 @@ inline void write_report_text(std::ostream& out, const StressReport& report) {
     out << "ticks=" << report.ticks << " clients=" << report.config.clients
         << " live_balls=" << report.live_balls << " spawned=" << report.spawned
         << " despawned=" << report.despawned << '\n';
+    out << "client_mode=" << client_mode_name(report.config.client_mode)
+        << " interpolation_buffer_frames=" << report.config.interpolation_buffer_frames
+        << " interpolation_buffer_capacity_frames=" << report.config.interpolation_buffer_capacity_frames << '\n';
     out << "poison added_components=" << report.poison_components_added
         << " removed_components=" << report.poison_components_removed
         << " ticks=" << report.poison_ticks << '\n';
@@ -749,6 +826,10 @@ inline void write_report_json(std::ostream& out, const StressReport& report) {
     out << "{";
     out << "\"ticks\":" << report.ticks << ",";
     out << "\"clients\":" << report.config.clients << ",";
+    out << "\"client_mode\":\"" << client_mode_name(report.config.client_mode) << "\",";
+    out << "\"interpolation_buffer_frames\":" << report.config.interpolation_buffer_frames << ",";
+    out << "\"interpolation_buffer_capacity_frames\":"
+        << report.config.interpolation_buffer_capacity_frames << ",";
     out << "\"live_balls\":" << report.live_balls << ",";
     out << "\"spawned\":" << report.spawned << ",";
     out << "\"despawned\":" << report.despawned << ",";
@@ -806,6 +887,16 @@ inline double parse_double(const std::string& name, const std::string& value) {
     return parsed;
 }
 
+inline ReplicationClientMode parse_client_mode(const std::string& value) {
+    if (value == "snap") {
+        return ReplicationClientMode::Snap;
+    }
+    if (value == "buffered-interpolation") {
+        return ReplicationClientMode::BufferedInterpolation;
+    }
+    throw std::invalid_argument("--client-mode must be snap or buffered-interpolation");
+}
+
 inline StressConfig parse_args(int argc, char** argv) {
     StressConfig config;
     for (int index = 1; index < argc; ++index) {
@@ -853,6 +944,12 @@ inline StressConfig parse_args(int argc, char** argv) {
             config.server_to_client_loss_percent = parse_double(arg, require_value());
         } else if (arg == "--client-to-server-loss-percent") {
             config.client_to_server_loss_percent = parse_double(arg, require_value());
+        } else if (arg == "--client-mode") {
+            config.client_mode = parse_client_mode(require_value());
+        } else if (arg == "--interpolation-buffer-frames") {
+            config.interpolation_buffer_frames = static_cast<SyncFrame>(parse_u64(arg, require_value()));
+        } else if (arg == "--interpolation-buffer-capacity-frames") {
+            config.interpolation_buffer_capacity_frames = static_cast<std::size_t>(parse_u64(arg, require_value()));
         } else if (arg == "--report") {
             const std::string value = require_value();
             if (value == "json") {
@@ -886,6 +983,9 @@ inline void write_usage(std::ostream& out) {
         << "  --latency-ms N --loss-percent N\n"
         << "  --server-to-client-latency-ms N --client-to-server-latency-ms N\n"
         << "  --server-to-client-loss-percent N --client-to-server-loss-percent N\n"
+        << "  --client-mode snap|buffered-interpolation\n"
+        << "  --interpolation-buffer-frames N\n"
+        << "  --interpolation-buffer-capacity-frames N\n"
         << "  --report text|json\n";
 }
 

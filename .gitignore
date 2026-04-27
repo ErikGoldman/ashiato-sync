@@ -1,5 +1,6 @@
 build/
 build-bench*/
+build-examples/
 artifacts/
 .vs/
 gmon.out

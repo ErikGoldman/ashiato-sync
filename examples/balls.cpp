@@ -41,6 +41,44 @@ struct BallPosition {
     float z = 0.0f;
 };
 
+}  // namespace
+
+namespace kage::sync {
+
+template <>
+struct SyncComponentTraits<BallPosition> {
+    using Quantized = BallPosition;
+
+    static Quantized quantize(const BallPosition& value) {
+        return value;
+    }
+
+    static BallPosition dequantize(const Quantized& value) {
+        return value;
+    }
+
+    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+        out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
+    }
+
+    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+        in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
+        return true;
+    }
+
+    static Quantized interpolate(const Quantized& from, const Quantized& to, float alpha) {
+        return Quantized{
+            from.x + (to.x - from.x) * alpha,
+            from.y + (to.y - from.y) * alpha,
+            from.z + (to.z - from.z) * alpha,
+        };
+    }
+};
+
+}  // namespace kage::sync
+
+namespace {
+
 struct BallVisual {
     float radius = 0.25f;
     std::uint8_t r = 255;
@@ -124,6 +162,7 @@ struct RuntimeStats {
     int dropped_packets = 0;
     int client_entities = 0;
     kage::sync::SyncFrame frame = 0;
+    kage::sync::SyncFrame client_frame = 0;
 };
 
 void close_socket(SocketHandle socket) {
@@ -239,14 +278,17 @@ bool receive_packet(SocketHandle socket, kage::sync::BitBuffer& packet, sockaddr
     return true;
 }
 
-SyncSchema define_schema(ecs::Registry& registry) {
+SyncSchema define_schema(ecs::Registry& registry, bool interpolate_position = false) {
     const ecs::Entity position = kage::sync::register_sync_component<BallPosition>(registry, "BallPosition");
     const ecs::Entity visual = kage::sync::register_sync_component<BallVisual>(registry, "BallVisual");
     return SyncSchema{kage::sync::define_archetype(
         registry,
         "Ball",
         {
-            {position, kage::sync::ReplicationAudience::All},
+            {position,
+             kage::sync::ReplicationAudience::All,
+             interpolate_position ? kage::sync::ComponentInterpolation::Interpolate
+                                  : kage::sync::ComponentInterpolation::Step},
             {visual, kage::sync::ReplicationAudience::All},
         })};
 }
@@ -334,6 +376,36 @@ void update_hotkeys(LinkSettings& settings) {
     }
 }
 
+void update_client_mode_hotkeys(
+    kage::sync::ReplicationClient& client,
+    kage::sync::ReplicationClientMode& client_mode,
+    kage::sync::SyncFrame& buffer_frames) {
+    if (IsKeyPressed(KEY_M)) {
+        client_mode = client_mode == kage::sync::ReplicationClientMode::Snap
+            ? kage::sync::ReplicationClientMode::BufferedInterpolation
+            : kage::sync::ReplicationClientMode::Snap;
+        client.set_client_mode(client_mode);
+    }
+    if (IsKeyPressed(KEY_ONE)) {
+        client_mode = kage::sync::ReplicationClientMode::Snap;
+        client.set_client_mode(client_mode);
+    }
+    if (IsKeyPressed(KEY_TWO)) {
+        client_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+        client.set_client_mode(client_mode);
+    }
+    if (IsKeyPressed(KEY_COMMA) && buffer_frames > 0) {
+        --buffer_frames;
+        client.set_interpolation_buffer_frames(buffer_frames);
+    }
+    if (IsKeyPressed(KEY_PERIOD)) {
+        const kage::sync::SyncFrame next = buffer_frames + 1U;
+        if (client.set_interpolation_buffer_frames(next)) {
+            buffer_frames = next;
+        }
+    }
+}
+
 void update_bandwidth_samples(RuntimeStats& stats, float dt) {
     stats.sample_timer += dt;
     if (stats.sample_timer < 0.25f) {
@@ -370,12 +442,31 @@ void draw_graph(Rectangle bounds, const SampleHistory& history, Color color, flo
     }
 }
 
-void draw_stats_overlay(const RuntimeStats& stats, const LinkSettings& link) {
+const char* client_mode_name(kage::sync::ReplicationClientMode mode) {
+    switch (mode) {
+    case kage::sync::ReplicationClientMode::Snap:
+        return "snap";
+    case kage::sync::ReplicationClientMode::BufferedInterpolation:
+        return "buffered";
+    }
+    return "snap";
+}
+
+void draw_stats_overlay(
+    const RuntimeStats& stats,
+    const LinkSettings& link,
+    kage::sync::ReplicationClientMode client_mode,
+    kage::sync::SyncFrame buffer_frames) {
     const Rectangle panel{16.0f, 16.0f, 390.0f, 216.0f};
     DrawRectangleRec(panel, Color{16, 18, 22, 220});
     DrawRectangleLinesEx(panel, 1.0f, Color{90, 96, 110, 255});
 
-    DrawText("UDP localhost snap client", 28, 28, 20, RAYWHITE);
+    DrawText(
+        TextFormat("UDP localhost %s client", client_mode_name(client_mode)),
+        28,
+        28,
+        20,
+        RAYWHITE);
     DrawText(TextFormat("frame %u   entities %d", stats.frame, stats.client_entities), 28, 56, 16, Color{215, 220, 230, 255});
     DrawText(
         TextFormat("latency %.0f ms  [ / ]     loss %.1f%%  - / =", link.latency_ms, link.loss_percent),
@@ -398,19 +489,51 @@ void draw_stats_overlay(const RuntimeStats& stats, const LinkSettings& link) {
         120,
         16,
         Color{215, 220, 230, 255});
+    DrawText(
+        TextFormat("client frame %u   buffer %u   mode M/1/2  buf ,/.", stats.client_frame, buffer_frames),
+        28,
+        140,
+        16,
+        Color{215, 220, 230, 255});
 
     const float scale = std::max(stats.down_kbps.max_value(), stats.up_kbps.max_value());
-    const Rectangle graph{28.0f, 150.0f, 354.0f, 54.0f};
+    const Rectangle graph{28.0f, 164.0f, 354.0f, 46.0f};
     draw_graph(graph, stats.down_kbps, Color{76, 190, 255, 255}, scale);
     draw_graph(graph, stats.up_kbps, Color{255, 190, 76, 255}, scale);
-    DrawText(TextFormat("scale %.1f kbps", scale), 260, 154, 14, Color{215, 220, 230, 255});
-    DrawText("down", 32, 206, 14, Color{76, 190, 255, 255});
-    DrawText("up", 82, 206, 14, Color{255, 190, 76, 255});
+    DrawText(TextFormat("scale %.1f kbps", scale), 260, 168, 14, Color{215, 220, 230, 255});
+    DrawText("down", 32, 212, 14, Color{76, 190, 255, 255});
+    DrawText("up", 82, 212, 14, Color{255, 190, 76, 255});
 }
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    kage::sync::ReplicationClientMode client_mode = kage::sync::ReplicationClientMode::Snap;
+    kage::sync::SyncFrame interpolation_buffer_frames = 2;
+    for (int index = 1; index < argc; ++index) {
+        const std::string arg = argv[index];
+        auto require_value = [&]() -> std::string {
+            if (index + 1 >= argc) {
+                throw std::runtime_error("missing value for " + arg);
+            }
+            return argv[++index];
+        };
+        if (arg == "--client-mode") {
+            const std::string value = require_value();
+            if (value == "snap") {
+                client_mode = kage::sync::ReplicationClientMode::Snap;
+            } else if (value == "buffered-interpolation") {
+                client_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+            } else {
+                throw std::runtime_error("--client-mode must be snap or buffered-interpolation");
+            }
+        } else if (arg == "--interpolation-buffer-frames") {
+            interpolation_buffer_frames = static_cast<kage::sync::SyncFrame>(std::stoul(require_value()));
+        } else {
+            throw std::runtime_error("unknown argument: " + arg);
+        }
+    }
+
 #ifdef _WIN32
     WSADATA data{};
     WSAStartup(MAKEWORD(2, 2), &data);
@@ -422,7 +545,7 @@ int main() {
 
     ecs::Registry client_registry;
     kage::sync::configure_client(client_registry, client_id);
-    define_schema(client_registry);
+    define_schema(client_registry, true);
 
     SocketHandle server_socket = make_udp_socket(server_port);
     SocketHandle client_socket = make_udp_socket(0);
@@ -446,7 +569,11 @@ int main() {
         }
     };
     kage::sync::ReplicationServer server(server_options);
-    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{1200});
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        client_mode,
+        interpolation_buffer_frames,
+        64});
 
     InitWindow(1280, 720, "kage-sync localhost balls");
     SetTargetFPS(60);
@@ -466,6 +593,7 @@ int main() {
         const float dt = GetFrameTime();
         server_accumulator += dt;
         update_hotkeys(downstream_link.settings);
+        update_client_mode_hotkeys(client, client_mode, interpolation_buffer_frames);
         upstream_link.settings = downstream_link.settings;
         flush_link(downstream_link, server_socket);
         flush_link(upstream_link, client_socket);
@@ -490,6 +618,7 @@ int main() {
 
         while (server_accumulator >= 1.0f / 30.0f) {
             server_accumulator -= 1.0f / 30.0f;
+            ++stats.client_frame;
             update_server_world(server_registry, balls, server_schema, 1.0f / 30.0f, spawn_index);
             server.tick(server_registry);
         }
@@ -501,6 +630,9 @@ int main() {
                 stats.frame = static_cast<kage::sync::SyncFrame>(read.read_bits(32U));
             }
             client.receive(client_registry, received);
+        }
+        if (client_mode == kage::sync::ReplicationClientMode::BufferedInterpolation) {
+            client.apply_frame(client_registry, stats.client_frame);
         }
         for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
             ++stats.client_packets;
@@ -529,7 +661,7 @@ int main() {
                     Color{visual.r, visual.g, visual.b, visual.a});
             });
         EndMode3D();
-        draw_stats_overlay(stats, downstream_link.settings);
+        draw_stats_overlay(stats, downstream_link.settings, client_mode, interpolation_buffer_frames);
         DrawFPS(28, 238);
         EndDrawing();
     }
