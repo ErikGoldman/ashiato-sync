@@ -226,7 +226,10 @@ TEST_CASE("ball stress packet classifier counts update record kinds") {
     packet.push_unsigned_bits(101, 64U);
     packet.push_bool(false);
     kage::sync::protocol::write_baseline_frame(packet, 7, 6);
-    packet.push_bits(0, 16U);
+    packet.push_bool(false);
+    packet.push_bool(false);
+    packet.push_bool(false);
+    packet.push_bool(false);
 
     packet.push_bool(true);
     packet.push_unsigned_bits(102, 64U);

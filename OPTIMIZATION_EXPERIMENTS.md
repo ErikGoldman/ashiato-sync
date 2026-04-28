@@ -214,3 +214,75 @@ single serializer contract instead of splitting fixed and variable paths.
 - Cleanup run: `wall=32.645514`, `server_replication=14.586273`,
   `client_receive=15.283563`, `ack_processing=2.178506`,
   `server_to_clients.bytes=386720019`
+
+## Experiment 8: Heap-Based Server Candidate Priority Queue
+
+Rationale: serialized server ticks build a candidate list for each client and
+sort it by priority before packing entity records. This experiment replaces the
+full `std::stable_sort` with a heap priority queue over the same candidate
+vector and the same priority comparator. The goal is to avoid fully sorting
+the candidate set up front while preserving the existing scheduling policy.
+
+Result:
+
+- `wall=33.675880`
+- `server_replication=15.105663`
+- `client_receive=15.736657`
+- `ack_processing=2.210176`
+- `server_to_clients.bytes=386720019`
+
+Command:
+
+```sh
+cmake --build build-bench --target run_kage_sync_ball_stress
+```
+
+Artifact: `build-bench/kage_sync_ball_stress`
+
+Conclusion: rejected. Packet counts, bytes, retained snapshots, and update
+counts matched the accepted direct-deserialize baseline, so this did not change
+the effective scheduling output. It did regress wall time and the server
+replication phase. The likely issue is that the workload usually consumes a
+large fraction of the candidate list, so heapifying and repeatedly popping
+adds worse constant factors and less cache-friendly access than sorting once
+and scanning the contiguous sorted vector. A viable priority-queue scheduler
+probably needs to be persistent across ticks and avoid rebuilding all
+candidates, not just swap `stable_sort` for a per-tick heap.
+
+## Experiment 9: Dirty Component Delta Bitvectors
+
+Rationale: the direct-deserialize protocol still serialized every visible
+component for every delta update. This experiment uses ECS dirty bits as input
+to server-owned per-slot component generations, so the server can reuse clean
+component bytes from the ACKed baseline without re-quantizing or serializing
+them. Delta records now carry a component bitvector mapped to the archetype;
+set bits are followed by component delta payloads in archetype order, and an
+all-zero bitvector still advances the entity's replicated frame for
+interpolation.
+
+Result:
+
+- Run 1: `wall=32.017058`, `server_replication=11.400723`,
+  `client_receive=17.925622`, `ack_processing=2.219748`,
+  `server_to_clients.bytes=243252485`, `server_to_clients.packets=207125`
+- Run 2: `wall=31.427831`, `server_replication=11.106562`,
+  `client_receive=17.628005`, `ack_processing=2.161517`,
+  `server_to_clients.bytes=243252485`, `server_to_clients.packets=207125`
+
+Command:
+
+```sh
+cmake --build build-bench --target run_kage_sync_ball_stress
+```
+
+Artifact: `build-bench/kage_sync_ball_stress`
+
+Conclusion: accepted. Server replication time improved substantially and
+server-to-client traffic fell from `386720019` bytes to `243252485` bytes.
+Client receive got slower because it now merges partial deltas with baseline
+state, but the server and bandwidth savings more than offset that in the
+end-to-end benchmark. Delta upsert counts stayed effectively unchanged, while
+packet count dropped because smaller entity records pack more densely. The
+server observes but does not clear gameplay dirty bits; the stress harness
+clears the replicated component dirty bits after server replication to model
+application-owned dirty-bit lifecycle.

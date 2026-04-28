@@ -67,16 +67,21 @@ UpdatePacket read_update(kage::sync::BitBuffer packet) {
             record.full = packet.read_bool();
             if (record.full) {
                 packet.read_bits(32U);
+                const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+                for (std::uint16_t component = 0; component < component_count; ++component) {
+                    const auto component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
+                    const std::size_t payload_bits = component_index == 0 ? 17U : sizeof(Health) * 8U;
+                    for (std::size_t bit = 0; bit < payload_bits; ++bit) {
+                        packet.read_bool();
+                    }
+                }
             } else {
                 REQUIRE(kage::sync::protocol::read_baseline_frame(packet, update.frame, record.baseline_frame));
-            }
-
-            const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
-            for (std::uint16_t component = 0; component < component_count; ++component) {
-                const auto component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
-                const std::size_t payload_bits = component_index == 0 ? 17U : sizeof(Health) * 8U;
-                for (std::size_t bit = 0; bit < payload_bits; ++bit) {
-                    packet.read_bool();
+                const bool position_changed = packet.read_bool();
+                if (position_changed) {
+                    for (std::size_t bit = 0; bit < 17U; ++bit) {
+                        packet.read_bool();
+                    }
                 }
             }
         }

@@ -280,6 +280,7 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
     refresh_replicated(registry);
 
     const SyncSettings& settings = registry.get<SyncSettings>();
+    capture_dirty_components(registry, settings);
     std::vector<SerializedCandidate> candidates;
     std::vector<std::uint32_t> sent;
     std::vector<std::uint32_t> unsent;
@@ -440,6 +441,85 @@ bool ReplicationServer::candidate_before(
     return lhs.destroy_index < rhs.destroy_index;
 }
 
+void ReplicationServer::capture_dirty_components(const ecs::Registry& registry, const SyncSettings& settings) {
+    for (const auto& component_ops : settings.component_ops) {
+        const ecs::Entity component{component_ops.first};
+        registry.each_dirty(component, [&](ecs::Entity entity, const void*) {
+            const auto found = entity_to_slot_.find(entity.value);
+            if (found != entity_to_slot_.end()) {
+                mark_dirty_component(settings, found->second, component);
+            }
+        });
+        registry.each_removed(component, [&](ecs::Registry::ComponentRemoval removal) {
+            const auto found = entity_index_to_slot_.find(removal.entity_index);
+            if (found != entity_index_to_slot_.end()) {
+                mark_dirty_component(settings, found->second, component);
+            }
+        });
+    }
+
+    registry.each_dirty<NetworkOwner>([&](ecs::Entity entity, const void*) {
+        const auto found = entity_to_slot_.find(entity.value);
+        if (found != entity_to_slot_.end()) {
+            mark_owner_visibility_dirty(settings, found->second);
+        }
+    });
+    registry.each_removed<NetworkOwner>([&](ecs::Registry::ComponentRemoval removal) {
+        const auto found = entity_index_to_slot_.find(removal.entity_index);
+        if (found != entity_index_to_slot_.end()) {
+            mark_owner_visibility_dirty(settings, found->second);
+        }
+    });
+}
+
+void ReplicationServer::mark_dirty_component(
+    const SyncSettings& settings,
+    std::uint32_t slot,
+    ecs::Entity component) {
+    if (slot >= replicated_.size() || !replicated_[slot].active) {
+        return;
+    }
+    ReplicatedSlot& replicated = replicated_[slot];
+    if (replicated.archetype.value >= settings.archetypes.size()) {
+        return;
+    }
+    const SyncArchetype& archetype = settings.archetypes[replicated.archetype.value];
+    if (replicated.component_dirty_generations.size() < archetype.components.size()) {
+        replicated.component_dirty_generations.resize(archetype.components.size(), 1U);
+    }
+    for (std::size_t index = 0; index < archetype.components.size(); ++index) {
+        if (archetype.components[index].component == component) {
+            ++replicated.component_dirty_generations[index];
+            if (replicated.component_dirty_generations[index] == 0) {
+                replicated.component_dirty_generations[index] = 1;
+            }
+            return;
+        }
+    }
+}
+
+void ReplicationServer::mark_owner_visibility_dirty(const SyncSettings& settings, std::uint32_t slot) {
+    if (slot >= replicated_.size() || !replicated_[slot].active) {
+        return;
+    }
+    ReplicatedSlot& replicated = replicated_[slot];
+    if (replicated.archetype.value >= settings.archetypes.size()) {
+        return;
+    }
+    const SyncArchetype& archetype = settings.archetypes[replicated.archetype.value];
+    if (replicated.component_dirty_generations.size() < archetype.components.size()) {
+        replicated.component_dirty_generations.resize(archetype.components.size(), 1U);
+    }
+    for (std::size_t index = 0; index < archetype.components.size(); ++index) {
+        if (archetype.components[index].audience == ReplicationAudience::Owner) {
+            ++replicated.component_dirty_generations[index];
+            if (replicated.component_dirty_generations[index] == 0) {
+                replicated.component_dirty_generations[index] = 1;
+            }
+        }
+    }
+}
+
 bool ReplicationServer::serialize_entity(
     const ecs::Registry& registry,
     const SyncSettings& settings,
@@ -457,7 +537,7 @@ bool ReplicationServer::serialize_entity(
         return false;
     }
 
-    const std::uint32_t snapshot = find_or_create_snapshot(registry, settings, client.id, slot, frame, scratch);
+    const std::uint32_t snapshot = find_or_create_snapshot(registry, settings, client, slot, frame, scratch);
     if (snapshot == invalid_snapshot_id) {
         return false;
     }
@@ -470,7 +550,7 @@ bool ReplicationServer::serialize_entity(
 std::uint32_t ReplicationServer::find_or_create_snapshot(
     const ecs::Registry& registry,
     const SyncSettings& settings,
-    ClientId client,
+    const ClientState& client,
     std::uint32_t slot,
     SyncFrame frame,
     std::vector<QuantizedBaseline>& scratch) {
@@ -481,13 +561,23 @@ std::uint32_t ReplicationServer::find_or_create_snapshot(
     const ReplicatedSlot& replicated = replicated_[slot];
     const SyncArchetype& archetype = settings.archetypes[replicated.archetype.value];
     const NetworkOwner* owner = registry.try_get<NetworkOwner>(replicated.entity);
+    const ClientEntityState* entity_state =
+        slot < client.entity_states.size() ? &client.entity_states[slot] : nullptr;
+    const QuantizedSnapshot* baseline_snapshot = nullptr;
+    if (entity_state != nullptr &&
+        entity_state->baseline != invalid_snapshot_id &&
+        entity_state->baseline < snapshots_.size() &&
+        snapshots_[entity_state->baseline].active &&
+        snapshots_[entity_state->baseline].archetype == replicated.archetype) {
+        baseline_snapshot = &snapshots_[entity_state->baseline];
+    }
 
     scratch.clear();
     scratch.reserve(archetype.components.size());
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
         const ComponentReplication& replication = archetype.components[component_index];
         if (replication.audience == ReplicationAudience::Owner &&
-            (owner == nullptr || owner->client != client)) {
+            (owner == nullptr || owner->client != client.id)) {
             continue;
         }
 
@@ -504,7 +594,29 @@ std::uint32_t ReplicationServer::find_or_create_snapshot(
         QuantizedBaseline quantized;
         quantized.component = replication.component;
         quantized.component_index = static_cast<std::uint16_t>(component_index);
-        found_ops->second.quantize(component_value, quantized.bytes);
+        quantized.dirty_generation = component_index < replicated.component_dirty_generations.size()
+            ? replicated.component_dirty_generations[component_index]
+            : 0;
+
+        const QuantizedBaseline* previous = nullptr;
+        if (baseline_snapshot != nullptr) {
+            const auto found_previous = std::find_if(
+                baseline_snapshot->baselines.begin(),
+                baseline_snapshot->baselines.end(),
+                [&](const QuantizedBaseline& baseline) {
+                    return baseline.component_index == component_index &&
+                        baseline.component == replication.component;
+                });
+            if (found_previous != baseline_snapshot->baselines.end()) {
+                previous = &*found_previous;
+            }
+        }
+
+        if (previous != nullptr && previous->dirty_generation == quantized.dirty_generation) {
+            quantized.bytes = previous->bytes;
+        } else {
+            found_ops->second.quantize(component_value, quantized.bytes);
+        }
         scratch.push_back(std::move(quantized));
     }
 
@@ -635,6 +747,7 @@ bool ReplicationServer::same_snapshot_components(
     for (std::size_t index = 0; index < baselines.size(); ++index) {
         if (snapshot.baselines[index].component != baselines[index].component ||
             snapshot.baselines[index].component_index != baselines[index].component_index ||
+            snapshot.baselines[index].dirty_generation != baselines[index].dirty_generation ||
             snapshot.baselines[index].bytes != baselines[index].bytes) {
             return false;
         }
@@ -670,9 +783,58 @@ void ReplicationServer::write_entity_record(
     } else {
         protocol::write_baseline_frame(out, snapshot.frame, snapshots_[entity_state.baseline].frame);
     }
-    out.push_bits(static_cast<std::int64_t>(snapshot.baselines.size()), 16U);
 
     const SyncArchetype& archetype = settings.archetypes[snapshot.archetype.value];
+    if (delta) {
+        const QuantizedSnapshot& baseline_snapshot = snapshots_[entity_state.baseline];
+        std::vector<const QuantizedBaseline*> changed;
+        changed.reserve(snapshot.baselines.size());
+        for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
+            const auto found_baseline = std::find_if(
+                snapshot.baselines.begin(),
+                snapshot.baselines.end(),
+                [component_index](const QuantizedBaseline& candidate) {
+                    return candidate.component_index == component_index;
+                });
+            if (found_baseline == snapshot.baselines.end()) {
+                out.push_bool(false);
+                continue;
+            }
+            const QuantizedBaseline& baseline = *found_baseline;
+            if (archetype.components[baseline.component_index].component != baseline.component) {
+                throw std::logic_error("replicated snapshot component is not in its archetype");
+            }
+            const QuantizedBaseline* previous = nullptr;
+            const auto found_previous = std::find_if(
+                baseline_snapshot.baselines.begin(),
+                baseline_snapshot.baselines.end(),
+                [&](const QuantizedBaseline& candidate) {
+                    return candidate.component == baseline.component &&
+                        candidate.component_index == baseline.component_index;
+                });
+            if (found_previous != baseline_snapshot.baselines.end()) {
+                previous = &*found_previous;
+            }
+            const bool component_changed = previous == nullptr || previous->bytes != baseline.bytes;
+            out.push_bool(component_changed);
+            if (component_changed) {
+                changed.push_back(&baseline);
+            }
+        }
+        for (const QuantizedBaseline* baseline : changed) {
+            const auto found_ops = settings.component_ops.find(baseline->component.value);
+            if (found_ops == settings.component_ops.end()) {
+                throw std::logic_error("sync component traits are not registered for replicated component");
+            }
+            const SyncComponentOps::QuantizedBytes* previous =
+                find_baseline_component(entity_state.baseline, baseline->component);
+            found_ops->second.serialize(previous, baseline->bytes, out);
+        }
+        (void)registry;
+        return;
+    }
+
+    out.push_bits(static_cast<std::int64_t>(snapshot.baselines.size()), 16U);
     for (const QuantizedBaseline& baseline : snapshot.baselines) {
         if (baseline.component_index >= archetype.components.size() ||
             archetype.components[baseline.component_index].component != baseline.component) {
@@ -727,6 +889,12 @@ bool ReplicationServer::upsert_replicated(ecs::Registry& registry, ecs::Entity e
     const auto found = entity_to_slot_.find(key);
     if (found != entity_to_slot_.end()) {
         replicated_[found->second].archetype = archetype;
+        const SyncSettings& settings = registry.get<SyncSettings>();
+        if (archetype.value < settings.archetypes.size()) {
+            replicated_[found->second].component_dirty_generations.assign(
+                settings.archetypes[archetype.value].components.size(),
+                1U);
+        }
         for (ClientState& client : clients_) {
             if (found->second < client.entity_states.size()) {
                 clear_client_entity_state(client.entity_states[found->second]);
@@ -738,6 +906,12 @@ bool ReplicationServer::upsert_replicated(ecs::Registry& registry, ecs::Entity e
     deactivate_entity_index(ecs::Registry::entity_index(entity));
 
     const std::uint32_t slot = allocate_slot(entity, archetype);
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    if (archetype.value < settings.archetypes.size()) {
+        replicated_[slot].component_dirty_generations.assign(
+            settings.archetypes[archetype.value].components.size(),
+            1U);
+    }
     entity_to_slot_[key] = slot;
     entity_index_to_slot_[ecs::Registry::entity_index(entity)] = slot;
     for (ClientState& client : clients_) {
@@ -758,7 +932,7 @@ std::uint32_t ReplicationServer::allocate_slot(ecs::Entity entity, SyncArchetype
     if (!free_replicated_slots_.empty()) {
         const std::uint32_t slot = free_replicated_slots_.back();
         free_replicated_slots_.pop_back();
-        replicated_[slot] = ReplicatedSlot{entity, archetype, {}, true};
+        replicated_[slot] = ReplicatedSlot{entity, archetype, {}, {}, true};
         return slot;
     }
 
@@ -767,7 +941,7 @@ std::uint32_t ReplicationServer::allocate_slot(ecs::Entity entity, SyncArchetype
     }
 
     const std::uint32_t slot = static_cast<std::uint32_t>(replicated_.size());
-    replicated_.push_back(ReplicatedSlot{entity, archetype, {}, true});
+    replicated_.push_back(ReplicatedSlot{entity, archetype, {}, {}, true});
     return slot;
 }
 

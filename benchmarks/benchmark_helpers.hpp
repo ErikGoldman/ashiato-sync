@@ -318,17 +318,23 @@ inline void ack_packets(
             const bool full = packet.read_bool();
             if (full) {
                 benchmark::DoNotOptimize(packet.read_bits(32U));
+                const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+                for (std::uint16_t component = 0; component < component_count; ++component) {
+                    benchmark::DoNotOptimize(packet.read_bits(16U));
+                    const std::size_t payload_bits = sizeof(DeltaPosition) * 8U;
+                    for (std::size_t bit = 0; bit < payload_bits; ++bit) {
+                        benchmark::DoNotOptimize(packet.read_bool());
+                    }
+                }
             } else {
                 std::uint32_t baseline_frame = 0;
                 benchmark::DoNotOptimize(protocol::read_baseline_frame(packet, frame, baseline_frame));
                 benchmark::DoNotOptimize(baseline_frame);
-            }
-            const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
-            for (std::uint16_t component = 0; component < component_count; ++component) {
-                benchmark::DoNotOptimize(packet.read_bits(16U));
-                const std::size_t payload_bits = full ? sizeof(DeltaPosition) * 8U : 16U;
-                for (std::size_t bit = 0; bit < payload_bits; ++bit) {
-                    benchmark::DoNotOptimize(packet.read_bool());
+                const bool changed = packet.read_bool();
+                if (changed) {
+                    for (std::size_t bit = 0; bit < 16U; ++bit) {
+                        benchmark::DoNotOptimize(packet.read_bool());
+                    }
                 }
             }
             benchmark::DoNotOptimize(server.acknowledge_entity(sent.first, entity, frame));

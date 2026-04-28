@@ -335,6 +335,27 @@ inline PacketBreakdown classify_packet(BitBuffer packet) {
             if (full) {
                 ++result.full_upserts;
                 packet.read_bits(32U);
+                const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+                for (std::uint16_t component = 0; component < component_count; ++component) {
+                    const auto component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
+                    switch (component_index) {
+                        case 0:
+                            packet.skip_bits(sizeof(BallPosition) * 8U);
+                            break;
+                        case 1:
+                            packet.skip_bits(sizeof(BallVisual) * 8U);
+                            break;
+                        case 2:
+                            packet.skip_bits(sizeof(BallHealth) * 8U);
+                            break;
+                        case 3:
+                            packet.skip_bits(sizeof(BallPoison) * 8U);
+                            break;
+                        default:
+                            result = PacketBreakdown{};
+                            return result;
+                    }
+                }
             } else {
                 ++result.delta_upserts;
                 std::uint32_t baseline_frame = 0;
@@ -342,26 +363,28 @@ inline PacketBreakdown classify_packet(BitBuffer packet) {
                     result = PacketBreakdown{};
                     return result;
                 }
-            }
-            const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
-            for (std::uint16_t component = 0; component < component_count; ++component) {
-                const auto component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
-                switch (component_index) {
-                    case 0:
-                        packet.skip_bits(sizeof(BallPosition) * 8U);
-                        break;
-                    case 1:
-                        packet.skip_bits(sizeof(BallVisual) * 8U);
-                        break;
-                    case 2:
-                        packet.skip_bits(sizeof(BallHealth) * 8U);
-                        break;
-                    case 3:
-                        packet.skip_bits(sizeof(BallPoison) * 8U);
-                        break;
-                    default:
-                        result = PacketBreakdown{};
-                        return result;
+                bool changed[4] = {};
+                for (std::size_t component_index = 0; component_index < 4U; ++component_index) {
+                    changed[component_index] = packet.read_bool();
+                }
+                for (std::size_t component_index = 0; component_index < 4U; ++component_index) {
+                    if (!changed[component_index]) {
+                        continue;
+                    }
+                    switch (component_index) {
+                        case 0:
+                            packet.skip_bits(sizeof(BallPosition) * 8U);
+                            break;
+                        case 1:
+                            packet.skip_bits(sizeof(BallVisual) * 8U);
+                            break;
+                        case 2:
+                            packet.skip_bits(sizeof(BallHealth) * 8U);
+                            break;
+                        case 3:
+                            packet.skip_bits(sizeof(BallPoison) * 8U);
+                            break;
+                    }
                 }
             }
         }
@@ -797,6 +820,10 @@ inline StressReport run_stress(const StressConfig& input_config) {
         {
             ScopedTimer timer(report.timing.server_replication_seconds);
             server.tick(server_registry);
+            server_registry.clear_all_dirty<BallPosition>();
+            server_registry.clear_all_dirty<BallVisual>();
+            server_registry.clear_all_dirty<BallHealth>();
+            server_registry.clear_all_dirty<BallPoison>();
         }
 
         if ((tick % 16U) == 0U) {

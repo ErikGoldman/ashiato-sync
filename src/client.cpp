@@ -435,9 +435,8 @@ bool ReplicationClient::apply_upsert(
     }
 
     const SyncArchetype& definition = settings.archetypes[archetype.value];
-    const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
     std::vector<ComponentBaseline> decoded;
-    decoded.reserve(component_count);
+    std::vector<ComponentBaseline> merged;
 
     EntityState* previous_state = found_state != entities_.end() && !previous_absent ? &found_state->second : nullptr;
     const std::vector<ComponentBaseline>* previous_baselines = nullptr;
@@ -454,27 +453,71 @@ bool ReplicationClient::apply_upsert(
         previous_baselines = &found_baseline->baselines;
     }
 
-    for (std::uint16_t component = 0; component < component_count; ++component) {
-        const auto component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
-        if (component_index >= definition.components.size()) {
-            return false;
-        }
+    if (full) {
+        const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+        decoded.reserve(component_count);
+        for (std::uint16_t component = 0; component < component_count; ++component) {
+            const auto component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
+            if (component_index >= definition.components.size()) {
+                return false;
+            }
 
-        const ecs::Entity component_entity = definition.components[component_index].component;
-        const auto found_ops = settings.component_ops.find(component_entity.value);
-        if (found_ops == settings.component_ops.end() || found_ops->second.deserialize == nullptr ||
-            found_ops->second.apply == nullptr) {
-            return false;
-        }
+            const ecs::Entity component_entity = definition.components[component_index].component;
+            const auto found_ops = settings.component_ops.find(component_entity.value);
+            if (found_ops == settings.component_ops.end() || found_ops->second.deserialize == nullptr ||
+                found_ops->second.apply == nullptr) {
+                return false;
+            }
 
-        ComponentBaseline baseline;
-        baseline.component = component_entity;
-        const SyncComponentOps::QuantizedBytes* previous =
-            previous_baselines != nullptr ? baseline_for(*previous_baselines, component_entity) : nullptr;
-        if (!found_ops->second.deserialize(packet, previous, baseline.bytes)) {
+            ComponentBaseline baseline;
+            baseline.component = component_entity;
+            if (!found_ops->second.deserialize(packet, nullptr, baseline.bytes)) {
+                return false;
+            }
+            decoded.push_back(std::move(baseline));
+        }
+        merged = decoded;
+    } else {
+        if (previous_baselines == nullptr) {
             return false;
         }
-        decoded.push_back(std::move(baseline));
+        std::vector<bool> changed;
+        changed.reserve(definition.components.size());
+        for (std::size_t component_index = 0; component_index < definition.components.size(); ++component_index) {
+            changed.push_back(packet.read_bool());
+        }
+        decoded.reserve(definition.components.size());
+        merged = *previous_baselines;
+        for (std::size_t component_index = 0; component_index < definition.components.size(); ++component_index) {
+            if (!changed[component_index]) {
+                continue;
+            }
+            const ecs::Entity component_entity = definition.components[component_index].component;
+            const auto found_ops = settings.component_ops.find(component_entity.value);
+            if (found_ops == settings.component_ops.end() || found_ops->second.deserialize == nullptr ||
+                found_ops->second.apply == nullptr) {
+                return false;
+            }
+
+            ComponentBaseline baseline;
+            baseline.component = component_entity;
+            const SyncComponentOps::QuantizedBytes* previous =
+                baseline_for(*previous_baselines, component_entity);
+            if (previous == nullptr || !found_ops->second.deserialize(packet, previous, baseline.bytes)) {
+                return false;
+            }
+            auto found_merged = std::find_if(
+                merged.begin(),
+                merged.end(),
+                [&](const ComponentBaseline& candidate) {
+                    return candidate.component == component_entity;
+                });
+            if (found_merged == merged.end()) {
+                return false;
+            }
+            found_merged->bytes = baseline.bytes;
+            decoded.push_back(std::move(baseline));
+        }
     }
 
     if (previous_state != nullptr && frame <= previous_state->frame) {
@@ -498,12 +541,16 @@ bool ReplicationClient::apply_upsert(
     }
 
     if (state.mode == ReplicationClientMode::BufferedInterpolation) {
-        return apply_buffered_upsert(registry, settings, frame, server_entity, archetype, decoded);
+        return apply_buffered_upsert(registry, settings, frame, server_entity, archetype, merged);
     }
 
     state.archetype = archetype;
     if (!apply_snap_sample(registry, settings, state, decoded, full)) {
         return false;
+    }
+    if (!full) {
+        state.baselines = std::move(merged);
+        state.applied_baselines = state.baselines;
     }
 
     state.frame = frame;

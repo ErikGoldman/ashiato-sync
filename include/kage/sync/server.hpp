@@ -46,12 +46,14 @@ private:
         ecs::Entity entity;
         SyncArchetypeId archetype;
         std::vector<std::uint32_t> snapshots;
+        std::vector<std::uint64_t> component_dirty_generations;
         bool active = false;
     };
 
     struct QuantizedBaseline {
         ecs::Entity component;
         std::uint16_t component_index = 0;
+        std::uint64_t dirty_generation = 0;
         SyncComponentOps::QuantizedBytes bytes;
     };
 
@@ -117,6 +119,9 @@ private:
     void deactivate_entity_index(std::uint32_t entity_index);
     void remove_slot_from_client_orders(std::uint32_t slot);
     bool slot_is_replicable(const ecs::Registry& registry, std::uint32_t slot) const;
+    void capture_dirty_components(const ecs::Registry& registry, const SyncSettings& settings);
+    void mark_dirty_component(const SyncSettings& settings, std::uint32_t slot, ecs::Entity component);
+    void mark_owner_visibility_dirty(const SyncSettings& settings, std::uint32_t slot);
     void tick_serialized(ecs::Registry& registry);
     static bool candidate_before(const SerializedCandidate& lhs, const SerializedCandidate& rhs) noexcept;
     bool serialize_entity(
@@ -130,7 +135,7 @@ private:
     std::uint32_t find_or_create_snapshot(
         const ecs::Registry& registry,
         const SyncSettings& settings,
-        ClientId client,
+        const ClientState& client,
         std::uint32_t slot,
         SyncFrame frame,
         std::vector<QuantizedBaseline>& scratch);
