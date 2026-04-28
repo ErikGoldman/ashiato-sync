@@ -67,8 +67,11 @@ ServerUpdatePacket read_server_update(kage::sync::BitBuffer packet) {
         for (std::uint16_t component = 0; component < component_count; ++component) {
             ComponentRecord record;
             record.component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
-            const std::uint32_t payload_bits = static_cast<std::uint32_t>(packet.read_bits(32U));
-            for (std::uint32_t bit = 0; bit < payload_bits; ++bit) {
+            std::size_t payload_bits = packet.remaining_bits();
+            if (entity_index + 1U < entity_count || component + 1U < component_count) {
+                payload_bits = record.component_index == 0 ? 17U : sizeof(Health) * 8U;
+            }
+            for (std::size_t bit = 0; bit < payload_bits; ++bit) {
                 record.payload.push_bool(packet.read_bool());
             }
             entity.components.push_back(std::move(record));
@@ -464,8 +467,8 @@ TEST_CASE("replication server filters owner-only serialized components") {
     server.tick(registry);
 
     REQUIRE(sends.size() == 2);
-    REQUIRE(sends[0] == std::pair<kage::sync::ClientId, std::size_t>{1, 30});
-    REQUIRE(sends[1] == std::pair<kage::sync::ClientId, std::size_t>{2, 40});
+    REQUIRE(sends[0] == std::pair<kage::sync::ClientId, std::size_t>{1, 26});
+    REQUIRE(sends[1] == std::pair<kage::sync::ClientId, std::size_t>{2, 32});
 }
 
 TEST_CASE("replication server packs entity records up to the configured mtu") {
@@ -497,7 +500,7 @@ TEST_CASE("replication server packs entity records up to the configured mtu") {
     server.tick(registry);
 
     REQUIRE(payloads.size() == 1);
-    REQUIRE(payloads[0].byte_size() == 52);
+    REQUIRE(payloads[0].byte_size() == 44);
     const ServerUpdatePacket update = read_server_update(payloads[0]);
     REQUIRE(update.entities.size() == 2);
 }
@@ -533,7 +536,7 @@ TEST_CASE("replication server splits packed updates at the mtu boundary") {
     REQUIRE(payloads.size() == 2);
     for (const kage::sync::BitBuffer& payload : payloads) {
         REQUIRE(payload.byte_size() <= options.mtu_bytes);
-        REQUIRE(payload.byte_size() == 30);
+        REQUIRE(payload.byte_size() == 26);
         REQUIRE(read_server_update(payload).entities.size() == 1);
     }
 }
@@ -767,13 +770,13 @@ TEST_CASE("replication server records bandwidth savings for ACKed delta updates"
     REQUIRE(start_sync(registry, entity, archetype));
 
     server.tick(registry);
-    REQUIRE(payloads.back().byte_size() == 32);
+    REQUIRE(payloads.back().byte_size() == 28);
     REQUIRE(server.acknowledge_entity(1, entity, read_server_update(payloads.back()).frame));
 
     registry.write<BandwidthProbe>(entity) = BandwidthProbe{105};
     server.tick(registry);
 
     const std::size_t expected_delta_bits = kage::sync::protocol::server_update_header_bits +
-        1U + 64U + 1U + (1U + kage::sync::protocol::baseline_frame_delta_bits) + 16U + 16U + 32U + 9U;
+        1U + 64U + 1U + (1U + kage::sync::protocol::baseline_frame_delta_bits) + 16U + 16U + 9U;
     REQUIRE(payloads.back().byte_size() == kage::sync::protocol::bytes_for_bits(expected_delta_bits));
 }

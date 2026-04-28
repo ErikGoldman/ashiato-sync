@@ -73,9 +73,9 @@ UpdatePacket read_update(kage::sync::BitBuffer packet) {
 
             const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
             for (std::uint16_t component = 0; component < component_count; ++component) {
-                packet.read_bits(16U);
-                const auto payload_bits = static_cast<std::uint32_t>(packet.read_bits(32U));
-                for (std::uint32_t bit = 0; bit < payload_bits; ++bit) {
+                const auto component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
+                const std::size_t payload_bits = component_index == 0 ? 17U : sizeof(Health) * 8U;
+                for (std::size_t bit = 0; bit < payload_bits; ++bit) {
                     packet.read_bool();
                 }
             }
@@ -110,10 +110,7 @@ kage::sync::BitBuffer make_position_packet(
         packet.push_bits(1, 16U);
         packet.push_bits(0, 16U);
 
-        kage::sync::BitBuffer payload;
-        payload.push_bytes(reinterpret_cast<const char*>(&record.second), sizeof(Position));
-        packet.push_bits(static_cast<std::uint32_t>(payload.bit_size()), 32U);
-        packet.push_buffer_bits(payload);
+        packet.push_bytes(reinterpret_cast<const char*>(&record.second), sizeof(Position));
     }
     return packet;
 }

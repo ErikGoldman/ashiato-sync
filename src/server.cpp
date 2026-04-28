@@ -688,29 +688,7 @@ void ReplicationServer::write_entity_record(
             delta ? find_baseline_component(entity_state.baseline, baseline.component) : nullptr;
 
         out.push_bits(static_cast<std::int64_t>(baseline.component_index), 16U);
-        if (found_ops->second.serialized_size_bits != SyncComponentOps::variable_serialized_bits) {
-            if (found_ops->second.serialized_size_bits >
-                static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
-                throw std::length_error("fixed-size replicated component payload bit size exceeds protocol limit");
-            }
-            out.push_bits(static_cast<std::int64_t>(found_ops->second.serialized_size_bits), 32U);
-            const std::size_t payload_begin = out.bit_size();
-            found_ops->second.serialize(previous, baseline.bytes, out);
-            if (out.bit_size() - payload_begin != found_ops->second.serialized_size_bits) {
-                throw std::logic_error("fixed-size replicated component serializer wrote an unexpected bit count");
-            }
-            continue;
-        }
-
-        const std::size_t payload_size_offset = out.bit_size();
-        out.push_bits(0, 32U);
-        const std::size_t payload_begin = out.bit_size();
         found_ops->second.serialize(previous, baseline.bytes, out);
-        const std::size_t payload_bits = out.bit_size() - payload_begin;
-        if (payload_bits > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
-            throw std::length_error("replicated component payload bit size exceeds protocol limit");
-        }
-        out.overwrite_unsigned_bits(payload_size_offset, payload_bits, 32U);
     }
 
     (void)registry;

@@ -65,18 +65,16 @@ struct SyncComponentTraits<benchmarks::DeltaPosition> {
     }
 
     static bool deserialize(BitBuffer& in, const Quantized* previous, Quantized& out) {
-        if (in.remaining_bits() == sizeof(Quantized) * 8U) {
+        if (previous == nullptr) {
             in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
             return true;
         }
-        if (in.remaining_bits() == 16U && previous != nullptr) {
-            out = Quantized{
-                previous->x + static_cast<std::int32_t>(in.read_bits(8U)),
-                previous->y + static_cast<std::int32_t>(in.read_bits(8U)),
-            };
-            return true;
-        }
-        return false;
+
+        out = Quantized{
+            previous->x + static_cast<std::int32_t>(in.read_bits(8U)),
+            previous->y + static_cast<std::int32_t>(in.read_bits(8U)),
+        };
+        return true;
     }
 
     static Quantized interpolate(const Quantized& from, const Quantized& to, float alpha) {
@@ -328,8 +326,8 @@ inline void ack_packets(
             const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
             for (std::uint16_t component = 0; component < component_count; ++component) {
                 benchmark::DoNotOptimize(packet.read_bits(16U));
-                const auto payload_bits = static_cast<std::uint32_t>(packet.read_bits(32U));
-                for (std::uint32_t bit = 0; bit < payload_bits; ++bit) {
+                const std::size_t payload_bits = full ? sizeof(DeltaPosition) * 8U : 16U;
+                for (std::size_t bit = 0; bit < payload_bits; ++bit) {
                     benchmark::DoNotOptimize(packet.read_bool());
                 }
             }

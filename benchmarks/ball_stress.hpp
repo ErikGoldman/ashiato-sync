@@ -33,7 +33,6 @@ namespace kage::sync {
 template <>
 struct SyncComponentTraits<stress::BallPosition> {
     using Quantized = stress::BallPosition;
-    static constexpr std::size_t serialized_size_bits = sizeof(Quantized) * 8U;
 
     static Quantized quantize(const stress::BallPosition& value) {
         return value;
@@ -346,9 +345,24 @@ inline PacketBreakdown classify_packet(BitBuffer packet) {
             }
             const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
             for (std::uint16_t component = 0; component < component_count; ++component) {
-                packet.read_bits(16U);
-                const auto payload_bits = static_cast<std::uint32_t>(packet.read_bits(32U));
-                packet.skip_bits(payload_bits);
+                const auto component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
+                switch (component_index) {
+                    case 0:
+                        packet.skip_bits(sizeof(BallPosition) * 8U);
+                        break;
+                    case 1:
+                        packet.skip_bits(sizeof(BallVisual) * 8U);
+                        break;
+                    case 2:
+                        packet.skip_bits(sizeof(BallHealth) * 8U);
+                        break;
+                    case 3:
+                        packet.skip_bits(sizeof(BallPoison) * 8U);
+                        break;
+                    default:
+                        result = PacketBreakdown{};
+                        return result;
+                }
             }
         }
     } catch (const std::exception&) {

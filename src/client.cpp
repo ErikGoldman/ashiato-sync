@@ -456,14 +456,9 @@ bool ReplicationClient::apply_upsert(
 
     for (std::uint16_t component = 0; component < component_count; ++component) {
         const auto component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
-        const auto payload_bits = static_cast<std::uint32_t>(packet.read_bits(32U));
         if (component_index >= definition.components.size()) {
             return false;
         }
-
-        BitBuffer payload;
-        payload.reserve_bytes(protocol::bytes_for_bits(payload_bits));
-        packet.read_buffer_bits(payload, payload_bits);
 
         const ecs::Entity component_entity = definition.components[component_index].component;
         const auto found_ops = settings.component_ops.find(component_entity.value);
@@ -476,7 +471,7 @@ bool ReplicationClient::apply_upsert(
         baseline.component = component_entity;
         const SyncComponentOps::QuantizedBytes* previous =
             previous_baselines != nullptr ? baseline_for(*previous_baselines, component_entity) : nullptr;
-        if (!found_ops->second.deserialize(payload, previous, baseline.bytes)) {
+        if (!found_ops->second.deserialize(packet, previous, baseline.bytes)) {
             return false;
         }
         decoded.push_back(std::move(baseline));
