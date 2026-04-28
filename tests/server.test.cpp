@@ -538,6 +538,94 @@ TEST_CASE("replication server splits packed updates at the mtu boundary") {
     }
 }
 
+TEST_CASE("replication server interleaves pending destroys with bandwidth-limited updates") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "NetworkedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    const ecs::Entity destroyed = registry.create();
+    const ecs::Entity live = registry.create();
+    REQUIRE(registry.add<NetworkedPosition>(destroyed, NetworkedPosition{1.0f, 1.0f}) != nullptr);
+    REQUIRE(registry.add<NetworkedPosition>(live, NetworkedPosition{2.0f, 2.0f}) != nullptr);
+
+    std::vector<kage::sync::BitBuffer> payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 30;
+    options.mtu_bytes = 30;
+    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+        payloads.push_back(payload);
+    };
+
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(registry, destroyed, archetype));
+    REQUIRE(start_sync(registry, live, archetype));
+    server.tick(registry);
+    REQUIRE(payloads.size() == 1);
+    payloads.clear();
+
+    REQUIRE(registry.destroy(destroyed));
+    server.tick(registry);
+    REQUIRE(payloads.size() == 1);
+    ServerUpdatePacket update = read_server_update(payloads.back());
+    REQUIRE(update.entities.size() == 1);
+    REQUIRE_FALSE(update.entities[0].destroy);
+    REQUIRE(update.entities[0].entity == live);
+    payloads.clear();
+
+    server.tick(registry);
+    REQUIRE(payloads.size() == 1);
+    update = read_server_update(payloads.back());
+    REQUIRE(update.entities.size() == 1);
+    REQUIRE(update.entities[0].destroy);
+    REQUIRE(update.entities[0].entity == destroyed);
+}
+
+TEST_CASE("replication server resends pending destroys until ACKed") {
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+    const ecs::Entity entity = registry.create();
+    REQUIRE(registry.add<kage_sync_tests::Position>(entity, kage_sync_tests::Position{1.0f, 2.0f}) != nullptr);
+
+    std::vector<kage::sync::BitBuffer> payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 30;
+    options.mtu_bytes = 30;
+    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+        payloads.push_back(payload);
+    };
+
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(registry, entity, archetype));
+    server.tick(registry);
+    payloads.clear();
+
+    REQUIRE(registry.destroy(entity));
+    server.tick(registry);
+    REQUIRE(payloads.size() == 1);
+    ServerUpdatePacket first_destroy = read_server_update(payloads.back());
+    REQUIRE(first_destroy.entities.size() == 1);
+    REQUIRE(first_destroy.entities[0].destroy);
+    payloads.clear();
+
+    server.tick(registry);
+    REQUIRE(payloads.size() == 1);
+    ServerUpdatePacket resent_destroy = read_server_update(payloads.back());
+    REQUIRE(resent_destroy.entities.size() == 1);
+    REQUIRE(resent_destroy.entities[0].destroy);
+    REQUIRE(resent_destroy.entities[0].entity == entity);
+    REQUIRE(resent_destroy.frame > first_destroy.frame);
+
+    REQUIRE(server.process_packet(1, write_ack_packet(entity, resent_destroy.frame, true)));
+    payloads.clear();
+    server.tick(registry);
+    REQUIRE(payloads.empty());
+}
+
 TEST_CASE("replication server accepts delayed entity ACKs for retained snapshots") {
     ecs::Registry registry;
     const ecs::Entity position_component =

@@ -54,8 +54,17 @@ cmake --build build-examples --target kage_sync_balls_example
 
 `kage_sync_balls_example` runs a UDP localhost server and client in one process
 and renders replicated moving balls with raylib. Use `--client-mode snap` or
-`--client-mode buffered-interpolation --interpolation-buffer-frames 2` to choose
-the client application mode.
+`--client-mode buffered-interpolation` to choose the client application mode.
+Buffered interpolation auto-sizes its buffer from measured receive latency and
+jitter by default; pass
+`--auto-interpolation-buffer off` to keep the configured buffer fixed. Use
+`--jitter-ms N` to start the local link simulator with uniform `+/-N ms` jitter,
+and `--entities N` to set the initial ball target. In the example, Up/Down
+adjust the target by 8, Shift+Up/Down by 1, PageUp/PageDown by 32, and Home/End
+jump to the maximum/minimum target.
+Use `--time-dilation-min`, `--time-dilation-max`, and
+`--time-dilation-gain` to control how quickly the client playback accumulator
+converges when the desired buffer changes.
 
 ## Tests
 
@@ -131,6 +140,15 @@ client, so bandwidth-limited clients naturally receive older unsent state first.
   each client tick. The ECS reflects server frame
   `client_frame - interpolation_buffer_frames`; create, component add/remove,
   and destroy records are delayed through the same buffer.
+- Call `ReplicationClient::receive(registry, packet, receive_frame, playback_frame)`
+  to record continuous receive delay and playback buffer depth from server
+  update frames. Buffered interpolation computes a desired buffer depth from
+  those samples and exposes `timing_stats().time_dilation`. Multiply the client
+  ECS tick accumulator by that scalar before incrementing `playback_frame` and
+  calling `apply_frame`; this lets playback converge without jumping the buffer
+  depth immediately. Disable `auto_interpolation_buffer_frames` for a fixed
+  manual buffer. The older `receive(registry, packet)` overload still applies
+  packets without recording timing samples.
 - Mark client-side `ComponentReplication::interpolation` as `Interpolate` for
   components that should be filled between received frames. The corresponding
   `SyncComponentTraits<T>` must provide `static Quantized interpolate(...)`;
@@ -170,8 +188,8 @@ and buffered interpolation.
 
 `kage_sync_ball_stress` is a deterministic headless stress scenario with
 server-side 3D balls, poison-on-bounce, health drain, despawns, simulated
-clients, in-memory latency/loss, timing counters, memory counters, and bandwidth
-breakdowns.
+clients, in-memory latency/jitter/loss, timing counters, memory counters, and
+bandwidth breakdowns.
 
 ```sh
 cmake -S . -B build-bench \
@@ -189,17 +207,23 @@ cmake --build build-bench --target kage_sync_ball_stress
   --health-min 20 \
   --health-max 80 \
   --latency-ms 50 \
+  --jitter-ms 25 \
   --loss-percent 1 \
   --client-mode buffered-interpolation \
   --interpolation-buffer-frames 2 \
+  --time-dilation-min 0.95 \
+  --time-dilation-max 1.05 \
+  --time-dilation-gain 0.05 \
   --report json
 ```
 
 Use `--server-to-client-latency-ms`, `--client-to-server-latency-ms`,
+`--server-to-client-jitter-ms`, `--client-to-server-jitter-ms`,
 `--server-to-client-loss-percent`, and `--client-to-server-loss-percent` to
 override the shared bidirectional link settings. The report includes total bytes
-and packets split by direction, packet type, update record kind, and dropped
-traffic, plus the selected client mode and interpolation buffer settings.
+and packets split by direction, packet type, update record kind, dropped
+traffic, client timing samples, and selected/auto-sized interpolation buffer
+settings.
 
 You can also configure the `run_kage_sync_ball_stress` target to run the same
 scenario normally, through gprof, or through Valgrind memory tools:

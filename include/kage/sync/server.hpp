@@ -78,6 +78,7 @@ private:
     struct ClientDestroyState {
         ecs::Entity entity;
         SyncFrame frame = 0;
+        std::uint64_t reset_epoch = 0;
     };
 
     struct ClientState {
@@ -96,6 +97,18 @@ private:
         BitBuffer payload;
     };
 
+    struct SerializedCandidate {
+        enum class Kind {
+            Update,
+            Destroy
+        };
+
+        Kind kind = Kind::Update;
+        std::uint32_t slot = 0;
+        std::size_t destroy_index = 0;
+        std::uint64_t priority = 0;
+    };
+
     bool valid_archetype(const ecs::Registry& registry, SyncArchetypeId archetype) const;
     bool upsert_replicated(ecs::Registry& registry, ecs::Entity entity, SyncArchetypeId archetype);
     std::uint32_t allocate_slot(ecs::Entity entity, SyncArchetypeId archetype);
@@ -104,6 +117,7 @@ private:
     void remove_slot_from_client_orders(std::uint32_t slot);
     bool slot_is_replicable(const ecs::Registry& registry, std::uint32_t slot) const;
     void tick_serialized(ecs::Registry& registry);
+    static bool candidate_before(const SerializedCandidate& lhs, const SerializedCandidate& rhs) noexcept;
     bool serialize_entity(
         const ecs::Registry& registry,
         const SyncSettings& settings,

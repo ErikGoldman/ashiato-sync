@@ -34,6 +34,8 @@ namespace {
 
 constexpr kage::sync::ClientId client_id = 1;
 constexpr std::uint16_t server_port = 37042;
+constexpr int min_ball_count = 0;
+constexpr int max_ball_count = 512;
 
 struct BallPosition {
     float x = 0.0f;
@@ -100,6 +102,7 @@ struct SyncSchema {
 
 struct LinkSettings {
     float latency_ms = 0.0f;
+    float jitter_ms = 0.0f;
     float loss_percent = 0.0f;
 };
 
@@ -120,6 +123,15 @@ struct LinkSimulator {
         }
         std::uniform_real_distribution<float> distribution(0.0f, 100.0f);
         return distribution(rng) < settings.loss_percent;
+    }
+
+    double delay_seconds() {
+        float latency = std::max(0.0f, settings.latency_ms);
+        if (settings.jitter_ms > 0.0f) {
+            std::uniform_real_distribution<float> distribution(-settings.jitter_ms, settings.jitter_ms);
+            latency = std::max(0.0f, latency + distribution(rng));
+        }
+        return static_cast<double>(latency) / 1000.0;
     }
 };
 
@@ -160,8 +172,10 @@ struct RuntimeStats {
     int server_packets = 0;
     int client_packets = 0;
     int dropped_packets = 0;
+    int server_entities = 0;
     int client_entities = 0;
     kage::sync::SyncFrame frame = 0;
+    kage::sync::SyncFrame receive_frame = 0;
     kage::sync::SyncFrame client_frame = 0;
 };
 
@@ -228,7 +242,14 @@ void queue_packet(
         return;
     }
 
-    if (link.settings.latency_ms <= 0.0f) {
+    if (downstream) {
+        stats.down_bytes_window += static_cast<float>(packet.byte_size());
+    } else {
+        stats.up_bytes_window += static_cast<float>(packet.byte_size());
+    }
+
+    const double delay = link.delay_seconds();
+    if (delay <= 0.0) {
         send_packet(socket, target, packet);
         return;
     }
@@ -236,12 +257,7 @@ void queue_packet(
     link.queued.push_back(QueuedPacket{
         packet,
         target,
-        GetTime() + static_cast<double>(link.settings.latency_ms) / 1000.0});
-    if (downstream) {
-        stats.down_bytes_window += static_cast<float>(packet.byte_size());
-    } else {
-        stats.up_bytes_window += static_cast<float>(packet.byte_size());
-    }
+        GetTime() + delay});
 }
 
 void flush_link(LinkSimulator& link, SocketHandle socket) {
@@ -314,12 +330,30 @@ void spawn_ball(ecs::Registry& registry, std::vector<ServerBall>& balls, kage::s
         3.5f + static_cast<float>(index % 6) * 0.45f});
 }
 
-void update_server_world(ecs::Registry& registry, std::vector<ServerBall>& balls, SyncSchema schema, float dt, int& spawn_index) {
+void update_server_world(
+    ecs::Registry& registry,
+    std::vector<ServerBall>& balls,
+    SyncSchema schema,
+    float dt,
+    int& spawn_index,
+    int target_ball_count) {
     static float spawn_timer = 0.0f;
+    const std::size_t target = static_cast<std::size_t>(std::clamp(target_ball_count, min_ball_count, max_ball_count));
+
+    while (balls.size() > target) {
+        registry.destroy(balls.back().entity);
+        balls.pop_back();
+    }
+
     spawn_timer += dt;
-    while (spawn_timer >= 0.18f && balls.size() < 96) {
+    int spawned = 0;
+    while (spawn_timer >= 0.18f && balls.size() < target && spawned < 16) {
         spawn_timer -= 0.18f;
         spawn_ball(registry, balls, schema.ball, spawn_index++);
+        ++spawned;
+    }
+    if (balls.size() >= target) {
+        spawn_timer = std::min(spawn_timer, 0.18f);
     }
 
     for (ServerBall& ball : balls) {
@@ -368,6 +402,12 @@ void update_hotkeys(LinkSettings& settings) {
     if (IsKeyPressed(KEY_LEFT_BRACKET)) {
         settings.latency_ms = std::max(settings.latency_ms - 25.0f, 0.0f);
     }
+    if (IsKeyPressed(KEY_APOSTROPHE)) {
+        settings.jitter_ms = std::min(settings.jitter_ms + 10.0f, 500.0f);
+    }
+    if (IsKeyPressed(KEY_SEMICOLON)) {
+        settings.jitter_ms = std::max(settings.jitter_ms - 10.0f, 0.0f);
+    }
     if (IsKeyPressed(KEY_EQUAL)) {
         settings.loss_percent = std::min(settings.loss_percent + 2.5f, 50.0f);
     }
@@ -378,8 +418,7 @@ void update_hotkeys(LinkSettings& settings) {
 
 void update_client_mode_hotkeys(
     kage::sync::ReplicationClient& client,
-    kage::sync::ReplicationClientMode& client_mode,
-    kage::sync::SyncFrame& buffer_frames) {
+    kage::sync::ReplicationClientMode& client_mode) {
     if (IsKeyPressed(KEY_M)) {
         client_mode = client_mode == kage::sync::ReplicationClientMode::Snap
             ? kage::sync::ReplicationClientMode::BufferedInterpolation
@@ -394,15 +433,28 @@ void update_client_mode_hotkeys(
         client_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
         client.set_client_mode(client_mode);
     }
-    if (IsKeyPressed(KEY_COMMA) && buffer_frames > 0) {
-        --buffer_frames;
-        client.set_interpolation_buffer_frames(buffer_frames);
+}
+
+void update_entity_count_hotkeys(int& target_ball_count) {
+    const int small_step = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT) ? 1 : 8;
+    const int large_step = 32;
+    if (IsKeyPressed(KEY_UP)) {
+        target_ball_count = std::min(target_ball_count + small_step, max_ball_count);
     }
-    if (IsKeyPressed(KEY_PERIOD)) {
-        const kage::sync::SyncFrame next = buffer_frames + 1U;
-        if (client.set_interpolation_buffer_frames(next)) {
-            buffer_frames = next;
-        }
+    if (IsKeyPressed(KEY_DOWN)) {
+        target_ball_count = std::max(target_ball_count - small_step, min_ball_count);
+    }
+    if (IsKeyPressed(KEY_PAGE_UP)) {
+        target_ball_count = std::min(target_ball_count + large_step, max_ball_count);
+    }
+    if (IsKeyPressed(KEY_PAGE_DOWN)) {
+        target_ball_count = std::max(target_ball_count - large_step, min_ball_count);
+    }
+    if (IsKeyPressed(KEY_HOME)) {
+        target_ball_count = max_ball_count;
+    }
+    if (IsKeyPressed(KEY_END)) {
+        target_ball_count = min_ball_count;
     }
 }
 
@@ -456,8 +508,10 @@ void draw_stats_overlay(
     const RuntimeStats& stats,
     const LinkSettings& link,
     kage::sync::ReplicationClientMode client_mode,
-    kage::sync::SyncFrame buffer_frames) {
-    const Rectangle panel{16.0f, 16.0f, 390.0f, 216.0f};
+    int target_ball_count,
+    kage::sync::SyncFrame buffer_frames,
+    const kage::sync::ReplicationClientTimingStats& timing) {
+    const Rectangle panel{16.0f, 16.0f, 460.0f, 260.0f};
     DrawRectangleRec(panel, Color{16, 18, 22, 220});
     DrawRectangleLinesEx(panel, 1.0f, Color{90, 96, 110, 255});
 
@@ -467,11 +521,36 @@ void draw_stats_overlay(
         28,
         20,
         RAYWHITE);
-    DrawText(TextFormat("frame %u   entities %d", stats.frame, stats.client_entities), 28, 56, 16, Color{215, 220, 230, 255});
     DrawText(
-        TextFormat("latency %.0f ms  [ / ]     loss %.1f%%  - / =", link.latency_ms, link.loss_percent),
+        TextFormat(
+            "frame %u   target %d   server %d   client %d",
+            stats.frame,
+            target_ball_count,
+            stats.server_entities,
+            stats.client_entities),
+        28,
+        56,
+        16,
+        Color{215, 220, 230, 255});
+    DrawText(
+        TextFormat(
+            "latency %.0f ms  [ / ]   jitter %.0f ms  ; / '",
+            link.latency_ms,
+            link.jitter_ms),
         28,
         78,
+        16,
+        Color{215, 220, 230, 255});
+    DrawText(
+        TextFormat("loss %.1f%%  - / =", link.loss_percent),
+        28,
+        100,
+        16,
+        Color{215, 220, 230, 255});
+    DrawText(
+        TextFormat("entities up/down +/-8   shift +/-1   pg +/-32"),
+        28,
+        122,
         16,
         Color{215, 220, 230, 255});
     DrawText(
@@ -480,29 +559,44 @@ void draw_stats_overlay(
             stats.current_down_kbps,
             stats.current_up_kbps),
         28,
-        100,
+        144,
         16,
         Color{215, 220, 230, 255});
     DrawText(
         TextFormat("packets down %d  up %d  dropped %d", stats.server_packets, stats.client_packets, stats.dropped_packets),
         28,
-        120,
+        164,
         16,
         Color{215, 220, 230, 255});
     DrawText(
-        TextFormat("client frame %u   buffer %u   mode M/1/2  buf ,/.", stats.client_frame, buffer_frames),
+        TextFormat(
+            "net frame %u   client frame %u   buffer %u->%u   mode M/1/2",
+            stats.receive_frame,
+            stats.client_frame,
+            buffer_frames,
+            timing.target_interpolation_buffer_frames),
         28,
-        140,
+        184,
+        16,
+        Color{215, 220, 230, 255});
+    DrawText(
+        TextFormat(
+            "measured %.1f frames latency  %.1f jitter  %.3fx",
+            timing.latency_frames,
+            timing.jitter_frames,
+            timing.time_dilation),
+        28,
+        204,
         16,
         Color{215, 220, 230, 255});
 
     const float scale = std::max(stats.down_kbps.max_value(), stats.up_kbps.max_value());
-    const Rectangle graph{28.0f, 164.0f, 354.0f, 46.0f};
+    const Rectangle graph{28.0f, 226.0f, 404.0f, 34.0f};
     draw_graph(graph, stats.down_kbps, Color{76, 190, 255, 255}, scale);
     draw_graph(graph, stats.up_kbps, Color{255, 190, 76, 255}, scale);
-    DrawText(TextFormat("scale %.1f kbps", scale), 260, 168, 14, Color{215, 220, 230, 255});
-    DrawText("down", 32, 212, 14, Color{76, 190, 255, 255});
-    DrawText("up", 82, 212, 14, Color{255, 190, 76, 255});
+    DrawText(TextFormat("scale %.1f kbps", scale), 310, 230, 14, Color{215, 220, 230, 255});
+    DrawText("down", 32, 262, 14, Color{76, 190, 255, 255});
+    DrawText("up", 82, 262, 14, Color{255, 190, 76, 255});
 }
 
 }  // namespace
@@ -510,6 +604,12 @@ void draw_stats_overlay(
 int main(int argc, char** argv) {
     kage::sync::ReplicationClientMode client_mode = kage::sync::ReplicationClientMode::Snap;
     kage::sync::SyncFrame interpolation_buffer_frames = 2;
+    bool auto_interpolation_buffer_frames = true;
+    float time_dilation_min = 0.95f;
+    float time_dilation_max = 1.05f;
+    float time_dilation_gain = 0.05f;
+    float initial_jitter_ms = 0.0f;
+    int target_ball_count = 96;
     for (int index = 1; index < argc; ++index) {
         const std::string arg = argv[index];
         auto require_value = [&]() -> std::string {
@@ -527,8 +627,25 @@ int main(int argc, char** argv) {
             } else {
                 throw std::runtime_error("--client-mode must be snap or buffered-interpolation");
             }
-        } else if (arg == "--interpolation-buffer-frames") {
-            interpolation_buffer_frames = static_cast<kage::sync::SyncFrame>(std::stoul(require_value()));
+        } else if (arg == "--jitter-ms") {
+            initial_jitter_ms = std::stof(require_value());
+        } else if (arg == "--entities") {
+            target_ball_count = std::clamp(std::stoi(require_value()), min_ball_count, max_ball_count);
+        } else if (arg == "--auto-interpolation-buffer") {
+            const std::string value = require_value();
+            if (value == "on" || value == "true" || value == "1") {
+                auto_interpolation_buffer_frames = true;
+            } else if (value == "off" || value == "false" || value == "0") {
+                auto_interpolation_buffer_frames = false;
+            } else {
+                throw std::runtime_error("--auto-interpolation-buffer must be on or off");
+            }
+        } else if (arg == "--time-dilation-min") {
+            time_dilation_min = std::stof(require_value());
+        } else if (arg == "--time-dilation-max") {
+            time_dilation_max = std::stof(require_value());
+        } else if (arg == "--time-dilation-gain") {
+            time_dilation_gain = std::stof(require_value());
         } else {
             throw std::runtime_error("unknown argument: " + arg);
         }
@@ -554,6 +671,7 @@ int main(int argc, char** argv) {
     bool client_connected = false;
     LinkSimulator downstream_link;
     LinkSimulator upstream_link;
+    downstream_link.settings.jitter_ms = initial_jitter_ms;
     RuntimeStats stats;
 
     kage::sync::ReplicationServerOptions server_options;
@@ -562,9 +680,6 @@ int main(int argc, char** argv) {
     server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
         if (client_connected) {
             ++stats.server_packets;
-            if (downstream_link.settings.latency_ms <= 0.0f) {
-                stats.down_bytes_window += static_cast<float>(packet.byte_size());
-            }
             queue_packet(downstream_link, server_socket, client_address, packet, stats, true);
         }
     };
@@ -573,7 +688,14 @@ int main(int argc, char** argv) {
         1200,
         client_mode,
         interpolation_buffer_frames,
-        64});
+        64,
+        auto_interpolation_buffer_frames,
+        1,
+        2.0f,
+        0.1f,
+        time_dilation_min,
+        time_dilation_max,
+        time_dilation_gain});
 
     InitWindow(1280, 720, "kage-sync localhost balls");
     SetTargetFPS(60);
@@ -587,13 +709,18 @@ int main(int argc, char** argv) {
     std::vector<ServerBall> balls;
     int spawn_index = 0;
     float server_accumulator = 0.0f;
+    float receive_accumulator = 0.0f;
+    float client_accumulator = 0.0f;
     send_hello(client_socket, server_address);
 
     while (!WindowShouldClose()) {
         const float dt = GetFrameTime();
         server_accumulator += dt;
+        receive_accumulator += dt;
+        client_accumulator += dt * client.timing_stats().time_dilation;
         update_hotkeys(downstream_link.settings);
-        update_client_mode_hotkeys(client, client_mode, interpolation_buffer_frames);
+        update_entity_count_hotkeys(target_ball_count);
+        update_client_mode_hotkeys(client, client_mode);
         upstream_link.settings = downstream_link.settings;
         flush_link(downstream_link, server_socket);
         flush_link(upstream_link, client_socket);
@@ -618,9 +745,28 @@ int main(int argc, char** argv) {
 
         while (server_accumulator >= 1.0f / 30.0f) {
             server_accumulator -= 1.0f / 30.0f;
-            ++stats.client_frame;
-            update_server_world(server_registry, balls, server_schema, 1.0f / 30.0f, spawn_index);
+            update_server_world(
+                server_registry,
+                balls,
+                server_schema,
+                1.0f / 30.0f,
+                spawn_index,
+                target_ball_count);
             server.tick(server_registry);
+        }
+        stats.server_entities = static_cast<int>(balls.size());
+
+        while (receive_accumulator >= 1.0f / 30.0f) {
+            receive_accumulator -= 1.0f / 30.0f;
+            ++stats.receive_frame;
+        }
+
+        while (client_accumulator >= 1.0f / 30.0f) {
+            client_accumulator -= 1.0f / 30.0f;
+            ++stats.client_frame;
+            if (client_mode == kage::sync::ReplicationClientMode::BufferedInterpolation) {
+                client.apply_frame(client_registry, stats.client_frame);
+            }
         }
 
         while (receive_packet(client_socket, received)) {
@@ -629,16 +775,11 @@ int main(int argc, char** argv) {
                 static_cast<std::uint8_t>(read.read_bits(8U)) == kage::sync::protocol::server_update_message) {
                 stats.frame = static_cast<kage::sync::SyncFrame>(read.read_bits(32U));
             }
-            client.receive(client_registry, received);
-        }
-        if (client_mode == kage::sync::ReplicationClientMode::BufferedInterpolation) {
-            client.apply_frame(client_registry, stats.client_frame);
+            client.receive(client_registry, received, stats.receive_frame, stats.client_frame);
+            interpolation_buffer_frames = client.options().interpolation_buffer_frames;
         }
         for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
             ++stats.client_packets;
-            if (upstream_link.settings.latency_ms <= 0.0f) {
-                stats.up_bytes_window += static_cast<float>(ack.byte_size());
-            }
             queue_packet(upstream_link, client_socket, server_address, ack, stats, false);
         }
 
@@ -661,8 +802,14 @@ int main(int argc, char** argv) {
                     Color{visual.r, visual.g, visual.b, visual.a});
             });
         EndMode3D();
-        draw_stats_overlay(stats, downstream_link.settings, client_mode, interpolation_buffer_frames);
-        DrawFPS(28, 238);
+        draw_stats_overlay(
+            stats,
+            downstream_link.settings,
+            client_mode,
+            target_ball_count,
+            interpolation_buffer_frames,
+            client.timing_stats());
+        DrawFPS(28, 282);
         EndDrawing();
     }
 

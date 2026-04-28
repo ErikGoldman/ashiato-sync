@@ -14,6 +14,24 @@ struct ReplicationClientOptions {
     ReplicationClientMode client_mode = ReplicationClientMode::Snap;
     SyncFrame interpolation_buffer_frames = 2;
     std::size_t interpolation_buffer_capacity_frames = 64;
+    bool auto_interpolation_buffer_frames = true;
+    SyncFrame auto_interpolation_min_frames = 1;
+    float auto_interpolation_jitter_multiplier = 2.0f;
+    float auto_interpolation_smoothing = 0.1f;
+    float auto_interpolation_time_dilation_min = 0.95f;
+    float auto_interpolation_time_dilation_max = 1.05f;
+    float auto_interpolation_time_dilation_gain = 0.05f;
+};
+
+struct ReplicationClientTimingStats {
+    std::uint64_t sample_count = 0;
+    float latency_frames = 0.0f;
+    float jitter_frames = 0.0f;
+    float measured_interpolation_buffer_frames = 0.0f;
+    SyncFrame desired_interpolation_buffer_frames = 0;
+    SyncFrame target_interpolation_buffer_frames = 0;
+    SyncFrame current_interpolation_buffer_frames = 0;
+    float time_dilation = 1.0f;
 };
 
 class ReplicationClient {
@@ -27,10 +45,19 @@ public:
     void set_client_mode(ReplicationClientMode mode) noexcept;
     bool set_interpolation_buffer_frames(SyncFrame frames) noexcept;
     bool receive(ecs::Registry& registry, BitBuffer packet);
+    bool receive(ecs::Registry& registry, BitBuffer packet, SyncFrame client_frame);
+    bool receive(
+        ecs::Registry& registry,
+        BitBuffer packet,
+        SyncFrame receive_frame,
+        SyncFrame playback_frame);
     bool apply_frame(ecs::Registry& registry, SyncFrame client_frame);
     std::vector<BitBuffer> drain_ack_packets();
     std::size_t pending_ack_count() const noexcept;
     ecs::Entity local_entity(ecs::Entity server_entity) const;
+    const ReplicationClientTimingStats& timing_stats() const noexcept {
+        return timing_stats_;
+    }
 
 private:
     struct ComponentBaseline {
@@ -69,7 +96,11 @@ private:
         bool destroy = false;
     };
 
-    bool apply_update(ecs::Registry& registry, BitBuffer& packet);
+    bool apply_update(
+        ecs::Registry& registry,
+        BitBuffer& packet,
+        SyncFrame frame,
+        std::uint16_t record_count);
     bool apply_upsert(
         ecs::Registry& registry,
         const SyncSettings& settings,
@@ -115,10 +146,14 @@ private:
         ecs::Entity component) const;
     void remember_baseline(EntityState& state);
     void queue_ack(ecs::Entity entity, SyncFrame frame, bool destroy);
+    void record_timing_sample(SyncFrame server_frame, SyncFrame receive_frame, SyncFrame playback_frame) noexcept;
 
     ReplicationClientOptions options_;
+    ReplicationClientTimingStats timing_stats_;
     std::unordered_map<std::uint64_t, EntityState> entities_;
     std::vector<AckRecord> pending_acks_;
+    SyncFrame last_applied_buffered_frame_ = 0;
+    bool has_applied_buffered_frame_ = false;
 };
 
 }  // namespace kage::sync

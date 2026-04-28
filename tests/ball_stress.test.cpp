@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 namespace stress = kage::sync::stress;
@@ -181,6 +182,34 @@ TEST_CASE("ball stress simulated transport applies latency and loss") {
     REQUIRE(lossy.queued.empty());
 }
 
+TEST_CASE("ball stress simulated transport applies bounded uniform jitter") {
+    stress::SimulatedLink link;
+    stress::DirectionStats stats;
+    link.latency_ms = 100.0;
+    link.jitter_ms = 25.0;
+    link.loss_percent = 0.0;
+    link.rng.seed(123);
+
+    kage::sync::BitBuffer packet;
+    packet.push_bits(kage::sync::protocol::client_ack_message, 8U);
+    packet.push_bits(0, 16U);
+
+    stress::enqueue_packet(link, stats, 1, packet, 1.0);
+    REQUIRE(link.queued.size() == 1);
+    REQUIRE(link.queued.front().deliver_at >= 1.075);
+    REQUIRE(link.queued.front().deliver_at <= 1.125);
+
+    stress::SimulatedLink clamped;
+    clamped.latency_ms = 5.0;
+    clamped.jitter_ms = 25.0;
+    clamped.rng.seed(456);
+    stress::DirectionStats clamped_stats;
+    stress::enqueue_packet(clamped, clamped_stats, 1, packet, 2.0);
+    REQUIRE(clamped.queued.size() == 1);
+    REQUIRE(clamped.queued.front().deliver_at >= 2.0);
+    REQUIRE(clamped.queued.front().deliver_at <= 2.03);
+}
+
 TEST_CASE("ball stress packet classifier counts update record kinds") {
     kage::sync::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
@@ -217,15 +246,46 @@ TEST_CASE("ball stress shared latency and loss defaults apply to both directions
     config.spawn_interval_ms = 1.0;
     config.max_balls = 2;
     config.latency_ms = 25.0;
+    config.jitter_ms = 5.0;
     config.loss_percent = 100.0;
 
     const stress::StressReport report = stress::run_stress(config);
 
     REQUIRE(report.config.server_to_client_latency_ms == 25.0);
     REQUIRE(report.config.client_to_server_latency_ms == 25.0);
+    REQUIRE(report.config.server_to_client_jitter_ms == 5.0);
+    REQUIRE(report.config.client_to_server_jitter_ms == 5.0);
     REQUIRE(report.config.server_to_client_loss_percent == 100.0);
     REQUIRE(report.config.client_to_server_loss_percent == 100.0);
     REQUIRE(report.server_to_clients.dropped_packets == report.server_to_clients.packets);
+}
+
+TEST_CASE("ball stress directional jitter overrides shared jitter") {
+    stress::StressConfig config = test_config();
+    config.duration_seconds = 0.1;
+    config.tick_rate = 10.0;
+    config.jitter_ms = 5.0;
+    config.server_to_client_jitter_ms = 10.0;
+    config.client_to_server_jitter_ms = 2.0;
+
+    const stress::StressReport report = stress::run_stress(config);
+
+    REQUIRE(report.config.server_to_client_jitter_ms == 10.0);
+    REQUIRE(report.config.client_to_server_jitter_ms == 2.0);
+}
+
+TEST_CASE("ball stress validates time dilation config") {
+    stress::StressConfig config = test_config();
+    config.time_dilation_min = 0.0;
+    REQUIRE_THROWS_AS(stress::run_stress(config), std::invalid_argument);
+
+    config = test_config();
+    config.time_dilation_max = 0.5;
+    REQUIRE_THROWS_AS(stress::run_stress(config), std::invalid_argument);
+
+    config = test_config();
+    config.time_dilation_gain = -0.1;
+    REQUIRE_THROWS_AS(stress::run_stress(config), std::invalid_argument);
 }
 
 TEST_CASE("ball stress runs multiple clients through replication and ACKs") {
@@ -259,4 +319,34 @@ TEST_CASE("ball stress runs with buffered interpolation clients") {
     REQUIRE(report.config.client_mode == kage::sync::ReplicationClientMode::BufferedInterpolation);
     REQUIRE(report.memory.client_pending_acks == 0);
     REQUIRE(report.server_to_clients.server_update_packets >= 1);
+    REQUIRE(report.client_timing.sample_count >= 1);
+    REQUIRE(report.client_timing.max_current_interpolation_buffer_frames < config.interpolation_buffer_capacity_frames);
+    REQUIRE(report.client_timing.average_time_dilation >= config.time_dilation_min);
+    REQUIRE(report.client_timing.average_time_dilation <= config.time_dilation_max);
+}
+
+TEST_CASE("ball stress buffered clients report accumulator timing under jitter") {
+    stress::StressConfig config = test_config();
+    config.client_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    config.duration_seconds = 2.0;
+    config.tick_rate = 30.0;
+    config.spawn_interval_ms = 2.0;
+    config.max_balls = 64;
+    config.latency_ms = 50.0;
+    config.jitter_ms = 25.0;
+    config.interpolation_buffer_frames = 1;
+    config.interpolation_buffer_capacity_frames = 16;
+    config.time_dilation_min = 0.50;
+    config.time_dilation_max = 1.50;
+    config.time_dilation_gain = 0.50;
+
+    const stress::StressReport report = stress::run_stress(config);
+
+    REQUIRE(report.client_timing.sample_count > 0);
+    REQUIRE(report.client_timing.max_desired_interpolation_buffer_frames > 0);
+    REQUIRE(report.client_timing.max_current_interpolation_buffer_frames < config.interpolation_buffer_capacity_frames);
+    REQUIRE(report.client_timing.average_time_dilation >= config.time_dilation_min);
+    REQUIRE(report.client_timing.average_time_dilation <= config.time_dilation_max);
+    REQUIRE(report.client_timing.average_measured_interpolation_buffer_frames >= 0.0);
+    REQUIRE(report.client_timing.average_jitter_frames >= 0.0);
 }

@@ -280,14 +280,16 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
     refresh_replicated(registry);
 
     const SyncSettings& settings = registry.get<SyncSettings>();
+    std::vector<SerializedCandidate> candidates;
     std::vector<std::uint32_t> sent;
-    std::vector<std::uint32_t> next_order;
+    std::vector<std::uint32_t> unsent;
     BitBuffer records;
     SerializedEntity serialized;
     std::vector<QuantizedBaseline> snapshot_scratch;
 
+    candidates.reserve(active_replicated_count_);
     sent.reserve(active_replicated_count_);
-    next_order.reserve(active_replicated_count_);
+    unsent.reserve(active_replicated_count_);
     ++frame_;
 
     for (ClientState& client : clients_) {
@@ -295,25 +297,79 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
 
         std::size_t remaining = options_.bandwidth_limit_bytes_per_tick;
         std::uint16_t packet_entities = 0;
-        std::vector<std::uint32_t> order = std::move(client.order);
+        candidates.clear();
+        candidates.reserve(client.order.size() + client.pending_destroys.size());
         sent.clear();
-        next_order.clear();
-        next_order.reserve(order.size());
+        unsent.clear();
+        unsent.reserve(client.order.size());
         records.clear();
         records.reserve_bytes(options_.mtu_bytes);
 
-        for (const std::uint32_t slot : order) {
+        for (const std::uint32_t slot : client.order) {
             if (!slot_is_replicable(registry, slot)) {
                 if (slot < replicated_.size() && replicated_[slot].active) {
                     deactivate_slot(slot);
                 }
                 continue;
             }
+            const std::uint64_t priority = slot < client.reset_epochs.size()
+                ? client.epoch - client.reset_epochs[slot]
+                : 0;
+            candidates.push_back(SerializedCandidate{SerializedCandidate::Kind::Update, slot, 0, priority});
+        }
+        for (std::size_t index = 0; index < client.pending_destroys.size(); ++index) {
+            const ClientDestroyState& destroy = client.pending_destroys[index];
+            candidates.push_back(SerializedCandidate{
+                SerializedCandidate::Kind::Destroy,
+                0,
+                index,
+                client.epoch - destroy.reset_epoch});
+        }
+        std::stable_sort(candidates.begin(), candidates.end(), candidate_before);
+
+        for (const SerializedCandidate& candidate : candidates) {
+            if (candidate.kind == SerializedCandidate::Kind::Destroy) {
+                if (candidate.destroy_index >= client.pending_destroys.size()) {
+                    continue;
+                }
+                ClientDestroyState& destroy = client.pending_destroys[candidate.destroy_index];
+                const std::size_t next_packet_bits =
+                    protocol::server_update_header_bits + records.bit_size() + destroy_record_bits;
+                if (!records.empty() && protocol::bytes_for_bits(next_packet_bits) > options_.mtu_bytes) {
+                    const std::size_t packet_bytes =
+                        protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
+                    if (packet_bytes > remaining) {
+                        break;
+                    }
+                    send_packet(client.id, frame_, packet_entities, records);
+                    remaining -= packet_bytes;
+                    records.clear();
+                    packet_entities = 0;
+                }
+
+                const std::size_t packet_bytes = protocol::bytes_for_bits(
+                    protocol::server_update_header_bits + records.bit_size() + destroy_record_bits);
+                if (packet_bytes > options_.mtu_bytes || packet_bytes > remaining) {
+                    continue;
+                }
+
+                destroy.frame = frame_;
+                destroy.reset_epoch = client.epoch;
+                records.push_bool(true);
+                records.push_unsigned_bits(destroy.entity.value, 64U);
+                ++packet_entities;
+                continue;
+            }
+
+            const std::uint32_t slot = candidate.slot;
+            if (!slot_is_replicable(registry, slot)) {
+                continue;
+            }
 
             serialized.payload.clear();
             serialized.snapshot = invalid_snapshot_id;
             if (!serialize_entity(registry, settings, client, slot, frame_, snapshot_scratch, serialized)) {
-                next_order.push_back(slot);
+                unsent.push_back(slot);
                 continue;
             }
 
@@ -324,7 +380,7 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
                     protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
                 if (packet_bytes > remaining) {
                     release_snapshot(serialized.snapshot);
-                    next_order.push_back(slot);
+                    unsent.push_back(slot);
                     continue;
                 }
                 send_packet(client.id, frame_, packet_entities, records);
@@ -338,7 +394,7 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
             const std::size_t packet_bytes = protocol::bytes_for_bits(single_packet_bits);
             if (packet_bytes > options_.mtu_bytes || packet_bytes > remaining) {
                 release_snapshot(serialized.snapshot);
-                next_order.push_back(slot);
+                unsent.push_back(slot);
                 continue;
             }
 
@@ -364,48 +420,24 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
                 remaining -= packet_bytes;
             }
         }
-
-        records.clear();
-        packet_entities = 0;
-        for (auto destroy = client.pending_destroys.begin(); destroy != client.pending_destroys.end();) {
-            const std::size_t next_packet_bits =
-                protocol::server_update_header_bits + records.bit_size() + destroy_record_bits;
-            if (!records.empty() && protocol::bytes_for_bits(next_packet_bits) > options_.mtu_bytes) {
-                const std::size_t packet_bytes =
-                    protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
-                if (packet_bytes > remaining) {
-                    break;
-                }
-                send_packet(client.id, frame_, packet_entities, records);
-                remaining -= packet_bytes;
-                records.clear();
-                packet_entities = 0;
-            }
-
-            const std::size_t packet_bytes = protocol::bytes_for_bits(
-                protocol::server_update_header_bits + records.bit_size() + destroy_record_bits);
-            if (packet_bytes > options_.mtu_bytes || packet_bytes > remaining) {
-                break;
-            }
-
-            destroy->frame = frame_;
-            records.push_bool(true);
-            records.push_unsigned_bits(destroy->entity.value, 64U);
-            ++packet_entities;
-            ++destroy;
-        }
-
-        if (!records.empty()) {
-            const std::size_t packet_bytes =
-                protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
-            if (packet_bytes <= remaining) {
-                send_packet(client.id, frame_, packet_entities, records);
-            }
-        }
-
-        next_order.insert(next_order.end(), sent.begin(), sent.end());
-        client.order = std::move(next_order);
+        unsent.insert(unsent.end(), sent.begin(), sent.end());
+        client.order = std::move(unsent);
     }
+}
+
+bool ReplicationServer::candidate_before(
+    const SerializedCandidate& lhs,
+    const SerializedCandidate& rhs) noexcept {
+    if (lhs.priority != rhs.priority) {
+        return lhs.priority > rhs.priority;
+    }
+    if (lhs.kind != rhs.kind) {
+        return lhs.kind == SerializedCandidate::Kind::Update;
+    }
+    if (lhs.kind == SerializedCandidate::Kind::Update) {
+        return lhs.slot < rhs.slot;
+    }
+    return lhs.destroy_index < rhs.destroy_index;
 }
 
 bool ReplicationServer::serialize_entity(

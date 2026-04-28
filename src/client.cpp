@@ -3,6 +3,7 @@
 #include "kage/sync/protocol.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <stdexcept>
 #include <utility>
@@ -26,6 +27,28 @@ ReplicationClient::ReplicationClient(ReplicationClientOptions options)
     if (options_.interpolation_buffer_frames >= options_.interpolation_buffer_capacity_frames) {
         throw std::invalid_argument("interpolation buffer amount must be smaller than capacity");
     }
+    if (options_.auto_interpolation_min_frames >= options_.interpolation_buffer_capacity_frames) {
+        throw std::invalid_argument("auto interpolation buffer minimum must be smaller than capacity");
+    }
+    if (options_.auto_interpolation_jitter_multiplier < 0.0f) {
+        throw std::invalid_argument("auto interpolation jitter multiplier must be non-negative");
+    }
+    if (options_.auto_interpolation_smoothing <= 0.0f || options_.auto_interpolation_smoothing > 1.0f) {
+        throw std::invalid_argument("auto interpolation smoothing must be in the range (0, 1]");
+    }
+    if (options_.auto_interpolation_time_dilation_min <= 0.0f ||
+        options_.auto_interpolation_time_dilation_min > 1.0f) {
+        throw std::invalid_argument("auto interpolation time dilation minimum must be in the range (0, 1]");
+    }
+    if (options_.auto_interpolation_time_dilation_max < 1.0f) {
+        throw std::invalid_argument("auto interpolation time dilation maximum must be at least 1");
+    }
+    if (options_.auto_interpolation_time_dilation_gain < 0.0f) {
+        throw std::invalid_argument("auto interpolation time dilation gain must be non-negative");
+    }
+    timing_stats_.desired_interpolation_buffer_frames = options_.interpolation_buffer_frames;
+    timing_stats_.target_interpolation_buffer_frames = options_.interpolation_buffer_frames;
+    timing_stats_.current_interpolation_buffer_frames = options_.interpolation_buffer_frames;
 }
 
 bool ReplicationClient::receive(ecs::Registry& registry, BitBuffer packet) {
@@ -37,7 +60,38 @@ bool ReplicationClient::receive(ecs::Registry& registry, BitBuffer packet) {
         if (message != protocol::server_update_message) {
             return false;
         }
-        return apply_update(registry, packet);
+        const auto frame = static_cast<SyncFrame>(packet.read_bits(32U));
+        const auto record_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+        return apply_update(registry, packet, frame, record_count);
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+bool ReplicationClient::receive(ecs::Registry& registry, BitBuffer packet, SyncFrame client_frame) {
+    return receive(registry, std::move(packet), client_frame, client_frame);
+}
+
+bool ReplicationClient::receive(
+    ecs::Registry& registry,
+    BitBuffer packet,
+    SyncFrame receive_frame,
+    SyncFrame playback_frame) {
+    try {
+        if (packet.remaining_bits() < 8U) {
+            return false;
+        }
+        const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
+        if (message != protocol::server_update_message) {
+            return false;
+        }
+        const auto frame = static_cast<SyncFrame>(packet.read_bits(32U));
+        const auto record_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+        const bool applied = apply_update(registry, packet, frame, record_count);
+        if (applied) {
+            record_timing_sample(frame, receive_frame, playback_frame);
+        }
+        return applied;
     } catch (const std::exception&) {
         return false;
     }
@@ -52,6 +106,10 @@ bool ReplicationClient::set_interpolation_buffer_frames(SyncFrame frames) noexce
         return false;
     }
     options_.interpolation_buffer_frames = frames;
+    timing_stats_.desired_interpolation_buffer_frames = frames;
+    timing_stats_.target_interpolation_buffer_frames = frames;
+    timing_stats_.current_interpolation_buffer_frames = frames;
+    timing_stats_.time_dilation = 1.0f;
     return true;
 }
 
@@ -64,6 +122,8 @@ bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame client_fr
     }
 
     const SyncFrame target_frame = client_frame - options_.interpolation_buffer_frames;
+    last_applied_buffered_frame_ = target_frame;
+    has_applied_buffered_frame_ = true;
     const SyncSettings& settings = registry.get<SyncSettings>();
     bool all_valid = true;
     for (auto& entry : entities_) {
@@ -170,9 +230,11 @@ ecs::Entity ReplicationClient::local_entity(ecs::Entity server_entity) const {
     return found != entities_.end() ? found->second.local : ecs::Entity{};
 }
 
-bool ReplicationClient::apply_update(ecs::Registry& registry, BitBuffer& packet) {
-    const auto frame = static_cast<SyncFrame>(packet.read_bits(32U));
-    const auto record_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+bool ReplicationClient::apply_update(
+    ecs::Registry& registry,
+    BitBuffer& packet,
+    SyncFrame frame,
+    std::uint16_t record_count) {
     const SyncSettings& settings = registry.get<SyncSettings>();
     bool applied_any = false;
 
@@ -413,6 +475,13 @@ bool ReplicationClient::apply_buffered_destroy(ecs::Registry& registry, SyncFram
     state.baselines.clear();
     state.frame = frame;
     remember_baseline(state);
+    if (has_applied_buffered_frame_ && frame <= last_applied_buffered_frame_) {
+        const std::size_t mask = state.buffered_frames.size() - 1U;
+        const EntityState::BufferedFrame& sample = state.buffered_frames[frame & mask];
+        if (!sample.valid || sample.frame != frame || !apply_buffered_sample(registry, settings, state, sample)) {
+            return false;
+        }
+    }
     queue_ack(server_entity, frame, true);
     return true;
 }
@@ -635,6 +704,62 @@ void ReplicationClient::queue_ack(ecs::Entity entity, SyncFrame frame, bool dest
             }),
         pending_acks_.end());
     pending_acks_.push_back(AckRecord{entity, frame, destroy});
+}
+
+void ReplicationClient::record_timing_sample(
+    SyncFrame server_frame,
+    SyncFrame receive_frame,
+    SyncFrame playback_frame) noexcept {
+    const float sample = receive_frame >= server_frame
+        ? static_cast<float>(receive_frame - server_frame)
+        : 0.0f;
+
+    if (timing_stats_.sample_count == 0) {
+        timing_stats_.latency_frames = sample;
+        timing_stats_.jitter_frames = 0.0f;
+    } else {
+        const float smoothing = options_.auto_interpolation_smoothing;
+        const float previous_latency = timing_stats_.latency_frames;
+        timing_stats_.latency_frames += (sample - timing_stats_.latency_frames) * smoothing;
+        const float deviation = std::fabs(sample - previous_latency);
+        timing_stats_.jitter_frames += (deviation - timing_stats_.jitter_frames) * smoothing;
+    }
+    ++timing_stats_.sample_count;
+
+    const float wanted = timing_stats_.latency_frames +
+        options_.auto_interpolation_jitter_multiplier * timing_stats_.jitter_frames;
+    SyncFrame target = static_cast<SyncFrame>(std::ceil(std::max(0.0f, wanted)));
+    target = std::max(target, options_.auto_interpolation_min_frames);
+    const SyncFrame max_frames = static_cast<SyncFrame>(options_.interpolation_buffer_capacity_frames - 1U);
+    target = std::min(target, max_frames);
+    timing_stats_.desired_interpolation_buffer_frames = target;
+    timing_stats_.target_interpolation_buffer_frames = target;
+
+    const SyncFrame current = options_.interpolation_buffer_frames;
+    const SyncFrame applied_frame = playback_frame >= current ? playback_frame - current : 0U;
+    const float measured = server_frame >= applied_frame
+        ? static_cast<float>(server_frame - applied_frame)
+        : 0.0f;
+    timing_stats_.measured_interpolation_buffer_frames = measured;
+
+    if (options_.client_mode == ReplicationClientMode::BufferedInterpolation &&
+        options_.auto_interpolation_buffer_frames) {
+        const float error = measured - static_cast<float>(target);
+        const float unclamped = 1.0f + error * options_.auto_interpolation_time_dilation_gain;
+        timing_stats_.time_dilation = std::min(
+            options_.auto_interpolation_time_dilation_max,
+            std::max(options_.auto_interpolation_time_dilation_min, unclamped));
+
+        if (current < target && measured >= static_cast<float>(current)) {
+            options_.interpolation_buffer_frames = current + 1U;
+        } else if (current > target && measured <= static_cast<float>(current)) {
+            options_.interpolation_buffer_frames = current - 1U;
+        }
+        timing_stats_.current_interpolation_buffer_frames = options_.interpolation_buffer_frames;
+    } else {
+        timing_stats_.current_interpolation_buffer_frames = options_.interpolation_buffer_frames;
+        timing_stats_.time_dilation = 1.0f;
+    }
 }
 
 }  // namespace kage::sync
