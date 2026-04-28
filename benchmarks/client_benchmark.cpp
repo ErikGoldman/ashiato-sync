@@ -176,6 +176,37 @@ void BM_ClientDrainAckPackets(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(packets.size()));
 }
 
+void BM_ClientDrainDuplicateHeavyAckPackets(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int frame_count = static_cast<int>(state.range(1));
+    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+
+    std::int64_t drained = 0;
+    for (auto _ : state) {
+        state.PauseTiming();
+        ecs::Registry registry;
+        define_client_delta_schema(registry, false);
+        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+            1200,
+            kage::sync::ReplicationClientMode::Snap,
+            2,
+            64});
+        for (const kage::sync::BitBuffer& packet : packets) {
+            benchmark::DoNotOptimize(client.receive(registry, packet));
+        }
+        state.ResumeTiming();
+
+        const std::vector<kage::sync::BitBuffer> acks = client.drain_ack_packets();
+        for (const kage::sync::BitBuffer& ack : acks) {
+            drained += static_cast<std::int64_t>(ack.byte_size());
+        }
+        benchmark::DoNotOptimize(drained);
+    }
+
+    state.SetItemsProcessed(
+        state.iterations() * static_cast<std::int64_t>(entity_count) * static_cast<std::int64_t>(frame_count));
+}
+
 void BM_ClientReceiveDestroySnap(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const DestroyPackets packets = make_destroy_packets(entity_count);
@@ -266,6 +297,7 @@ BENCHMARK(BM_ClientReceiveMixedEntityModes)->Apply(ClientArgs);
 BENCHMARK(BM_ClientApplyBufferedInterpolation)->Apply(ClientArgs);
 BENCHMARK(BM_ClientSampleDisplayInterpolation)->Apply(ClientArgs);
 BENCHMARK(BM_ClientDrainAckPackets)->Apply(ClientArgs);
+BENCHMARK(BM_ClientDrainDuplicateHeavyAckPackets)->Args({1024, 64})->Args({4096, 64});
 BENCHMARK(BM_ClientReceiveDestroySnap)->Apply(DestroyArgs);
 BENCHMARK(BM_ClientReceiveDestroyBuffered)->Apply(DestroyArgs);
 BENCHMARK(BM_ClientTickBufferedAutoInterpolation)->Apply(ClientArgs);

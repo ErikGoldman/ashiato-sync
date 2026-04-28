@@ -93,11 +93,35 @@ typename std::enable_if<has_interpolate<Traits, Quantized>::value, bool>::type i
 }
 
 template <typename Traits, typename Quantized>
+typename std::enable_if<has_interpolate<Traits, Quantized>::value, bool>::type interpolate_quantized_bytes(
+    const std::uint8_t* from_bytes,
+    const std::uint8_t* to_bytes,
+    float alpha,
+    std::uint8_t* out) {
+    Quantized from{};
+    Quantized to{};
+    std::memcpy(&from, from_bytes, sizeof(Quantized));
+    std::memcpy(&to, to_bytes, sizeof(Quantized));
+    const Quantized interpolated = Traits::interpolate(from, to, alpha);
+    std::memcpy(out, &interpolated, sizeof(Quantized));
+    return true;
+}
+
+template <typename Traits, typename Quantized>
 typename std::enable_if<!has_interpolate<Traits, Quantized>::value, bool>::type interpolate_quantized(
     const SyncComponentOps::QuantizedBytes&,
     const SyncComponentOps::QuantizedBytes&,
     float,
     SyncComponentOps::QuantizedBytes&) {
+    return false;
+}
+
+template <typename Traits, typename Quantized>
+typename std::enable_if<!has_interpolate<Traits, Quantized>::value, bool>::type interpolate_quantized_bytes(
+    const std::uint8_t*,
+    const std::uint8_t*,
+    float,
+    std::uint8_t*) {
     return false;
 }
 
@@ -238,6 +262,10 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
         out.resize(sizeof(Quantized));
         std::memcpy(out.data(), &quantized, sizeof(Quantized));
     };
+    ops.quantize_bytes = [](const void* value, std::uint8_t* out) {
+        const Quantized quantized = Traits::quantize(*static_cast<const T*>(value));
+        std::memcpy(out, &quantized, sizeof(Quantized));
+    };
     ops.dequantize = [](const SyncComponentOps::QuantizedBytes& quantized_bytes, void* out) {
         if (quantized_bytes.size() != sizeof(Quantized)) {
             return;
@@ -254,6 +282,11 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
         std::memcpy(&quantized, quantized_bytes.data(), sizeof(Quantized));
         return registry.add<T>(entity, Traits::dequantize(quantized)) != nullptr;
     };
+    ops.apply_bytes = [](ecs::Registry& registry, ecs::Entity entity, const std::uint8_t* quantized_bytes) {
+        Quantized quantized{};
+        std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
+        return registry.add<T>(entity, Traits::dequantize(quantized)) != nullptr;
+    };
     ops.serialize = [](const SyncComponentOps::QuantizedBytes* previous_bytes,
                        const SyncComponentOps::QuantizedBytes& current_bytes,
                        BitBuffer& out) {
@@ -264,6 +297,19 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
         const Quantized* previous_ptr = nullptr;
         if (previous_bytes != nullptr && previous_bytes->size() == sizeof(Quantized)) {
             std::memcpy(&previous, previous_bytes->data(), sizeof(Quantized));
+            previous_ptr = &previous;
+        }
+
+        Traits::serialize(previous_ptr, current, out);
+    };
+    ops.serialize_bytes = [](const std::uint8_t* previous_bytes, const std::uint8_t* current_bytes, BitBuffer& out) {
+        Quantized current{};
+        std::memcpy(&current, current_bytes, sizeof(Quantized));
+
+        Quantized previous{};
+        const Quantized* previous_ptr = nullptr;
+        if (previous_bytes != nullptr) {
+            std::memcpy(&previous, previous_bytes, sizeof(Quantized));
             previous_ptr = &previous;
         }
 
@@ -288,8 +334,25 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
         std::memcpy(out.data(), &quantized, sizeof(Quantized));
         return true;
     };
+    ops.deserialize_bytes = [](BitBuffer& in, const std::uint8_t* previous_bytes, std::uint8_t* out) {
+        Quantized previous{};
+        const Quantized* previous_ptr = nullptr;
+        if (previous_bytes != nullptr) {
+            std::memcpy(&previous, previous_bytes, sizeof(Quantized));
+            previous_ptr = &previous;
+        }
+
+        Quantized quantized{};
+        if (!Traits::deserialize(in, previous_ptr, quantized)) {
+            return false;
+        }
+
+        std::memcpy(out, &quantized, sizeof(Quantized));
+        return true;
+    };
     if constexpr (detail::has_interpolate<Traits, Quantized>::value) {
         ops.interpolate = &detail::interpolate_quantized<Traits, Quantized>;
+        ops.interpolate_bytes = &detail::interpolate_quantized_bytes<Traits, Quantized>;
     }
     if constexpr (detail::has_error_blending<Traits, Quantized>::value) {
         using Error = typename Traits::Error;

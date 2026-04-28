@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <unordered_map>
 #include <vector>
 
@@ -172,6 +173,15 @@ private:
         ecs::Entity entity;
         SyncFrame frame = 0;
         bool destroy = false;
+        bool active = true;
+    };
+
+    static constexpr std::size_t invalid_ack_index = std::numeric_limits<std::size_t>::max();
+
+    struct AckIndexEntry {
+        std::uint64_t entity = 0;
+        std::size_t update = invalid_ack_index;
+        std::size_t destroy = invalid_ack_index;
     };
 
     bool apply_update(
@@ -248,6 +258,8 @@ private:
     ReplicationClientTimingStats timing_stats_;
     std::unordered_map<std::uint64_t, EntityState> entities_;
     std::vector<AckRecord> pending_acks_;
+    std::vector<AckIndexEntry> pending_ack_index_;
+    std::size_t pending_ack_live_count_ = 0;
     DisplaySampleBuffer display_frame_;
     DisplaySampleBuffer display_scratch_;
     double receive_accumulator_seconds_ = 0.0;

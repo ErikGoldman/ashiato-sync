@@ -59,6 +59,41 @@ bool frame_component_bytes(
     return true;
 }
 
+const std::uint8_t* frame_component_data(
+    const SyncArchetype& archetype,
+    const QuantizedFrameData& frame,
+    std::size_t component_index) {
+    if (!frame_has_component(frame, component_index) ||
+        component_index >= archetype.component_offsets.size() ||
+        component_index >= archetype.component_ops.size()) {
+        return nullptr;
+    }
+    const std::size_t offset = archetype.component_offsets[component_index];
+    const std::size_t size = archetype.component_ops[component_index].quantized_size;
+    if (offset + size > frame.bytes.size()) {
+        return nullptr;
+    }
+    return frame.bytes.data() + offset;
+}
+
+std::uint8_t* mutable_frame_component_data(
+    const SyncArchetype& archetype,
+    QuantizedFrameData& frame,
+    std::size_t component_index) {
+    if (component_index >= 64U ||
+        component_index >= archetype.component_offsets.size() ||
+        component_index >= archetype.component_ops.size()) {
+        return nullptr;
+    }
+    const std::size_t offset = archetype.component_offsets[component_index];
+    const std::size_t size = archetype.component_ops[component_index].quantized_size;
+    if (offset + size > frame.bytes.size()) {
+        return nullptr;
+    }
+    frame.present_mask |= (std::uint64_t{1} << component_index);
+    return frame.bytes.data() + offset;
+}
+
 bool set_frame_component_bytes(
     const SyncArchetype& archetype,
     QuantizedFrameData& frame,
@@ -367,11 +402,12 @@ const DisplaySampleBuffer& ReplicationClient::display_frame(const ecs::Registry&
 
 std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
     std::vector<BitBuffer> packets;
-    if (pending_acks_.empty()) {
+    if (pending_ack_live_count_ == 0U) {
+        pending_acks_.clear();
+        pending_ack_index_.clear();
         return packets;
     }
 
-    std::vector<AckRecord> retained_acks;
     const std::size_t one_ack_bytes =
         protocol::bytes_for_bits(protocol::client_ack_header_bits + protocol::client_ack_record_bits);
     if (one_ack_bytes > options_.mtu_bytes) {
@@ -387,28 +423,51 @@ std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
         return packets;
     }
 
-    packets.reserve((pending_acks_.size() + max_acks_per_packet - 1U) / max_acks_per_packet);
-    for (std::size_t begin = 0; begin < pending_acks_.size(); begin += max_acks_per_packet) {
-        const std::size_t count = std::min(max_acks_per_packet, pending_acks_.size() - begin);
-        BitBuffer packet;
+    packets.reserve((pending_ack_live_count_ + max_acks_per_packet - 1U) / max_acks_per_packet);
+    BitBuffer packet;
+    std::uint16_t packet_ack_count = 0;
+    std::size_t packet_count_offset = 0;
+    auto begin_packet = [&]() {
+        packet.clear();
         packet.reserve_bytes(options_.mtu_bytes);
         packet.push_bits(protocol::client_ack_message, 8U);
-        packet.push_bits(static_cast<std::int64_t>(count), 16U);
-        for (std::size_t index = begin; index < begin + count; ++index) {
-            const AckRecord& ack = pending_acks_[index];
-            packet.push_bool(ack.destroy);
-            packet.push_bits(ack.frame, 32U);
-            packet.push_unsigned_bits(ack.entity.value, 64U);
+        packet_count_offset = packet.bit_size();
+        packet.push_bits(0, 16U);
+        packet_ack_count = 0;
+    };
+    auto finish_packet = [&]() {
+        if (packet_ack_count == 0U) {
+            return;
         }
+        packet.overwrite_unsigned_bits(packet_count_offset, packet_ack_count, 16U);
         packets.push_back(std::move(packet));
-    }
+        packet = BitBuffer{};
+    };
 
-    pending_acks_ = std::move(retained_acks);
+    begin_packet();
+    for (const AckRecord& ack : pending_acks_) {
+        if (!ack.active) {
+            continue;
+        }
+        if (packet_ack_count == max_acks_per_packet) {
+            finish_packet();
+            begin_packet();
+        }
+        packet.push_bool(ack.destroy);
+        packet.push_bits(ack.frame, 32U);
+        packet.push_unsigned_bits(ack.entity.value, 64U);
+        ++packet_ack_count;
+    }
+    finish_packet();
+
+    pending_acks_.clear();
+    pending_ack_index_.clear();
+    pending_ack_live_count_ = 0;
     return packets;
 }
 
 std::size_t ReplicationClient::pending_ack_count() const noexcept {
-    return pending_acks_.size();
+    return pending_ack_live_count_;
 }
 
 ecs::Entity ReplicationClient::local_entity(ecs::Entity server_entity) const {
@@ -489,12 +548,22 @@ bool ReplicationClient::apply_upsert(
     }
 
     const SyncArchetype& definition = settings.archetypes[archetype.value];
+    const bool collect_decoded_updates = options_.entity_mode_selector &&
+        (found_state == entities_.end() || previous_absent || !found_state->second.mode_selected);
+    const bool buffered_without_selector = !options_.entity_mode_selector &&
+        (found_state != entities_.end() && !previous_absent && found_state->second.mode_selected
+             ? found_state->second.mode == ReplicationClientMode::BufferedInterpolation
+             : options_.default_entity_mode == ReplicationClientMode::BufferedInterpolation);
     std::vector<ComponentBaseline> decoded_updates;
-    QuantizedFrameData decoded;
     QuantizedFrameData merged;
-    if (!init_frame_data(definition, decoded) || !init_frame_data(definition, merged)) {
+    QuantizedFrameData decoded;
+    if (!init_frame_data(definition, merged)) {
         return false;
     }
+    if (!buffered_without_selector && !init_frame_data(definition, decoded)) {
+        return false;
+    }
+    QuantizedFrameData& received = buffered_without_selector ? merged : decoded;
 
     EntityState* previous_state = found_state != entities_.end() && !previous_absent ? &found_state->second : nullptr;
     const QuantizedFrameData* previous_baseline = nullptr;
@@ -513,7 +582,9 @@ bool ReplicationClient::apply_upsert(
 
     if (full) {
         const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
-        decoded_updates.reserve(component_count);
+        if (collect_decoded_updates) {
+            decoded_updates.reserve(component_count);
+        }
         for (std::uint16_t component = 0; component < component_count; ++component) {
             const auto component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
             if (component_index >= definition.components.size()) {
@@ -531,21 +602,40 @@ bool ReplicationClient::apply_upsert(
 
             ComponentBaseline baseline;
             baseline.component = component_entity;
-            if (!ops.deserialize(packet, nullptr, baseline.bytes)) {
+            std::uint8_t* received_bytes = mutable_frame_component_data(definition, received, component_index);
+            if (received_bytes == nullptr) {
                 return false;
             }
-            if (!set_frame_component_bytes(definition, decoded, component_index, baseline.bytes)) {
-                return false;
+            if (ops.deserialize_bytes != nullptr) {
+                if (!ops.deserialize_bytes(packet, nullptr, received_bytes)) {
+                    return false;
+                }
+                if (collect_decoded_updates) {
+                    baseline.bytes.assign(received_bytes, ops.quantized_size);
+                }
+            } else {
+                if (!ops.deserialize(packet, nullptr, baseline.bytes)) {
+                    return false;
+                }
+                if (!set_frame_component_bytes(definition, received, component_index, baseline.bytes)) {
+                    return false;
+                }
             }
-            decoded_updates.push_back(std::move(baseline));
+            if (collect_decoded_updates) {
+                decoded_updates.push_back(std::move(baseline));
+            }
         }
-        merged = decoded;
+        if (!buffered_without_selector) {
+            merged = decoded;
+        }
     } else {
         if (previous_baseline == nullptr) {
             return false;
         }
         const std::uint64_t changed_mask = packet.read_unsigned_bits(definition.components.size());
-        decoded_updates.reserve(definition.components.size());
+        if (collect_decoded_updates) {
+            decoded_updates.reserve(definition.components.size());
+        }
         merged = *previous_baseline;
         for (std::size_t component_index = 0; component_index < definition.components.size(); ++component_index) {
             if ((changed_mask & (std::uint64_t{1} << component_index)) == 0U) {
@@ -562,16 +652,43 @@ bool ReplicationClient::apply_upsert(
 
             ComponentBaseline baseline;
             baseline.component = component_entity;
-            SyncComponentOps::QuantizedBytes previous_bytes;
-            if (!frame_component_bytes(definition, *previous_baseline, component_index, previous_bytes) ||
-                !ops.deserialize(packet, &previous_bytes, baseline.bytes)) {
+            const std::uint8_t* previous_bytes =
+                frame_component_data(definition, *previous_baseline, component_index);
+            std::uint8_t* merged_bytes = mutable_frame_component_data(definition, merged, component_index);
+            std::uint8_t* decoded_bytes = buffered_without_selector
+                ? nullptr
+                : mutable_frame_component_data(definition, decoded, component_index);
+            if (previous_bytes == nullptr || merged_bytes == nullptr ||
+                (!buffered_without_selector && decoded_bytes == nullptr)) {
                 return false;
             }
-            if (!set_frame_component_bytes(definition, merged, component_index, baseline.bytes) ||
-                !set_frame_component_bytes(definition, decoded, component_index, baseline.bytes)) {
-                return false;
+            if (ops.deserialize_bytes != nullptr) {
+                if (!ops.deserialize_bytes(packet, previous_bytes, merged_bytes)) {
+                    return false;
+                }
+                if (!buffered_without_selector) {
+                    std::memcpy(decoded_bytes, merged_bytes, ops.quantized_size);
+                }
+                if (collect_decoded_updates) {
+                    baseline.bytes.assign(merged_bytes, ops.quantized_size);
+                }
+            } else {
+                SyncComponentOps::QuantizedBytes previous_quantized;
+                previous_quantized.assign(previous_bytes, ops.quantized_size);
+                if (!ops.deserialize(packet, &previous_quantized, baseline.bytes)) {
+                    return false;
+                }
+                if (!set_frame_component_bytes(definition, merged, component_index, baseline.bytes)) {
+                    return false;
+                }
+                if (!buffered_without_selector &&
+                    !set_frame_component_bytes(definition, decoded, component_index, baseline.bytes)) {
+                    return false;
+                }
             }
-            decoded_updates.push_back(std::move(baseline));
+            if (collect_decoded_updates) {
+                decoded_updates.push_back(std::move(baseline));
+            }
         }
     }
 
@@ -789,31 +906,42 @@ bool ReplicationClient::write_buffered_frame(
         if (!frame_has_component(*from, component_index)) {
             continue;
         }
-        SyncComponentOps::QuantizedBytes previous;
-        if (!frame_component_bytes(archetype, *from, component_index, previous)) {
+        const SyncComponentOps& ops = archetype.component_ops[component_index];
+        const std::uint8_t* previous = frame_component_data(archetype, *from, component_index);
+        std::uint8_t* value = mutable_frame_component_data(archetype, sample.baseline, component_index);
+        if (previous == nullptr || value == nullptr) {
             return false;
         }
-        SyncComponentOps::QuantizedBytes value = previous;
+        std::memcpy(value, previous, ops.quantized_size);
         if (to != nullptr &&
             frame_has_component(*to, component_index) &&
             archetype.components[component_index].interpolation == ComponentInterpolation::Interpolate) {
             if (component_index >= archetype.component_ops.size() ||
-                archetype.component_ops[component_index].interpolate == nullptr ||
+                (ops.interpolate == nullptr && ops.interpolate_bytes == nullptr) ||
                 to_frame == from_frame) {
                 return false;
             }
-            SyncComponentOps::QuantizedBytes next;
-            if (!frame_component_bytes(archetype, *to, component_index, next)) {
+            const std::uint8_t* next = frame_component_data(archetype, *to, component_index);
+            if (next == nullptr) {
                 return false;
             }
             const float alpha =
                 static_cast<float>(frame - from_frame) / static_cast<float>(to_frame - from_frame);
-            if (!archetype.component_ops[component_index].interpolate(previous, next, alpha, value)) {
-                return false;
+            if (ops.interpolate_bytes != nullptr) {
+                if (!ops.interpolate_bytes(previous, next, alpha, value)) {
+                    return false;
+                }
+            } else {
+                SyncComponentOps::QuantizedBytes previous_quantized;
+                SyncComponentOps::QuantizedBytes next_quantized;
+                SyncComponentOps::QuantizedBytes interpolated;
+                previous_quantized.assign(previous, ops.quantized_size);
+                next_quantized.assign(next, ops.quantized_size);
+                if (!ops.interpolate(previous_quantized, next_quantized, alpha, interpolated) ||
+                    !set_frame_component_bytes(archetype, sample.baseline, component_index, interpolated)) {
+                    return false;
+                }
             }
-        }
-        if (!set_frame_component_bytes(archetype, sample.baseline, component_index, value)) {
-            return false;
         }
     }
 
@@ -853,13 +981,21 @@ bool ReplicationClient::apply_buffered_sample(
             component_index >= archetype.component_ops.size()) {
             continue;
         }
-        SyncComponentOps::QuantizedBytes bytes;
-        if (!frame_component_bytes(archetype, sample.baseline, component_index, bytes) ||
-            !archetype.component_ops[component_index].apply(
-                registry,
-                state.local,
-                bytes)) {
+        const SyncComponentOps& ops = archetype.component_ops[component_index];
+        const std::uint8_t* bytes = frame_component_data(archetype, sample.baseline, component_index);
+        if (bytes == nullptr) {
             return false;
+        }
+        if (ops.apply_bytes != nullptr) {
+            if (!ops.apply_bytes(registry, state.local, bytes)) {
+                return false;
+            }
+        } else {
+            SyncComponentOps::QuantizedBytes quantized;
+            quantized.assign(bytes, ops.quantized_size);
+            if (!ops.apply(registry, state.local, quantized)) {
+                return false;
+            }
         }
     }
 
@@ -920,10 +1056,20 @@ bool ReplicationClient::apply_snap_sample(
         }
         const ComponentReplication& replication = archetype.components[component_index];
         const SyncComponentOps& ops = archetype.component_ops[component_index];
-        SyncComponentOps::QuantizedBytes bytes;
-        if (!frame_component_bytes(archetype, decoded, component_index, bytes) ||
-            !ops.apply(registry, state.local, bytes)) {
+        const std::uint8_t* bytes = frame_component_data(archetype, decoded, component_index);
+        if (bytes == nullptr) {
             return false;
+        }
+        if (ops.apply_bytes != nullptr) {
+            if (!ops.apply_bytes(registry, state.local, bytes)) {
+                return false;
+            }
+        } else {
+            SyncComponentOps::QuantizedBytes quantized;
+            quantized.assign(bytes, ops.quantized_size);
+            if (!ops.apply(registry, state.local, quantized)) {
+                return false;
+            }
         }
 
         SyncComponentOps::QuantizedBytes previous_bytes;
@@ -932,8 +1078,10 @@ bool ReplicationClient::apply_snap_sample(
             ops.compute_error != nullptr &&
             ops.apply_error != nullptr &&
             ops.blend_out_error != nullptr) {
+            SyncComponentOps::QuantizedBytes current_bytes;
+            current_bytes.assign(bytes, ops.quantized_size);
             SyncComponentOps::QuantizedBytes error;
-            if (!ops.compute_error(bytes, previous_bytes, error)) {
+            if (!ops.compute_error(current_bytes, previous_bytes, error)) {
                 return false;
             }
 
@@ -953,7 +1101,9 @@ bool ReplicationClient::apply_snap_sample(
                 found_error->bytes = std::move(error);
             }
         }
-        if (!set_frame_component_bytes(archetype, state.baseline, component_index, bytes)) {
+        SyncComponentOps::QuantizedBytes current_bytes;
+        current_bytes.assign(bytes, ops.quantized_size);
+        if (!set_frame_component_bytes(archetype, state.baseline, component_index, current_bytes)) {
             return false;
         }
     }
@@ -1276,16 +1426,26 @@ void ReplicationClient::remember_baseline(EntityState& state) {
 }
 
 void ReplicationClient::queue_ack(ecs::Entity entity, SyncFrame frame, bool destroy) {
-    const auto existing = std::find_if(
-        pending_acks_.begin(),
-        pending_acks_.end(),
-        [&](const AckRecord& ack) {
-            return ack.entity == entity && ack.destroy == destroy;
-        });
-    if (existing != pending_acks_.end()) {
-        pending_acks_.erase(existing);
+    const std::uint32_t entity_index = ecs::Registry::entity_index(entity);
+    if (entity_index >= pending_ack_index_.size()) {
+        pending_ack_index_.resize(static_cast<std::size_t>(entity_index) + 1U);
     }
-    pending_acks_.push_back(AckRecord{entity, frame, destroy});
+    AckIndexEntry& entry = pending_ack_index_[entity_index];
+    std::size_t& existing = destroy ? entry.destroy : entry.update;
+    if (entry.entity == entity.value && existing != invalid_ack_index && existing < pending_acks_.size()) {
+        AckRecord& old = pending_acks_[existing];
+        if (old.active && old.entity == entity && old.destroy == destroy) {
+            old.active = false;
+            --pending_ack_live_count_;
+        }
+    } else {
+        entry.entity = entity.value;
+        entry.update = invalid_ack_index;
+        entry.destroy = invalid_ack_index;
+    }
+    existing = pending_acks_.size();
+    pending_acks_.push_back(AckRecord{entity, frame, destroy, true});
+    ++pending_ack_live_count_;
 }
 
 void ReplicationClient::record_timing_sample(

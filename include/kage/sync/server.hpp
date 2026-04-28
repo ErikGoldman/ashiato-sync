@@ -121,7 +121,6 @@ private:
     void mark_owner_visibility_dirty(const SyncSettings& settings, std::uint32_t slot);
     static bool archetype_is_same_frame_cacheable(const SyncArchetype& archetype);
     void tick_serialized(ecs::Registry& registry);
-    static bool candidate_before(const SerializedCandidate& lhs, const SerializedCandidate& rhs) noexcept;
     bool serialize_entity(
         const ecs::Registry& registry,
         const SyncSettings& settings,

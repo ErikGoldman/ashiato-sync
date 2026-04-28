@@ -38,6 +38,20 @@ TEST_CASE("bit buffer handles unaligned byte payloads") {
     REQUIRE(buffer.remaining_bits() == 0);
 }
 
+TEST_CASE("bit buffer handles unaligned 64-bit integer payloads") {
+    kage::sync::BitBuffer buffer;
+    buffer.push_bits(0b101, 3U);
+    buffer.push_unsigned_bits(0xfedcba9876543210ULL, 64U);
+    buffer.push_unsigned_bits(0x0123456789abcdefULL, 64U);
+    buffer.push_bits(0b11, 2U);
+
+    REQUIRE(buffer.read_bits(3U) == 0b101);
+    REQUIRE(buffer.read_unsigned_bits(64U) == 0xfedcba9876543210ULL);
+    REQUIRE(buffer.read_unsigned_bits(64U) == 0x0123456789abcdefULL);
+    REQUIRE(buffer.read_bits(2U) == 0b11);
+    REQUIRE(buffer.remaining_bits() == 0U);
+}
+
 TEST_CASE("bit buffer reset and clear preserve expected offsets") {
     kage::sync::BitBuffer buffer;
     buffer.push_unsigned_bits(0xfeedfaceULL, 32U);

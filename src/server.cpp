@@ -31,23 +31,39 @@ bool frame_has_component(const QuantizedFrameData& frame, std::size_t component_
     return component_index < 64U && (frame.present_mask & (std::uint64_t{1} << component_index)) != 0U;
 }
 
-bool frame_component_bytes(
+const std::uint8_t* frame_component_data(
     const SyncArchetype& archetype,
     const QuantizedFrameData& frame,
-    std::size_t component_index,
-    SyncComponentOps::QuantizedBytes& out) {
+    std::size_t component_index) {
     if (!frame_has_component(frame, component_index) ||
         component_index >= archetype.component_offsets.size() ||
         component_index >= archetype.component_ops.size()) {
-        return false;
+        return nullptr;
     }
     const std::size_t offset = archetype.component_offsets[component_index];
     const std::size_t size = archetype.component_ops[component_index].quantized_size;
     if (offset + size > frame.bytes.size()) {
-        return false;
+        return nullptr;
     }
-    out.assign(frame.bytes.data() + offset, size);
-    return true;
+    return frame.bytes.data() + offset;
+}
+
+std::uint8_t* mutable_frame_component_data(
+    const SyncArchetype& archetype,
+    QuantizedFrameData& frame,
+    std::size_t component_index) {
+    if (component_index >= 64U ||
+        component_index >= archetype.component_offsets.size() ||
+        component_index >= archetype.component_ops.size()) {
+        return nullptr;
+    }
+    const std::size_t offset = archetype.component_offsets[component_index];
+    const std::size_t size = archetype.component_ops[component_index].quantized_size;
+    if (offset + size > frame.bytes.size()) {
+        return nullptr;
+    }
+    frame.present_mask |= (std::uint64_t{1} << component_index);
+    return frame.bytes.data() + offset;
 }
 
 bool set_frame_component_bytes(
@@ -335,6 +351,8 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
     const SyncSettings& settings = registry.get<SyncSettings>();
     capture_dirty_components(registry, settings);
     std::vector<SerializedCandidate> candidates;
+    std::vector<SerializedCandidate> update_candidates;
+    std::vector<std::size_t> destroy_order;
     std::vector<std::uint32_t> sent;
     std::vector<std::uint32_t> unsent;
     BitBuffer records;
@@ -343,6 +361,7 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
     std::vector<std::uint64_t> snapshot_dirty_scratch;
 
     candidates.reserve(active_replicated_count_);
+    update_candidates.reserve(active_replicated_count_);
     sent.reserve(active_replicated_count_);
     unsent.reserve(active_replicated_count_);
     ++frame_;
@@ -354,6 +373,10 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
         std::uint16_t packet_entities = 0;
         candidates.clear();
         candidates.reserve(client.order.size() + client.pending_destroys.size());
+        update_candidates.clear();
+        update_candidates.reserve(client.order.size());
+        destroy_order.clear();
+        destroy_order.reserve(client.pending_destroys.size());
         sent.clear();
         unsent.clear();
         unsent.reserve(client.order.size());
@@ -370,17 +393,54 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
             const std::uint64_t priority = slot < client.reset_epochs.size()
                 ? client.epoch - client.reset_epochs[slot]
                 : 0;
-            candidates.push_back(SerializedCandidate{SerializedCandidate::Kind::Update, slot, 0, priority});
+            update_candidates.push_back(SerializedCandidate{SerializedCandidate::Kind::Update, slot, 0, priority});
         }
-        for (std::size_t index = 0; index < client.pending_destroys.size(); ++index) {
-            const ClientDestroyState& destroy = client.pending_destroys[index];
-            candidates.push_back(SerializedCandidate{
-                SerializedCandidate::Kind::Destroy,
-                0,
-                index,
-                client.epoch - destroy.reset_epoch});
+
+        if (client.pending_destroys.empty()) {
+            candidates.insert(candidates.end(), update_candidates.begin(), update_candidates.end());
+        } else {
+            for (std::size_t index = 0; index < client.pending_destroys.size(); ++index) {
+                destroy_order.push_back(index);
+            }
+            std::stable_sort(
+                destroy_order.begin(),
+                destroy_order.end(),
+                [&](std::size_t lhs, std::size_t rhs) {
+                    const ClientDestroyState& left = client.pending_destroys[lhs];
+                    const ClientDestroyState& right = client.pending_destroys[rhs];
+                    if (left.reset_epoch != right.reset_epoch) {
+                        return left.reset_epoch < right.reset_epoch;
+                    }
+                    return lhs < rhs;
+                });
+
+            std::size_t destroy_cursor = 0;
+            auto append_destroy = [&]() {
+                const std::size_t destroy_index = destroy_order[destroy_cursor++];
+                const ClientDestroyState& destroy = client.pending_destroys[destroy_index];
+                candidates.push_back(SerializedCandidate{
+                    SerializedCandidate::Kind::Destroy,
+                    0,
+                    destroy_index,
+                    client.epoch - destroy.reset_epoch});
+            };
+
+            for (const SerializedCandidate& update : update_candidates) {
+                const std::uint64_t update_priority = update.priority;
+                while (destroy_cursor < destroy_order.size()) {
+                    const ClientDestroyState& destroy = client.pending_destroys[destroy_order[destroy_cursor]];
+                    const std::uint64_t destroy_priority = client.epoch - destroy.reset_epoch;
+                    if (update_priority >= destroy_priority) {
+                        break;
+                    }
+                    append_destroy();
+                }
+                candidates.push_back(update);
+            }
+            while (destroy_cursor < destroy_order.size()) {
+                append_destroy();
+            }
         }
-        std::stable_sort(candidates.begin(), candidates.end(), candidate_before);
 
         for (const SerializedCandidate& candidate : candidates) {
             if (candidate.kind == SerializedCandidate::Kind::Destroy) {
@@ -486,21 +546,6 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
         unsent.insert(unsent.end(), sent.begin(), sent.end());
         client.order = std::move(unsent);
     }
-}
-
-bool ReplicationServer::candidate_before(
-    const SerializedCandidate& lhs,
-    const SerializedCandidate& rhs) noexcept {
-    if (lhs.priority != rhs.priority) {
-        return lhs.priority > rhs.priority;
-    }
-    if (lhs.kind != rhs.kind) {
-        return lhs.kind == SerializedCandidate::Kind::Update;
-    }
-    if (lhs.kind == SerializedCandidate::Kind::Update) {
-        return lhs.slot < rhs.slot;
-    }
-    return lhs.destroy_index < rhs.destroy_index;
 }
 
 void ReplicationServer::capture_dirty_components(const ecs::Registry& registry, const SyncSettings& settings) {
@@ -689,16 +734,30 @@ std::uint32_t ReplicationServer::find_or_create_snapshot(
             : 0;
         scratch_dirty_generations[component_index] = dirty_generation;
 
-        SyncComponentOps::QuantizedBytes quantized;
+        std::uint8_t* destination = mutable_frame_component_data(archetype, scratch, component_index);
+        if (destination == nullptr) {
+            return invalid_snapshot_id;
+        }
         if (baseline_snapshot != nullptr &&
             component_index < baseline_snapshot->dirty_generations.size() &&
             baseline_snapshot->dirty_generations[component_index] == dirty_generation &&
-            frame_component_bytes(archetype, baseline_snapshot->data, component_index, quantized)) {
+            frame_has_component(baseline_snapshot->data, component_index)) {
+            const std::size_t offset = archetype.component_offsets[component_index];
+            const std::size_t size = archetype.component_ops[component_index].quantized_size;
+            if (offset + size > baseline_snapshot->data.bytes.size()) {
+                return invalid_snapshot_id;
+            }
+            std::memcpy(destination, baseline_snapshot->data.bytes.data() + offset, size);
         } else {
-            ops.quantize(component_value, quantized);
-        }
-        if (!set_frame_component_bytes(archetype, scratch, component_index, quantized)) {
-            return invalid_snapshot_id;
+            if (ops.quantize_bytes == nullptr) {
+                SyncComponentOps::QuantizedBytes quantized;
+                ops.quantize(component_value, quantized);
+                if (!set_frame_component_bytes(archetype, scratch, component_index, quantized)) {
+                    return invalid_snapshot_id;
+                }
+            } else {
+                ops.quantize_bytes(component_value, destination);
+            }
         }
     }
 
@@ -887,13 +946,20 @@ void ReplicationServer::write_entity_record(
                 throw std::logic_error("sync component traits are not registered for replicated component");
             }
             const SyncComponentOps& ops = archetype.component_ops[component_index];
-            SyncComponentOps::QuantizedBytes previous;
-            SyncComponentOps::QuantizedBytes current;
-            if (!frame_component_bytes(archetype, baseline_snapshot.data, component_index, previous) ||
-                !frame_component_bytes(archetype, snapshot.data, component_index, current)) {
+            const std::uint8_t* previous = frame_component_data(archetype, baseline_snapshot.data, component_index);
+            const std::uint8_t* current = frame_component_data(archetype, snapshot.data, component_index);
+            if (previous == nullptr || current == nullptr) {
                 throw std::logic_error("replicated snapshot component bytes are missing");
             }
-            ops.serialize(&previous, current, out);
+            if (ops.serialize_bytes != nullptr) {
+                ops.serialize_bytes(previous, current, out);
+            } else {
+                SyncComponentOps::QuantizedBytes previous_bytes;
+                SyncComponentOps::QuantizedBytes current_bytes;
+                previous_bytes.assign(previous, ops.quantized_size);
+                current_bytes.assign(current, ops.quantized_size);
+                ops.serialize(&previous_bytes, current_bytes, out);
+            }
         }
         (void)registry;
         return;
@@ -914,13 +980,19 @@ void ReplicationServer::write_entity_record(
             throw std::logic_error("sync component traits are not registered for replicated component");
         }
         const SyncComponentOps& ops = archetype.component_ops[component_index];
-        SyncComponentOps::QuantizedBytes current;
-        if (!frame_component_bytes(archetype, snapshot.data, component_index, current)) {
+        const std::uint8_t* current = frame_component_data(archetype, snapshot.data, component_index);
+        if (current == nullptr) {
             throw std::logic_error("replicated snapshot component bytes are missing");
         }
 
         out.push_bits(static_cast<std::int64_t>(component_index), 16U);
-        ops.serialize(nullptr, current, out);
+        if (ops.serialize_bytes != nullptr) {
+            ops.serialize_bytes(nullptr, current, out);
+        } else {
+            SyncComponentOps::QuantizedBytes current_bytes;
+            current_bytes.assign(current, ops.quantized_size);
+            ops.serialize(nullptr, current_bytes, out);
+        }
     }
 
     (void)registry;

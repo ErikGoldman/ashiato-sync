@@ -541,6 +541,40 @@ void BM_ServerTickArchetypeDiversity(benchmark::State& state) {
         state.iterations() * static_cast<std::int64_t>(entity_count) * static_cast<std::int64_t>(client_count));
 }
 
+void BM_ServerTickStressScheduler(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int client_count = static_cast<int>(state.range(1));
+
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
+    const std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
+
+    std::uint64_t sent = 0;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 1024U * 1024U;
+    options.mtu_bytes = 1200;
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        sent += client + payload.byte_size();
+        benchmark::DoNotOptimize(sent);
+    };
+
+    kage::sync::ReplicationServer server(options);
+    add_clients(server, client_count);
+    add_replication_configs(registry, entities, archetype);
+    server.refresh_replicated(registry);
+
+    for (auto _ : state) {
+        for (int index = 0; index < entity_count; ++index) {
+            registry.write<DeltaPosition>(entities[static_cast<std::size_t>(index)]) =
+                DeltaPosition{index + static_cast<int>(state.iterations()), index + 1};
+        }
+        server.tick(registry);
+    }
+
+    state.SetItemsProcessed(
+        state.iterations() * static_cast<std::int64_t>(entity_count) * static_cast<std::int64_t>(client_count));
+}
+
 void BM_BitBufferUnalignedBytes(benchmark::State& state) {
     const int byte_count = static_cast<int>(state.range(0));
     std::vector<char> bytes(static_cast<std::size_t>(byte_count), 'x');
@@ -554,6 +588,28 @@ void BM_BitBufferUnalignedBytes(benchmark::State& state) {
     }
 
     state.SetBytesProcessed(state.iterations() * static_cast<std::int64_t>(byte_count));
+}
+
+void BM_BitBufferUnalignedReadUnsigned(benchmark::State& state) {
+    const int bit_count = static_cast<int>(state.range(0));
+    kage::sync::BitBuffer source;
+    source.reserve_bytes(static_cast<std::size_t>(bit_count + 8));
+    source.push_bool(true);
+    for (int index = 0; index < bit_count; ++index) {
+        source.push_unsigned_bits(0xfedcba9876543210ULL + static_cast<std::uint64_t>(index), 64U);
+    }
+
+    std::uint64_t sum = 0;
+    for (auto _ : state) {
+        kage::sync::BitBuffer input = source;
+        benchmark::DoNotOptimize(input.read_bool());
+        for (int index = 0; index < bit_count; ++index) {
+            sum += input.read_unsigned_bits(64U);
+        }
+        benchmark::DoNotOptimize(sum);
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(bit_count));
 }
 
 void BM_BitBufferAppendBits(benchmark::State& state) {
@@ -614,7 +670,9 @@ BENCHMARK(BM_ServerTickPendingDestroysBudgetLimited)->Apply(PendingDestroyArgs);
 BENCHMARK(BM_ServerTickMutatingAckedDelta)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickOwnerAudienceMixed)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickArchetypeDiversity)->Apply(TickArgs);
+BENCHMARK(BM_ServerTickStressScheduler)->Args({4096, 4});
 BENCHMARK(BM_BitBufferUnalignedBytes)->Arg(64)->Arg(1024)->Arg(16384);
+BENCHMARK(BM_BitBufferUnalignedReadUnsigned)->Arg(1024)->Arg(16384);
 BENCHMARK(BM_BitBufferAppendBits)->Arg(512)->Arg(8192)->Arg(131072);
 
 }  // namespace

@@ -584,3 +584,97 @@ component records, fixed archetype frame storage cuts RSS by roughly another
 fixed blob stores the full archetype byte span for each snapshot, but the
 combined process RSS and wall time improve substantially. Packet/update counts
 stayed identical.
+
+## Experiment 15: Post-Profile Hot Path Batch
+
+Rationale: a gprof run of the documented ball stress scenario showed the
+largest remaining costs in per-component byte scratch during
+serialize/deserialize, buffered client receive work that is unused when no
+entity mode selector is installed, ACK duplicate handling, server candidate
+sorting, and unaligned `BitBuffer` integer reads/writes. This experiment tried
+the five targeted changes from that profile in sequence and ran the stress
+scenario after each step:
+
+- direct byte-span component ops for fixed archetype frame storage;
+- buffered interpolation receive fast path when no entity mode selector is
+  installed;
+- indexed ACK coalescing with append-order preservation;
+- merge ordered updates with sorted pending destroys instead of sorting all
+  server candidates;
+- unaligned `BitBuffer::push_unsigned_bits` and `read_unsigned_bits` fast
+  paths.
+
+Baseline immediately before these changes:
+
+- `wall=21.268996`, `server_replication=9.462134`,
+  `client_receive=9.784310`, `ack_processing=1.667472`
+
+Stress results after each step:
+
+- Direct byte-span ops: `wall=21.851678`,
+  `server_replication=9.485185`, `client_receive=10.288461`,
+  `ack_processing=1.724624`
+- Add buffered receive fast path: `wall=21.156217`,
+  `server_replication=9.479551`, `client_receive=9.650104`,
+  `ack_processing=1.689691`
+- Add indexed ACK coalescing: `wall=21.956637`,
+  `server_replication=10.023671`, `client_receive=9.363564`,
+  `ack_processing=2.222341`
+- Add candidate merge scheduler: `wall=20.507879`,
+  `server_replication=9.253099`, `client_receive=8.720641`,
+  `ack_processing=2.197905`
+- Add unaligned `BitBuffer` fast paths: `wall=17.570524`,
+  `server_replication=8.440212`, `client_receive=6.979565`,
+  `ack_processing=1.826202`
+- Replace ACK hash index with direct entity-index table and fix scheduler
+  same-tick destroy collection in the final state: `wall=14.560662`,
+  `server_replication=7.585361`, `client_receive=5.547014`,
+  `ack_processing=1.145871`
+
+Stress command:
+
+```sh
+build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --report text
+```
+
+Stress artifact: `build-bench/kage_sync_ball_stress`
+
+Focused benchmark command:
+
+```sh
+build-bench/kage_sync_benchmark --benchmark_filter='BM_ClientReceiveBufferedInterpolation|BM_ClientDrainDuplicateHeavyAckPackets|BM_ServerTickStressScheduler|BM_ServerTickPackedAckedDeltaShared|BM_ServerTickMutatingAckedDelta|BM_BitBufferUnalignedReadUnsigned' --benchmark_min_time=0.05s
+```
+
+Focused artifact: `build-bench/kage_sync_benchmark`
+
+Profile command:
+
+```sh
+cmake --build build-bench-gprof --target run_kage_sync_ball_stress
+```
+
+Profile artifact: `/tmp/kage_sync_ball_stress_gprof.txt`
+
+Profiled final-state stress result: `wall=18.123062`,
+`server_replication=8.897216`, `client_receive=7.355429`,
+`ack_processing=1.316898`
+
+Focused results from the final state:
+
+- `BM_ClientReceiveBufferedInterpolation/4096/16`: `7991084 ns`
+- `BM_ClientDrainDuplicateHeavyAckPackets/4096/64`: `4572208 ns`
+- `BM_ServerTickStressScheduler/4096/4`: `6071280 ns`
+- `BM_BitBufferUnalignedReadUnsigned/16384`: `41403 ns`
+- `BM_ServerTickPackedAckedDeltaShared/16384/8`: `15938889 ns`
+- `BM_ServerTickMutatingAckedDelta/16384/8`: `77390329 ns`
+
+Conclusion: keep the buffered receive fast path, direct entity-index ACK
+coalescing, and unaligned `BitBuffer` fast paths. The direct byte-span
+component ops regressed by themselves, but they enabled the buffered receive
+fast path and leave a useful hook for future component-direct work. The first
+ACK index attempt using an `unordered_map` regressed; changing the index to a
+direct table keyed by `ecs::Registry::entity_index` made the final cumulative
+state much faster. The candidate merge scheduler improved wall time, but it
+changed packet/update counts slightly, so it should be treated as a scheduling
+policy change rather than a pure CPU optimization. The final cumulative state
+cuts wall time by about 31.5% versus the immediate baseline.
