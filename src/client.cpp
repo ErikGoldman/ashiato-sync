@@ -19,6 +19,34 @@ bool is_power_of_two(std::size_t value) {
 
 }  // namespace
 
+bool ReplicatedEntityUpdateView::try_get(
+    const ecs::Registry& registry,
+    ecs::Entity component,
+    void* out) const {
+    if (components == nullptr || out == nullptr) {
+        return false;
+    }
+
+    const auto found = std::find_if(
+        components->begin(),
+        components->end(),
+        [component](const ReplicatedComponentUpdate& update) {
+            return update.component == component;
+        });
+    if (found == components->end()) {
+        return false;
+    }
+
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    const auto found_ops = settings.component_ops.find(component.value);
+    if (found_ops == settings.component_ops.end() || found_ops->second.dequantize == nullptr) {
+        return false;
+    }
+
+    found_ops->second.dequantize(found->bytes, out);
+    return true;
+}
+
 ReplicationClient::ReplicationClient(ReplicationClientOptions options)
     : options_(options) {
     if (!is_power_of_two(options_.interpolation_buffer_capacity_frames)) {
@@ -97,8 +125,35 @@ bool ReplicationClient::receive(
     }
 }
 
-void ReplicationClient::set_client_mode(ReplicationClientMode mode) noexcept {
-    options_.client_mode = mode;
+bool ReplicationClient::set_default_entity_mode(ReplicationClientMode mode) noexcept {
+    options_.default_entity_mode = mode;
+    return true;
+}
+
+bool ReplicationClient::set_entity_mode(
+    ecs::Registry& registry,
+    ecs::Entity server_entity,
+    ReplicationClientMode mode) {
+    const auto found = entities_.find(server_entity.value);
+    if (found == entities_.end()) {
+        return false;
+    }
+
+    EntityState& state = found->second;
+    if (!state.entity_present && !state.local) {
+        return false;
+    }
+    if (state.mode == mode) {
+        return true;
+    }
+
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    return switch_entity_mode(registry, settings, state, mode);
+}
+
+ReplicationClientMode ReplicationClient::entity_mode(ecs::Entity server_entity) const noexcept {
+    const auto found = entities_.find(server_entity.value);
+    return found != entities_.end() ? found->second.mode : options_.default_entity_mode;
 }
 
 bool ReplicationClient::set_interpolation_buffer_frames(SyncFrame frames) noexcept {
@@ -114,7 +169,7 @@ bool ReplicationClient::set_interpolation_buffer_frames(SyncFrame frames) noexce
 }
 
 bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame client_frame) {
-    if (options_.client_mode != ReplicationClientMode::BufferedInterpolation) {
+    if (!has_buffered_entities()) {
         return true;
     }
     if (client_frame < options_.interpolation_buffer_frames) {
@@ -268,13 +323,26 @@ bool ReplicationClient::apply_upsert(
     SyncFrame baseline_frame = 0;
 
     auto found_state = entities_.find(server_entity.value);
+    const bool previous_absent = found_state != entities_.end() &&
+        !found_state->second.entity_present &&
+        !found_state->second.local;
     if (full) {
         archetype = SyncArchetypeId{static_cast<std::uint32_t>(packet.read_bits(32U))};
         if (archetype.value >= settings.archetypes.size()) {
             return false;
         }
+        if (previous_absent) {
+            EntityState& state = found_state->second;
+            state.archetype = archetype;
+            state.mode = ReplicationClientMode::Snap;
+            state.entity_present = false;
+            state.mode_selected = false;
+            state.baselines.clear();
+            state.history.clear();
+            state.applied_baselines.clear();
+        }
     } else {
-        if (found_state == entities_.end()) {
+        if (found_state == entities_.end() || previous_absent) {
             return false;
         }
         archetype = found_state->second.archetype;
@@ -294,7 +362,7 @@ bool ReplicationClient::apply_upsert(
     std::vector<ComponentBaseline> decoded;
     decoded.reserve(component_count);
 
-    EntityState* previous_state = found_state != entities_.end() ? &found_state->second : nullptr;
+    EntityState* previous_state = found_state != entities_.end() && !previous_absent ? &found_state->second : nullptr;
     const std::vector<ComponentBaseline>* previous_baselines = nullptr;
     if (!full && previous_state != nullptr) {
         const auto found_baseline = std::find_if(
@@ -343,68 +411,33 @@ bool ReplicationClient::apply_upsert(
         return false;
     }
 
-    if (options_.client_mode == ReplicationClientMode::BufferedInterpolation) {
+    EntityState& state = entities_[server_entity.value];
+    if (!state.mode_selected) {
+        ReplicationClientMode selected = options_.default_entity_mode;
+        if (options_.entity_mode_selector) {
+            ReplicatedEntityUpdateView update;
+            update.server_entity = server_entity;
+            update.local_entity = state.local;
+            update.archetype = archetype;
+            update.frame = frame;
+            update.components = &decoded;
+            selected = options_.entity_mode_selector(update);
+        }
+        state.mode = selected;
+        state.mode_selected = true;
+    }
+
+    if (state.mode == ReplicationClientMode::BufferedInterpolation) {
         return apply_buffered_upsert(registry, settings, frame, server_entity, archetype, decoded);
     }
 
-    EntityState& state = entities_[server_entity.value];
-    if (!state.local) {
-        state.local = registry.create();
-    }
-    state.mode = ReplicationClientMode::Snap;
     state.archetype = archetype;
-
-    if (full && previous_state != nullptr) {
-        for (const ComponentBaseline& existing : previous_state->baselines) {
-            const auto still_visible = std::find_if(
-                decoded.begin(),
-                decoded.end(),
-                [&](const ComponentBaseline& baseline) {
-                    return baseline.component == existing.component;
-                });
-            if (still_visible != decoded.end()) {
-                continue;
-            }
-
-            registry.remove(state.local, existing.component);
-        }
-
-        state.baselines.erase(
-            std::remove_if(
-                state.baselines.begin(),
-                state.baselines.end(),
-                [&](const ComponentBaseline& existing) {
-                    return std::find_if(
-                        decoded.begin(),
-                        decoded.end(),
-                        [&](const ComponentBaseline& baseline) {
-                            return baseline.component == existing.component;
-                        }) == decoded.end();
-                }),
-            state.baselines.end());
-    }
-
-    for (const ComponentBaseline& baseline : decoded) {
-        const auto found_ops = settings.component_ops.find(baseline.component.value);
-        if (found_ops == settings.component_ops.end() ||
-            !found_ops->second.apply(registry, state.local, baseline.bytes)) {
-            return false;
-        }
-
-        auto found_baseline = std::find_if(
-            state.baselines.begin(),
-            state.baselines.end(),
-            [&](const ComponentBaseline& existing) {
-                return existing.component == baseline.component;
-            });
-        if (found_baseline == state.baselines.end()) {
-            state.baselines.push_back(baseline);
-        } else {
-            found_baseline->bytes = baseline.bytes;
-        }
+    if (!apply_snap_sample(registry, settings, state, decoded, full)) {
+        return false;
     }
 
     state.frame = frame;
+    state.entity_present = true;
     remember_baseline(state);
     queue_ack(server_entity, frame, false);
     return true;
@@ -412,18 +445,20 @@ bool ReplicationClient::apply_upsert(
 
 bool ReplicationClient::apply_destroy(ecs::Registry& registry, SyncFrame frame, ecs::Entity server_entity) {
     const auto found = entities_.find(server_entity.value);
-    if (options_.client_mode == ReplicationClientMode::BufferedInterpolation) {
+    if (found == entities_.end()) {
+        queue_ack(server_entity, frame, true);
+        return true;
+    }
+    if (found->second.mode == ReplicationClientMode::BufferedInterpolation) {
         return apply_buffered_destroy(registry, frame, server_entity);
     }
-    if (found != entities_.end()) {
-        if (frame <= found->second.frame) {
-            return false;
-        }
-        if (found->second.local) {
-            registry.destroy(found->second.local);
-        }
-        entities_.erase(found);
+    if (frame <= found->second.frame) {
+        return false;
     }
+    if (found->second.local) {
+        registry.destroy(found->second.local);
+    }
+    entities_.erase(found);
     queue_ack(server_entity, frame, true);
     return true;
 }
@@ -441,6 +476,7 @@ bool ReplicationClient::apply_buffered_upsert(
 
     EntityState& state = entities_[server_entity.value];
     state.mode = ReplicationClientMode::BufferedInterpolation;
+    state.mode_selected = true;
     state.archetype = archetype;
     if (state.buffered_frames.empty()) {
         state.buffered_frames.resize(options_.interpolation_buffer_capacity_frames);
@@ -455,6 +491,7 @@ bool ReplicationClient::apply_buffered_upsert(
 
     state.baselines = decoded;
     state.frame = frame;
+    state.entity_present = true;
     remember_baseline(state);
     queue_ack(server_entity, frame, false);
     (void)registry;
@@ -464,6 +501,7 @@ bool ReplicationClient::apply_buffered_upsert(
 bool ReplicationClient::apply_buffered_destroy(ecs::Registry& registry, SyncFrame frame, ecs::Entity server_entity) {
     EntityState& state = entities_[server_entity.value];
     state.mode = ReplicationClientMode::BufferedInterpolation;
+    state.mode_selected = true;
     if (state.buffered_frames.empty()) {
         state.buffered_frames.resize(options_.interpolation_buffer_capacity_frames);
     }
@@ -474,6 +512,7 @@ bool ReplicationClient::apply_buffered_destroy(ecs::Registry& registry, SyncFram
     }
     state.baselines.clear();
     state.frame = frame;
+    state.entity_present = false;
     remember_baseline(state);
     if (has_applied_buffered_frame_ && frame <= last_applied_buffered_frame_) {
         const std::size_t mask = state.buffered_frames.size() - 1U;
@@ -650,6 +689,143 @@ bool ReplicationClient::apply_buffered_sample(
     return true;
 }
 
+bool ReplicationClient::apply_snap_sample(
+    ecs::Registry& registry,
+    const SyncSettings& settings,
+    EntityState& state,
+    const std::vector<ComponentBaseline>& decoded,
+    bool full) {
+    if (!state.local || !registry.alive(state.local)) {
+        state.local = registry.create();
+    }
+
+    if (full) {
+        for (const ComponentBaseline& existing : state.baselines) {
+            const auto still_visible = std::find_if(
+                decoded.begin(),
+                decoded.end(),
+                [&](const ComponentBaseline& baseline) {
+                    return baseline.component == existing.component;
+                });
+            if (still_visible == decoded.end()) {
+                registry.remove(state.local, existing.component);
+            }
+        }
+
+        state.baselines.erase(
+            std::remove_if(
+                state.baselines.begin(),
+                state.baselines.end(),
+                [&](const ComponentBaseline& existing) {
+                    return std::find_if(
+                        decoded.begin(),
+                        decoded.end(),
+                        [&](const ComponentBaseline& baseline) {
+                            return baseline.component == existing.component;
+                        }) == decoded.end();
+                }),
+            state.baselines.end());
+    }
+
+    for (const ComponentBaseline& baseline : decoded) {
+        const auto found_ops = settings.component_ops.find(baseline.component.value);
+        if (found_ops == settings.component_ops.end() ||
+            !found_ops->second.apply(registry, state.local, baseline.bytes)) {
+            return false;
+        }
+
+        auto found_baseline = std::find_if(
+            state.baselines.begin(),
+            state.baselines.end(),
+            [&](const ComponentBaseline& existing) {
+                return existing.component == baseline.component;
+            });
+        if (found_baseline == state.baselines.end()) {
+            state.baselines.push_back(baseline);
+        } else {
+            found_baseline->bytes = baseline.bytes;
+        }
+    }
+
+    state.entity_present = true;
+    state.applied_baselines = state.baselines;
+    return true;
+}
+
+bool ReplicationClient::apply_latest_snap(
+    ecs::Registry& registry,
+    const SyncSettings& settings,
+    EntityState& state) {
+    if (!state.entity_present) {
+        if (state.local && registry.alive(state.local)) {
+            registry.destroy(state.local);
+        }
+        state.local = ecs::Entity{};
+        state.applied_baselines.clear();
+        return true;
+    }
+
+    return apply_snap_sample(registry, settings, state, state.baselines, true);
+}
+
+bool ReplicationClient::switch_entity_mode(
+    ecs::Registry& registry,
+    const SyncSettings& settings,
+    EntityState& state,
+    ReplicationClientMode mode) {
+    if (state.mode == mode) {
+        return true;
+    }
+
+    if (mode == ReplicationClientMode::BufferedInterpolation) {
+        if (!validate_buffered_archetype(settings, state.archetype)) {
+            return false;
+        }
+        state.mode = ReplicationClientMode::BufferedInterpolation;
+        state.mode_selected = true;
+        if (state.buffered_frames.empty()) {
+            state.buffered_frames.resize(options_.interpolation_buffer_capacity_frames);
+            for (EntityState::BufferedFrame& sample : state.buffered_frames) {
+                sample.baselines.reserve(settings.archetypes[state.archetype.value].components.size());
+            }
+        }
+        if (state.frame != 0) {
+            if (!write_buffered_frame(
+                    settings,
+                    state,
+                    state.frame,
+                    state.entity_present,
+                    nullptr,
+                    state.entity_present ? &state.baselines : nullptr,
+                    state.frame,
+                    state.frame)) {
+                return false;
+            }
+        }
+        state.applied_baselines = state.baselines;
+        return true;
+    }
+
+    const ReplicationClientMode previous = state.mode;
+    state.mode = ReplicationClientMode::Snap;
+    state.mode_selected = true;
+    if (!apply_latest_snap(registry, settings, state)) {
+        state.mode = previous;
+        return false;
+    }
+    state.buffered_frames.clear();
+    return true;
+}
+
+bool ReplicationClient::has_buffered_entities() const noexcept {
+    return std::any_of(
+        entities_.begin(),
+        entities_.end(),
+        [](const auto& entry) {
+            return entry.second.mode == ReplicationClientMode::BufferedInterpolation;
+        });
+}
+
 ComponentInterpolation ReplicationClient::interpolation_for(
     const SyncSettings& settings,
     SyncArchetypeId archetype,
@@ -742,7 +918,7 @@ void ReplicationClient::record_timing_sample(
         : 0.0f;
     timing_stats_.measured_interpolation_buffer_frames = measured;
 
-    if (options_.client_mode == ReplicationClientMode::BufferedInterpolation &&
+    if (has_buffered_entities() &&
         options_.auto_interpolation_buffer_frames) {
         const float error = measured - static_cast<float>(target);
         const float unclamped = 1.0f + error * options_.auto_interpolation_time_dilation_gain;

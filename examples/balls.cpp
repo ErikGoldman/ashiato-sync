@@ -337,7 +337,6 @@ void update_server_world(
     float dt,
     int& spawn_index,
     int target_ball_count) {
-    static float spawn_timer = 0.0f;
     const std::size_t target = static_cast<std::size_t>(std::clamp(target_ball_count, min_ball_count, max_ball_count));
 
     while (balls.size() > target) {
@@ -345,15 +344,10 @@ void update_server_world(
         balls.pop_back();
     }
 
-    spawn_timer += dt;
     int spawned = 0;
-    while (spawn_timer >= 0.18f && balls.size() < target && spawned < 16) {
-        spawn_timer -= 0.18f;
+    while (balls.size() < target && spawned < 16) {
         spawn_ball(registry, balls, schema.ball, spawn_index++);
         ++spawned;
-    }
-    if (balls.size() >= target) {
-        spawn_timer = std::min(spawn_timer, 0.18f);
     }
 
     for (ServerBall& ball : balls) {
@@ -418,20 +412,28 @@ void update_hotkeys(LinkSettings& settings) {
 
 void update_client_mode_hotkeys(
     kage::sync::ReplicationClient& client,
+    ecs::Registry& client_registry,
+    const std::vector<ServerBall>& balls,
     kage::sync::ReplicationClientMode& client_mode) {
+    auto set_mode = [&](kage::sync::ReplicationClientMode mode) {
+        client_mode = mode;
+        client.set_default_entity_mode(mode);
+        for (const ServerBall& ball : balls) {
+            client.set_entity_mode(client_registry, ball.entity, mode);
+        }
+    };
+
     if (IsKeyPressed(KEY_M)) {
-        client_mode = client_mode == kage::sync::ReplicationClientMode::Snap
-            ? kage::sync::ReplicationClientMode::BufferedInterpolation
-            : kage::sync::ReplicationClientMode::Snap;
-        client.set_client_mode(client_mode);
+        set_mode(
+            client_mode == kage::sync::ReplicationClientMode::Snap
+                ? kage::sync::ReplicationClientMode::BufferedInterpolation
+                : kage::sync::ReplicationClientMode::Snap);
     }
     if (IsKeyPressed(KEY_ONE)) {
-        client_mode = kage::sync::ReplicationClientMode::Snap;
-        client.set_client_mode(client_mode);
+        set_mode(kage::sync::ReplicationClientMode::Snap);
     }
     if (IsKeyPressed(KEY_TWO)) {
-        client_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
-        client.set_client_mode(client_mode);
+        set_mode(kage::sync::ReplicationClientMode::BufferedInterpolation);
     }
 }
 
@@ -720,7 +722,7 @@ int main(int argc, char** argv) {
         client_accumulator += dt * client.timing_stats().time_dilation;
         update_hotkeys(downstream_link.settings);
         update_entity_count_hotkeys(target_ball_count);
-        update_client_mode_hotkeys(client, client_mode);
+        update_client_mode_hotkeys(client, client_registry, balls, client_mode);
         upstream_link.settings = downstream_link.settings;
         flush_link(downstream_link, server_socket);
         flush_link(upstream_link, client_socket);
@@ -764,9 +766,7 @@ int main(int argc, char** argv) {
         while (client_accumulator >= 1.0f / 30.0f) {
             client_accumulator -= 1.0f / 30.0f;
             ++stats.client_frame;
-            if (client_mode == kage::sync::ReplicationClientMode::BufferedInterpolation) {
-                client.apply_frame(client_registry, stats.client_frame);
-            }
+            client.apply_frame(client_registry, stats.client_frame);
         }
 
         while (receive_packet(client_socket, received)) {

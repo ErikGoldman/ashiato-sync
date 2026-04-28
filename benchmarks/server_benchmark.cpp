@@ -551,6 +551,36 @@ void BM_ClientReceiveBufferedInterpolation(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(packets.size()));
 }
 
+void BM_ClientReceiveMixedEntityModes(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int frame_count = static_cast<int>(state.range(1));
+    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        ecs::Registry registry;
+        define_client_delta_schema(registry, true);
+        kage::sync::ReplicationClientOptions options;
+        options.mtu_bytes = 1200;
+        options.default_entity_mode = kage::sync::ReplicationClientMode::Snap;
+        options.interpolation_buffer_frames = 2;
+        options.interpolation_buffer_capacity_frames = 64;
+        options.entity_mode_selector = [](const kage::sync::ReplicatedEntityUpdateView& update) {
+            return (update.server_entity.value & 1U) == 0U
+                ? kage::sync::ReplicationClientMode::BufferedInterpolation
+                : kage::sync::ReplicationClientMode::Snap;
+        };
+        kage::sync::ReplicationClient client(std::move(options));
+        state.ResumeTiming();
+
+        for (const kage::sync::BitBuffer& packet : packets) {
+            benchmark::DoNotOptimize(client.receive(registry, packet));
+        }
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(packets.size()));
+}
+
 void BM_ClientApplyBufferedInterpolation(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
@@ -643,6 +673,7 @@ BENCHMARK(BM_ServerTickPackedAckedDeltaShared)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickPackedMtuLimited)->Apply(TickArgs);
 BENCHMARK(BM_ClientReceiveSnap)->Apply(ClientArgs);
 BENCHMARK(BM_ClientReceiveBufferedInterpolation)->Apply(ClientArgs);
+BENCHMARK(BM_ClientReceiveMixedEntityModes)->Apply(ClientArgs);
 BENCHMARK(BM_ClientApplyBufferedInterpolation)->Apply(ClientArgs);
 BENCHMARK(BM_BitBufferUnalignedBytes)->Arg(64)->Arg(1024)->Arg(16384);
 BENCHMARK(BM_BitBufferAppendBits)->Arg(512)->Arg(8192)->Arg(131072);

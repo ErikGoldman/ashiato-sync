@@ -132,10 +132,15 @@ client, so bandwidth-limited clients naturally receive older unsent state first.
   since the last tick.
 - Use `set_owner` or add `NetworkOwner` directly when assigning owner-only
   replicated state.
-- `ReplicationClientOptions::client_mode` selects snap or buffered
-  interpolation globally for now. Buffered mode is implemented with per-entity
-  bookkeeping so later policy can choose modes per entity without changing the
-  storage model.
+- `ReplicationClientOptions::default_entity_mode` selects the fallback client
+  mode for newly received entities. Set `entity_mode_selector` to choose snap
+  or buffered interpolation on the first upsert for each entity from a decoded
+  `ReplicatedEntityUpdateView`. The view exposes `server_entity`,
+  `local_entity`, `archetype`, `frame`, and typed `try_get<T>` accessors for
+  the received component data.
+- Call `ReplicationClient::set_entity_mode(registry, server_entity, mode)` to
+  switch an already-known entity immediately. It returns `false` for unknown
+  server entities and does not create future overrides.
 - Buffered clients call `ReplicationClient::apply_frame(registry, client_frame)`
   each client tick. The ECS reflects server frame
   `client_frame - interpolation_buffer_frames`; create, component add/remove,

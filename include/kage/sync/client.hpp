@@ -4,14 +4,42 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <unordered_map>
 #include <vector>
 
 namespace kage::sync {
 
+struct ReplicatedComponentUpdate {
+    ecs::Entity component;
+    SyncComponentOps::QuantizedBytes bytes;
+};
+
+struct ReplicatedEntityUpdateView {
+    ecs::Entity server_entity;
+    ecs::Entity local_entity;
+    SyncArchetypeId archetype;
+    SyncFrame frame = 0;
+
+    template <typename T>
+    bool try_get(const ecs::Registry& registry, T& out) const {
+        const ecs::Entity component = registry.component<T>();
+        return try_get(registry, component, &out);
+    }
+
+    bool try_get(const ecs::Registry& registry, ecs::Entity component, void* out) const;
+
+private:
+    friend class ReplicationClient;
+
+    const std::vector<ReplicatedComponentUpdate>* components = nullptr;
+};
+
+using EntityModeSelector = std::function<ReplicationClientMode(const ReplicatedEntityUpdateView&)>;
+
 struct ReplicationClientOptions {
     std::size_t mtu_bytes = 1200;
-    ReplicationClientMode client_mode = ReplicationClientMode::Snap;
+    ReplicationClientMode default_entity_mode = ReplicationClientMode::Snap;
     SyncFrame interpolation_buffer_frames = 2;
     std::size_t interpolation_buffer_capacity_frames = 64;
     bool auto_interpolation_buffer_frames = true;
@@ -21,6 +49,7 @@ struct ReplicationClientOptions {
     float auto_interpolation_time_dilation_min = 0.95f;
     float auto_interpolation_time_dilation_max = 1.05f;
     float auto_interpolation_time_dilation_gain = 0.05f;
+    EntityModeSelector entity_mode_selector;
 };
 
 struct ReplicationClientTimingStats {
@@ -42,7 +71,9 @@ public:
         return options_;
     }
 
-    void set_client_mode(ReplicationClientMode mode) noexcept;
+    bool set_default_entity_mode(ReplicationClientMode mode) noexcept;
+    bool set_entity_mode(ecs::Registry& registry, ecs::Entity server_entity, ReplicationClientMode mode);
+    ReplicationClientMode entity_mode(ecs::Entity server_entity) const noexcept;
     bool set_interpolation_buffer_frames(SyncFrame frames) noexcept;
     bool receive(ecs::Registry& registry, BitBuffer packet);
     bool receive(ecs::Registry& registry, BitBuffer packet, SyncFrame client_frame);
@@ -60,10 +91,7 @@ public:
     }
 
 private:
-    struct ComponentBaseline {
-        ecs::Entity component;
-        SyncComponentOps::QuantizedBytes bytes;
-    };
+    using ComponentBaseline = ReplicatedComponentUpdate;
 
     struct EntityState {
         struct FrameBaseline {
@@ -75,6 +103,8 @@ private:
         SyncArchetypeId archetype;
         ReplicationClientMode mode = ReplicationClientMode::Snap;
         SyncFrame frame = 0;
+        bool entity_present = true;
+        bool mode_selected = false;
         std::vector<ComponentBaseline> baselines;
         std::vector<FrameBaseline> history;
 
@@ -137,6 +167,19 @@ private:
         const SyncSettings& settings,
         EntityState& state,
         const EntityState::BufferedFrame& sample);
+    bool apply_snap_sample(
+        ecs::Registry& registry,
+        const SyncSettings& settings,
+        EntityState& state,
+        const std::vector<ComponentBaseline>& decoded,
+        bool full);
+    bool apply_latest_snap(ecs::Registry& registry, const SyncSettings& settings, EntityState& state);
+    bool switch_entity_mode(
+        ecs::Registry& registry,
+        const SyncSettings& settings,
+        EntityState& state,
+        ReplicationClientMode mode);
+    bool has_buffered_entities() const noexcept;
     ComponentInterpolation interpolation_for(
         const SyncSettings& settings,
         SyncArchetypeId archetype,
