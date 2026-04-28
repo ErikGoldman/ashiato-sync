@@ -317,69 +317,36 @@ std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
         return packets;
     }
 
-    BitBuffer packet;
-    packet.reserve_bytes(options_.mtu_bytes);
-    std::uint16_t packet_acks = 0;
     std::vector<AckRecord> retained_acks;
-
-    auto flush = [&]() {
-        if (packet_acks == 0) {
-            return;
-        }
-        packets.push_back(packet);
-        packet.clear();
-        packet.reserve_bytes(options_.mtu_bytes);
-        packet_acks = 0;
-    };
-
-    for (const AckRecord& ack : pending_acks_) {
-        if (protocol::bytes_for_bits(protocol::client_ack_header_bits + protocol::client_ack_record_bits) >
-            options_.mtu_bytes) {
-            retained_acks.push_back(ack);
-            continue;
-        }
-
-        if (packet_acks == 0) {
-            packet.push_bits(protocol::client_ack_message, 8U);
-            packet.push_bits(0, 16U);
-        }
-
-        const std::size_t next_bits = packet.bit_size() + protocol::client_ack_record_bits;
-        if (packet_acks != 0 && protocol::bytes_for_bits(next_bits) > options_.mtu_bytes) {
-            flush();
-            packet.push_bits(protocol::client_ack_message, 8U);
-            packet.push_bits(0, 16U);
-        }
-
-        if (protocol::bytes_for_bits(packet.bit_size() + protocol::client_ack_record_bits) > options_.mtu_bytes) {
-            retained_acks.push_back(ack);
-            continue;
-        }
-
-        packet.push_bool(ack.destroy);
-        packet.push_bits(ack.frame, 32U);
-        packet.push_unsigned_bits(ack.entity.value, 64U);
-        ++packet_acks;
+    const std::size_t one_ack_bytes =
+        protocol::bytes_for_bits(protocol::client_ack_header_bits + protocol::client_ack_record_bits);
+    if (one_ack_bytes > options_.mtu_bytes) {
+        return packets;
     }
-    flush();
 
-    for (BitBuffer& ack_packet : packets) {
-        BitBuffer rewritten;
-        rewritten.reserve_bytes(ack_packet.byte_size());
-        rewritten.push_bits(protocol::client_ack_message, 8U);
+    const std::size_t mtu_bits = options_.mtu_bytes * 8U;
+    const std::size_t max_acks_per_packet =
+        std::min<std::size_t>(
+            std::numeric_limits<std::uint16_t>::max(),
+            (mtu_bits - protocol::client_ack_header_bits) / protocol::client_ack_record_bits);
+    if (max_acks_per_packet == 0U) {
+        return packets;
+    }
 
-        BitBuffer read = ack_packet;
-        read.read_bits(8U);
-        read.read_bits(16U);
-        const std::uint16_t count =
-            static_cast<std::uint16_t>(read.remaining_bits() / protocol::client_ack_record_bits);
-        rewritten.push_bits(count, 16U);
-        while (read.remaining_bits() >= protocol::client_ack_record_bits) {
-            rewritten.push_bool(read.read_bool());
-            rewritten.push_bits(read.read_bits(32U), 32U);
-            rewritten.push_unsigned_bits(read.read_unsigned_bits(64U), 64U);
+    packets.reserve((pending_acks_.size() + max_acks_per_packet - 1U) / max_acks_per_packet);
+    for (std::size_t begin = 0; begin < pending_acks_.size(); begin += max_acks_per_packet) {
+        const std::size_t count = std::min(max_acks_per_packet, pending_acks_.size() - begin);
+        BitBuffer packet;
+        packet.reserve_bytes(options_.mtu_bytes);
+        packet.push_bits(protocol::client_ack_message, 8U);
+        packet.push_bits(static_cast<std::int64_t>(count), 16U);
+        for (std::size_t index = begin; index < begin + count; ++index) {
+            const AckRecord& ack = pending_acks_[index];
+            packet.push_bool(ack.destroy);
+            packet.push_bits(ack.frame, 32U);
+            packet.push_unsigned_bits(ack.entity.value, 64U);
         }
-        ack_packet = std::move(rewritten);
+        packets.push_back(std::move(packet));
     }
 
     pending_acks_ = std::move(retained_acks);
@@ -496,9 +463,7 @@ bool ReplicationClient::apply_upsert(
 
         BitBuffer payload;
         payload.reserve_bytes(protocol::bytes_for_bits(payload_bits));
-        for (std::uint32_t bit = 0; bit < payload_bits; ++bit) {
-            payload.push_bool(packet.read_bool());
-        }
+        packet.read_buffer_bits(payload, payload_bits);
 
         const ecs::Entity component_entity = definition.components[component_index].component;
         const auto found_ops = settings.component_ops.find(component_entity.value);
@@ -1229,14 +1194,15 @@ void ReplicationClient::remember_baseline(EntityState& state) {
 }
 
 void ReplicationClient::queue_ack(ecs::Entity entity, SyncFrame frame, bool destroy) {
-    pending_acks_.erase(
-        std::remove_if(
-            pending_acks_.begin(),
-            pending_acks_.end(),
-            [&](const AckRecord& ack) {
-                return ack.entity == entity && ack.destroy == destroy;
-            }),
-        pending_acks_.end());
+    const auto existing = std::find_if(
+        pending_acks_.begin(),
+        pending_acks_.end(),
+        [&](const AckRecord& ack) {
+            return ack.entity == entity && ack.destroy == destroy;
+        });
+    if (existing != pending_acks_.end()) {
+        pending_acks_.erase(existing);
+    }
     pending_acks_.push_back(AckRecord{entity, frame, destroy});
 }
 

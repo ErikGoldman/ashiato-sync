@@ -347,9 +347,7 @@ inline PacketBreakdown classify_packet(BitBuffer packet) {
             for (std::uint16_t component = 0; component < component_count; ++component) {
                 packet.read_bits(16U);
                 const auto payload_bits = static_cast<std::uint32_t>(packet.read_bits(32U));
-                for (std::uint32_t bit = 0; bit < payload_bits; ++bit) {
-                    packet.read_bool();
-                }
+                packet.skip_bits(payload_bits);
             }
         }
     } catch (const std::exception&) {

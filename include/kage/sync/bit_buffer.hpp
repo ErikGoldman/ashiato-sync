@@ -75,6 +75,14 @@ public:
             throw std::invalid_argument("bit buffer cannot push more than 64 bits at once");
         }
 
+        if ((bit_size_ % 8U) == 0 && (num_bits % 8U) == 0) {
+            for (std::size_t byte = 0; byte < num_bits / 8U; ++byte) {
+                bytes_.push_back(static_cast<std::uint8_t>((value >> (byte * 8U)) & 0xFFU));
+            }
+            bit_size_ += num_bits;
+            return;
+        }
+
         for (std::size_t bit = 0; bit < num_bits; ++bit) {
             push_bool(((value >> bit) & 1U) != 0);
         }
@@ -101,11 +109,44 @@ public:
     }
 
     void push_buffer_bits(const BitBuffer& source) {
+        if (source.bit_size_ == 0) {
+            return;
+        }
+
+        if ((bit_size_ % 8U) == 0) {
+            bytes_.insert(bytes_.end(), source.bytes_.begin(), source.bytes_.end());
+            bit_size_ += source.bit_size_;
+            return;
+        }
+
         for (std::size_t bit = 0; bit < source.bit_size_; ++bit) {
             const bool value =
                 (source.bytes_[bit / 8U] & static_cast<std::uint8_t>(1U << (bit % 8U))) != 0;
             push_bool(value);
         }
+    }
+
+    void read_buffer_bits(BitBuffer& out, std::size_t num_bits) {
+        ensure_can_read(num_bits);
+        if (num_bits == 0) {
+            return;
+        }
+
+        if ((read_bit_ % 8U) == 0 && (out.bit_size_ % 8U) == 0 && (num_bits % 8U) == 0) {
+            const std::size_t num_bytes = num_bits / 8U;
+            out.push_bytes(reinterpret_cast<const char*>(bytes_.data() + (read_bit_ / 8U)), num_bytes);
+            read_bit_ += num_bits;
+            return;
+        }
+
+        for (std::size_t bit = 0; bit < num_bits; ++bit) {
+            out.push_bool(read_bool());
+        }
+    }
+
+    void skip_bits(std::size_t num_bits) {
+        ensure_can_read(num_bits);
+        read_bit_ += num_bits;
     }
 
     bool read_bool() {
@@ -124,6 +165,15 @@ public:
             throw std::invalid_argument("bit buffer cannot read more than 64 bits at once");
         }
         ensure_can_read(num_bits);
+
+        if ((read_bit_ % 8U) == 0 && (num_bits % 8U) == 0) {
+            std::uint64_t value = 0;
+            for (std::size_t byte = 0; byte < num_bits / 8U; ++byte) {
+                value |= std::uint64_t{bytes_[(read_bit_ / 8U) + byte]} << (byte * 8U);
+            }
+            read_bit_ += num_bits;
+            return value;
+        }
 
         std::uint64_t value = 0;
         for (std::size_t bit = 0; bit < num_bits; ++bit) {
