@@ -301,6 +301,10 @@ include/kage/sync/sync.hpp   Public API
 src/sync.cpp                 Implementation
 tests/sync.test.cpp          Catch2 tests
 benchmarks/server_benchmark.cpp
-                             Google Benchmark server scheduler benchmarks
+                             Google Benchmark server-side benchmarks
+benchmarks/client_benchmark.cpp
+                             Google Benchmark client-side benchmarks
+benchmarks/benchmark_helpers.hpp
+                             Shared benchmark fixtures and packet helpers
 CMakeLists.txt               Library, test, and benchmark targets
 ```

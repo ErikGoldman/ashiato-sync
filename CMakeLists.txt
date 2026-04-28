@@ -130,6 +130,7 @@ if(KAGE_SYNC_BUILD_BENCHMARKS)
     FetchContent_MakeAvailable(google_benchmark)
 
     add_executable(kage_sync_benchmark
+        benchmarks/client_benchmark.cpp
         benchmarks/server_benchmark.cpp
     )
 

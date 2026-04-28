@@ -1,0 +1,273 @@
+#include "benchmark_helpers.hpp"
+
+#include <benchmark/benchmark.h>
+
+#include <cstdint>
+#include <utility>
+#include <vector>
+
+namespace {
+
+using namespace kage::sync::benchmarks;
+
+void BM_ClientReceiveSnap(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int frame_count = static_cast<int>(state.range(1));
+    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        ecs::Registry registry;
+        define_client_delta_schema(registry, false);
+        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+            1200,
+            kage::sync::ReplicationClientMode::Snap,
+            2,
+            64});
+        state.ResumeTiming();
+
+        for (const kage::sync::BitBuffer& packet : packets) {
+            benchmark::DoNotOptimize(client.receive(registry, packet));
+        }
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(packets.size()));
+}
+
+void BM_ClientReceiveBufferedInterpolation(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int frame_count = static_cast<int>(state.range(1));
+    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        ecs::Registry registry;
+        define_client_delta_schema(registry, true);
+        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+            1200,
+            kage::sync::ReplicationClientMode::BufferedInterpolation,
+            2,
+            64});
+        state.ResumeTiming();
+
+        for (const kage::sync::BitBuffer& packet : packets) {
+            benchmark::DoNotOptimize(client.receive(registry, packet));
+        }
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(packets.size()));
+}
+
+void BM_ClientReceiveMixedEntityModes(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int frame_count = static_cast<int>(state.range(1));
+    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        ecs::Registry registry;
+        define_client_delta_schema(registry, true);
+        kage::sync::ReplicationClientOptions options;
+        options.mtu_bytes = 1200;
+        options.default_entity_mode = kage::sync::ReplicationClientMode::Snap;
+        options.interpolation_buffer_frames = 2;
+        options.interpolation_buffer_capacity_frames = 64;
+        options.entity_mode_selector = [](const kage::sync::ReplicatedEntityUpdateView& update) {
+            return (update.server_entity.value & 1U) == 0U
+                ? kage::sync::ReplicationClientMode::BufferedInterpolation
+                : kage::sync::ReplicationClientMode::Snap;
+        };
+        kage::sync::ReplicationClient client(std::move(options));
+        state.ResumeTiming();
+
+        for (const kage::sync::BitBuffer& packet : packets) {
+            benchmark::DoNotOptimize(client.receive(registry, packet));
+        }
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(packets.size()));
+}
+
+void BM_ClientApplyBufferedInterpolation(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int frame_count = static_cast<int>(state.range(1));
+    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        ecs::Registry registry;
+        define_client_delta_schema(registry, true);
+        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+            1200,
+            kage::sync::ReplicationClientMode::BufferedInterpolation,
+            2,
+            64});
+        for (const kage::sync::BitBuffer& packet : packets) {
+            benchmark::DoNotOptimize(client.receive(registry, packet));
+        }
+        state.ResumeTiming();
+
+        for (int frame = 2; frame < frame_count + 2; ++frame) {
+            benchmark::DoNotOptimize(client.apply_frame(registry, static_cast<kage::sync::SyncFrame>(frame)));
+        }
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(frame_count));
+}
+
+void BM_ClientSampleDisplayInterpolation(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int frame_count = static_cast<int>(state.range(1));
+    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        ecs::Registry registry;
+        define_client_delta_schema(registry, true);
+        kage::sync::set_display_interpolated<DeltaPosition>(registry);
+        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+            1200,
+            kage::sync::ReplicationClientMode::BufferedInterpolation,
+            2,
+            64});
+        for (const kage::sync::BitBuffer& packet : packets) {
+            benchmark::DoNotOptimize(client.receive(registry, packet));
+        }
+        kage::sync::DisplaySampleBuffer display;
+        state.ResumeTiming();
+
+        for (int frame = 1; frame < frame_count; ++frame) {
+            benchmark::DoNotOptimize(client.sample_display_target_frame(
+                registry,
+                static_cast<double>(frame) + 0.5,
+                display));
+            benchmark::DoNotOptimize(display.entities.data());
+        }
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(frame_count - 1));
+}
+
+void BM_ClientDrainAckPackets(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int frame_count = static_cast<int>(state.range(1));
+    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+
+    std::int64_t drained = 0;
+    for (auto _ : state) {
+        state.PauseTiming();
+        ecs::Registry registry;
+        define_client_delta_schema(registry, false);
+        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+            1200,
+            kage::sync::ReplicationClientMode::Snap,
+            2,
+            64});
+        for (const kage::sync::BitBuffer& packet : packets) {
+            benchmark::DoNotOptimize(client.receive(registry, packet));
+        }
+        state.ResumeTiming();
+
+        const std::vector<kage::sync::BitBuffer> acks = client.drain_ack_packets();
+        drained += static_cast<std::int64_t>(acks.size());
+        benchmark::DoNotOptimize(drained);
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(packets.size()));
+}
+
+void BM_ClientReceiveDestroySnap(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const DestroyPackets packets = make_destroy_packets(entity_count);
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        ecs::Registry registry;
+        define_client_delta_schema(registry, false);
+        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+            1200,
+            kage::sync::ReplicationClientMode::Snap,
+            2,
+            64});
+        for (const kage::sync::BitBuffer& packet : packets.initial) {
+            benchmark::DoNotOptimize(client.receive(registry, packet));
+        }
+        state.ResumeTiming();
+
+        for (const kage::sync::BitBuffer& packet : packets.destroys) {
+            benchmark::DoNotOptimize(client.receive(registry, packet));
+        }
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(entity_count));
+}
+
+void BM_ClientReceiveDestroyBuffered(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const DestroyPackets packets = make_destroy_packets(entity_count);
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        ecs::Registry registry;
+        define_client_delta_schema(registry, true);
+        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+            1200,
+            kage::sync::ReplicationClientMode::BufferedInterpolation,
+            2,
+            64});
+        for (const kage::sync::BitBuffer& packet : packets.initial) {
+            benchmark::DoNotOptimize(client.receive(registry, packet));
+        }
+        state.ResumeTiming();
+
+        for (const kage::sync::BitBuffer& packet : packets.destroys) {
+            benchmark::DoNotOptimize(client.receive(registry, packet));
+        }
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(entity_count));
+}
+
+void BM_ClientTickBufferedAutoInterpolation(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int frame_count = static_cast<int>(state.range(1));
+    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        ecs::Registry registry;
+        define_client_delta_schema(registry, true);
+        kage::sync::ReplicationClientOptions options;
+        options.mtu_bytes = 1200;
+        options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+        options.interpolation_buffer_frames = 2;
+        options.interpolation_buffer_capacity_frames = 64;
+        options.auto_interpolation_buffer_frames = true;
+        options.fixed_dt_seconds = 1.0 / 60.0;
+        kage::sync::ReplicationClient client(options);
+        state.ResumeTiming();
+
+        for (std::size_t packet_index = 0; packet_index < packets.size(); ++packet_index) {
+            benchmark::DoNotOptimize(client.receive(
+                registry,
+                packets[packet_index],
+                static_cast<kage::sync::SyncFrame>(packet_index + 3U),
+                static_cast<kage::sync::SyncFrame>(packet_index)));
+            benchmark::DoNotOptimize(client.tick(registry, 1.0 / 60.0));
+        }
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(packets.size()));
+}
+
+BENCHMARK(BM_ClientReceiveSnap)->Apply(ClientArgs);
+BENCHMARK(BM_ClientReceiveBufferedInterpolation)->Apply(ClientArgs);
+BENCHMARK(BM_ClientReceiveMixedEntityModes)->Apply(ClientArgs);
+BENCHMARK(BM_ClientApplyBufferedInterpolation)->Apply(ClientArgs);
+BENCHMARK(BM_ClientSampleDisplayInterpolation)->Apply(ClientArgs);
+BENCHMARK(BM_ClientDrainAckPackets)->Apply(ClientArgs);
+BENCHMARK(BM_ClientReceiveDestroySnap)->Apply(DestroyArgs);
+BENCHMARK(BM_ClientReceiveDestroyBuffered)->Apply(DestroyArgs);
+BENCHMARK(BM_ClientTickBufferedAutoInterpolation)->Apply(ClientArgs);
+
+}  // namespace
