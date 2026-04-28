@@ -50,6 +50,7 @@ namespace kage::sync {
 template <>
 struct SyncComponentTraits<BallPosition> {
     using Quantized = BallPosition;
+    using Error = BallPosition;
 
     static Quantized quantize(const BallPosition& value) {
         return value;
@@ -73,6 +74,37 @@ struct SyncComponentTraits<BallPosition> {
             from.x + (to.x - from.x) * alpha,
             from.y + (to.y - from.y) * alpha,
             from.z + (to.z - from.z) * alpha,
+        };
+    }
+
+    static Error compute_error(const Quantized& current, const Quantized& previous) {
+        return Error{
+            previous.x - current.x,
+            previous.y - current.y,
+            previous.z - current.z,
+        };
+    }
+
+    static Quantized apply_error(const Quantized& current, const Error& error) {
+        return Quantized{
+            current.x + error.x,
+            current.y + error.y,
+            current.z + error.z,
+        };
+    }
+
+    static Error blend_out_error(const Error& error, float dt_seconds) {
+        const float magnitude = std::sqrt(error.x * error.x + error.y * error.y + error.z * error.z);
+        if (magnitude < 0.001f || dt_seconds <= 0.0f) {
+            return magnitude < 0.001f ? Error{} : error;
+        }
+
+        const float rate = 2.0f + std::min(magnitude * 12.0f, 28.0f);
+        const float scale = std::exp(-rate * dt_seconds);
+        return Error{
+            error.x * scale,
+            error.y * scale,
+            error.z * scale,
         };
     }
 };

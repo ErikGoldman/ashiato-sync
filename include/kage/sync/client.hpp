@@ -141,6 +141,11 @@ private:
             std::vector<ComponentBaseline> baselines;
         };
 
+        struct ComponentError {
+            ecs::Entity component;
+            SyncComponentOps::QuantizedBytes bytes;
+        };
+
         ecs::Entity local;
         SyncArchetypeId archetype;
         ReplicationClientMode mode = ReplicationClientMode::Snap;
@@ -160,6 +165,7 @@ private:
 
         std::vector<BufferedFrame> buffered_frames;
         std::vector<ComponentBaseline> applied_baselines;
+        std::vector<ComponentError> snap_errors;
     };
 
     struct AckRecord {
@@ -222,6 +228,7 @@ private:
         EntityState& state,
         ReplicationClientMode mode);
     bool has_buffered_entities() const noexcept;
+    void blend_snap_errors(const SyncSettings& settings, float dt_seconds);
     bool write_display_samples(
         const ecs::Registry& registry,
         double target_frame,
@@ -248,6 +255,7 @@ private:
     DisplaySampleBuffer display_scratch_;
     double receive_accumulator_seconds_ = 0.0;
     double playback_accumulator_seconds_ = 0.0;
+    double display_accumulator_seconds_ = 0.0;
     double display_target_frame_ = 0.0;
     SyncFrame receive_frame_ = 0;
     SyncFrame playback_frame_ = 0;

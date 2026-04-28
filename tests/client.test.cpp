@@ -1627,6 +1627,100 @@ TEST_CASE("client-owned display frame keeps previous entities while committing n
     REQUIRE(found == 2);
 }
 
+TEST_CASE("snap display error blending uses tick dt without mutating ECS") {
+    ecs::Registry client_registry;
+    const ecs::Entity smooth =
+        kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
+    REQUIRE(kage::sync::define_archetype(
+                client_registry,
+                "SmoothActor",
+                {{smooth, kage::sync::ReplicationAudience::All}})
+        .value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Snap;
+    options.fixed_dt_seconds = 1.0;
+    kage::sync::ReplicationClient client(options);
+    const ecs::Entity server_entity{42};
+
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{0.0f, 0.0f}}})));
+    REQUIRE(client.tick(client_registry, 0.5));
+    const kage::sync::DisplaySampleBuffer& first = client.display_frame(client_registry);
+    REQUIRE(first.entities.size() == 1);
+    SmoothPosition sampled;
+    REQUIRE(first.entities[0].try_get(client_registry, sampled));
+    REQUIRE(sampled.x == Catch::Approx(0.0f));
+
+    REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{10.0f, 0.0f}}})));
+    const ecs::Entity local = client.local_entity(server_entity);
+    REQUIRE(local);
+    REQUIRE(client_registry.get<SmoothPosition>(local).x == Catch::Approx(10.0f));
+
+    REQUIRE(client.tick(client_registry, 0.25));
+    const kage::sync::DisplaySampleBuffer& blended = client.display_frame(client_registry);
+    REQUIRE(blended.entities.size() == 1);
+    REQUIRE(blended.entities[0].try_get(client_registry, sampled));
+    REQUIRE(sampled.x == Catch::Approx(2.5f));
+    REQUIRE(client_registry.get<SmoothPosition>(local).x == Catch::Approx(10.0f));
+
+    const kage::sync::DisplaySampleBuffer& repeated = client.display_frame(client_registry);
+    REQUIRE(repeated.entities.size() == 1);
+    REQUIRE(repeated.entities[0].try_get(client_registry, sampled));
+    REQUIRE(sampled.x == Catch::Approx(2.5f));
+}
+
+TEST_CASE("snap display error blending clears after the accumulated tick dt consumes the error") {
+    ecs::Registry client_registry;
+    const ecs::Entity smooth =
+        kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
+    REQUIRE(kage::sync::define_archetype(
+                client_registry,
+                "SmoothActor",
+                {{smooth, kage::sync::ReplicationAudience::All}})
+        .value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Snap;
+    options.fixed_dt_seconds = 1.0;
+    kage::sync::ReplicationClient client(options);
+    const ecs::Entity server_entity{42};
+
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{0.0f, 0.0f}}})));
+    REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{10.0f, 0.0f}}})));
+    REQUIRE(client.tick(client_registry, 1.0));
+
+    const kage::sync::DisplaySampleBuffer& display = client.display_frame(client_registry);
+    REQUIRE(display.entities.size() == 1);
+    SmoothPosition sampled;
+    REQUIRE(display.entities[0].try_get(client_registry, sampled));
+    REQUIRE(sampled.x == Catch::Approx(10.0f));
+}
+
+TEST_CASE("snap display components without error traits keep snapped values") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Snap;
+    options.fixed_dt_seconds = 1.0;
+    kage::sync::ReplicationClient client(options);
+    const ecs::Entity server_entity{42};
+
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{0.0f, 0.0f}}})));
+    REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{10.0f, 0.0f}}})));
+    REQUIRE(client.tick(client_registry, 0.25));
+
+    const kage::sync::DisplaySampleBuffer& display = client.display_frame(client_registry);
+    REQUIRE(display.entities.size() == 1);
+    Position sampled;
+    REQUIRE(display.entities[0].try_get(client_registry, sampled));
+    REQUIRE(sampled.x == Catch::Approx(10.0f));
+}
+
 TEST_CASE("buffered interpolation validates wrapped buffer samples by frame") {
     ecs::Registry server_registry;
     const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);

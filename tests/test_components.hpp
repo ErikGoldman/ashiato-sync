@@ -106,6 +106,7 @@ struct SyncComponentTraits<kage_sync_tests::NetworkedPosition> {
 template <>
 struct SyncComponentTraits<kage_sync_tests::SmoothPosition> {
     using Quantized = kage_sync_tests::SmoothPosition;
+    using Error = kage_sync_tests::SmoothPosition;
 
     static Quantized quantize(const kage_sync_tests::SmoothPosition& value) {
         return value;
@@ -128,6 +129,34 @@ struct SyncComponentTraits<kage_sync_tests::SmoothPosition> {
         return Quantized{
             from.x + (to.x - from.x) * alpha,
             from.y + (to.y - from.y) * alpha,
+        };
+    }
+
+    static Error compute_error(const Quantized& current, const Quantized& previous) {
+        return Error{
+            previous.x - current.x,
+            previous.y - current.y,
+        };
+    }
+
+    static Quantized apply_error(const Quantized& current, const Error& error) {
+        return Quantized{
+            current.x + error.x,
+            current.y + error.y,
+        };
+    }
+
+    static Error blend_out_error(const Error& error, float dt_seconds) {
+        if (dt_seconds <= 0.0f) {
+            return error;
+        }
+        if (dt_seconds >= 1.0f) {
+            return Error{};
+        }
+        const float scale = 1.0f - dt_seconds;
+        return Error{
+            error.x * scale,
+            error.y * scale,
         };
     }
 };

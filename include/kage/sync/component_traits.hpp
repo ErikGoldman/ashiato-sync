@@ -101,6 +101,111 @@ typename std::enable_if<!has_interpolate<Traits, Quantized>::value, bool>::type 
     return false;
 }
 
+template <typename Traits, typename Quantized, typename = void>
+struct has_error_blending : std::false_type {};
+
+template <typename Traits, typename Quantized>
+struct has_error_blending<
+    Traits,
+    Quantized,
+    std::void_t<
+        typename Traits::Error,
+        decltype(Traits::compute_error(std::declval<const Quantized&>(), std::declval<const Quantized&>())),
+        decltype(Traits::apply_error(
+            std::declval<const Quantized&>(),
+            std::declval<const typename Traits::Error&>())),
+        decltype(Traits::blend_out_error(
+            std::declval<const typename Traits::Error&>(),
+            std::declval<float>()))>> : std::true_type {};
+
+template <typename Traits, typename Quantized>
+typename std::enable_if<has_error_blending<Traits, Quantized>::value, bool>::type compute_error_quantized(
+    const SyncComponentOps::QuantizedBytes& current_bytes,
+    const SyncComponentOps::QuantizedBytes& previous_bytes,
+    SyncComponentOps::QuantizedBytes& out) {
+    using Error = typename Traits::Error;
+    static_assert(
+        std::is_trivially_copyable<Error>::value,
+        "SyncComponentTraits<T>::Error must be trivially copyable");
+    if (current_bytes.size() != sizeof(Quantized) || previous_bytes.size() != sizeof(Quantized)) {
+        return false;
+    }
+
+    Quantized current{};
+    Quantized previous{};
+    std::memcpy(&current, current_bytes.data(), sizeof(Quantized));
+    std::memcpy(&previous, previous_bytes.data(), sizeof(Quantized));
+    const Error error = Traits::compute_error(current, previous);
+
+    out.resize(sizeof(Error));
+    std::memcpy(out.data(), &error, sizeof(Error));
+    return true;
+}
+
+template <typename Traits, typename Quantized>
+typename std::enable_if<!has_error_blending<Traits, Quantized>::value, bool>::type compute_error_quantized(
+    const SyncComponentOps::QuantizedBytes&,
+    const SyncComponentOps::QuantizedBytes&,
+    SyncComponentOps::QuantizedBytes&) {
+    return false;
+}
+
+template <typename Traits, typename Quantized>
+typename std::enable_if<has_error_blending<Traits, Quantized>::value, bool>::type apply_error_quantized(
+    const SyncComponentOps::QuantizedBytes& current_bytes,
+    const SyncComponentOps::QuantizedBytes& error_bytes,
+    SyncComponentOps::QuantizedBytes& out) {
+    using Error = typename Traits::Error;
+    if (current_bytes.size() != sizeof(Quantized) || error_bytes.size() != sizeof(Error)) {
+        return false;
+    }
+
+    Quantized current{};
+    Error error{};
+    std::memcpy(&current, current_bytes.data(), sizeof(Quantized));
+    std::memcpy(&error, error_bytes.data(), sizeof(Error));
+    const Quantized display = Traits::apply_error(current, error);
+
+    out.resize(sizeof(Quantized));
+    std::memcpy(out.data(), &display, sizeof(Quantized));
+    return true;
+}
+
+template <typename Traits, typename Quantized>
+typename std::enable_if<!has_error_blending<Traits, Quantized>::value, bool>::type apply_error_quantized(
+    const SyncComponentOps::QuantizedBytes&,
+    const SyncComponentOps::QuantizedBytes&,
+    SyncComponentOps::QuantizedBytes&) {
+    return false;
+}
+
+template <typename Traits, typename Quantized>
+typename std::enable_if<has_error_blending<Traits, Quantized>::value, bool>::type blend_out_error_quantized(
+    const SyncComponentOps::QuantizedBytes& error_bytes,
+    float dt_seconds,
+    SyncComponentOps::QuantizedBytes& out) {
+    using Error = typename Traits::Error;
+    if (error_bytes.size() != sizeof(Error)) {
+        return false;
+    }
+
+    Error error{};
+    std::memcpy(&error, error_bytes.data(), sizeof(Error));
+    const Error blended = Traits::blend_out_error(error, dt_seconds);
+
+    out.resize(sizeof(Error));
+    std::memcpy(out.data(), &blended, sizeof(Error));
+    return true;
+}
+
+template <typename Traits, typename Quantized>
+typename std::enable_if<!has_error_blending<Traits, Quantized>::value, bool>::type blend_out_error_quantized(
+    const SyncComponentOps::QuantizedBytes&,
+    float,
+    SyncComponentOps::QuantizedBytes&) {
+    return false;
+}
+
 }  // namespace detail
 
 }  // namespace kage::sync
@@ -185,6 +290,16 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
     };
     if constexpr (detail::has_interpolate<Traits, Quantized>::value) {
         ops.interpolate = &detail::interpolate_quantized<Traits, Quantized>;
+    }
+    if constexpr (detail::has_error_blending<Traits, Quantized>::value) {
+        using Error = typename Traits::Error;
+        static_assert(
+            std::is_trivially_copyable<Error>::value,
+            "SyncComponentTraits<T>::Error must be trivially copyable");
+        ops.error_size = sizeof(Error);
+        ops.compute_error = &detail::compute_error_quantized<Traits, Quantized>;
+        ops.apply_error = &detail::apply_error_quantized<Traits, Quantized>;
+        ops.blend_out_error = &detail::blend_out_error_quantized<Traits, Quantized>;
     }
 
     registry.write<SyncSettings>().component_ops[component.value] = ops;

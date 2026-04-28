@@ -73,14 +73,21 @@ struct SyncComponentOps {
     using SerializeFn = void (*)(const QuantizedBytes*, const QuantizedBytes&, BitBuffer&);
     using DeserializeFn = bool (*)(BitBuffer&, const QuantizedBytes*, QuantizedBytes&);
     using InterpolateFn = bool (*)(const QuantizedBytes&, const QuantizedBytes&, float, QuantizedBytes&);
+    using ComputeErrorFn = bool (*)(const QuantizedBytes&, const QuantizedBytes&, QuantizedBytes&);
+    using ApplyErrorFn = bool (*)(const QuantizedBytes&, const QuantizedBytes&, QuantizedBytes&);
+    using BlendOutErrorFn = bool (*)(const QuantizedBytes&, float, QuantizedBytes&);
 
     std::size_t quantized_size = 0;
+    std::size_t error_size = 0;
     QuantizeFn quantize = nullptr;
     DequantizeFn dequantize = nullptr;
     ApplyFn apply = nullptr;
     SerializeFn serialize = nullptr;
     DeserializeFn deserialize = nullptr;
     InterpolateFn interpolate = nullptr;
+    ComputeErrorFn compute_error = nullptr;
+    ApplyErrorFn apply_error = nullptr;
+    BlendOutErrorFn blend_out_error = nullptr;
 };
 
 struct SyncSettings {

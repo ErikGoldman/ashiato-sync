@@ -19,6 +19,12 @@ bool is_power_of_two(std::size_t value) {
     return value != 0U && (value & (value - 1U)) == 0U;
 }
 
+bool all_zero(const SyncComponentOps::QuantizedBytes& bytes) {
+    return std::all_of(bytes.begin(), bytes.end(), [](std::uint8_t byte) {
+        return byte == 0U;
+    });
+}
+
 }  // namespace
 
 bool ReplicatedEntityUpdateView::try_get(
@@ -226,6 +232,7 @@ bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds) {
     }
 
     playback_accumulator_seconds_ += dt_seconds * static_cast<double>(timing_stats_.time_dilation);
+    display_accumulator_seconds_ += dt_seconds;
     while (playback_accumulator_seconds_ >= options_.fixed_dt_seconds) {
         playback_accumulator_seconds_ -= options_.fixed_dt_seconds;
         ++playback_frame_;
@@ -287,6 +294,13 @@ bool ReplicationClient::sample_display_frame(
 }
 
 const DisplaySampleBuffer& ReplicationClient::display_frame(const ecs::Registry& registry) {
+    const float display_dt = display_accumulator_seconds_ > 0.0 && std::isfinite(display_accumulator_seconds_)
+        ? static_cast<float>(display_accumulator_seconds_)
+        : 0.0f;
+    display_accumulator_seconds_ = 0.0;
+    if (display_dt > 0.0f) {
+        blend_snap_errors(registry.get<SyncSettings>(), display_dt);
+    }
     if (write_display_samples(registry, display_target_frame_, true, true, display_scratch_)) {
         display_frame_.entities.swap(display_scratch_.entities);
         display_scratch_.clear();
@@ -574,6 +588,7 @@ bool ReplicationClient::apply_buffered_upsert(
     state.mode = ReplicationClientMode::BufferedInterpolation;
     state.mode_selected = true;
     state.archetype = archetype;
+    state.snap_errors.clear();
     if (state.buffered_frames.empty()) {
         state.buffered_frames.resize(options_.interpolation_buffer_capacity_frames);
         for (EntityState::BufferedFrame& sample : state.buffered_frames) {
@@ -598,6 +613,7 @@ bool ReplicationClient::apply_buffered_destroy(ecs::Registry& registry, SyncFram
     EntityState& state = entities_[server_entity.value];
     state.mode = ReplicationClientMode::BufferedInterpolation;
     state.mode_selected = true;
+    state.snap_errors.clear();
     if (state.buffered_frames.empty()) {
         state.buffered_frames.resize(options_.interpolation_buffer_capacity_frames);
     }
@@ -753,6 +769,7 @@ bool ReplicationClient::apply_buffered_sample(
         }
         state.local = ecs::Entity{};
         state.applied_baselines.clear();
+        state.snap_errors.clear();
         return true;
     }
 
@@ -821,6 +838,20 @@ bool ReplicationClient::apply_snap_sample(
                         }) == decoded.end();
                 }),
             state.baselines.end());
+
+        state.snap_errors.erase(
+            std::remove_if(
+                state.snap_errors.begin(),
+                state.snap_errors.end(),
+                [&](const EntityState::ComponentError& existing) {
+                    return std::find_if(
+                        decoded.begin(),
+                        decoded.end(),
+                        [&](const ComponentBaseline& baseline) {
+                            return baseline.component == existing.component;
+                        }) == decoded.end();
+                }),
+            state.snap_errors.end());
     }
 
     for (const ComponentBaseline& baseline : decoded) {
@@ -836,6 +867,31 @@ bool ReplicationClient::apply_snap_sample(
             [&](const ComponentBaseline& existing) {
                 return existing.component == baseline.component;
             });
+        if (found_baseline != state.baselines.end() &&
+            found_ops->second.compute_error != nullptr &&
+            found_ops->second.apply_error != nullptr &&
+            found_ops->second.blend_out_error != nullptr) {
+            SyncComponentOps::QuantizedBytes error;
+            if (!found_ops->second.compute_error(baseline.bytes, found_baseline->bytes, error)) {
+                return false;
+            }
+
+            auto found_error = std::find_if(
+                state.snap_errors.begin(),
+                state.snap_errors.end(),
+                [&](const EntityState::ComponentError& existing) {
+                    return existing.component == baseline.component;
+                });
+            if (all_zero(error)) {
+                if (found_error != state.snap_errors.end()) {
+                    state.snap_errors.erase(found_error);
+                }
+            } else if (found_error == state.snap_errors.end()) {
+                state.snap_errors.push_back(EntityState::ComponentError{baseline.component, std::move(error)});
+            } else {
+                found_error->bytes = std::move(error);
+            }
+        }
         if (found_baseline == state.baselines.end()) {
             state.baselines.push_back(baseline);
         } else {
@@ -858,6 +914,7 @@ bool ReplicationClient::apply_latest_snap(
         }
         state.local = ecs::Entity{};
         state.applied_baselines.clear();
+        state.snap_errors.clear();
         return true;
     }
 
@@ -879,6 +936,7 @@ bool ReplicationClient::switch_entity_mode(
         }
         state.mode = ReplicationClientMode::BufferedInterpolation;
         state.mode_selected = true;
+        state.snap_errors.clear();
         if (state.buffered_frames.empty()) {
             state.buffered_frames.resize(options_.interpolation_buffer_capacity_frames);
             for (EntityState::BufferedFrame& sample : state.buffered_frames) {
@@ -920,6 +978,32 @@ bool ReplicationClient::has_buffered_entities() const noexcept {
         [](const auto& entry) {
             return entry.second.mode == ReplicationClientMode::BufferedInterpolation;
         });
+}
+
+void ReplicationClient::blend_snap_errors(const SyncSettings& settings, float dt_seconds) {
+    for (auto& entry : entities_) {
+        EntityState& state = entry.second;
+        if (state.mode != ReplicationClientMode::Snap || state.snap_errors.empty()) {
+            continue;
+        }
+
+        for (EntityState::ComponentError& error : state.snap_errors) {
+            const auto found_ops = settings.component_ops.find(error.component.value);
+            if (found_ops == settings.component_ops.end() || found_ops->second.blend_out_error == nullptr ||
+                !found_ops->second.blend_out_error(error.bytes, dt_seconds, error.bytes)) {
+                error.bytes.clear();
+            }
+        }
+
+        state.snap_errors.erase(
+            std::remove_if(
+                state.snap_errors.begin(),
+                state.snap_errors.end(),
+                [](const EntityState::ComponentError& error) {
+                    return error.bytes.empty() || all_zero(error.bytes);
+                }),
+            state.snap_errors.end());
+    }
 }
 
 bool ReplicationClient::write_display_samples(
@@ -976,6 +1060,28 @@ bool ReplicationClient::write_display_samples(
             display.frame = state.frame;
             display.alpha = 0.0f;
             display.components.clear();
+            display.components.reserve(state.snap_errors.size());
+            for (const EntityState::ComponentError& error : state.snap_errors) {
+                const auto found_ops = settings.component_ops.find(error.component.value);
+                if (found_ops == settings.component_ops.end() ||
+                    found_ops->second.quantize == nullptr ||
+                    found_ops->second.apply_error == nullptr) {
+                    return false;
+                }
+                const void* current = registry.get(state.local, error.component);
+                if (current == nullptr) {
+                    return false;
+                }
+
+                ReplicatedComponentUpdate value;
+                value.component = error.component;
+                SyncComponentOps::QuantizedBytes current_bytes;
+                found_ops->second.quantize(current, current_bytes);
+                if (!found_ops->second.apply_error(current_bytes, error.bytes, value.bytes)) {
+                    return false;
+                }
+                display.components.push_back(std::move(value));
+            }
             continue;
         }
 
