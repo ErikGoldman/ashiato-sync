@@ -25,6 +25,60 @@ bool all_zero(const SyncComponentOps::QuantizedBytes& bytes) {
     });
 }
 
+bool init_frame_data(const SyncArchetype& archetype, QuantizedFrameData& frame) {
+    if (archetype.components.size() > 64U ||
+        archetype.component_offsets.size() != archetype.components.size() ||
+        archetype.component_ops.size() != archetype.components.size()) {
+        return false;
+    }
+    frame.present_mask = 0;
+    frame.bytes.assign(archetype.total_quantized_bytes, 0U);
+    return true;
+}
+
+bool frame_has_component(const QuantizedFrameData& frame, std::size_t component_index) {
+    return component_index < 64U && (frame.present_mask & (std::uint64_t{1} << component_index)) != 0U;
+}
+
+bool frame_component_bytes(
+    const SyncArchetype& archetype,
+    const QuantizedFrameData& frame,
+    std::size_t component_index,
+    SyncComponentOps::QuantizedBytes& out) {
+    if (!frame_has_component(frame, component_index) ||
+        component_index >= archetype.component_offsets.size() ||
+        component_index >= archetype.component_ops.size()) {
+        return false;
+    }
+    const std::size_t offset = archetype.component_offsets[component_index];
+    const std::size_t size = archetype.component_ops[component_index].quantized_size;
+    if (offset + size > frame.bytes.size()) {
+        return false;
+    }
+    out.assign(frame.bytes.data() + offset, size);
+    return true;
+}
+
+bool set_frame_component_bytes(
+    const SyncArchetype& archetype,
+    QuantizedFrameData& frame,
+    std::size_t component_index,
+    const SyncComponentOps::QuantizedBytes& bytes) {
+    if (component_index >= 64U ||
+        component_index >= archetype.component_offsets.size() ||
+        component_index >= archetype.component_ops.size() ||
+        bytes.size() != archetype.component_ops[component_index].quantized_size) {
+        return false;
+    }
+    const std::size_t offset = archetype.component_offsets[component_index];
+    if (offset + bytes.size() > frame.bytes.size()) {
+        return false;
+    }
+    std::memcpy(frame.bytes.data() + offset, bytes.data(), bytes.size());
+    frame.present_mask |= (std::uint64_t{1} << component_index);
+    return true;
+}
+
 }  // namespace
 
 bool ReplicatedEntityUpdateView::try_get(
@@ -414,9 +468,9 @@ bool ReplicationClient::apply_upsert(
             state.mode = ReplicationClientMode::Snap;
             state.entity_present = false;
             state.mode_selected = false;
-            state.baselines.clear();
+            state.baseline.clear();
             state.history.clear();
-            state.applied_baselines.clear();
+            state.applied_present_mask = 0;
         }
     } else {
         if (found_state == entities_.end() || previous_absent) {
@@ -435,11 +489,15 @@ bool ReplicationClient::apply_upsert(
     }
 
     const SyncArchetype& definition = settings.archetypes[archetype.value];
-    std::vector<ComponentBaseline> decoded;
-    std::vector<ComponentBaseline> merged;
+    std::vector<ComponentBaseline> decoded_updates;
+    QuantizedFrameData decoded;
+    QuantizedFrameData merged;
+    if (!init_frame_data(definition, decoded) || !init_frame_data(definition, merged)) {
+        return false;
+    }
 
     EntityState* previous_state = found_state != entities_.end() && !previous_absent ? &found_state->second : nullptr;
-    const std::vector<ComponentBaseline>* previous_baselines = nullptr;
+    const QuantizedFrameData* previous_baseline = nullptr;
     if (!full && previous_state != nullptr) {
         const auto found_baseline = std::find_if(
             previous_state->history.begin(),
@@ -450,12 +508,12 @@ bool ReplicationClient::apply_upsert(
         if (found_baseline == previous_state->history.end()) {
             return false;
         }
-        previous_baselines = &found_baseline->baselines;
+        previous_baseline = &found_baseline->baseline;
     }
 
     if (full) {
         const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
-        decoded.reserve(component_count);
+        decoded_updates.reserve(component_count);
         for (std::uint16_t component = 0; component < component_count; ++component) {
             const auto component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
             if (component_index >= definition.components.size()) {
@@ -476,18 +534,19 @@ bool ReplicationClient::apply_upsert(
             if (!ops.deserialize(packet, nullptr, baseline.bytes)) {
                 return false;
             }
-            decoded.push_back(std::move(baseline));
+            if (!set_frame_component_bytes(definition, decoded, component_index, baseline.bytes)) {
+                return false;
+            }
+            decoded_updates.push_back(std::move(baseline));
         }
         merged = decoded;
     } else {
-        if (previous_baselines == nullptr) {
+        if (previous_baseline == nullptr) {
             return false;
         }
         const std::uint64_t changed_mask = packet.read_unsigned_bits(definition.components.size());
-        decoded.reserve(definition.components.size());
-        merged = *previous_baselines;
-        std::size_t previous_index = 0;
-        std::size_t merged_index = 0;
+        decoded_updates.reserve(definition.components.size());
+        merged = *previous_baseline;
         for (std::size_t component_index = 0; component_index < definition.components.size(); ++component_index) {
             if ((changed_mask & (std::uint64_t{1} << component_index)) == 0U) {
                 continue;
@@ -503,23 +562,16 @@ bool ReplicationClient::apply_upsert(
 
             ComponentBaseline baseline;
             baseline.component = component_entity;
-            while (previous_index < previous_baselines->size() &&
-                   (*previous_baselines)[previous_index].component != component_entity) {
-                ++previous_index;
-            }
-            if (previous_index == previous_baselines->size() ||
-                !ops.deserialize(packet, &(*previous_baselines)[previous_index].bytes, baseline.bytes)) {
+            SyncComponentOps::QuantizedBytes previous_bytes;
+            if (!frame_component_bytes(definition, *previous_baseline, component_index, previous_bytes) ||
+                !ops.deserialize(packet, &previous_bytes, baseline.bytes)) {
                 return false;
             }
-            while (merged_index < merged.size() &&
-                   merged[merged_index].component != component_entity) {
-                ++merged_index;
-            }
-            if (merged_index == merged.size()) {
+            if (!set_frame_component_bytes(definition, merged, component_index, baseline.bytes) ||
+                !set_frame_component_bytes(definition, decoded, component_index, baseline.bytes)) {
                 return false;
             }
-            merged[merged_index].bytes = baseline.bytes;
-            decoded.push_back(std::move(baseline));
+            decoded_updates.push_back(std::move(baseline));
         }
     }
 
@@ -536,7 +588,7 @@ bool ReplicationClient::apply_upsert(
             update.local_entity = state.local;
             update.archetype = archetype;
             update.frame = frame;
-            update.components = &decoded;
+            update.components = &decoded_updates;
             selected = options_.entity_mode_selector(update);
         }
         state.mode = selected;
@@ -552,8 +604,8 @@ bool ReplicationClient::apply_upsert(
         return false;
     }
     if (!full) {
-        state.baselines = std::move(merged);
-        state.applied_baselines = state.baselines;
+        state.baseline = std::move(merged);
+        state.applied_present_mask = state.baseline.present_mask;
     }
 
     state.frame = frame;
@@ -589,7 +641,7 @@ bool ReplicationClient::apply_buffered_upsert(
     SyncFrame frame,
     ecs::Entity server_entity,
     SyncArchetypeId archetype,
-    std::vector<ComponentBaseline>& decoded) {
+    QuantizedFrameData& decoded) {
     if (!validate_buffered_archetype(settings, archetype)) {
         return false;
     }
@@ -601,16 +653,13 @@ bool ReplicationClient::apply_buffered_upsert(
     state.snap_errors.clear();
     if (state.buffered_frames.empty()) {
         state.buffered_frames.resize(options_.interpolation_buffer_capacity_frames);
-        for (EntityState::BufferedFrame& sample : state.buffered_frames) {
-            sample.baselines.reserve(settings.archetypes[archetype.value].components.size());
-        }
     }
 
     if (!fill_buffered_frames(settings, state, frame, true, decoded)) {
         return false;
     }
 
-    state.baselines = decoded;
+    state.baseline = decoded;
     state.frame = frame;
     state.entity_present = true;
     remember_baseline(state);
@@ -627,12 +676,15 @@ bool ReplicationClient::apply_buffered_destroy(ecs::Registry& registry, SyncFram
     if (state.buffered_frames.empty()) {
         state.buffered_frames.resize(options_.interpolation_buffer_capacity_frames);
     }
-    std::vector<ComponentBaseline> empty;
+    QuantizedFrameData empty;
     const SyncSettings& settings = registry.get<SyncSettings>();
+    if (state.archetype.value < settings.archetypes.size()) {
+        (void)init_frame_data(settings.archetypes[state.archetype.value], empty);
+    }
     if (!fill_buffered_frames(settings, state, frame, false, empty)) {
         return false;
     }
-    state.baselines.clear();
+    state.baseline.clear();
     state.frame = frame;
     state.entity_present = false;
     remember_baseline(state);
@@ -669,18 +721,18 @@ bool ReplicationClient::fill_buffered_frames(
     EntityState& state,
     SyncFrame frame,
     bool entity_present,
-    std::vector<ComponentBaseline>& decoded) {
+    QuantizedFrameData& decoded) {
     if (state.frame != 0 && frame <= state.frame) {
         return false;
     }
 
-    const std::vector<ComponentBaseline>* from = state.frame != 0 ? &state.baselines : nullptr;
-    const bool from_entity_present = state.local || (from != nullptr && !from->empty());
+    const QuantizedFrameData* from = state.frame != 0 ? &state.baseline : nullptr;
+    const bool from_entity_present = state.local || (from != nullptr && from->present_mask != 0U);
     const SyncFrame from_frame = state.frame;
     const SyncFrame begin = state.frame != 0 ? state.frame + 1U : frame;
     for (SyncFrame current = begin; current <= frame; ++current) {
         const bool current_present = current == frame ? entity_present : from_entity_present;
-        const std::vector<ComponentBaseline>* to = entity_present ? &decoded : nullptr;
+        const QuantizedFrameData* to = entity_present ? &decoded : nullptr;
         const bool final_absent = current == frame && !entity_present;
         if (!write_buffered_frame(
                 settings,
@@ -705,8 +757,8 @@ bool ReplicationClient::write_buffered_frame(
     EntityState& state,
     SyncFrame frame,
     bool entity_present,
-    const std::vector<ComponentBaseline>* from,
-    const std::vector<ComponentBaseline>* to,
+    const QuantizedFrameData* from,
+    const QuantizedFrameData* to,
     SyncFrame from_frame,
     SyncFrame to_frame) {
     const std::size_t mask = state.buffered_frames.size() - 1U;
@@ -715,7 +767,10 @@ bool ReplicationClient::write_buffered_frame(
     sample.valid = true;
     sample.entity_present = entity_present;
     sample.archetype = state.archetype;
-    sample.baselines.clear();
+    const SyncArchetype& archetype = settings.archetypes[state.archetype.value];
+    if (!init_frame_data(archetype, sample.baseline)) {
+        return false;
+    }
 
     if (!entity_present) {
         return true;
@@ -723,46 +778,43 @@ bool ReplicationClient::write_buffered_frame(
 
     const bool final_frame = frame == to_frame;
     if (final_frame && to != nullptr) {
-        sample.baselines = *to;
+        sample.baseline = *to;
         return true;
     }
     if (from == nullptr) {
         return true;
     }
 
-    sample.baselines.reserve(from->size());
-    for (const ComponentBaseline& previous : *from) {
-        const ComponentBaseline* next = nullptr;
-        if (to != nullptr) {
-            const auto found_next = std::find_if(
-                to->begin(),
-                to->end(),
-                [&](const ComponentBaseline& candidate) {
-                    return candidate.component == previous.component;
-                });
-            if (found_next != to->end()) {
-                next = &*found_next;
-            }
+    for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
+        if (!frame_has_component(*from, component_index)) {
+            continue;
         }
-
-        ComponentBaseline value;
-        value.component = previous.component;
-        if (next != nullptr &&
-            interpolation_for(settings, state.archetype, previous.component) == ComponentInterpolation::Interpolate) {
-            const auto found_ops = settings.component_ops.find(previous.component.value);
-            if (found_ops == settings.component_ops.end() || found_ops->second.interpolate == nullptr ||
+        SyncComponentOps::QuantizedBytes previous;
+        if (!frame_component_bytes(archetype, *from, component_index, previous)) {
+            return false;
+        }
+        SyncComponentOps::QuantizedBytes value = previous;
+        if (to != nullptr &&
+            frame_has_component(*to, component_index) &&
+            archetype.components[component_index].interpolation == ComponentInterpolation::Interpolate) {
+            if (component_index >= archetype.component_ops.size() ||
+                archetype.component_ops[component_index].interpolate == nullptr ||
                 to_frame == from_frame) {
+                return false;
+            }
+            SyncComponentOps::QuantizedBytes next;
+            if (!frame_component_bytes(archetype, *to, component_index, next)) {
                 return false;
             }
             const float alpha =
                 static_cast<float>(frame - from_frame) / static_cast<float>(to_frame - from_frame);
-            if (!found_ops->second.interpolate(previous.bytes, next->bytes, alpha, value.bytes)) {
+            if (!archetype.component_ops[component_index].interpolate(previous, next, alpha, value)) {
                 return false;
             }
-        } else {
-            value.bytes = previous.bytes;
         }
-        sample.baselines.push_back(std::move(value));
+        if (!set_frame_component_bytes(archetype, sample.baseline, component_index, value)) {
+            return false;
+        }
     }
 
     return true;
@@ -778,7 +830,7 @@ bool ReplicationClient::apply_buffered_sample(
             registry.destroy(state.local);
         }
         state.local = ecs::Entity{};
-        state.applied_baselines.clear();
+        state.applied_present_mask = 0;
         state.snap_errors.clear();
         return true;
     }
@@ -787,27 +839,31 @@ bool ReplicationClient::apply_buffered_sample(
         state.local = registry.create();
     }
 
-    for (const ComponentBaseline& existing : state.applied_baselines) {
-        const auto still_present = std::find_if(
-            sample.baselines.begin(),
-            sample.baselines.end(),
-            [&](const ComponentBaseline& baseline) {
-                return baseline.component == existing.component;
-            });
-        if (still_present == sample.baselines.end()) {
-            registry.remove(state.local, existing.component);
+    const SyncArchetype& archetype = settings.archetypes[sample.archetype.value];
+    for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
+        const std::uint64_t bit = std::uint64_t{1} << component_index;
+        if ((state.applied_present_mask & bit) != 0U &&
+            (sample.baseline.present_mask & bit) == 0U) {
+            registry.remove(state.local, archetype.components[component_index].component);
         }
     }
 
-    for (const ComponentBaseline& baseline : sample.baselines) {
-        const auto found_ops = settings.component_ops.find(baseline.component.value);
-        if (found_ops == settings.component_ops.end() ||
-            !found_ops->second.apply(registry, state.local, baseline.bytes)) {
+    for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
+        if (!frame_has_component(sample.baseline, component_index) ||
+            component_index >= archetype.component_ops.size()) {
+            continue;
+        }
+        SyncComponentOps::QuantizedBytes bytes;
+        if (!frame_component_bytes(archetype, sample.baseline, component_index, bytes) ||
+            !archetype.component_ops[component_index].apply(
+                registry,
+                state.local,
+                bytes)) {
             return false;
         }
     }
 
-    state.applied_baselines = sample.baselines;
+    state.applied_present_mask = sample.baseline.present_mask;
     state.archetype = sample.archetype;
     return true;
 }
@@ -816,73 +872,68 @@ bool ReplicationClient::apply_snap_sample(
     ecs::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
-    const std::vector<ComponentBaseline>& decoded,
+    const QuantizedFrameData& decoded,
     bool full) {
     if (!state.local || !registry.alive(state.local)) {
         state.local = registry.create();
     }
 
+    const SyncArchetype& archetype = settings.archetypes[state.archetype.value];
+    if (state.baseline.bytes.size() != archetype.total_quantized_bytes &&
+        !init_frame_data(archetype, state.baseline)) {
+        return false;
+    }
     if (full) {
-        for (const ComponentBaseline& existing : state.baselines) {
-            const auto still_visible = std::find_if(
-                decoded.begin(),
-                decoded.end(),
-                [&](const ComponentBaseline& baseline) {
-                    return baseline.component == existing.component;
-                });
-            if (still_visible == decoded.end()) {
-                registry.remove(state.local, existing.component);
+        for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
+            const std::uint64_t bit = std::uint64_t{1} << component_index;
+            if ((state.baseline.present_mask & bit) != 0U &&
+                (decoded.present_mask & bit) == 0U) {
+                registry.remove(state.local, archetype.components[component_index].component);
             }
         }
-
-        state.baselines.erase(
-            std::remove_if(
-                state.baselines.begin(),
-                state.baselines.end(),
-                [&](const ComponentBaseline& existing) {
-                    return std::find_if(
-                        decoded.begin(),
-                        decoded.end(),
-                        [&](const ComponentBaseline& baseline) {
-                            return baseline.component == existing.component;
-                        }) == decoded.end();
-                }),
-            state.baselines.end());
 
         state.snap_errors.erase(
             std::remove_if(
                 state.snap_errors.begin(),
                 state.snap_errors.end(),
                 [&](const EntityState::ComponentError& existing) {
-                    return std::find_if(
-                        decoded.begin(),
-                        decoded.end(),
-                        [&](const ComponentBaseline& baseline) {
-                            return baseline.component == existing.component;
-                        }) == decoded.end();
+                    const auto found_component = std::find_if(
+                        archetype.components.begin(),
+                        archetype.components.end(),
+                        [&](const ComponentReplication& replication) {
+                            return replication.component == existing.component;
+                        });
+                    if (found_component == archetype.components.end()) {
+                        return true;
+                    }
+                    const std::size_t component_index =
+                        static_cast<std::size_t>(found_component - archetype.components.begin());
+                    return (decoded.present_mask & (std::uint64_t{1} << component_index)) == 0U;
                 }),
             state.snap_errors.end());
     }
 
-    for (const ComponentBaseline& baseline : decoded) {
-        const auto found_ops = settings.component_ops.find(baseline.component.value);
-        if (found_ops == settings.component_ops.end() ||
-            !found_ops->second.apply(registry, state.local, baseline.bytes)) {
+    for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
+        if (!frame_has_component(decoded, component_index) ||
+            component_index >= archetype.component_ops.size()) {
+            continue;
+        }
+        const ComponentReplication& replication = archetype.components[component_index];
+        const SyncComponentOps& ops = archetype.component_ops[component_index];
+        SyncComponentOps::QuantizedBytes bytes;
+        if (!frame_component_bytes(archetype, decoded, component_index, bytes) ||
+            !ops.apply(registry, state.local, bytes)) {
             return false;
         }
 
-        auto found_baseline = std::find_if(
-            state.baselines.begin(),
-            state.baselines.end(),
-            [&](const ComponentBaseline& existing) {
-                return existing.component == baseline.component;
-            });
-        if (found_baseline != state.baselines.end() &&
-            found_ops->second.compute_error != nullptr &&
-            found_ops->second.apply_error != nullptr &&
-            found_ops->second.blend_out_error != nullptr) {
+        SyncComponentOps::QuantizedBytes previous_bytes;
+        const bool had_baseline = frame_component_bytes(archetype, state.baseline, component_index, previous_bytes);
+        if (had_baseline &&
+            ops.compute_error != nullptr &&
+            ops.apply_error != nullptr &&
+            ops.blend_out_error != nullptr) {
             SyncComponentOps::QuantizedBytes error;
-            if (!found_ops->second.compute_error(baseline.bytes, found_baseline->bytes, error)) {
+            if (!ops.compute_error(bytes, previous_bytes, error)) {
                 return false;
             }
 
@@ -890,27 +941,25 @@ bool ReplicationClient::apply_snap_sample(
                 state.snap_errors.begin(),
                 state.snap_errors.end(),
                 [&](const EntityState::ComponentError& existing) {
-                    return existing.component == baseline.component;
+                    return existing.component == replication.component;
                 });
             if (all_zero(error)) {
                 if (found_error != state.snap_errors.end()) {
                     state.snap_errors.erase(found_error);
                 }
             } else if (found_error == state.snap_errors.end()) {
-                state.snap_errors.push_back(EntityState::ComponentError{baseline.component, std::move(error)});
+                state.snap_errors.push_back(EntityState::ComponentError{replication.component, std::move(error)});
             } else {
                 found_error->bytes = std::move(error);
             }
         }
-        if (found_baseline == state.baselines.end()) {
-            state.baselines.push_back(baseline);
-        } else {
-            found_baseline->bytes = baseline.bytes;
+        if (!set_frame_component_bytes(archetype, state.baseline, component_index, bytes)) {
+            return false;
         }
     }
 
     state.entity_present = true;
-    state.applied_baselines = state.baselines;
+    state.applied_present_mask = state.baseline.present_mask;
     return true;
 }
 
@@ -923,12 +972,12 @@ bool ReplicationClient::apply_latest_snap(
             registry.destroy(state.local);
         }
         state.local = ecs::Entity{};
-        state.applied_baselines.clear();
+        state.applied_present_mask = 0;
         state.snap_errors.clear();
         return true;
     }
 
-    return apply_snap_sample(registry, settings, state, state.baselines, true);
+    return apply_snap_sample(registry, settings, state, state.baseline, true);
 }
 
 bool ReplicationClient::switch_entity_mode(
@@ -949,9 +998,6 @@ bool ReplicationClient::switch_entity_mode(
         state.snap_errors.clear();
         if (state.buffered_frames.empty()) {
             state.buffered_frames.resize(options_.interpolation_buffer_capacity_frames);
-            for (EntityState::BufferedFrame& sample : state.buffered_frames) {
-                sample.baselines.reserve(settings.archetypes[state.archetype.value].components.size());
-            }
         }
         if (state.frame != 0) {
             if (!write_buffered_frame(
@@ -960,13 +1006,13 @@ bool ReplicationClient::switch_entity_mode(
                     state.frame,
                     state.entity_present,
                     nullptr,
-                    state.entity_present ? &state.baselines : nullptr,
+                    state.entity_present ? &state.baseline : nullptr,
                     state.frame,
                     state.frame)) {
                 return false;
             }
         }
-        state.applied_baselines = state.baselines;
+        state.applied_present_mask = state.baseline.present_mask;
         return true;
     }
 
@@ -1133,36 +1179,39 @@ bool ReplicationClient::write_display_samples(
         display.frame = floor_frame;
         display.alpha = alpha;
         display.components.clear();
-        display.components.reserve(floor_sample.baselines.size());
+        const SyncArchetype& display_archetype = settings.archetypes[floor_sample.archetype.value];
+        display.components.reserve(display_archetype.components.size());
 
-        for (const ComponentBaseline& baseline : floor_sample.baselines) {
-            if (!registry.has<DisplayInterpolated>(baseline.component)) {
+        for (std::size_t component_index = 0; component_index < display_archetype.components.size(); ++component_index) {
+            const ecs::Entity component = display_archetype.components[component_index].component;
+            if (!frame_has_component(floor_sample.baseline, component_index) ||
+                !registry.has<DisplayInterpolated>(component)) {
                 continue;
             }
 
             ReplicatedComponentUpdate value;
-            value.component = baseline.component;
-            const ComponentBaseline* next = nullptr;
-            if (next_sample != nullptr) {
-                const auto found_next = std::find_if(
-                    next_sample->baselines.begin(),
-                    next_sample->baselines.end(),
-                    [&](const ComponentBaseline& candidate) {
-                        return candidate.component == baseline.component;
-                    });
-                if (found_next != next_sample->baselines.end()) {
-                    next = &*found_next;
-                }
+            value.component = component;
+            SyncComponentOps::QuantizedBytes baseline_bytes;
+            if (!frame_component_bytes(display_archetype, floor_sample.baseline, component_index, baseline_bytes)) {
+                return false;
             }
 
-            if (next != nullptr) {
-                const auto found_ops = settings.component_ops.find(baseline.component.value);
-                if (found_ops == settings.component_ops.end() || found_ops->second.interpolate == nullptr ||
-                    !found_ops->second.interpolate(baseline.bytes, next->bytes, alpha, value.bytes)) {
+            if (next_sample != nullptr && frame_has_component(next_sample->baseline, component_index)) {
+                if (component_index >= display_archetype.component_ops.size() ||
+                    display_archetype.component_ops[component_index].interpolate == nullptr) {
+                    return false;
+                }
+                SyncComponentOps::QuantizedBytes next_bytes;
+                if (!frame_component_bytes(display_archetype, next_sample->baseline, component_index, next_bytes) ||
+                    !display_archetype.component_ops[component_index].interpolate(
+                        baseline_bytes,
+                        next_bytes,
+                        alpha,
+                        value.bytes)) {
                     return false;
                 }
             } else {
-                value.bytes = baseline.bytes;
+                value.bytes = std::move(baseline_bytes);
             }
             display.components.push_back(std::move(value));
         }
@@ -1211,18 +1260,6 @@ ComponentInterpolation ReplicationClient::interpolation_for(
     return found != definition.components.end() ? found->interpolation : ComponentInterpolation::Step;
 }
 
-const SyncComponentOps::QuantizedBytes* ReplicationClient::baseline_for(
-    const std::vector<ComponentBaseline>& baselines,
-    ecs::Entity component) const {
-    const auto found = std::find_if(
-        baselines.begin(),
-        baselines.end(),
-        [component](const ComponentBaseline& baseline) {
-            return baseline.component == component;
-        });
-    return found != baselines.end() ? &found->bytes : nullptr;
-}
-
 void ReplicationClient::remember_baseline(EntityState& state) {
     state.history.erase(
         std::remove_if(
@@ -1232,7 +1269,7 @@ void ReplicationClient::remember_baseline(EntityState& state) {
                 return baseline.frame == frame;
             }),
         state.history.end());
-    state.history.push_back(EntityState::FrameBaseline{state.frame, state.baselines});
+    state.history.push_back(EntityState::FrameBaseline{state.frame, state.baseline});
     while (state.history.size() > max_baseline_history_per_entity) {
         state.history.erase(state.history.begin());
     }

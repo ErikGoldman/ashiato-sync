@@ -55,20 +55,14 @@ private:
         bool active = false;
     };
 
-    struct QuantizedBaseline {
-        ecs::Entity component;
-        std::uint16_t component_index = 0;
-        std::uint64_t dirty_generation = 0;
-        SyncComponentOps::QuantizedBytes bytes;
-    };
-
     struct QuantizedSnapshot {
         std::uint32_t slot = 0;
         SyncFrame frame = 0;
         SyncArchetypeId archetype;
         std::uint32_t ref_count = 0;
         bool active = false;
-        std::vector<QuantizedBaseline> baselines;
+        QuantizedFrameData data;
+        std::vector<std::uint64_t> dirty_generations;
     };
 
     struct ClientEntityState {
@@ -134,7 +128,8 @@ private:
         ClientState& client,
         std::uint32_t slot,
         SyncFrame frame,
-        std::vector<QuantizedBaseline>& scratch,
+        QuantizedFrameData& scratch,
+        std::vector<std::uint64_t>& scratch_dirty_generations,
         SerializedEntity& out);
     std::uint32_t find_or_create_snapshot(
         const ecs::Registry& registry,
@@ -142,17 +137,16 @@ private:
         const ClientState& client,
         std::uint32_t slot,
         SyncFrame frame,
-        std::vector<QuantizedBaseline>& scratch);
+        QuantizedFrameData& scratch,
+        std::vector<std::uint64_t>& scratch_dirty_generations);
     void retain_snapshot(std::uint32_t snapshot);
     void release_snapshot(std::uint32_t snapshot);
     void clear_client_entity_state(ClientEntityState& state);
     bool acknowledge_destroy(ClientState& client, ecs::Entity entity, SyncFrame frame);
-    const SyncComponentOps::QuantizedBytes* find_baseline_component(
-        std::uint32_t snapshot,
-        ecs::Entity component) const;
     bool same_snapshot_components(
         const QuantizedSnapshot& snapshot,
-        const std::vector<QuantizedBaseline>& baselines) const;
+        const QuantizedFrameData& data,
+        const std::vector<std::uint64_t>& dirty_generations) const;
     void write_entity_record(
         const ecs::Registry& registry,
         const SyncSettings& settings,

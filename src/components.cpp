@@ -7,6 +7,9 @@
 namespace kage::sync {
 namespace {
 
+constexpr std::size_t max_archetype_components = 64;
+constexpr std::size_t max_archetype_quantized_bytes = 1200;
+
 bool valid_archetype_id(const SyncSettings& settings, SyncArchetypeId id) {
     return id.value < settings.archetypes.size();
 }
@@ -92,16 +95,36 @@ SyncArchetypeId define_archetype(
 
     SyncSettings& settings = registry.write<SyncSettings>();
     std::vector<SyncComponentOps> component_ops;
+    std::vector<std::uint32_t> component_offsets;
     component_ops.reserve(components.size());
+    component_offsets.reserve(components.size());
+    if (components.size() > max_archetype_components) {
+        throw std::invalid_argument("sync archetypes may not contain more than 64 components");
+    }
+    std::size_t total_quantized_bytes = 0;
     for (const ComponentReplication& replication : components) {
         const auto found_ops = settings.component_ops.find(replication.component.value);
         if (found_ops == settings.component_ops.end()) {
             throw std::invalid_argument("sync archetype references a component without sync traits");
         }
+        if (found_ops->second.quantized_size == 0 ||
+            found_ops->second.quantized_size > SyncComponentOps::QuantizedBytes::max_size) {
+            throw std::invalid_argument("sync archetype references a component with invalid quantized size");
+        }
+        component_offsets.push_back(static_cast<std::uint32_t>(total_quantized_bytes));
+        total_quantized_bytes += found_ops->second.quantized_size;
+        if (total_quantized_bytes > max_archetype_quantized_bytes) {
+            throw std::invalid_argument("sync archetype quantized state exceeds maximum size");
+        }
         component_ops.push_back(found_ops->second);
     }
     const SyncArchetypeId id{static_cast<std::uint32_t>(settings.archetypes.size())};
-    settings.archetypes.push_back(SyncArchetype{std::move(name), std::move(components), std::move(component_ops)});
+    settings.archetypes.push_back(SyncArchetype{
+        std::move(name),
+        std::move(components),
+        std::move(component_ops),
+        std::move(component_offsets),
+        static_cast<std::uint32_t>(total_quantized_bytes)});
     return id;
 }
 

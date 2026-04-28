@@ -8,6 +8,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -145,6 +146,13 @@ public:
         }
     }
 
+    void assign(const void* data, std::size_t size) {
+        resize(size);
+        if (size != 0U) {
+            std::memcpy(this->data(), data, size);
+        }
+    }
+
     friend bool operator==(const QuantizedBytes& lhs, const QuantizedBytes& rhs) noexcept {
         return lhs.size_ == rhs.size_ && std::equal(lhs.data(), lhs.data() + lhs.size_, rhs.data());
     }
@@ -190,6 +198,18 @@ struct SyncArchetype {
     std::string name;
     std::vector<ComponentReplication> components;
     std::vector<SyncComponentOps> component_ops;
+    std::vector<std::uint32_t> component_offsets;
+    std::uint32_t total_quantized_bytes = 0;
+};
+
+struct QuantizedFrameData {
+    std::uint64_t present_mask = 0;
+    std::vector<std::uint8_t> bytes;
+
+    void clear() {
+        present_mask = 0;
+        bytes.clear();
+    }
 };
 
 struct SyncSettings {

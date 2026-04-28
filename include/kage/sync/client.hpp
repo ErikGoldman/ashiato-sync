@@ -138,7 +138,7 @@ private:
     struct EntityState {
         struct FrameBaseline {
             SyncFrame frame = 0;
-            std::vector<ComponentBaseline> baselines;
+            QuantizedFrameData baseline;
         };
 
         struct ComponentError {
@@ -152,7 +152,7 @@ private:
         SyncFrame frame = 0;
         bool entity_present = true;
         bool mode_selected = false;
-        std::vector<ComponentBaseline> baselines;
+        QuantizedFrameData baseline;
         std::vector<FrameBaseline> history;
 
         struct BufferedFrame {
@@ -160,11 +160,11 @@ private:
             bool valid = false;
             bool entity_present = false;
             SyncArchetypeId archetype;
-            std::vector<ComponentBaseline> baselines;
+            QuantizedFrameData baseline;
         };
 
         std::vector<BufferedFrame> buffered_frames;
-        std::vector<ComponentBaseline> applied_baselines;
+        std::uint64_t applied_present_mask = 0;
         std::vector<ComponentError> snap_errors;
     };
 
@@ -192,7 +192,7 @@ private:
         SyncFrame frame,
         ecs::Entity server_entity,
         SyncArchetypeId archetype,
-        std::vector<ComponentBaseline>& decoded);
+        QuantizedFrameData& decoded);
     bool apply_buffered_destroy(ecs::Registry& registry, SyncFrame frame, ecs::Entity server_entity);
     bool validate_buffered_archetype(const SyncSettings& settings, SyncArchetypeId archetype) const;
     bool fill_buffered_frames(
@@ -200,14 +200,14 @@ private:
         EntityState& state,
         SyncFrame frame,
         bool entity_present,
-        std::vector<ComponentBaseline>& decoded);
+        QuantizedFrameData& decoded);
     bool write_buffered_frame(
         const SyncSettings& settings,
         EntityState& state,
         SyncFrame frame,
         bool entity_present,
-        const std::vector<ComponentBaseline>* from,
-        const std::vector<ComponentBaseline>* to,
+        const QuantizedFrameData* from,
+        const QuantizedFrameData* to,
         SyncFrame from_frame,
         SyncFrame to_frame);
     bool apply_buffered_sample(
@@ -219,7 +219,7 @@ private:
         ecs::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
-        const std::vector<ComponentBaseline>& decoded,
+        const QuantizedFrameData& decoded,
         bool full);
     bool apply_latest_snap(ecs::Registry& registry, const SyncSettings& settings, EntityState& state);
     bool switch_entity_mode(
@@ -239,9 +239,6 @@ private:
     ComponentInterpolation interpolation_for(
         const SyncSettings& settings,
         SyncArchetypeId archetype,
-        ecs::Entity component) const;
-    const SyncComponentOps::QuantizedBytes* baseline_for(
-        const std::vector<ComponentBaseline>& baselines,
         ecs::Entity component) const;
     void remember_baseline(EntityState& state);
     void queue_ack(ecs::Entity entity, SyncFrame frame, bool destroy);

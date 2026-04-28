@@ -527,3 +527,60 @@ per-component indexes. Precomputed archetype component ops are mixed in stress,
 but they remove hash lookups from indexed hot paths and remain in the final
 state; the map-isolation run had better client time but worse server
 replication. Packet/update counts stayed identical across all accepted runs.
+
+## Experiment 14: Fixed-Size Archetype Frame Storage
+
+Rationale: `SyncComponentTraits<T>::Quantized` is already required to be
+trivially copyable, so each component's retained quantized state has a known
+fixed size. Instead of storing one byte container per retained component, this
+experiment precomputes per-archetype byte offsets and stores retained client
+and server state as one byte blob plus a 64-bit component presence mask.
+
+Implementation notes:
+
+- `SyncArchetype` now stores `component_offsets` and
+  `total_quantized_bytes`, validated at archetype definition time.
+- Client `EntityState` baselines, baseline history, buffered frames, and
+  applied component tracking use `QuantizedFrameData`.
+- Server `QuantizedSnapshot` uses `QuantizedFrameData` plus a parallel
+  component dirty-generation vector.
+- Component-facing callbacks/display paths still materialize temporary
+  `ReplicatedComponentUpdate` values where needed.
+- Wire format is unchanged.
+
+Results:
+
+- Client-only fixed frame run: `wall=22.157833`,
+  `server_replication=9.970254`, `client_receive=10.048042`,
+  `ack_processing=1.755859`, `rss_peak_bytes=352415744`,
+  `server_retained_snapshot_bytes=101944`
+- Full client/server fixed frame run 1: `wall=22.409071`,
+  `server_replication=9.958881`, `client_receive=10.288488`,
+  `ack_processing=1.775840`, `rss_peak_bytes=350326784`,
+  `server_retained_snapshot_bytes=107456`
+- Full client/server fixed frame run 2: `wall=21.216457`,
+  `server_replication=9.412056`, `client_receive=9.773369`,
+  `ack_processing=1.678802`, `rss_peak_bytes=350318592`,
+  `server_retained_snapshot_bytes=107456`
+
+Focused benchmark:
+
+```sh
+build-bench/kage_sync_benchmark --benchmark_filter='BM_ClientReceiveBufferedInterpolation|BM_ServerTickPackedAckedDeltaShared|BM_ServerTickMutatingAckedDelta' --benchmark_min_time=0.05s
+```
+
+Stress command:
+
+```sh
+build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --report text
+```
+
+Artifact: `build-bench/kage_sync_ball_stress`
+
+Conclusion: accepted. Compared with Experiment 13's lazy-overflow retained
+component records, fixed archetype frame storage cuts RSS by roughly another
+354 MB and reduces client receive from about `11.4-11.8` seconds to
+`9.8-10.3` seconds. Server retained snapshot bytes rise slightly because the
+fixed blob stores the full archetype byte span for each snapshot, but the
+combined process RSS and wall time improve substantially. Packet/update counts
+stayed identical.
