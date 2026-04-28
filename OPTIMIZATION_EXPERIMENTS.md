@@ -404,3 +404,61 @@ bulk read shrank the hot path further now that archetypes are assumed to fit in
 regressed stress timing; the original changed-pointer vector plus existing
 searches is apparently cheaper than the added mask/order checks in this
 workload.
+
+## Experiment 12: Component-Oriented Iteration Attempts
+
+Rationale: after the client bitset change, two component-oriented ideas were
+tested:
+
+- store client baselines with component indexes and use fixed 64-entry stack
+  lookup tables during delta merge instead of repeated linear searches;
+- during server snapshot construction, copy clean components from the ACKed
+  baseline before doing `registry.get`, and separately try a per-slot component
+  cache filled during dirty component iteration.
+
+Results:
+
+- Client indexed-baseline merge: `wall=33.236714`,
+  `server_replication=11.102449`, `client_receive=19.223582`,
+  `ack_processing=2.345817`, `rss_peak_bytes=1057853440`
+- Server dirty-quantized component cache run 1: `wall=30.892461`,
+  `server_replication=10.424174`, `client_receive=17.724703`,
+  `ack_processing=2.237924`
+- Server dirty-quantized component cache run 2: `wall=30.934188`,
+  `server_replication=10.420661`, `client_receive=17.781287`,
+  `ack_processing=2.254061`
+- Server copy-clean-before-ECS-get run 1: `wall=30.707352`,
+  `server_replication=10.489335`, `client_receive=17.544651`,
+  `ack_processing=2.194878`
+- Server copy-clean-before-ECS-get run 2: `wall=30.682914`,
+  `server_replication=10.429197`, `client_receive=17.547564`,
+  `ack_processing=2.237003`
+- Client bulk bitset read with the `<=64 components` guard removed:
+  `wall=29.702147`, `server_replication=10.215634`,
+  `client_receive=16.853907`, `ack_processing=2.157355`
+
+Focused server benchmark for the copy-clean-before-ECS-get variant:
+
+```sh
+build-bench/kage_sync_benchmark --benchmark_filter='BM_ServerTickPackedAckedDeltaShared|BM_ServerTickMutatingAckedDelta' --benchmark_min_time=0.05s
+```
+
+The focused server results regressed versus the earlier benchmark run in this
+file, so the server-side variants were rejected.
+
+Stress command:
+
+```sh
+build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --report text
+```
+
+Artifact: `build-bench/kage_sync_ball_stress`
+
+Conclusion: rejected the client indexed-baseline merge because the stored
+component index inflated every retained baseline and buffered frame enough to
+hurt memory and client receive substantially. Rejected the server component
+cache because the retained per-slot cache and extra work in dirty capture did
+not improve server replication. Rejected copy-clean-before-ECS-get because it
+regressed focused server benchmarks. Kept only the branch removal in the client
+bulk bitset read path under the project assumption that archetypes never exceed
+64 components.

@@ -481,9 +481,6 @@ bool ReplicationClient::apply_upsert(
         if (previous_baselines == nullptr) {
             return false;
         }
-        if (definition.components.size() > 64U) {
-            return false;
-        }
         const std::uint64_t changed_mask = packet.read_unsigned_bits(definition.components.size());
         decoded.reserve(definition.components.size());
         merged = *previous_baselines;
