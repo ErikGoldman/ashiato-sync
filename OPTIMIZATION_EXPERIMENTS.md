@@ -462,3 +462,68 @@ not improve server replication. Rejected copy-clean-before-ECS-get because it
 regressed focused server benchmarks. Kept only the branch removal in the client
 bulk bitset read path under the project assumption that archetypes never exceed
 64 components.
+
+## Experiment 13: Inline Bytes and Archetype-Indexed Ops
+
+Rationale: the previous component-oriented attempts showed that adding indexes
+to every retained component record inflated memory too much. This experiment
+instead changes the byte payload itself and uses existing archetype order:
+
+- replace heap-first `std::vector<uint8_t>` quantized payloads with
+  `QuantizedBytes`, which stores payloads up to 16 bytes inline and lazily
+  allocates overflow storage for larger payloads;
+- use archetype-order forward scans during client delta merge instead of
+  repeated `find_if` calls, without storing a component index per baseline;
+- store a copy of component ops on each archetype so indexed server/client hot
+  paths avoid `unordered_map` lookups.
+
+Results:
+
+- Inline bytes with embedded overflow vector run 1: `wall=24.970765`,
+  `server_replication=9.711238`, `client_receive=12.783843`,
+  `ack_processing=2.063182`, `rss_peak_bytes=895598592`
+- Inline bytes with embedded overflow vector run 2: `wall=24.639514`,
+  `server_replication=9.588017`, `client_receive=12.602594`,
+  `ack_processing=2.010520`, `rss_peak_bytes=895639552`
+- Add archetype-order client merge run 1: `wall=24.256349`,
+  `server_replication=9.531549`, `client_receive=12.346919`,
+  `ack_processing=1.977476`
+- Add archetype-order client merge run 2: `wall=24.655805`,
+  `server_replication=9.689080`, `client_receive=12.533034`,
+  `ack_processing=2.000763`
+- Add precomputed archetype component ops run 1: `wall=24.721719`,
+  `server_replication=9.644244`, `client_receive=12.650505`,
+  `ack_processing=2.027500`
+- Add precomputed archetype component ops run 2: `wall=24.394010`,
+  `server_replication=9.528032`, `client_receive=12.428334`,
+  `ack_processing=2.024985`
+- Map lookup isolation run on the same inline/order code: `wall=24.085248`,
+  `server_replication=9.964842`, `client_receive=11.705891`,
+  `ack_processing=2.027171`
+- Lazy overflow pointer run 1: `wall=23.789934`,
+  `server_replication=9.868873`, `client_receive=11.540013`,
+  `ack_processing=1.990558`, `rss_peak_bytes=704483328`
+- Lazy overflow pointer run 2: `wall=23.291535`,
+  `server_replication=9.554155`, `client_receive=11.408701`,
+  `ack_processing=1.945955`, `rss_peak_bytes=704274432`
+- Final kept state run: `wall=24.017574`,
+  `server_replication=9.849401`, `client_receive=11.768045`,
+  `ack_processing=2.002623`, `rss_peak_bytes=704196608`
+
+Command:
+
+```sh
+build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --report text
+```
+
+Artifact: `build-bench/kage_sync_ball_stress`
+
+Conclusion: accepted. Inline/lazy quantized storage is the dominant win: the
+stress components all fit in 16 bytes, so retained snapshots, client baseline
+history, buffered frames, and display samples avoid millions of tiny vector
+allocations and reduce RSS by about 263 MB versus the previous accepted state.
+Archetype-order client merge gives a small additional CPU win without storing
+per-component indexes. Precomputed archetype component ops are mixed in stress,
+but they remove hash lookups from indexed hot paths and remain in the final
+state; the map-isolation run had better client time but worse server
+replication. Packet/update counts stayed identical across all accepted runs.

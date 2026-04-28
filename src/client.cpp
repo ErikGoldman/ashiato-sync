@@ -463,15 +463,17 @@ bool ReplicationClient::apply_upsert(
             }
 
             const ecs::Entity component_entity = definition.components[component_index].component;
-            const auto found_ops = settings.component_ops.find(component_entity.value);
-            if (found_ops == settings.component_ops.end() || found_ops->second.deserialize == nullptr ||
-                found_ops->second.apply == nullptr) {
+            if (component_index >= definition.component_ops.size()) {
+                return false;
+            }
+            const SyncComponentOps& ops = definition.component_ops[component_index];
+            if (ops.deserialize == nullptr || ops.apply == nullptr) {
                 return false;
             }
 
             ComponentBaseline baseline;
             baseline.component = component_entity;
-            if (!found_ops->second.deserialize(packet, nullptr, baseline.bytes)) {
+            if (!ops.deserialize(packet, nullptr, baseline.bytes)) {
                 return false;
             }
             decoded.push_back(std::move(baseline));
@@ -484,34 +486,39 @@ bool ReplicationClient::apply_upsert(
         const std::uint64_t changed_mask = packet.read_unsigned_bits(definition.components.size());
         decoded.reserve(definition.components.size());
         merged = *previous_baselines;
+        std::size_t previous_index = 0;
+        std::size_t merged_index = 0;
         for (std::size_t component_index = 0; component_index < definition.components.size(); ++component_index) {
             if ((changed_mask & (std::uint64_t{1} << component_index)) == 0U) {
                 continue;
             }
             const ecs::Entity component_entity = definition.components[component_index].component;
-            const auto found_ops = settings.component_ops.find(component_entity.value);
-            if (found_ops == settings.component_ops.end() || found_ops->second.deserialize == nullptr ||
-                found_ops->second.apply == nullptr) {
+            if (component_index >= definition.component_ops.size()) {
+                return false;
+            }
+            const SyncComponentOps& ops = definition.component_ops[component_index];
+            if (ops.deserialize == nullptr || ops.apply == nullptr) {
                 return false;
             }
 
             ComponentBaseline baseline;
             baseline.component = component_entity;
-            const SyncComponentOps::QuantizedBytes* previous =
-                baseline_for(*previous_baselines, component_entity);
-            if (previous == nullptr || !found_ops->second.deserialize(packet, previous, baseline.bytes)) {
+            while (previous_index < previous_baselines->size() &&
+                   (*previous_baselines)[previous_index].component != component_entity) {
+                ++previous_index;
+            }
+            if (previous_index == previous_baselines->size() ||
+                !ops.deserialize(packet, &(*previous_baselines)[previous_index].bytes, baseline.bytes)) {
                 return false;
             }
-            auto found_merged = std::find_if(
-                merged.begin(),
-                merged.end(),
-                [&](const ComponentBaseline& candidate) {
-                    return candidate.component == component_entity;
-                });
-            if (found_merged == merged.end()) {
+            while (merged_index < merged.size() &&
+                   merged[merged_index].component != component_entity) {
+                ++merged_index;
+            }
+            if (merged_index == merged.size()) {
                 return false;
             }
-            found_merged->bytes = baseline.bytes;
+            merged[merged_index].bytes = baseline.bytes;
             decoded.push_back(std::move(baseline));
         }
     }
@@ -645,12 +652,12 @@ bool ReplicationClient::validate_buffered_archetype(const SyncSettings& settings
         return false;
     }
     const SyncArchetype& definition = settings.archetypes[archetype.value];
-    for (const ComponentReplication& replication : definition.components) {
+    for (std::size_t index = 0; index < definition.components.size(); ++index) {
+        const ComponentReplication& replication = definition.components[index];
         if (replication.interpolation != ComponentInterpolation::Interpolate) {
             continue;
         }
-        const auto found_ops = settings.component_ops.find(replication.component.value);
-        if (found_ops == settings.component_ops.end() || found_ops->second.interpolate == nullptr) {
+        if (index >= definition.component_ops.size() || definition.component_ops[index].interpolate == nullptr) {
             return false;
         }
     }

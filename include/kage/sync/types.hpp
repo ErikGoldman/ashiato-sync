@@ -4,10 +4,14 @@
 
 #include "ecs/ecs.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -60,13 +64,105 @@ struct ComponentReplication {
     ComponentInterpolation interpolation = ComponentInterpolation::Step;
 };
 
-struct SyncArchetype {
-    std::string name;
-    std::vector<ComponentReplication> components;
+class QuantizedBytes {
+public:
+    static constexpr std::size_t inline_capacity = 16;
+    static constexpr std::size_t max_size = 1200;
+
+    QuantizedBytes() = default;
+
+    QuantizedBytes(const QuantizedBytes& other)
+        : size_(other.size_),
+          inline_(other.inline_) {
+        if (other.overflow_) {
+            overflow_ = std::make_unique<Overflow>(*other.overflow_);
+        }
+    }
+
+    QuantizedBytes& operator=(const QuantizedBytes& other) {
+        if (this != &other) {
+            size_ = other.size_;
+            inline_ = other.inline_;
+            if (other.overflow_) {
+                overflow_ = std::make_unique<Overflow>(*other.overflow_);
+            } else {
+                overflow_.reset();
+            }
+        }
+        return *this;
+    }
+
+    QuantizedBytes(QuantizedBytes&&) noexcept = default;
+    QuantizedBytes& operator=(QuantizedBytes&&) noexcept = default;
+
+    std::size_t size() const noexcept {
+        return size_;
+    }
+
+    bool empty() const noexcept {
+        return size_ == 0;
+    }
+
+    std::uint8_t* data() noexcept {
+        return overflow_ == nullptr ? inline_.data() : overflow_->data();
+    }
+
+    const std::uint8_t* data() const noexcept {
+        return overflow_ == nullptr ? inline_.data() : overflow_->data();
+    }
+
+    std::uint8_t* begin() noexcept {
+        return data();
+    }
+
+    std::uint8_t* end() noexcept {
+        return data() + size_;
+    }
+
+    const std::uint8_t* begin() const noexcept {
+        return data();
+    }
+
+    const std::uint8_t* end() const noexcept {
+        return data() + size_;
+    }
+
+    void clear() noexcept {
+        size_ = 0;
+    }
+
+    void resize(std::size_t size) {
+        if (size > max_size) {
+            throw std::length_error("sync quantized component payload exceeds maximum size");
+        }
+        size_ = size;
+        if (size <= inline_capacity) {
+            overflow_.reset();
+            return;
+        }
+        if (overflow_ == nullptr) {
+            overflow_ = std::make_unique<Overflow>();
+        }
+    }
+
+    friend bool operator==(const QuantizedBytes& lhs, const QuantizedBytes& rhs) noexcept {
+        return lhs.size_ == rhs.size_ && std::equal(lhs.data(), lhs.data() + lhs.size_, rhs.data());
+    }
+
+    friend bool operator!=(const QuantizedBytes& lhs, const QuantizedBytes& rhs) noexcept {
+        return !(lhs == rhs);
+    }
+
+private:
+    using Overflow = std::array<std::uint8_t, max_size>;
+
+    std::size_t size_ = 0;
+    std::array<std::uint8_t, inline_capacity> inline_{};
+    std::unique_ptr<Overflow> overflow_;
 };
 
 struct SyncComponentOps {
-    using QuantizedBytes = std::vector<std::uint8_t>;
+    using QuantizedBytes = kage::sync::QuantizedBytes;
     using QuantizeFn = void (*)(const void*, QuantizedBytes&);
     using DequantizeFn = void (*)(const QuantizedBytes&, void*);
     using ApplyFn = bool (*)(ecs::Registry&, ecs::Entity, const QuantizedBytes&);
@@ -88,6 +184,12 @@ struct SyncComponentOps {
     ComputeErrorFn compute_error = nullptr;
     ApplyErrorFn apply_error = nullptr;
     BlendOutErrorFn blend_out_error = nullptr;
+};
+
+struct SyncArchetype {
+    std::string name;
+    std::vector<ComponentReplication> components;
+    std::vector<SyncComponentOps> component_ops;
 };
 
 struct SyncSettings {

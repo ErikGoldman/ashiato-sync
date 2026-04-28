@@ -606,10 +606,10 @@ std::uint32_t ReplicationServer::find_or_create_snapshot(
             continue;
         }
 
-        const auto found_ops = settings.component_ops.find(replication.component.value);
-        if (found_ops == settings.component_ops.end()) {
+        if (component_index >= archetype.component_ops.size()) {
             throw std::logic_error("sync component traits are not registered for replicated component");
         }
+        const SyncComponentOps& ops = archetype.component_ops[component_index];
 
         QuantizedBaseline quantized;
         quantized.component = replication.component;
@@ -635,7 +635,7 @@ std::uint32_t ReplicationServer::find_or_create_snapshot(
         if (previous != nullptr && previous->dirty_generation == quantized.dirty_generation) {
             quantized.bytes = previous->bytes;
         } else {
-            found_ops->second.quantize(component_value, quantized.bytes);
+            ops.quantize(component_value, quantized.bytes);
         }
         scratch.push_back(std::move(quantized));
     }
@@ -846,13 +846,13 @@ void ReplicationServer::write_entity_record(
             }
         }
         for (const QuantizedBaseline* baseline : changed) {
-            const auto found_ops = settings.component_ops.find(baseline->component.value);
-            if (found_ops == settings.component_ops.end()) {
+            if (baseline->component_index >= archetype.component_ops.size()) {
                 throw std::logic_error("sync component traits are not registered for replicated component");
             }
+            const SyncComponentOps& ops = archetype.component_ops[baseline->component_index];
             const SyncComponentOps::QuantizedBytes* previous =
                 find_baseline_component(entity_state.baseline, baseline->component);
-            found_ops->second.serialize(previous, baseline->bytes, out);
+            ops.serialize(previous, baseline->bytes, out);
         }
         (void)registry;
         return;
@@ -865,16 +865,16 @@ void ReplicationServer::write_entity_record(
             throw std::logic_error("replicated snapshot component is not in its archetype");
         }
 
-        const auto found_ops = settings.component_ops.find(baseline.component.value);
-        if (found_ops == settings.component_ops.end()) {
+        if (baseline.component_index >= archetype.component_ops.size()) {
             throw std::logic_error("sync component traits are not registered for replicated component");
         }
+        const SyncComponentOps& ops = archetype.component_ops[baseline.component_index];
 
         const SyncComponentOps::QuantizedBytes* previous =
             delta ? find_baseline_component(entity_state.baseline, baseline.component) : nullptr;
 
         out.push_bits(static_cast<std::int64_t>(baseline.component_index), 16U);
-        found_ops->second.serialize(previous, baseline.bytes, out);
+        ops.serialize(previous, baseline.bytes, out);
     }
 
     (void)registry;

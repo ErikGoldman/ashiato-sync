@@ -91,8 +91,17 @@ SyncArchetypeId define_archetype(
     }
 
     SyncSettings& settings = registry.write<SyncSettings>();
+    std::vector<SyncComponentOps> component_ops;
+    component_ops.reserve(components.size());
+    for (const ComponentReplication& replication : components) {
+        const auto found_ops = settings.component_ops.find(replication.component.value);
+        if (found_ops == settings.component_ops.end()) {
+            throw std::invalid_argument("sync archetype references a component without sync traits");
+        }
+        component_ops.push_back(found_ops->second);
+    }
     const SyncArchetypeId id{static_cast<std::uint32_t>(settings.archetypes.size())};
-    settings.archetypes.push_back(SyncArchetype{std::move(name), std::move(components)});
+    settings.archetypes.push_back(SyncArchetype{std::move(name), std::move(components), std::move(component_ops)});
     return id;
 }
 
