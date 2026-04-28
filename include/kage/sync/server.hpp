@@ -51,6 +51,7 @@ private:
 
     struct QuantizedBaseline {
         ecs::Entity component;
+        std::uint16_t component_index = 0;
         SyncComponentOps::QuantizedBytes bytes;
     };
 

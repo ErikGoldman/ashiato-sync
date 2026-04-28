@@ -66,6 +66,8 @@ struct SyncArchetype {
 };
 
 struct SyncComponentOps {
+    static constexpr std::size_t variable_serialized_bits = std::numeric_limits<std::size_t>::max();
+
     using QuantizedBytes = std::vector<std::uint8_t>;
     using QuantizeFn = void (*)(const void*, QuantizedBytes&);
     using DequantizeFn = void (*)(const QuantizedBytes&, void*);
@@ -78,6 +80,7 @@ struct SyncComponentOps {
     using BlendOutErrorFn = bool (*)(const QuantizedBytes&, float, QuantizedBytes&);
 
     std::size_t quantized_size = 0;
+    std::size_t serialized_size_bits = variable_serialized_bits;
     std::size_t error_size = 0;
     QuantizeFn quantize = nullptr;
     DequantizeFn dequantize = nullptr;

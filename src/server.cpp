@@ -484,7 +484,8 @@ std::uint32_t ReplicationServer::find_or_create_snapshot(
 
     scratch.clear();
     scratch.reserve(archetype.components.size());
-    for (const ComponentReplication& replication : archetype.components) {
+    for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
+        const ComponentReplication& replication = archetype.components[component_index];
         if (replication.audience == ReplicationAudience::Owner &&
             (owner == nullptr || owner->client != client)) {
             continue;
@@ -502,6 +503,7 @@ std::uint32_t ReplicationServer::find_or_create_snapshot(
 
         QuantizedBaseline quantized;
         quantized.component = replication.component;
+        quantized.component_index = static_cast<std::uint16_t>(component_index);
         found_ops->second.quantize(component_value, quantized.bytes);
         scratch.push_back(std::move(quantized));
     }
@@ -632,6 +634,7 @@ bool ReplicationServer::same_snapshot_components(
 
     for (std::size_t index = 0; index < baselines.size(); ++index) {
         if (snapshot.baselines[index].component != baselines[index].component ||
+            snapshot.baselines[index].component_index != baselines[index].component_index ||
             snapshot.baselines[index].bytes != baselines[index].bytes) {
             return false;
         }
@@ -671,32 +674,43 @@ void ReplicationServer::write_entity_record(
 
     const SyncArchetype& archetype = settings.archetypes[snapshot.archetype.value];
     for (const QuantizedBaseline& baseline : snapshot.baselines) {
-        const auto component_found = std::find_if(
-            archetype.components.begin(),
-            archetype.components.end(),
-            [&baseline](const ComponentReplication& replication) {
-                return replication.component == baseline.component;
-            });
-        if (component_found == archetype.components.end()) {
+        if (baseline.component_index >= archetype.components.size() ||
+            archetype.components[baseline.component_index].component != baseline.component) {
             throw std::logic_error("replicated snapshot component is not in its archetype");
         }
 
-        const std::size_t component_index =
-            static_cast<std::size_t>(component_found - archetype.components.begin());
         const auto found_ops = settings.component_ops.find(baseline.component.value);
         if (found_ops == settings.component_ops.end()) {
             throw std::logic_error("sync component traits are not registered for replicated component");
         }
 
-        BitBuffer component_payload;
-        component_payload.reserve_bytes(found_ops->second.quantized_size);
         const SyncComponentOps::QuantizedBytes* previous =
             delta ? find_baseline_component(entity_state.baseline, baseline.component) : nullptr;
-        found_ops->second.serialize(previous, baseline.bytes, component_payload);
 
-        out.push_bits(static_cast<std::int64_t>(component_index), 16U);
-        out.push_bits(static_cast<std::int64_t>(component_payload.bit_size()), 32U);
-        out.push_buffer_bits(component_payload);
+        out.push_bits(static_cast<std::int64_t>(baseline.component_index), 16U);
+        if (found_ops->second.serialized_size_bits != SyncComponentOps::variable_serialized_bits) {
+            if (found_ops->second.serialized_size_bits >
+                static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+                throw std::length_error("fixed-size replicated component payload bit size exceeds protocol limit");
+            }
+            out.push_bits(static_cast<std::int64_t>(found_ops->second.serialized_size_bits), 32U);
+            const std::size_t payload_begin = out.bit_size();
+            found_ops->second.serialize(previous, baseline.bytes, out);
+            if (out.bit_size() - payload_begin != found_ops->second.serialized_size_bits) {
+                throw std::logic_error("fixed-size replicated component serializer wrote an unexpected bit count");
+            }
+            continue;
+        }
+
+        const std::size_t payload_size_offset = out.bit_size();
+        out.push_bits(0, 32U);
+        const std::size_t payload_begin = out.bit_size();
+        found_ops->second.serialize(previous, baseline.bytes, out);
+        const std::size_t payload_bits = out.bit_size() - payload_begin;
+        if (payload_bits > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+            throw std::length_error("replicated component payload bit size exceeds protocol limit");
+        }
+        out.overwrite_unsigned_bits(payload_size_offset, payload_bits, 32U);
     }
 
     (void)registry;

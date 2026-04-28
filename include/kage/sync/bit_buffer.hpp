@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -85,6 +86,54 @@ public:
 
         for (std::size_t bit = 0; bit < num_bits; ++bit) {
             push_bool(((value >> bit) & 1U) != 0);
+        }
+    }
+
+    void overwrite_unsigned_bits(std::size_t bit_offset, std::uint64_t value, std::size_t num_bits) {
+        if (num_bits > 64U) {
+            throw std::invalid_argument("bit buffer cannot overwrite more than 64 bits at once");
+        }
+        if (bit_offset > bit_size_ || num_bits > bit_size_ - bit_offset) {
+            throw std::out_of_range("bit buffer overwrite past end");
+        }
+        if (num_bits == 0U) {
+            return;
+        }
+
+        const std::size_t bit_shift = bit_offset % 8U;
+        const std::size_t byte_offset = bit_offset / 8U;
+        if (bit_shift == 0U && (num_bits % 8U) == 0U) {
+            for (std::size_t byte = 0; byte < num_bits / 8U; ++byte) {
+                bytes_[byte_offset + byte] = static_cast<std::uint8_t>((value >> (byte * 8U)) & 0xFFU);
+            }
+            return;
+        }
+
+        const std::size_t touched_bytes = (bit_shift + num_bits + 7U) / 8U;
+        if (touched_bytes <= sizeof(std::uint64_t)) {
+            std::uint64_t window = 0;
+            for (std::size_t byte = 0; byte < touched_bytes; ++byte) {
+                window |= std::uint64_t{bytes_[byte_offset + byte]} << (byte * 8U);
+            }
+            const std::uint64_t value_mask = num_bits == 64U
+                ? std::numeric_limits<std::uint64_t>::max()
+                : ((std::uint64_t{1} << num_bits) - 1U);
+            const std::uint64_t mask = value_mask << bit_shift;
+            window = (window & ~mask) | ((value & value_mask) << bit_shift);
+            for (std::size_t byte = 0; byte < touched_bytes; ++byte) {
+                bytes_[byte_offset + byte] = static_cast<std::uint8_t>((window >> (byte * 8U)) & 0xFFU);
+            }
+            return;
+        }
+
+        for (std::size_t bit = 0; bit < num_bits; ++bit) {
+            const std::size_t target = bit_offset + bit;
+            const auto mask = static_cast<std::uint8_t>(1U << (target % 8U));
+            if (((value >> bit) & 1U) != 0) {
+                bytes_[target / 8U] |= mask;
+            } else {
+                bytes_[target / 8U] &= static_cast<std::uint8_t>(~mask);
+            }
         }
     }
 

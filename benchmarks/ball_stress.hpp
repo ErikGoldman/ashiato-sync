@@ -33,6 +33,7 @@ namespace kage::sync {
 template <>
 struct SyncComponentTraits<stress::BallPosition> {
     using Quantized = stress::BallPosition;
+    static constexpr std::size_t serialized_size_bits = sizeof(Quantized) * 8U;
 
     static Quantized quantize(const stress::BallPosition& value) {
         return value;

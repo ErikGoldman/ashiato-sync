@@ -19,3 +19,7 @@ This is a high-performance project. Always consider the performance effect of an
 - Record the command and artifact path used in any benchmark summary.
 - Treat Debug timings as smoke tests, not authoritative performance data.
 - Use gprof to find hot spots
+
+## Optimization
+
+- Previous optimization experiments are in OPTIMIZATION\_EXPERIMENTS.md -- read it for context and update it when trying new experiments.

@@ -59,12 +59,38 @@ TEST_CASE("bit buffer validates invalid read and write requests") {
     REQUIRE_NOTHROW(buffer.push_bytes(nullptr, 0U));
     REQUIRE_THROWS_AS(buffer.push_bytes(nullptr, 1U), std::invalid_argument);
     REQUIRE_THROWS_AS(buffer.push_bits(0, 65U), std::invalid_argument);
+    REQUIRE_THROWS_AS(buffer.overwrite_unsigned_bits(0, 0, 65U), std::invalid_argument);
+    REQUIRE_THROWS_AS(buffer.overwrite_unsigned_bits(0, 0, 1U), std::out_of_range);
 
     char out = 0;
     REQUIRE_NOTHROW(buffer.read_bytes(nullptr, 0U));
     REQUIRE_THROWS_AS(buffer.read_bytes(nullptr, 1U), std::invalid_argument);
     REQUIRE_THROWS_AS(buffer.read_unsigned_bits(65U), std::invalid_argument);
     REQUIRE_THROWS_AS(buffer.read_bytes(&out, 1U), std::out_of_range);
+}
+
+TEST_CASE("bit buffer overwrites existing aligned and unaligned bit ranges") {
+    kage::sync::BitBuffer aligned;
+    aligned.push_bits(0, 32U);
+    aligned.overwrite_unsigned_bits(0, 0xfeedfaceU, 32U);
+    REQUIRE(aligned.read_unsigned_bits(32U) == 0xfeedfaceU);
+
+    kage::sync::BitBuffer unaligned;
+    unaligned.push_bits(0b101, 3U);
+    const std::size_t patch_offset = unaligned.bit_size();
+    unaligned.push_bits(0, 32U);
+    unaligned.push_bits(0b11, 2U);
+
+    REQUIRE(unaligned.read_bits(3U) == 0b101);
+    REQUIRE(unaligned.read_offset_bits() == 3U);
+
+    unaligned.overwrite_unsigned_bits(patch_offset, 0xcafebabeU, 32U);
+
+    REQUIRE(unaligned.bit_size() == 37U);
+    REQUIRE(unaligned.read_offset_bits() == 3U);
+    REQUIRE(unaligned.read_unsigned_bits(32U) == 0xcafebabeU);
+    REQUIRE(unaligned.read_bits(2U) == 0b11);
+    REQUIRE(unaligned.remaining_bits() == 0U);
 }
 
 TEST_CASE("bit buffer appends source buffers bit-exactly") {

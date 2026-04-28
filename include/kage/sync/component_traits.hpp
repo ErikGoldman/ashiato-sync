@@ -13,6 +13,7 @@ namespace kage::sync {
 template <typename T>
 struct SyncComponentTraits {
     using Quantized = T;
+    static constexpr std::size_t serialized_size_bits = sizeof(Quantized) * 8U;
 
     static Quantized quantize(const T& value) {
         static_assert(
@@ -103,6 +104,12 @@ typename std::enable_if<!has_interpolate<Traits, Quantized>::value, bool>::type 
 
 template <typename Traits, typename Quantized, typename = void>
 struct has_error_blending : std::false_type {};
+
+template <typename Traits, typename = void>
+struct has_serialized_size_bits : std::false_type {};
+
+template <typename Traits>
+struct has_serialized_size_bits<Traits, std::void_t<decltype(Traits::serialized_size_bits)>> : std::true_type {};
 
 template <typename Traits, typename Quantized>
 struct has_error_blending<
@@ -233,6 +240,9 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
 
     SyncComponentOps ops;
     ops.quantized_size = sizeof(Quantized);
+    if constexpr (detail::has_serialized_size_bits<Traits>::value) {
+        ops.serialized_size_bits = Traits::serialized_size_bits;
+    }
     ops.quantize = [](const void* value, SyncComponentOps::QuantizedBytes& out) {
         const Quantized quantized = Traits::quantize(*static_cast<const T*>(value));
         out.resize(sizeof(Quantized));
