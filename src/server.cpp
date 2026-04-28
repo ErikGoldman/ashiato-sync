@@ -520,6 +520,15 @@ void ReplicationServer::mark_owner_visibility_dirty(const SyncSettings& settings
     }
 }
 
+bool ReplicationServer::archetype_is_same_frame_cacheable(const SyncArchetype& archetype) {
+    for (const ComponentReplication& replication : archetype.components) {
+        if (replication.audience != ReplicationAudience::All) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool ReplicationServer::serialize_entity(
     const ecs::Registry& registry,
     const SyncSettings& settings,
@@ -560,6 +569,17 @@ std::uint32_t ReplicationServer::find_or_create_snapshot(
 
     const ReplicatedSlot& replicated = replicated_[slot];
     const SyncArchetype& archetype = settings.archetypes[replicated.archetype.value];
+    if (replicated.same_frame_cacheable &&
+        replicated.same_frame_snapshot_frame == frame &&
+        replicated.same_frame_snapshot != invalid_snapshot_id &&
+        replicated.same_frame_snapshot < snapshots_.size()) {
+        const QuantizedSnapshot& cached = snapshots_[replicated.same_frame_snapshot];
+        if (cached.active && cached.slot == slot && cached.frame == frame &&
+            cached.archetype == replicated.archetype) {
+            return replicated.same_frame_snapshot;
+        }
+    }
+
     const NetworkOwner* owner = registry.try_get<NetworkOwner>(replicated.entity);
     const ClientEntityState* entity_state =
         slot < client.entity_states.size() ? &client.entity_states[slot] : nullptr;
@@ -655,6 +675,10 @@ std::uint32_t ReplicationServer::find_or_create_snapshot(
     snapshot.active = true;
     snapshot.baselines = std::move(scratch);
     replicated_[slot].snapshots.push_back(index);
+    if (replicated_[slot].same_frame_cacheable) {
+        replicated_[slot].same_frame_snapshot = index;
+        replicated_[slot].same_frame_snapshot_frame = frame;
+    }
     return index;
 }
 
@@ -889,8 +913,12 @@ bool ReplicationServer::upsert_replicated(ecs::Registry& registry, ecs::Entity e
     const auto found = entity_to_slot_.find(key);
     if (found != entity_to_slot_.end()) {
         replicated_[found->second].archetype = archetype;
+        replicated_[found->second].same_frame_snapshot = invalid_snapshot_id;
+        replicated_[found->second].same_frame_snapshot_frame = 0;
         const SyncSettings& settings = registry.get<SyncSettings>();
         if (archetype.value < settings.archetypes.size()) {
+            replicated_[found->second].same_frame_cacheable =
+                archetype_is_same_frame_cacheable(settings.archetypes[archetype.value]);
             replicated_[found->second].component_dirty_generations.assign(
                 settings.archetypes[archetype.value].components.size(),
                 1U);
@@ -908,6 +936,8 @@ bool ReplicationServer::upsert_replicated(ecs::Registry& registry, ecs::Entity e
     const std::uint32_t slot = allocate_slot(entity, archetype);
     const SyncSettings& settings = registry.get<SyncSettings>();
     if (archetype.value < settings.archetypes.size()) {
+        replicated_[slot].same_frame_cacheable =
+            archetype_is_same_frame_cacheable(settings.archetypes[archetype.value]);
         replicated_[slot].component_dirty_generations.assign(
             settings.archetypes[archetype.value].components.size(),
             1U);
@@ -932,7 +962,7 @@ std::uint32_t ReplicationServer::allocate_slot(ecs::Entity entity, SyncArchetype
     if (!free_replicated_slots_.empty()) {
         const std::uint32_t slot = free_replicated_slots_.back();
         free_replicated_slots_.pop_back();
-        replicated_[slot] = ReplicatedSlot{entity, archetype, {}, {}, true};
+        replicated_[slot] = ReplicatedSlot{entity, archetype, {}, {}, invalid_snapshot_id, 0, false, true};
         return slot;
     }
 
@@ -941,7 +971,7 @@ std::uint32_t ReplicationServer::allocate_slot(ecs::Entity entity, SyncArchetype
     }
 
     const std::uint32_t slot = static_cast<std::uint32_t>(replicated_.size());
-    replicated_.push_back(ReplicatedSlot{entity, archetype, {}, {}, true});
+    replicated_.push_back(ReplicatedSlot{entity, archetype, {}, {}, invalid_snapshot_id, 0, false, true});
     return slot;
 }
 
@@ -955,6 +985,9 @@ void ReplicationServer::deactivate_slot(std::uint32_t slot) {
     entity_index_to_slot_.erase(ecs::Registry::entity_index(entity));
     replicated_[slot].active = false;
     replicated_[slot].snapshots.clear();
+    replicated_[slot].same_frame_snapshot = invalid_snapshot_id;
+    replicated_[slot].same_frame_snapshot_frame = 0;
+    replicated_[slot].same_frame_cacheable = false;
     free_replicated_slots_.push_back(slot);
     --active_replicated_count_;
     for (ClientState& client : clients_) {

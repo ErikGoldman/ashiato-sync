@@ -42,11 +42,16 @@ public:
     void tick(ecs::Registry& registry, const ReplicateFn& replicate);
 
 private:
+    static constexpr std::uint32_t invalid_snapshot_id = std::numeric_limits<std::uint32_t>::max();
+
     struct ReplicatedSlot {
         ecs::Entity entity;
         SyncArchetypeId archetype;
         std::vector<std::uint32_t> snapshots;
         std::vector<std::uint64_t> component_dirty_generations;
+        std::uint32_t same_frame_snapshot = invalid_snapshot_id;
+        SyncFrame same_frame_snapshot_frame = 0;
+        bool same_frame_cacheable = false;
         bool active = false;
     };
 
@@ -56,8 +61,6 @@ private:
         std::uint64_t dirty_generation = 0;
         SyncComponentOps::QuantizedBytes bytes;
     };
-
-    static constexpr std::uint32_t invalid_snapshot_id = std::numeric_limits<std::uint32_t>::max();
 
     struct QuantizedSnapshot {
         std::uint32_t slot = 0;
@@ -122,6 +125,7 @@ private:
     void capture_dirty_components(const ecs::Registry& registry, const SyncSettings& settings);
     void mark_dirty_component(const SyncSettings& settings, std::uint32_t slot, ecs::Entity component);
     void mark_owner_visibility_dirty(const SyncSettings& settings, std::uint32_t slot);
+    static bool archetype_is_same_frame_cacheable(const SyncArchetype& archetype);
     void tick_serialized(ecs::Registry& registry);
     static bool candidate_before(const SerializedCandidate& lhs, const SerializedCandidate& rhs) noexcept;
     bool serialize_entity(

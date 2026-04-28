@@ -286,3 +286,52 @@ packet count dropped because smaller entity records pack more densely. The
 server observes but does not clear gameplay dirty bits; the stress harness
 clears the replicated component dirty bits after server replication to model
 application-owned dirty-bit lifecycle.
+
+## Experiment 10: Same-Frame Quantized Snapshot Cache After Dirty Bitvectors
+
+Rationale: Experiment 9 made ACKed baseline reuse much cheaper, but the server
+still rebuilt same-frame quantized snapshots when multiple clients serialized
+the same all-audience slot in one server frame. This revisits the rejected
+Experiment 2 idea on top of the newer dirty-component protocol. Two variants
+were tried:
+
+- direct per-slot same-frame snapshot id cache with archetype audience checked
+  on every serialization;
+- the same snapshot id cache with the all-audience eligibility precomputed on
+  the replicated slot when its archetype is assigned.
+
+Result:
+
+- Direct eligibility check run: `wall=32.632117`,
+  `server_replication=11.080315`, `client_receive=18.685556`,
+  `ack_processing=2.320491`, `server_to_clients.bytes=243252485`
+- Precomputed eligibility run 1: `wall=30.170488`,
+  `server_replication=10.074138`, `client_receive=17.413807`,
+  `ack_processing=2.185484`, `server_to_clients.bytes=243252485`
+- Precomputed eligibility run 2: `wall=31.055385`,
+  `server_replication=10.351669`, `client_receive=17.939104`,
+  `ack_processing=2.233395`, `server_to_clients.bytes=243252485`
+
+Focused benchmark command:
+
+```sh
+build-bench/kage_sync_benchmark --benchmark_filter='BM_ServerTickPacked(FullBudget|AckedDeltaShared|MtuLimited)|BM_ServerTickMutatingAckedDelta|BM_ServerTickOwnerAudienceMixed|BM_ServerTickArchetypeDiversity' --benchmark_min_time=0.05s
+```
+
+Stress command:
+
+```sh
+cmake --build build-bench --target run_kage_sync_ball_stress
+```
+
+Artifact: `build-bench/kage_sync_ball_stress`
+
+Conclusion: accepted with precomputed eligibility. The direct-check variant
+reduced server replication but regressed wall time, matching the earlier lesson
+that cache metadata overhead can erase quantization wins. Precomputing the
+cacheability bit keeps the hot-path check small enough to pay off: compared
+with Experiment 9's accepted runs, server replication improved from
+`11.106562-11.400723` seconds to `10.074138-10.351669` seconds, while wall time
+improved from `31.427831-32.017058` seconds to `30.170488-31.055385` seconds.
+Packet counts, update counts, retained snapshot counts, and
+server-to-client bytes stayed unchanged, so the gain is CPU-side only.
