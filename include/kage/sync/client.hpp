@@ -35,6 +35,31 @@ private:
     const std::vector<ReplicatedComponentUpdate>* components = nullptr;
 };
 
+struct DisplayEntitySample {
+    ecs::Entity server_entity;
+    ecs::Entity local_entity;
+    SyncArchetypeId archetype;
+    SyncFrame frame = 0;
+    float alpha = 0.0f;
+    std::vector<ReplicatedComponentUpdate> components;
+
+    template <typename T>
+    bool try_get(const ecs::Registry& registry, T& out) const {
+        const ecs::Entity component = registry.component<T>();
+        return try_get(registry, component, &out);
+    }
+
+    bool try_get(const ecs::Registry& registry, ecs::Entity component, void* out) const;
+};
+
+struct DisplaySampleBuffer {
+    std::vector<DisplayEntitySample> entities;
+
+    void clear() {
+        entities.clear();
+    }
+};
+
 using EntityModeSelector = std::function<ReplicationClientMode(const ReplicatedEntityUpdateView&)>;
 
 struct ReplicationClientOptions {
@@ -50,6 +75,7 @@ struct ReplicationClientOptions {
     float auto_interpolation_time_dilation_max = 1.05f;
     float auto_interpolation_time_dilation_gain = 0.05f;
     EntityModeSelector entity_mode_selector;
+    double fixed_dt_seconds = 1.0 / 60.0;
 };
 
 struct ReplicationClientTimingStats {
@@ -75,6 +101,7 @@ public:
     bool set_entity_mode(ecs::Registry& registry, ecs::Entity server_entity, ReplicationClientMode mode);
     ReplicationClientMode entity_mode(ecs::Entity server_entity) const noexcept;
     bool set_interpolation_buffer_frames(SyncFrame frames) noexcept;
+    bool tick(ecs::Registry& registry, double dt_seconds);
     bool receive(ecs::Registry& registry, BitBuffer packet);
     bool receive(ecs::Registry& registry, BitBuffer packet, SyncFrame client_frame);
     bool receive(
@@ -83,9 +110,24 @@ public:
         SyncFrame receive_frame,
         SyncFrame playback_frame);
     bool apply_frame(ecs::Registry& registry, SyncFrame client_frame);
+    bool sample_display_target_frame(
+        const ecs::Registry& registry,
+        double target_frame,
+        DisplaySampleBuffer& out) const;
+    bool sample_display_frame(
+        const ecs::Registry& registry,
+        double client_frame,
+        DisplaySampleBuffer& out) const;
+    const DisplaySampleBuffer& display_frame(const ecs::Registry& registry);
     std::vector<BitBuffer> drain_ack_packets();
     std::size_t pending_ack_count() const noexcept;
     ecs::Entity local_entity(ecs::Entity server_entity) const;
+    SyncFrame receive_frame() const noexcept {
+        return receive_frame_;
+    }
+    SyncFrame playback_frame() const noexcept {
+        return playback_frame_;
+    }
     const ReplicationClientTimingStats& timing_stats() const noexcept {
         return timing_stats_;
     }
@@ -180,6 +222,13 @@ private:
         EntityState& state,
         ReplicationClientMode mode);
     bool has_buffered_entities() const noexcept;
+    bool write_display_samples(
+        const ecs::Registry& registry,
+        double target_frame,
+        bool include_snap,
+        bool include_empty_buffered,
+        DisplaySampleBuffer& out) const;
+    void update_display_target(double dt_seconds) noexcept;
     ComponentInterpolation interpolation_for(
         const SyncSettings& settings,
         SyncArchetypeId archetype,
@@ -195,8 +244,16 @@ private:
     ReplicationClientTimingStats timing_stats_;
     std::unordered_map<std::uint64_t, EntityState> entities_;
     std::vector<AckRecord> pending_acks_;
+    DisplaySampleBuffer display_frame_;
+    DisplaySampleBuffer display_scratch_;
+    double receive_accumulator_seconds_ = 0.0;
+    double playback_accumulator_seconds_ = 0.0;
+    double display_target_frame_ = 0.0;
+    SyncFrame receive_frame_ = 0;
+    SyncFrame playback_frame_ = 0;
     SyncFrame last_applied_buffered_frame_ = 0;
     bool has_applied_buffered_frame_ = false;
+    bool has_display_target_frame_ = false;
 };
 
 }  // namespace kage::sync

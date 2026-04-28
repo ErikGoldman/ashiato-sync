@@ -1298,6 +1298,335 @@ TEST_CASE("buffered interpolation keeps step components held between interpolate
     REQUIRE(client_registry.get<Health>(local).value == 40);
 }
 
+TEST_CASE("display interpolation samples fractional frames without mutating ECS") {
+    ecs::Registry server_registry;
+    const ecs::Entity server_position =
+        kage::sync::register_sync_component<SmoothPosition>(server_registry, "SmoothPosition");
+    const kage::sync::SyncArchetypeId server_archetype = kage::sync::define_archetype(
+        server_registry,
+        "SmoothActor",
+        {{server_position, kage::sync::ReplicationAudience::All}});
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<SmoothPosition>(server_entity, SmoothPosition{0.0f, 0.0f}) != nullptr);
+
+    std::vector<kage::sync::BitBuffer> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+    ecs::Registry client_registry;
+    const ecs::Entity client_position =
+        kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
+    REQUIRE(kage::sync::set_display_interpolated(client_registry, client_position));
+    const kage::sync::SyncArchetypeId client_archetype = kage::sync::define_archetype(
+        client_registry,
+        "SmoothActor",
+        {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}});
+    REQUIRE(client_archetype == server_archetype);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        1,
+        8});
+    server.tick(server_registry);
+    REQUIRE(client.receive(client_registry, packets.back()));
+    for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
+        REQUIRE(server.process_packet(1, ack));
+    }
+
+    packets.clear();
+    server_registry.write<SmoothPosition>(server_entity) = SmoothPosition{10.0f, 0.0f};
+    server.tick(server_registry);
+    REQUIRE(client.receive(client_registry, packets.back()));
+
+    REQUIRE(client.apply_frame(client_registry, 2));
+    const ecs::Entity local = client.local_entity(server_entity);
+    REQUIRE(local);
+    REQUIRE(client_registry.get<SmoothPosition>(local).x == 0.0f);
+
+    kage::sync::DisplaySampleBuffer display;
+    REQUIRE(client.sample_display_frame(client_registry, 2.5, display));
+    REQUIRE(display.entities.size() == 1);
+    REQUIRE(display.entities[0].server_entity == server_entity);
+    REQUIRE(display.entities[0].local_entity == local);
+    REQUIRE(display.entities[0].frame == 1);
+    REQUIRE(display.entities[0].alpha == Catch::Approx(0.5f));
+
+    SmoothPosition sampled;
+    REQUIRE(display.entities[0].try_get(client_registry, sampled));
+    REQUIRE(sampled.x == Catch::Approx(5.0f));
+    REQUIRE(sampled.y == Catch::Approx(0.0f));
+    REQUIRE(client_registry.get<SmoothPosition>(local).x == 0.0f);
+}
+
+TEST_CASE("display interpolation returns floor samples when the next frame is unavailable") {
+    ecs::Registry client_registry;
+    const ecs::Entity client_position =
+        kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
+    REQUIRE(kage::sync::set_display_interpolated(client_registry, client_position));
+    const kage::sync::SyncArchetypeId client_archetype = kage::sync::define_archetype(
+        client_registry,
+        "SmoothActor",
+        {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}});
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        1,
+        8});
+    const ecs::Entity server_entity{42};
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(1, {{server_entity, Position{7.0f, 3.0f}}})));
+
+    kage::sync::DisplaySampleBuffer display;
+    REQUIRE(client.sample_display_frame(client_registry, 2.75, display));
+    REQUIRE(display.entities.size() == 1);
+
+    SmoothPosition sampled;
+    REQUIRE(display.entities[0].try_get(client_registry, sampled));
+    REQUIRE(sampled.x == Catch::Approx(7.0f));
+    REQUIRE(sampled.y == Catch::Approx(3.0f));
+}
+
+TEST_CASE("display interpolation omits untagged components from samples") {
+    ecs::Registry client_registry;
+    const ecs::Entity client_position =
+        kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
+    const kage::sync::SyncArchetypeId client_archetype = kage::sync::define_archetype(
+        client_registry,
+        "SmoothActor",
+        {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}});
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        1,
+        8});
+    const ecs::Entity server_entity{42};
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(1, {{server_entity, Position{7.0f, 3.0f}}})));
+
+    kage::sync::DisplaySampleBuffer display;
+    REQUIRE(client.sample_display_frame(client_registry, 2.0, display));
+    REQUIRE(display.entities.empty());
+}
+
+TEST_CASE("display interpolation steps entity destroy at the floor frame") {
+    ecs::Registry client_registry;
+    const ecs::Entity client_position =
+        kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
+    REQUIRE(kage::sync::set_display_interpolated(client_registry, client_position));
+    const kage::sync::SyncArchetypeId client_archetype = kage::sync::define_archetype(
+        client_registry,
+        "SmoothActor",
+        {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}});
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        1,
+        8});
+    const ecs::Entity server_entity{42};
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(1, {{server_entity, Position{7.0f, 3.0f}}})));
+    REQUIRE(client.receive(client_registry, make_destroy_packet(2, server_entity)));
+
+    kage::sync::DisplaySampleBuffer display;
+    REQUIRE(client.sample_display_frame(client_registry, 2.5, display));
+    REQUIRE(display.entities.size() == 1);
+
+    REQUIRE(client.sample_display_frame(client_registry, 3.0, display));
+    REQUIRE(display.entities.empty());
+}
+
+TEST_CASE("client-owned display frame holds instead of rewinding when buffer depth grows") {
+    ecs::Registry client_registry;
+    const ecs::Entity client_position =
+        kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
+    REQUIRE(kage::sync::set_display_interpolated(client_registry, client_position));
+    REQUIRE(kage::sync::define_archetype(
+                client_registry,
+                "SmoothActor",
+                {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}})
+        .value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    options.interpolation_buffer_frames = 1;
+    options.interpolation_buffer_capacity_frames = 8;
+    options.fixed_dt_seconds = 1.0;
+    kage::sync::ReplicationClient client(options);
+    const ecs::Entity server_entity{42};
+
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{10.0f, 0.0f}}})));
+    REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{20.0f, 0.0f}}})));
+    REQUIRE(client.receive(client_registry, make_position_packet(3, {{server_entity, Position{30.0f, 0.0f}}})));
+
+    REQUIRE(client.tick(client_registry, 3.0));
+    const kage::sync::DisplaySampleBuffer& before = client.display_frame(client_registry);
+    REQUIRE(before.entities.size() == 1);
+    SmoothPosition sampled;
+    REQUIRE(before.entities[0].try_get(client_registry, sampled));
+    REQUIRE(sampled.x == Catch::Approx(20.0f));
+
+    REQUIRE(client.set_interpolation_buffer_frames(3));
+    REQUIRE(client.tick(client_registry, 1.0 / 120.0));
+    const kage::sync::DisplaySampleBuffer& after = client.display_frame(client_registry);
+    REQUIRE(after.entities.size() == 1);
+    REQUIRE(after.entities[0].try_get(client_registry, sampled));
+    REQUIRE(sampled.x == Catch::Approx(20.0f));
+}
+
+TEST_CASE("client-owned display frame returns the previous valid sample when target data is missing") {
+    ecs::Registry client_registry;
+    const ecs::Entity client_position =
+        kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
+    REQUIRE(kage::sync::set_display_interpolated(client_registry, client_position));
+    REQUIRE(kage::sync::define_archetype(
+                client_registry,
+                "SmoothActor",
+                {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}})
+        .value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    options.interpolation_buffer_frames = 1;
+    options.interpolation_buffer_capacity_frames = 8;
+    options.fixed_dt_seconds = 1.0;
+    kage::sync::ReplicationClient client(options);
+    const ecs::Entity server_entity{42};
+
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{10.0f, 0.0f}}})));
+    REQUIRE(client.tick(client_registry, 2.0));
+    const kage::sync::DisplaySampleBuffer& before = client.display_frame(client_registry);
+    REQUIRE(before.entities.size() == 1);
+    SmoothPosition sampled;
+    REQUIRE(before.entities[0].try_get(client_registry, sampled));
+    REQUIRE(sampled.x == Catch::Approx(10.0f));
+
+    REQUIRE(client.tick(client_registry, 1.0));
+    const kage::sync::DisplaySampleBuffer& after = client.display_frame(client_registry);
+    REQUIRE(after.entities.size() == 1);
+    REQUIRE(after.entities[0].try_get(client_registry, sampled));
+    REQUIRE(sampled.x == Catch::Approx(10.0f));
+}
+
+TEST_CASE("client-owned display frame exposes snap and buffered entities in one loop") {
+    ecs::Registry client_registry;
+    const ecs::Entity smooth =
+        kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
+    const ecs::Entity health = kage::sync::register_sync_component<Health>(client_registry, "Health");
+    REQUIRE(kage::sync::set_display_interpolated(client_registry, smooth));
+    REQUIRE(kage::sync::define_archetype(
+                client_registry,
+                "Actor",
+                {
+                    {smooth, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate},
+                    {health, kage::sync::ReplicationAudience::All},
+                })
+        .value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Snap;
+    options.interpolation_buffer_frames = 1;
+    options.interpolation_buffer_capacity_frames = 8;
+    options.fixed_dt_seconds = 1.0;
+    options.entity_mode_selector = [](const kage::sync::ReplicatedEntityUpdateView& update) {
+        return update.server_entity.value == 42
+            ? kage::sync::ReplicationClientMode::BufferedInterpolation
+            : kage::sync::ReplicationClientMode::Snap;
+    };
+    kage::sync::ReplicationClient client(options);
+
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{ecs::Entity{42}, Position{10.0f, 0.0f}}})));
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{ecs::Entity{43}, Position{20.0f, 0.0f}}})));
+    REQUIRE(client.tick(client_registry, 2.0));
+
+    const kage::sync::DisplaySampleBuffer& display = client.display_frame(client_registry);
+    REQUIRE(display.entities.size() == 2);
+    int found = 0;
+    for (const kage::sync::DisplayEntitySample& entity : display.entities) {
+        SmoothPosition sampled;
+        REQUIRE(entity.try_get(client_registry, sampled));
+        if (entity.server_entity.value == 42) {
+            REQUIRE(sampled.x == Catch::Approx(10.0f));
+            ++found;
+        }
+        if (entity.server_entity.value == 43) {
+            REQUIRE(sampled.x == Catch::Approx(20.0f));
+            ++found;
+        }
+    }
+    REQUIRE(found == 2);
+}
+
+TEST_CASE("client-owned display frame keeps previous entities while committing newly valid buffered entities") {
+    ecs::Registry client_registry;
+    const ecs::Entity smooth =
+        kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
+    REQUIRE(kage::sync::set_display_interpolated(client_registry, smooth));
+    REQUIRE(kage::sync::define_archetype(
+                client_registry,
+                "SmoothActor",
+                {{smooth, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}})
+        .value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Snap;
+    options.interpolation_buffer_frames = 1;
+    options.interpolation_buffer_capacity_frames = 8;
+    options.fixed_dt_seconds = 1.0;
+    kage::sync::ReplicationClient client(options);
+
+    const ecs::Entity existing{42};
+    const ecs::Entity incoming{43};
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{existing, Position{10.0f, 0.0f}}})));
+    REQUIRE(client.tick(client_registry, 2.0));
+    REQUIRE(client.display_frame(client_registry).entities.size() == 1);
+
+    REQUIRE(client.set_default_entity_mode(kage::sync::ReplicationClientMode::BufferedInterpolation));
+    REQUIRE(client.set_entity_mode(client_registry, existing, kage::sync::ReplicationClientMode::BufferedInterpolation));
+    REQUIRE(client.receive(client_registry, make_position_packet(2, {{incoming, Position{20.0f, 0.0f}}})));
+    REQUIRE(client.tick(client_registry, 1.0));
+
+    const kage::sync::DisplaySampleBuffer& display = client.display_frame(client_registry);
+    REQUIRE(display.entities.size() == 2);
+
+    int found = 0;
+    for (const kage::sync::DisplayEntitySample& entity : display.entities) {
+        SmoothPosition sampled;
+        REQUIRE(entity.try_get(client_registry, sampled));
+        if (entity.server_entity == existing) {
+            REQUIRE(sampled.x == Catch::Approx(10.0f));
+            ++found;
+        }
+        if (entity.server_entity == incoming) {
+            REQUIRE(sampled.x == Catch::Approx(20.0f));
+            ++found;
+        }
+    }
+    REQUIRE(found == 2);
+}
+
 TEST_CASE("buffered interpolation validates wrapped buffer samples by frame") {
     ecs::Registry server_registry;
     const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
@@ -2047,7 +2376,7 @@ TEST_CASE("buffered interpolation applies correct target frame after auto buffer
     REQUIRE_FALSE(client_registry.alive(local));
 }
 
-TEST_CASE("legacy receive applies packets without timing samples") {
+TEST_CASE("normal receive records timing from the client-owned clock without moving an idle clock buffer") {
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
@@ -2060,7 +2389,7 @@ TEST_CASE("legacy receive applies packets without timing samples") {
         2,
         8});
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
-    REQUIRE(client.timing_stats().sample_count == 0);
+    REQUIRE(client.timing_stats().sample_count == 1);
     REQUIRE(client.options().interpolation_buffer_frames == 2);
 }
 

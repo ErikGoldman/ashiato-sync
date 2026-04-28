@@ -141,24 +141,27 @@ client, so bandwidth-limited clients naturally receive older unsent state first.
 - Call `ReplicationClient::set_entity_mode(registry, server_entity, mode)` to
   switch an already-known entity immediately. It returns `false` for unknown
   server entities and does not create future overrides.
-- Buffered clients call `ReplicationClient::apply_frame(registry, client_frame)`
-  each client tick. The ECS reflects server frame
-  `client_frame - interpolation_buffer_frames`; create, component add/remove,
-  and destroy records are delayed through the same buffer.
-- Call `ReplicationClient::receive(registry, packet, receive_frame, playback_frame)`
-  to record continuous receive delay and playback buffer depth from server
-  update frames. Buffered interpolation computes a desired buffer depth from
-  those samples and exposes `timing_stats().time_dilation`. Multiply the client
-  ECS tick accumulator by that scalar before incrementing `playback_frame` and
-  calling `apply_frame`; this lets playback converge without jumping the buffer
-  depth immediately. Disable `auto_interpolation_buffer_frames` for a fixed
-  manual buffer. The older `receive(registry, packet)` overload still applies
-  packets without recording timing samples.
+- Set `ReplicationClientOptions::fixed_dt_seconds`, call
+  `ReplicationClient::tick(registry, dt_seconds)` once per app frame, and pass
+  server packets to the normal `receive(registry, packet)` overload. The client
+  owns receive/playback frame counters, records continuous receive delay from
+  server update frames, applies fixed buffered frames, and adjusts playback with
+  `timing_stats().time_dilation`. Disable `auto_interpolation_buffer_frames` for
+  a fixed manual buffer. Explicit-frame `receive` and `apply_frame` overloads
+  remain available for tests and advanced integrations.
 - Mark client-side `ComponentReplication::interpolation` as `Interpolate` for
   components that should be filled between received frames. The corresponding
   `SyncComponentTraits<T>` must provide `static Quantized interpolate(...)`;
   otherwise buffered receive rejects the update without ACKing it. Components
   left as `Step` hold the previous value until the received frame.
+- Mark component entities with `set_display_interpolated` when render code
+  should sample them at fractional playback frames without mutating the ECS, then
+  render `client.display_frame(registry).entities`. The display frame contains
+  snap and buffered entities in one list. Typed `try_get<T>` reads sampled
+  display-interpolated values first and falls back to live ECS values for
+  untagged components such as visuals. If auto-buffering changes depth or target
+  data is missing, the client keeps returning the previous valid display frame
+  instead of rewinding or exposing partial live transform state.
 - `ReplicationAudience::All` and `ReplicationAudience::Owner` are stored as
   archetype metadata. The current scheduler callback receives every scheduled
   entity; audience filtering and serialization policy should be applied by the

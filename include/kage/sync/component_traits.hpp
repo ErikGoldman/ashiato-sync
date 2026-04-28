@@ -44,6 +44,18 @@ struct SyncComponentTraits {
 void register_components(ecs::Registry& registry);
 
 const SyncComponentOps* find_component_ops(const ecs::Registry& registry, ecs::Entity component);
+bool set_display_interpolated(ecs::Registry& registry, ecs::Entity component, bool enabled = true);
+bool is_display_interpolated(const ecs::Registry& registry, ecs::Entity component);
+
+template <typename T>
+bool set_display_interpolated(ecs::Registry& registry, bool enabled = true) {
+    return set_display_interpolated(registry, registry.component<T>(), enabled);
+}
+
+template <typename T>
+bool is_display_interpolated(const ecs::Registry& registry) {
+    return is_display_interpolated(registry, registry.component<T>());
+}
 
 namespace detail {
 

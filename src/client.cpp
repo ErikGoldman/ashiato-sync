@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -47,6 +49,43 @@ bool ReplicatedEntityUpdateView::try_get(
     return true;
 }
 
+bool DisplayEntitySample::try_get(
+    const ecs::Registry& registry,
+    ecs::Entity component,
+    void* out) const {
+    if (out == nullptr) {
+        return false;
+    }
+
+    const auto found = std::find_if(
+        components.begin(),
+        components.end(),
+        [component](const ReplicatedComponentUpdate& update) {
+            return update.component == component;
+        });
+    if (found == components.end()) {
+        if (!local_entity || !registry.alive(local_entity)) {
+            return false;
+        }
+        const void* value = registry.get(local_entity, component);
+        const ecs::ComponentInfo* info = registry.component_info(component);
+        if (value == nullptr || info == nullptr || info->tag) {
+            return false;
+        }
+        std::memcpy(out, value, info->size);
+        return true;
+    }
+
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    const auto found_ops = settings.component_ops.find(component.value);
+    if (found_ops == settings.component_ops.end() || found_ops->second.dequantize == nullptr) {
+        return false;
+    }
+
+    found_ops->second.dequantize(found->bytes, out);
+    return true;
+}
+
 ReplicationClient::ReplicationClient(ReplicationClientOptions options)
     : options_(options) {
     if (!is_power_of_two(options_.interpolation_buffer_capacity_frames)) {
@@ -74,6 +113,9 @@ ReplicationClient::ReplicationClient(ReplicationClientOptions options)
     if (options_.auto_interpolation_time_dilation_gain < 0.0f) {
         throw std::invalid_argument("auto interpolation time dilation gain must be non-negative");
     }
+    if (options_.fixed_dt_seconds <= 0.0 || !std::isfinite(options_.fixed_dt_seconds)) {
+        throw std::invalid_argument("fixed dt seconds must be finite and positive");
+    }
     timing_stats_.desired_interpolation_buffer_frames = options_.interpolation_buffer_frames;
     timing_stats_.target_interpolation_buffer_frames = options_.interpolation_buffer_frames;
     timing_stats_.current_interpolation_buffer_frames = options_.interpolation_buffer_frames;
@@ -90,7 +132,11 @@ bool ReplicationClient::receive(ecs::Registry& registry, BitBuffer packet) {
         }
         const auto frame = static_cast<SyncFrame>(packet.read_bits(32U));
         const auto record_count = static_cast<std::uint16_t>(packet.read_bits(16U));
-        return apply_update(registry, packet, frame, record_count);
+        const bool applied = apply_update(registry, packet, frame, record_count);
+        if (applied) {
+            record_timing_sample(frame, receive_frame_, playback_frame_);
+        }
+        return applied;
     } catch (const std::exception&) {
         return false;
     }
@@ -168,6 +214,28 @@ bool ReplicationClient::set_interpolation_buffer_frames(SyncFrame frames) noexce
     return true;
 }
 
+bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds) {
+    if (dt_seconds < 0.0 || !std::isfinite(dt_seconds)) {
+        return false;
+    }
+
+    receive_accumulator_seconds_ += dt_seconds;
+    while (receive_accumulator_seconds_ >= options_.fixed_dt_seconds) {
+        receive_accumulator_seconds_ -= options_.fixed_dt_seconds;
+        ++receive_frame_;
+    }
+
+    playback_accumulator_seconds_ += dt_seconds * static_cast<double>(timing_stats_.time_dilation);
+    while (playback_accumulator_seconds_ >= options_.fixed_dt_seconds) {
+        playback_accumulator_seconds_ -= options_.fixed_dt_seconds;
+        ++playback_frame_;
+        (void)apply_frame(registry, playback_frame_);
+    }
+
+    update_display_target(dt_seconds);
+    return true;
+}
+
 bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame client_frame) {
     if (!has_buffered_entities()) {
         return true;
@@ -199,6 +267,34 @@ bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame client_fr
     }
 
     return all_valid;
+}
+
+bool ReplicationClient::sample_display_target_frame(
+    const ecs::Registry& registry,
+    double target_frame,
+    DisplaySampleBuffer& out) const {
+    return write_display_samples(registry, target_frame, false, false, out);
+}
+
+bool ReplicationClient::sample_display_frame(
+    const ecs::Registry& registry,
+    double client_frame,
+    DisplaySampleBuffer& out) const {
+    return sample_display_target_frame(
+        registry,
+        client_frame - static_cast<double>(options_.interpolation_buffer_frames),
+        out);
+}
+
+const DisplaySampleBuffer& ReplicationClient::display_frame(const ecs::Registry& registry) {
+    if (write_display_samples(registry, display_target_frame_, true, true, display_scratch_)) {
+        display_frame_.entities.swap(display_scratch_.entities);
+        display_scratch_.clear();
+    } else if (display_frame_.entities.empty()) {
+        display_frame_.entities.swap(display_scratch_.entities);
+        display_scratch_.clear();
+    }
+    return display_frame_;
 }
 
 std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
@@ -826,6 +922,162 @@ bool ReplicationClient::has_buffered_entities() const noexcept {
         });
 }
 
+bool ReplicationClient::write_display_samples(
+    const ecs::Registry& registry,
+    double target_frame,
+    bool include_snap,
+    bool include_empty_buffered,
+    DisplaySampleBuffer& out) const {
+    out.clear();
+    const bool target_valid = target_frame >= 0.0 &&
+        std::isfinite(target_frame) &&
+        target_frame <= static_cast<double>(std::numeric_limits<SyncFrame>::max());
+    const double floor_value = target_valid ? std::floor(target_frame) : 0.0;
+    const SyncFrame floor_frame = static_cast<SyncFrame>(floor_value);
+    const float alpha = target_valid ? static_cast<float>(target_frame - floor_value) : 0.0f;
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    bool all_valid = target_valid || !has_buffered_entities();
+    std::size_t sampled_count = 0;
+    auto previous_display = [&](std::uint64_t server_entity) -> const DisplayEntitySample* {
+        const auto found = std::find_if(
+            display_frame_.entities.begin(),
+            display_frame_.entities.end(),
+            [server_entity](const DisplayEntitySample& sample) {
+                return sample.server_entity.value == server_entity;
+            });
+        return found != display_frame_.entities.end() ? &*found : nullptr;
+    };
+    auto append_previous_display = [&](std::uint64_t server_entity) {
+        const DisplayEntitySample* previous = previous_display(server_entity);
+        if (previous == nullptr) {
+            return false;
+        }
+        if (sampled_count == out.entities.size()) {
+            out.entities.emplace_back();
+        }
+        out.entities[sampled_count++] = *previous;
+        return true;
+    };
+
+    for (const auto& entry : entities_) {
+        const EntityState& state = entry.second;
+        if (state.mode != ReplicationClientMode::BufferedInterpolation) {
+            if (!include_snap || !state.local || !registry.alive(state.local)) {
+                continue;
+            }
+
+            if (sampled_count == out.entities.size()) {
+                out.entities.emplace_back();
+            }
+            DisplayEntitySample& display = out.entities[sampled_count++];
+            display.server_entity = ecs::Entity{entry.first};
+            display.local_entity = state.local;
+            display.archetype = state.archetype;
+            display.frame = state.frame;
+            display.alpha = 0.0f;
+            display.components.clear();
+            continue;
+        }
+
+        if (state.buffered_frames.empty() || !target_valid) {
+            if (!include_empty_buffered || !append_previous_display(entry.first)) {
+                all_valid = false;
+            }
+            continue;
+        }
+
+        const std::size_t mask = state.buffered_frames.size() - 1U;
+        const EntityState::BufferedFrame& floor_sample = state.buffered_frames[floor_frame & mask];
+        if (!floor_sample.valid || floor_sample.frame != floor_frame) {
+            if (!include_empty_buffered || !append_previous_display(entry.first)) {
+                all_valid = false;
+            }
+            continue;
+        }
+        if (!floor_sample.entity_present) {
+            continue;
+        }
+
+        const EntityState::BufferedFrame* next_sample = nullptr;
+        if (alpha > 0.0f && floor_frame != std::numeric_limits<SyncFrame>::max()) {
+            const SyncFrame next_frame = floor_frame + 1U;
+            const EntityState::BufferedFrame& candidate = state.buffered_frames[next_frame & mask];
+            if (candidate.valid && candidate.frame == next_frame && candidate.entity_present) {
+                next_sample = &candidate;
+            }
+        }
+
+        if (sampled_count == out.entities.size()) {
+            out.entities.emplace_back();
+        }
+        DisplayEntitySample& display = out.entities[sampled_count];
+        display.server_entity = ecs::Entity{entry.first};
+        display.local_entity = state.local;
+        display.archetype = floor_sample.archetype;
+        display.frame = floor_frame;
+        display.alpha = alpha;
+        display.components.clear();
+        display.components.reserve(floor_sample.baselines.size());
+
+        for (const ComponentBaseline& baseline : floor_sample.baselines) {
+            if (!registry.has<DisplayInterpolated>(baseline.component)) {
+                continue;
+            }
+
+            ReplicatedComponentUpdate value;
+            value.component = baseline.component;
+            const ComponentBaseline* next = nullptr;
+            if (next_sample != nullptr) {
+                const auto found_next = std::find_if(
+                    next_sample->baselines.begin(),
+                    next_sample->baselines.end(),
+                    [&](const ComponentBaseline& candidate) {
+                        return candidate.component == baseline.component;
+                    });
+                if (found_next != next_sample->baselines.end()) {
+                    next = &*found_next;
+                }
+            }
+
+            if (next != nullptr) {
+                const auto found_ops = settings.component_ops.find(baseline.component.value);
+                if (found_ops == settings.component_ops.end() || found_ops->second.interpolate == nullptr ||
+                    !found_ops->second.interpolate(baseline.bytes, next->bytes, alpha, value.bytes)) {
+                    return false;
+                }
+            } else {
+                value.bytes = baseline.bytes;
+            }
+            display.components.push_back(std::move(value));
+        }
+
+        if (include_empty_buffered || !display.components.empty()) {
+            ++sampled_count;
+        }
+    }
+
+    out.entities.resize(sampled_count);
+    return include_empty_buffered || all_valid;
+}
+
+void ReplicationClient::update_display_target(double dt_seconds) noexcept {
+    const double playback_frame =
+        static_cast<double>(playback_frame_) + playback_accumulator_seconds_ / options_.fixed_dt_seconds;
+    const double desired = playback_frame - static_cast<double>(options_.interpolation_buffer_frames);
+    if (!has_display_target_frame_ || desired < 0.0) {
+        display_target_frame_ = desired;
+        has_display_target_frame_ = true;
+        return;
+    }
+    if (desired <= display_target_frame_) {
+        return;
+    }
+
+    const double max_advance_frames =
+        dt_seconds / options_.fixed_dt_seconds * static_cast<double>(options_.auto_interpolation_time_dilation_max);
+    display_target_frame_ = std::min(desired, display_target_frame_ + max_advance_frames);
+}
+
 ComponentInterpolation ReplicationClient::interpolation_for(
     const SyncSettings& settings,
     SyncArchetypeId archetype,
@@ -918,7 +1170,9 @@ void ReplicationClient::record_timing_sample(
         : 0.0f;
     timing_stats_.measured_interpolation_buffer_frames = measured;
 
-    if (has_buffered_entities() &&
+    const bool internal_clock_started = receive_frame != 0 || playback_frame != 0;
+    if (internal_clock_started &&
+        has_buffered_entities() &&
         options_.auto_interpolation_buffer_frames) {
         const float error = measured - static_cast<float>(target);
         const float unclamped = 1.0f + error * options_.auto_interpolation_time_dilation_gain;

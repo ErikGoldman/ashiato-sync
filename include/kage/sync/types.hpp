@@ -98,6 +98,8 @@ struct NetworkOwner {
     ClientId client = invalid_client_id;
 };
 
+struct DisplayInterpolated {};
+
 struct ReplicationServerOptions {
     std::size_t bandwidth_limit_bytes_per_tick = 1024;
     std::size_t fixed_entity_replication_cost_bytes = 128;

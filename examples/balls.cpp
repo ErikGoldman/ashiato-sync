@@ -297,6 +297,9 @@ bool receive_packet(SocketHandle socket, kage::sync::BitBuffer& packet, sockaddr
 SyncSchema define_schema(ecs::Registry& registry, bool interpolate_position = false) {
     const ecs::Entity position = kage::sync::register_sync_component<BallPosition>(registry, "BallPosition");
     const ecs::Entity visual = kage::sync::register_sync_component<BallVisual>(registry, "BallVisual");
+    if (interpolate_position) {
+        kage::sync::set_display_interpolated(registry, position);
+    }
     return SyncSchema{kage::sync::define_archetype(
         registry,
         "Ball",
@@ -697,10 +700,11 @@ int main(int argc, char** argv) {
         0.1f,
         time_dilation_min,
         time_dilation_max,
-        time_dilation_gain});
+        time_dilation_gain,
+        {},
+        1.0 / 30.0});
 
     InitWindow(1280, 720, "kage-sync localhost balls");
-    SetTargetFPS(60);
     Camera3D camera{};
     camera.position = Vector3{0.0f, 5.5f, 9.0f};
     camera.target = Vector3{0.0f, 0.0f, 0.0f};
@@ -711,15 +715,12 @@ int main(int argc, char** argv) {
     std::vector<ServerBall> balls;
     int spawn_index = 0;
     float server_accumulator = 0.0f;
-    float receive_accumulator = 0.0f;
-    float client_accumulator = 0.0f;
     send_hello(client_socket, server_address);
 
     while (!WindowShouldClose()) {
         const float dt = GetFrameTime();
         server_accumulator += dt;
-        receive_accumulator += dt;
-        client_accumulator += dt * client.timing_stats().time_dilation;
+        client.tick(client_registry, dt);
         update_hotkeys(downstream_link.settings);
         update_entity_count_hotkeys(target_ball_count);
         update_client_mode_hotkeys(client, client_registry, balls, client_mode);
@@ -758,30 +759,21 @@ int main(int argc, char** argv) {
         }
         stats.server_entities = static_cast<int>(balls.size());
 
-        while (receive_accumulator >= 1.0f / 30.0f) {
-            receive_accumulator -= 1.0f / 30.0f;
-            ++stats.receive_frame;
-        }
-
-        while (client_accumulator >= 1.0f / 30.0f) {
-            client_accumulator -= 1.0f / 30.0f;
-            ++stats.client_frame;
-            client.apply_frame(client_registry, stats.client_frame);
-        }
-
         while (receive_packet(client_socket, received)) {
             kage::sync::BitBuffer read = received;
             if (read.remaining_bits() >= 40U &&
                 static_cast<std::uint8_t>(read.read_bits(8U)) == kage::sync::protocol::server_update_message) {
                 stats.frame = static_cast<kage::sync::SyncFrame>(read.read_bits(32U));
             }
-            client.receive(client_registry, received, stats.receive_frame, stats.client_frame);
+            client.receive(client_registry, received);
             interpolation_buffer_frames = client.options().interpolation_buffer_frames;
         }
         for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
             ++stats.client_packets;
             queue_packet(upstream_link, client_socket, server_address, ack, stats, false);
         }
+        stats.receive_frame = client.receive_frame();
+        stats.client_frame = client.playback_frame();
 
         int visible_entities = 0;
         client_registry.view<const BallPosition, const BallVisual>().each(
@@ -794,13 +786,17 @@ int main(int argc, char** argv) {
         ClearBackground(Color{18, 20, 24, 255});
         BeginMode3D(camera);
         DrawGrid(12, 1.0f);
-        client_registry.view<const BallPosition, const BallVisual>().each(
-            [](ecs::Entity, const BallPosition& position, const BallVisual& visual) {
-                DrawSphere(
-                    Vector3{position.x, position.y, position.z},
-                    visual.radius,
-                    Color{visual.r, visual.g, visual.b, visual.a});
-            });
+        for (const kage::sync::DisplayEntitySample& entity : client.display_frame(client_registry).entities) {
+            BallPosition position;
+            BallVisual visual;
+            if (!entity.try_get(client_registry, position) || !entity.try_get(client_registry, visual)) {
+                continue;
+            }
+            DrawSphere(
+                Vector3{position.x, position.y, position.z},
+                visual.radius,
+                Color{visual.r, visual.g, visual.b, visual.a});
+        }
         EndMode3D();
         draw_stats_overlay(
             stats,
