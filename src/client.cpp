@@ -481,15 +481,14 @@ bool ReplicationClient::apply_upsert(
         if (previous_baselines == nullptr) {
             return false;
         }
-        std::vector<bool> changed;
-        changed.reserve(definition.components.size());
-        for (std::size_t component_index = 0; component_index < definition.components.size(); ++component_index) {
-            changed.push_back(packet.read_bool());
+        if (definition.components.size() > 64U) {
+            return false;
         }
+        const std::uint64_t changed_mask = packet.read_unsigned_bits(definition.components.size());
         decoded.reserve(definition.components.size());
         merged = *previous_baselines;
         for (std::size_t component_index = 0; component_index < definition.components.size(); ++component_index) {
-            if (!changed[component_index]) {
+            if ((changed_mask & (std::uint64_t{1} << component_index)) == 0U) {
                 continue;
             }
             const ecs::Entity component_entity = definition.components[component_index].component;

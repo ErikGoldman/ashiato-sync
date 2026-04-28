@@ -335,3 +335,72 @@ with Experiment 9's accepted runs, server replication improved from
 improved from `31.427831-32.017058` seconds to `30.170488-31.055385` seconds.
 Packet counts, update counts, retained snapshot counts, and
 server-to-client bytes stayed unchanged, so the gain is CPU-side only.
+
+## Experiment 11: Client Decode Allocation Variants
+
+Rationale: client receive remained the largest measured phase after dirty
+component bitvectors. Three client/server allocation variants were tried on the
+stress workload:
+
+- persistent `ReplicationClient` decode/merge/change scratch vectors instead
+  of per-record local vectors;
+- a direct storage apply fast path for storage-identical component traits using
+  runtime ECS byte writes;
+- a small-archetype delta change-mask fast path that reads component change
+  bits into a local `uint64_t` instead of allocating a `vector<bool>`;
+- with the explicit assumption that archetypes will never exceed 64 components,
+  a client bulk `read_unsigned_bits(component_count)` variant and a server
+  delta-writer mask variant were also tried.
+
+Results:
+
+- Persistent client scratch: `wall=31.154470`, `server_replication=10.328614`,
+  `client_receive=18.061907`, `ack_processing=2.269345`
+- Direct storage apply: `wall=31.987381`, `server_replication=10.580664`,
+  `client_receive=18.682031`, `ack_processing=2.218531`
+- 64-bit change mask run 1: `wall=30.216835`,
+  `server_replication=10.388842`, `client_receive=17.196505`,
+  `ack_processing=2.151588`
+- 64-bit change mask run 2: `wall=31.621334`,
+  `server_replication=10.822611`, `client_receive=18.009891`,
+  `ack_processing=2.266083`
+- 64-bit change mask run 3: `wall=30.765997`,
+  `server_replication=10.513511`, `client_receive=17.547391`,
+  `ack_processing=2.221906`
+- Client bulk bitset read run 1: `wall=30.590865`,
+  `server_replication=10.522056`, `client_receive=17.371195`,
+  `ack_processing=2.184699`
+- Client bulk bitset read run 2: `wall=30.070997`,
+  `server_replication=10.204007`, `client_receive=17.240643`,
+  `ack_processing=2.149421`
+- Server delta-writer mask plus client bitset read run 1: `wall=31.142853`,
+  `server_replication=10.565002`, `client_receive=17.851370`,
+  `ack_processing=2.249158`
+- Server delta-writer mask plus client bitset read run 2: `wall=31.488401`,
+  `server_replication=10.742865`, `client_receive=18.034050`,
+  `ack_processing=2.223578`
+
+Baseline immediately before these experiments:
+
+- `wall=30.966659`, `server_replication=10.377538`,
+  `client_receive=17.888676`, `ack_processing=2.222215`
+
+Command:
+
+```sh
+cmake --build build-bench --target run_kage_sync_ball_stress
+```
+
+Artifact: `build-bench/kage_sync_ball_stress`
+
+Conclusion: keep only the client bulk bitset read. The persistent scratch
+variant did not help, likely because the retained vector capacity increased
+client working-set pressure and the remaining copies still dominated. The
+direct storage apply path was worse; the dynamic ECS byte-add route appears
+slower than the typed `registry.add<T>` path for this workload. The first
+client mask variant removed the `vector<bool>` allocation, and the follow-up
+bulk read shrank the hot path further now that archetypes are assumed to fit in
+64 bits. Packet/update counts stayed identical. The server-side mask variant
+regressed stress timing; the original changed-pointer vector plus existing
+searches is apparently cheaper than the added mask/order checks in this
+workload.
