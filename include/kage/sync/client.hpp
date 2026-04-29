@@ -80,6 +80,7 @@ struct ReplicationClientOptions {
     float auto_interpolation_time_dilation_gain = 0.05f;
     EntityModeSelector entity_mode_selector;
     double fixed_dt_seconds = 1.0 / 60.0;
+    std::size_t max_pending_packet_acks_per_client = protocol::default_max_pending_packet_acks_per_client;
 };
 
 struct ReplicationClientTimingStats {

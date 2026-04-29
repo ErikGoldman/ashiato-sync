@@ -168,6 +168,9 @@ struct WireFormatStats {
     std::uint64_t destroy_record_bits = 0;
     std::uint64_t full_upsert_bits = 0;
     std::uint64_t full_upsert_payload_bits = 0;
+    std::uint64_t full_upsert_slot_list_records = 0;
+    std::uint64_t full_upsert_presence_mask_records = 0;
+    std::uint64_t full_upsert_presence_mask_bits = 0;
     std::uint64_t delta_upsert_bits = 0;
     std::uint64_t delta_upsert_payload_bits = 0;
     std::uint64_t delta_baseline_bits = 0;
@@ -439,7 +442,13 @@ inline PacketBreakdown classify_packet(BitBuffer packet, WireFormatStats* wire =
         for (std::uint16_t entity_index = 0; entity_index < entity_count; ++entity_index) {
             const std::size_t record_start = packet.read_offset_bits();
             const bool destroy = packet.read_bool();
-            packet.read_bits(protocol::network_entity_id_bits);
+            const std::size_t network_id_start = packet.read_offset_bits();
+            std::uint32_t network_id = 0;
+            if (!protocol::read_network_entity_id(packet, network_id) || network_id == 0U) {
+                result = PacketBreakdown{};
+                return result;
+            }
+            const std::uint64_t network_id_bits = packet.read_offset_bits() - network_id_start;
             if (destroy) {
                 ++result.destroys;
                 if (wire != nullptr) {
@@ -453,53 +462,93 @@ inline PacketBreakdown classify_packet(BitBuffer packet, WireFormatStats* wire =
                 ++result.full_upserts;
                 packet.read_unsigned_bits(64U);
                 packet.read_bits(32U);
-                const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
-                for (std::uint16_t component = 0; component < component_count; ++component) {
-                    const auto component_index =
-                        static_cast<std::uint16_t>(packet.read_bits(stress_slot_index_bits()));
+                const bool uses_presence_mask = packet.read_bool();
+                std::uint64_t presence_mask = 0;
+                std::uint16_t component_count = 0;
+                if (uses_presence_mask) {
+                    presence_mask = packet.read_unsigned_bits(WireFormatStats::slot_count);
+                    for (std::size_t slot = 0; slot < WireFormatStats::slot_count; ++slot) {
+                        if ((presence_mask & (std::uint64_t{1} << slot)) != 0U) {
+                            ++component_count;
+                        }
+                    }
+                    if (wire != nullptr) {
+                        ++wire->full_upsert_presence_mask_records;
+                        wire->full_upsert_presence_mask_bits += WireFormatStats::slot_count;
+                    }
+                } else {
+                    component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+                    if (wire != nullptr) {
+                        ++wire->full_upsert_slot_list_records;
+                    }
+                }
+
+                auto read_full_slot = [&](std::uint16_t component_index) {
                     switch (component_index) {
                         case 0:
                             packet.skip_bits(2U);
                             if (wire != nullptr) {
-                                record_wire_slot(*wire, 0, true);
+                                record_wire_slot(*wire, 0, !uses_presence_mask);
                             }
-                            break;
+                            return true;
                         case 1:
                             packet.skip_bits(sizeof(BallPosition) * 8U);
                             if (wire != nullptr) {
-                                record_wire_slot(*wire, 1, true);
+                                record_wire_slot(*wire, 1, !uses_presence_mask);
                             }
-                            break;
+                            return true;
                         case 2:
                             packet.skip_bits(sizeof(BallVisual) * 8U);
                             if (wire != nullptr) {
-                                record_wire_slot(*wire, 2, true);
+                                record_wire_slot(*wire, 2, !uses_presence_mask);
                             }
-                            break;
+                            return true;
                         case 3:
                             packet.skip_bits(sizeof(BallHealth) * 8U);
                             if (wire != nullptr) {
-                                record_wire_slot(*wire, 3, true);
+                                record_wire_slot(*wire, 3, !uses_presence_mask);
                             }
-                            break;
+                            return true;
                         case 4:
                             packet.skip_bits(sizeof(BallPoison) * 8U);
                             if (wire != nullptr) {
-                                record_wire_slot(*wire, 4, true);
+                                record_wire_slot(*wire, 4, !uses_presence_mask);
                             }
-                            break;
+                            return true;
                         default:
+                            return false;
+                    }
+                };
+
+                if (uses_presence_mask) {
+                    for (std::size_t slot = 0; slot < WireFormatStats::slot_count; ++slot) {
+                        if ((presence_mask & (std::uint64_t{1} << slot)) == 0U) {
+                            continue;
+                        }
+                        if (!read_full_slot(static_cast<std::uint16_t>(slot))) {
                             result = PacketBreakdown{};
                             return result;
+                        }
+                    }
+                } else {
+                    for (std::uint16_t component = 0; component < component_count; ++component) {
+                        const auto component_index =
+                            static_cast<std::uint16_t>(packet.read_bits(stress_slot_index_bits()));
+                        if (!read_full_slot(component_index)) {
+                            result = PacketBreakdown{};
+                            return result;
+                        }
                     }
                 }
                 if (wire != nullptr) {
                     const std::uint64_t record_bits = packet.read_offset_bits() - record_start;
+                    const std::uint64_t full_index_bits = uses_presence_mask
+                        ? WireFormatStats::slot_count
+                        : 16U + static_cast<std::uint64_t>(component_count) * stress_slot_index_bits();
                     wire->full_upsert_bits += record_bits;
                     wire->full_upsert_payload_bits +=
                         record_bits -
-                        (1U + protocol::network_entity_id_bits + 1U + 64U + 32U + 16U +
-                         static_cast<std::uint64_t>(component_count) * stress_slot_index_bits());
+                        (1U + network_id_bits + 1U + 64U + 32U + 1U + full_index_bits);
                 }
             } else {
                 ++result.delta_upserts;
@@ -560,7 +609,7 @@ inline PacketBreakdown classify_packet(BitBuffer packet, WireFormatStats* wire =
                     const std::uint64_t record_bits = packet.read_offset_bits() - record_start;
                     wire->delta_upsert_bits += record_bits;
                     wire->delta_upsert_payload_bits +=
-                        record_bits - (1U + protocol::network_entity_id_bits + 1U) -
+                        record_bits - (1U + network_id_bits + 1U) -
                         (uses_delta_baseline ? 1U + protocol::baseline_frame_delta_bits : 33U) -
                         WireFormatStats::slot_count;
                 }
@@ -1143,6 +1192,9 @@ inline void write_wire_text(
         << " destroy_record_bits=" << wire.destroy_record_bits
         << " full_upsert_bits=" << wire.full_upsert_bits
         << " full_upsert_payload_bits=" << wire.full_upsert_payload_bits
+        << " full_upsert_slot_list_records=" << wire.full_upsert_slot_list_records
+        << " full_upsert_presence_mask_records=" << wire.full_upsert_presence_mask_records
+        << " full_upsert_presence_mask_bits=" << wire.full_upsert_presence_mask_bits
         << " delta_upsert_bits=" << wire.delta_upsert_bits
         << " delta_upsert_payload_bits=" << wire.delta_upsert_payload_bits
         << " delta_baseline_bits=" << wire.delta_baseline_bits
@@ -1247,6 +1299,9 @@ inline void write_wire_json(std::ostream& out, const DirectionStats& stats, std:
         << "\"destroy_record_bits\":" << wire.destroy_record_bits << ","
         << "\"full_upsert_bits\":" << wire.full_upsert_bits << ","
         << "\"full_upsert_payload_bits\":" << wire.full_upsert_payload_bits << ","
+        << "\"full_upsert_slot_list_records\":" << wire.full_upsert_slot_list_records << ","
+        << "\"full_upsert_presence_mask_records\":" << wire.full_upsert_presence_mask_records << ","
+        << "\"full_upsert_presence_mask_bits\":" << wire.full_upsert_presence_mask_bits << ","
         << "\"delta_upsert_bits\":" << wire.delta_upsert_bits << ","
         << "\"delta_upsert_payload_bits\":" << wire.delta_upsert_payload_bits << ","
         << "\"delta_baseline_bits\":" << wire.delta_baseline_bits << ","

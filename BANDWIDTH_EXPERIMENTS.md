@@ -108,3 +108,93 @@ Conclusion: accepted. Full-upsert bits dropped from `212611680` to
 `213549534`. The gain is smaller than the ACK and entity-id changes because
 deltas dominate this stress workload, but the encoding is strictly more compact
 for full records and keeps the same component ordering semantics.
+
+## Experiment 4: Adaptive Packet ID Width
+
+Rationale: packet-level ACKs made upload ACK traffic small, but each ACK record
+and each server update header still carried a fixed 32-bit packet id. The
+server only retains a bounded pending packet ACK window, so this experiment
+derives the packet id bit width from `max_pending_packet_acks_per_client`. The
+default window is `255`, which uses 8-bit packet ids and abandons stale pending
+packet ACK records before id reuse.
+
+Result:
+
+- `wall=12.165908`
+- `server_replication=7.844172`
+- `client_receive=3.601972`
+- `ack_processing=0.547028`
+- `server_to_clients.bytes=219606978`
+- `clients_to_server.bytes=109362`
+- `clients_to_server.ack_records=98601`
+- `clients_to_server.ack_record_bits=788808`
+- `server_to_clients.server_update_header_bits=11965312`
+- `server_to_clients.full_upsert_bits=239743217`
+- `server_to_clients.delta_upsert_bits=1502872601`
+- `server_to_clients.destroy_record_bits=1620366`
+
+Conclusion: accepted for upload ACK compression. ACK record bits dropped from
+`5469280` to `788808` and upload bytes dropped from `694421` to `109362`.
+Downstream bytes increased in this run because lower upload pressure changed
+which packets landed in the lossy stress simulation, so this should be compared
+primarily by direct ACK/header bit diagnostics rather than total downstream
+bytes alone.
+
+## Experiment 5: Tiered Network Entity ID Width
+
+Rationale: most stress-test network ids are small, but update and destroy
+records still used a fixed 32-bit network id. This experiment encodes ids in
+tiers: 16 bits for ids below `2^15`, 25 bits below `2^23`, and 34 bits for the
+full 32-bit range.
+
+Result:
+
+- `wall=12.726862`
+- `server_replication=8.228117`
+- `client_receive=3.785806`
+- `ack_processing=0.555434`
+- `server_to_clients.bytes=207773924`
+- `clients_to_server.bytes=105171`
+- `clients_to_server.ack_records=94407`
+- `clients_to_server.ack_record_bits=755256`
+- `server_to_clients.server_update_header_bits=11322752`
+- `server_to_clients.full_upsert_bits=261932080`
+- `server_to_clients.delta_upsert_bits=1387486201`
+- `server_to_clients.destroy_record_bits=831181`
+
+Conclusion: accepted. Delta-upsert bits dropped from `1502872601` to
+`1387486201`, destroy bits dropped from `1620366` to `831181`, and downstream
+bytes dropped from `219606978` to `207773924`. Full-upsert bits rose in this
+particular lossy run because more fulls were resent, but per-record id overhead
+is lower for all ids in the common small-id tier.
+
+## Experiment 6: Full-Upsert Presence Masks
+
+Rationale: compact full-upsert slot indices still pay one slot id per present
+component. Dense full upserts can be smaller if the packet writes a fixed
+archetype-local presence mask and then streams payloads in slot order. This
+experiment adds a one-bit full-upsert mode selector and chooses the mask when it
+is smaller than the slot-list encoding.
+
+Result:
+
+- `wall=11.595590`
+- `server_replication=7.596421`
+- `client_receive=3.425211`
+- `ack_processing=0.429267`
+- `server_to_clients.bytes=206490083`
+- `clients_to_server.bytes=101570`
+- `clients_to_server.ack_records=90809`
+- `clients_to_server.ack_record_bits=726472`
+- `server_to_clients.full_upsert_bits=250704306`
+- `server_to_clients.full_upsert_payload_bits=164110746`
+- `server_to_clients.full_upsert_slot_list_records=0`
+- `server_to_clients.full_upsert_presence_mask_records=721613`
+- `server_to_clients.full_upsert_presence_mask_bits=3608065`
+- `server_to_clients.delta_upsert_bits=1388550699`
+- `server_to_clients.destroy_record_bits=856290`
+
+Conclusion: accepted. Full-upsert bits dropped from `261932080` to
+`250704306` despite more full records in the run, and downstream bytes dropped
+from `207773924` to `206490083`. The stress archetype is dense enough that all
+full upserts selected presence-mask mode.

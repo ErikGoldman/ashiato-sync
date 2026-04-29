@@ -162,6 +162,8 @@ private:
     bool acknowledge_packet(ClientState& client, std::uint32_t packet_id);
     bool packet_ack_record_pending(const ClientState& client, const PacketAckRecord& record) const;
     void cleanup_packet_acks(ClientState& client);
+    std::uint32_t allocate_packet_id(ClientState& client);
+    void enforce_pending_packet_ack_limit(ClientState& client);
     bool acknowledge_destroy(ClientState& client, ecs::Entity entity, SyncFrame frame);
     bool same_quantized_frame_components(
         const QuantizedFrame& quantized_frame,

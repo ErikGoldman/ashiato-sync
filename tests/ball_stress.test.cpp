@@ -286,16 +286,17 @@ TEST_CASE("ball stress packet classifier counts update record kinds") {
     packet.push_bits(3, 16U);
 
     packet.push_bool(false);
-    packet.push_bits(100, kage::sync::protocol::network_entity_id_bits);
+    kage::sync::protocol::write_network_entity_id(packet, 100);
     packet.push_bool(true);
     packet.push_unsigned_bits(100, 64U);
     packet.push_bits(1, 32U);
+    packet.push_bool(false);
     packet.push_bits(1, 16U);
     packet.push_bits(0, kage::sync::protocol::bits_for_range(stress::WireFormatStats::slot_count));
     packet.push_unsigned_bits(3U, 2U);
 
     packet.push_bool(false);
-    packet.push_bits(101, kage::sync::protocol::network_entity_id_bits);
+    kage::sync::protocol::write_network_entity_id(packet, 101);
     packet.push_bool(false);
     kage::sync::protocol::write_baseline_frame(packet, 7, 6);
     packet.push_bool(true);
@@ -306,7 +307,7 @@ TEST_CASE("ball stress packet classifier counts update record kinds") {
     packet.push_unsigned_bits(1U, 2U);
 
     packet.push_bool(true);
-    packet.push_bits(102, kage::sync::protocol::network_entity_id_bits);
+    kage::sync::protocol::write_network_entity_id(packet, 102);
 
     const stress::PacketBreakdown breakdown = stress::classify_packet(packet);
 
@@ -319,20 +320,22 @@ TEST_CASE("ball stress packet classifier counts update record kinds") {
     const stress::PacketBreakdown diagnostic_breakdown = stress::classify_packet(packet, &wire);
 
     REQUIRE(diagnostic_breakdown.type == stress::PacketType::ServerUpdate);
-    REQUIRE(wire.packet_bits == 319);
-    REQUIRE(wire.padding_bits == 1);
+    REQUIRE(wire.packet_bits == 248);
+    REQUIRE(wire.padding_bits == 0);
     REQUIRE(wire.server_update_header_bits == kage::sync::protocol::server_update_header_bits);
     REQUIRE(wire.server_update_entities == 3);
     REQUIRE(wire.max_server_update_entities_per_packet == 3);
-    REQUIRE(wire.full_upsert_bits == 151);
+    REQUIRE(wire.full_upsert_bits == 136);
     REQUIRE(wire.full_upsert_payload_bits == 2);
-    REQUIRE(wire.delta_upsert_bits == 47);
+    REQUIRE(wire.full_upsert_slot_list_records == 1);
+    REQUIRE(wire.full_upsert_presence_mask_records == 0);
+    REQUIRE(wire.delta_upsert_bits == 31);
     REQUIRE(wire.delta_upsert_payload_bits == 2);
     REQUIRE(wire.delta_baseline_bits == 1 + kage::sync::protocol::baseline_frame_delta_bits);
     REQUIRE(wire.delta_baseline_relative == 1);
     REQUIRE(wire.delta_baseline_absolute == 0);
     REQUIRE(wire.delta_change_mask_bits == stress::WireFormatStats::slot_count);
-    REQUIRE(wire.destroy_record_bits == 33);
+    REQUIRE(wire.destroy_record_bits == 17);
     REQUIRE(wire.slots[0].records == 2);
     REQUIRE(wire.slots[0].index_bits == 3);
     REQUIRE(wire.slots[0].payload_bits == 4);

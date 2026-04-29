@@ -15,6 +15,10 @@ namespace {
 
 constexpr std::size_t max_baseline_history_per_entity = 64;
 
+std::size_t configured_packet_id_bits(const ReplicationClientOptions& options) noexcept {
+    return protocol::packet_id_bits_for_max_pending(options.max_pending_packet_acks_per_client);
+}
+
 bool is_power_of_two(std::size_t value) {
     return value != 0U && (value & (value - 1U)) == 0U;
 }
@@ -485,7 +489,7 @@ bool ReplicationClient::receive(ecs::Registry& registry, BitBuffer packet) {
             return false;
         }
         const auto frame = static_cast<SyncFrame>(packet.read_bits(32U));
-        const auto packet_id = static_cast<std::uint32_t>(packet.read_bits(protocol::server_packet_id_bits));
+        const auto packet_id = static_cast<std::uint32_t>(packet.read_bits(configured_packet_id_bits(options_)));
         const auto record_count = static_cast<std::uint16_t>(packet.read_bits(16U));
         const bool applied = apply_update(registry, packet, packet_id, frame, record_count);
         if (applied) {
@@ -515,7 +519,7 @@ bool ReplicationClient::receive(
             return false;
         }
         const auto frame = static_cast<SyncFrame>(packet.read_bits(32U));
-        const auto packet_id = static_cast<std::uint32_t>(packet.read_bits(protocol::server_packet_id_bits));
+        const auto packet_id = static_cast<std::uint32_t>(packet.read_bits(configured_packet_id_bits(options_)));
         const auto record_count = static_cast<std::uint16_t>(packet.read_bits(16U));
         const bool applied = apply_update(registry, packet, packet_id, frame, record_count);
         if (applied) {
@@ -674,8 +678,8 @@ std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
         return packets;
     }
 
-    const std::size_t one_ack_bytes =
-        protocol::bytes_for_bits(protocol::client_ack_header_bits + protocol::client_ack_record_bits);
+    const std::size_t packet_id_bits = configured_packet_id_bits(options_);
+    const std::size_t one_ack_bytes = protocol::bytes_for_bits(protocol::client_ack_header_bits + packet_id_bits);
     if (one_ack_bytes > options_.mtu_bytes) {
         return packets;
     }
@@ -684,7 +688,7 @@ std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
     const std::size_t max_acks_per_packet =
         std::min<std::size_t>(
             std::numeric_limits<std::uint16_t>::max(),
-            (mtu_bits - protocol::client_ack_header_bits) / protocol::client_ack_record_bits);
+            (mtu_bits - protocol::client_ack_header_bits) / packet_id_bits);
     if (max_acks_per_packet == 0U) {
         return packets;
     }
@@ -716,7 +720,7 @@ std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
             finish_packet();
             begin_packet();
         }
-        packet.push_bits(packet_id, protocol::server_packet_id_bits);
+        packet.push_bits(packet_id, packet_id_bits);
         ++packet_ack_count;
     }
     finish_packet();
@@ -745,7 +749,10 @@ bool ReplicationClient::apply_update(
 
     for (std::uint16_t record = 0; record < record_count; ++record) {
         const bool destroy = packet.read_bool();
-        const auto network_id = static_cast<std::uint32_t>(packet.read_bits(protocol::network_entity_id_bits));
+        std::uint32_t network_id = 0;
+        if (!protocol::read_network_entity_id(packet, network_id)) {
+            return false;
+        }
         if (network_id == 0U) {
             return false;
         }
@@ -853,13 +860,25 @@ bool ReplicationClient::apply_upsert(
     }
 
     if (full) {
-        const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+        const std::size_t sync_slot_bits = protocol::bits_for_range(sync_slot_count(definition));
+        const bool uses_presence_mask = packet.read_bool();
+        std::uint64_t presence_mask = 0;
+        std::uint16_t component_count = 0;
+        if (uses_presence_mask) {
+            presence_mask = packet.read_unsigned_bits(sync_slot_count(definition));
+            for (std::size_t sync_slot = 0; sync_slot < sync_slot_count(definition); ++sync_slot) {
+                if ((presence_mask & sync_slot_bit(sync_slot)) != 0U) {
+                    ++component_count;
+                }
+            }
+        } else {
+            component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+        }
         if (collect_decoded_updates) {
             decoded_updates.reserve(component_count);
         }
-        const std::size_t sync_slot_bits = protocol::bits_for_range(sync_slot_count(definition));
-        for (std::uint16_t component = 0; component < component_count; ++component) {
-            const auto sync_slot = static_cast<std::uint16_t>(packet.read_bits(sync_slot_bits));
+
+        auto read_full_slot = [&](std::uint16_t sync_slot) {
             if (sync_slot >= sync_slot_count(definition)) {
                 return false;
             }
@@ -868,7 +887,7 @@ bool ReplicationClient::apply_upsert(
                     return false;
                 }
                 received.tag_mask = packet.read_unsigned_bits(definition.tags.size());
-                continue;
+                return true;
             }
 
             const std::size_t component_index = static_cast<std::size_t>(sync_slot - 1U);
@@ -904,6 +923,25 @@ bool ReplicationClient::apply_upsert(
             }
             if (collect_decoded_updates) {
                 decoded_updates.push_back(std::move(baseline));
+            }
+            return true;
+        };
+
+        if (uses_presence_mask) {
+            for (std::size_t sync_slot = 0; sync_slot < sync_slot_count(definition); ++sync_slot) {
+                if ((presence_mask & sync_slot_bit(sync_slot)) == 0U) {
+                    continue;
+                }
+                if (!read_full_slot(static_cast<std::uint16_t>(sync_slot))) {
+                    return false;
+                }
+            }
+        } else {
+            for (std::uint16_t component = 0; component < component_count; ++component) {
+                const auto sync_slot = static_cast<std::uint16_t>(packet.read_bits(sync_slot_bits));
+                if (!read_full_slot(sync_slot)) {
+                    return false;
+                }
             }
         }
         if (!buffered_without_selector) {

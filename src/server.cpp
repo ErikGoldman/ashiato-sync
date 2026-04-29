@@ -17,8 +17,19 @@
 namespace kage::sync {
 namespace {
 
-constexpr std::size_t destroy_record_bits = 1U + protocol::network_entity_id_bits;
 constexpr std::size_t max_pending_quantized_frames_per_entity = 64;
+
+std::size_t configured_packet_id_bits(const ReplicationServerOptions& options) noexcept {
+    return protocol::packet_id_bits_for_max_pending(options.max_pending_packet_acks_per_client);
+}
+
+std::size_t server_update_header_bits(const ReplicationServerOptions& options) noexcept {
+    return 8U + 32U + configured_packet_id_bits(options) + 16U;
+}
+
+std::size_t destroy_record_bits(std::uint32_t network_id) noexcept {
+    return 1U + protocol::network_entity_id_encoded_bits(network_id);
+}
 
 struct OutboundPacket {
     ClientId client = invalid_client_id;
@@ -131,6 +142,7 @@ std::uint64_t visible_tag_mask(
 
 BitBuffer make_server_packet(
     std::size_t mtu_bytes,
+    std::size_t packet_id_bits,
     SyncFrame frame,
     std::uint32_t packet_id,
     std::uint16_t entity_count,
@@ -139,7 +151,7 @@ BitBuffer make_server_packet(
     packet.reserve_bytes(mtu_bytes);
     packet.push_bits(protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
-    packet.push_bits(packet_id, protocol::server_packet_id_bits);
+    packet.push_bits(packet_id, packet_id_bits);
     packet.push_bits(entity_count, 16U);
     packet.push_buffer_bits(records);
     return packet;
@@ -314,10 +326,11 @@ bool ReplicationServer::process_packet(ClientId client, BitBuffer packet) {
         }
 
         ClientState& state = clients_[client_found->second];
+        const std::size_t packet_id_bits = configured_packet_id_bits(options_);
         const auto ack_count = static_cast<std::uint16_t>(packet.read_bits(16U));
         bool all_valid = true;
         for (std::uint16_t ack = 0; ack < ack_count; ++ack) {
-            const auto packet_id = static_cast<std::uint32_t>(packet.read_bits(protocol::server_packet_id_bits));
+            const auto packet_id = static_cast<std::uint32_t>(packet.read_bits(packet_id_bits));
             all_valid = acknowledge_packet(state, packet_id) && all_valid;
         }
         cleanup_packet_acks(state);
@@ -426,6 +439,7 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
     sent.reserve(active_replicated_count_);
     unsent.reserve(active_replicated_count_);
     ++frame_;
+    const std::size_t update_header_bits = server_update_header_bits(options_);
 
     for (ClientState& client : clients_) {
         ++client.epoch;
@@ -511,11 +525,12 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
                     continue;
                 }
                 ClientDestroyState& destroy = client.pending_destroys[candidate.destroy_index];
+                const std::size_t destroy_bits = destroy_record_bits(destroy.network_id);
                 const std::size_t next_packet_bits =
-                    protocol::server_update_header_bits + records.bit_size() + destroy_record_bits;
+                    update_header_bits + records.bit_size() + destroy_bits;
                 if (!records.empty() && protocol::bytes_for_bits(next_packet_bits) > options_.mtu_bytes) {
                     const std::size_t packet_bytes =
-                        protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
+                        protocol::bytes_for_bits(update_header_bits + records.bit_size());
                     if (packet_bytes > remaining) {
                         break;
                     }
@@ -526,8 +541,8 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
                     packet_entities = 0;
                 }
 
-                const std::size_t packet_bytes = protocol::bytes_for_bits(
-                    protocol::server_update_header_bits + records.bit_size() + destroy_record_bits);
+                const std::size_t packet_bytes =
+                    protocol::bytes_for_bits(update_header_bits + records.bit_size() + destroy_bits);
                 if (packet_bytes > options_.mtu_bytes || packet_bytes > remaining) {
                     continue;
                 }
@@ -535,7 +550,7 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
                 destroy.frame = frame_;
                 destroy.reset_epoch = client.epoch;
                 records.push_bool(true);
-                records.push_bits(destroy.network_id, protocol::network_entity_id_bits);
+                protocol::write_network_entity_id(records, destroy.network_id);
                 packet_ack_records.push_back(PacketAckRecord{destroy.entity, frame_, true});
                 ++packet_entities;
                 continue;
@@ -562,10 +577,10 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
             }
 
             const std::size_t next_packet_bits =
-                protocol::server_update_header_bits + records.bit_size() + 1U + serialized.payload.bit_size();
+                update_header_bits + records.bit_size() + 1U + serialized.payload.bit_size();
             if (!records.empty() && protocol::bytes_for_bits(next_packet_bits) > options_.mtu_bytes) {
                 const std::size_t packet_bytes =
-                    protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
+                    protocol::bytes_for_bits(update_header_bits + records.bit_size());
                 if (packet_bytes > remaining) {
                     release_quantized_frame(serialized.quantized_frame);
                     unsent.push_back(slot);
@@ -579,7 +594,7 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
             }
 
             const std::size_t single_packet_bits =
-                protocol::server_update_header_bits + records.bit_size() + 1U + serialized.payload.bit_size();
+                update_header_bits + records.bit_size() + 1U + serialized.payload.bit_size();
             const std::size_t packet_bytes = protocol::bytes_for_bits(single_packet_bits);
             if (packet_bytes > options_.mtu_bytes || packet_bytes > remaining) {
                 release_quantized_frame(serialized.quantized_frame);
@@ -604,7 +619,7 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
 
         if (!records.empty()) {
             const std::size_t packet_bytes =
-                protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
+                protocol::bytes_for_bits(update_header_bits + records.bit_size());
             if (packet_bytes <= remaining) {
                 send_packet(client, frame_, packet_entities, records, packet_ack_records);
                 remaining -= packet_bytes;
@@ -759,11 +774,18 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
             if (packet_entities == 0U) {
                 return;
             }
-            const std::uint32_t packet_id = client.next_packet_id++;
+            const std::uint32_t packet_id = allocate_packet_id(client);
             packets_by_client[client_index].push_back(OutboundPacket{
                 client.id,
-                make_server_packet(options_.mtu_bytes, frame_, packet_id, packet_entities, records)});
+                make_server_packet(
+                    options_.mtu_bytes,
+                    configured_packet_id_bits(options_),
+                    frame_,
+                    packet_id,
+                    packet_entities,
+                    records)});
             track_packet_ack(client, packet_id, packet_ack_records);
+            enforce_pending_packet_ack_limit(client);
             records.clear();
             packet_ack_records.clear();
             packet_entities = 0;
@@ -780,11 +802,13 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
                     continue;
                 }
                 ClientDestroyState& destroy = client.pending_destroys[candidate.destroy_index];
+                const std::size_t update_header_bits = server_update_header_bits(options_);
+                const std::size_t destroy_bits = destroy_record_bits(destroy.network_id);
                 const std::size_t next_packet_bits =
-                    protocol::server_update_header_bits + records.bit_size() + destroy_record_bits;
+                    update_header_bits + records.bit_size() + destroy_bits;
                 if (!records.empty() && protocol::bytes_for_bits(next_packet_bits) > options_.mtu_bytes) {
                     const std::size_t packet_bytes =
-                        protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
+                        protocol::bytes_for_bits(update_header_bits + records.bit_size());
                     if (packet_bytes > remaining) {
                         break;
                     }
@@ -792,8 +816,8 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
                     remaining -= packet_bytes;
                 }
 
-                const std::size_t packet_bytes = protocol::bytes_for_bits(
-                    protocol::server_update_header_bits + records.bit_size() + destroy_record_bits);
+                const std::size_t packet_bytes =
+                    protocol::bytes_for_bits(update_header_bits + records.bit_size() + destroy_bits);
                 if (packet_bytes > options_.mtu_bytes || packet_bytes > remaining) {
                     continue;
                 }
@@ -801,7 +825,7 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
                 destroy.frame = frame_;
                 destroy.reset_epoch = client.epoch;
                 records.push_bool(true);
-                records.push_bits(destroy.network_id, protocol::network_entity_id_bits);
+                protocol::write_network_entity_id(records, destroy.network_id);
                 packet_ack_records.push_back(PacketAckRecord{destroy.entity, frame_, true});
                 ++packet_entities;
                 continue;
@@ -825,10 +849,10 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
             }
 
             const std::size_t next_packet_bits =
-                protocol::server_update_header_bits + records.bit_size() + 1U + serialized.payload.bit_size();
+                server_update_header_bits(options_) + records.bit_size() + 1U + serialized.payload.bit_size();
             if (!records.empty() && protocol::bytes_for_bits(next_packet_bits) > options_.mtu_bytes) {
                 const std::size_t packet_bytes =
-                    protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
+                    protocol::bytes_for_bits(server_update_header_bits(options_) + records.bit_size());
                 if (packet_bytes > remaining) {
                     release_prepared_quantized_frame(serialized.quantized_frame);
                     unsent.push_back(slot);
@@ -839,7 +863,7 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
             }
 
             const std::size_t single_packet_bits =
-                protocol::server_update_header_bits + records.bit_size() + 1U + serialized.payload.bit_size();
+                server_update_header_bits(options_) + records.bit_size() + 1U + serialized.payload.bit_size();
             const std::size_t packet_bytes = protocol::bytes_for_bits(single_packet_bits);
             if (packet_bytes > options_.mtu_bytes || packet_bytes > remaining) {
                 release_prepared_quantized_frame(serialized.quantized_frame);
@@ -864,7 +888,7 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
 
         if (!records.empty()) {
             const std::size_t packet_bytes =
-                protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
+                protocol::bytes_for_bits(server_update_header_bits(options_) + records.bit_size());
             if (packet_bytes <= remaining) {
                 emit_records();
             }
@@ -1386,6 +1410,32 @@ void ReplicationServer::cleanup_packet_acks(ClientState& client) {
         client.pending_packet_acks.end());
 }
 
+std::uint32_t ReplicationServer::allocate_packet_id(ClientState& client) {
+    const std::size_t packet_id_bits = configured_packet_id_bits(options_);
+    const std::uint32_t max_packet_id = protocol::packet_id_mask(packet_id_bits);
+    if (client.next_packet_id == 0U || client.next_packet_id > max_packet_id) {
+        client.next_packet_id = 1U;
+    }
+
+    const std::uint32_t packet_id = client.next_packet_id;
+    client.next_packet_id = packet_id == max_packet_id ? 1U : packet_id + 1U;
+    client.pending_packet_acks.erase(
+        std::remove_if(
+            client.pending_packet_acks.begin(),
+            client.pending_packet_acks.end(),
+            [packet_id](const PendingPacketAck& pending) {
+                return pending.packet_id == packet_id;
+            }),
+        client.pending_packet_acks.end());
+    return packet_id;
+}
+
+void ReplicationServer::enforce_pending_packet_ack_limit(ClientState& client) {
+    while (client.pending_packet_acks.size() > options_.max_pending_packet_acks_per_client) {
+        client.pending_packet_acks.erase(client.pending_packet_acks.begin());
+    }
+}
+
 bool ReplicationServer::same_quantized_frame_components(
     const QuantizedFrame& quantized_frame,
     const QuantizedFrameData& data,
@@ -1422,7 +1472,7 @@ void ReplicationServer::write_entity_record(
         delta = baseline.data.present_mask == quantized_frame.data.present_mask;
     }
 
-    out.push_bits(replicated.network_id, protocol::network_entity_id_bits);
+    protocol::write_network_entity_id(out, replicated.network_id);
     out.push_bool(!delta);
     if (!delta) {
         out.push_unsigned_bits(replicated.entity.value, 64U);
@@ -1501,18 +1551,33 @@ void ReplicationServer::write_entity_record(
     }
 
     std::uint16_t component_count = 0;
+    std::uint64_t present_sync_slots = 0;
     if (has_tag_slot(archetype)) {
         ++component_count;
+        present_sync_slots |= sync_slot_bit(0);
     }
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
         if (frame_has_component(quantized_frame.data, component_index)) {
             ++component_count;
+            present_sync_slots |= sync_slot_bit(component_index + 1U);
         }
     }
-    out.push_bits(static_cast<std::int64_t>(component_count), 16U);
+
+    const std::size_t sync_slots = sync_slot_count(archetype);
     const std::size_t sync_slot_bits = protocol::bits_for_range(sync_slot_count(archetype));
+    const std::size_t slot_list_bits = 16U + static_cast<std::size_t>(component_count) * sync_slot_bits;
+    const bool use_presence_mask = sync_slots < slot_list_bits;
+    out.push_bool(use_presence_mask);
+    if (use_presence_mask) {
+        out.push_unsigned_bits(present_sync_slots, sync_slots);
+    } else {
+        out.push_bits(static_cast<std::int64_t>(component_count), 16U);
+    }
+
     if (has_tag_slot(archetype)) {
-        out.push_bits(0, sync_slot_bits);
+        if (!use_presence_mask) {
+            out.push_bits(0, sync_slot_bits);
+        }
         out.push_unsigned_bits(quantized_frame.data.tag_mask, archetype.tags.size());
     }
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
@@ -1528,7 +1593,9 @@ void ReplicationServer::write_entity_record(
             throw std::logic_error("replicated quantized frame component bytes are missing");
         }
 
-        out.push_bits(static_cast<std::int64_t>(component_index + 1U), sync_slot_bits);
+        if (!use_presence_mask) {
+            out.push_bits(static_cast<std::int64_t>(component_index + 1U), sync_slot_bits);
+        }
         if (ops.serialize_bytes != nullptr) {
             ops.serialize_bytes(nullptr, current, out);
         } else {
@@ -1561,9 +1628,11 @@ void ReplicationServer::send_packet(
         return;
     }
 
-    const std::uint32_t packet_id = client.next_packet_id++;
-    BitBuffer packet = make_server_packet(options_.mtu_bytes, frame, packet_id, entity_count, records);
+    const std::uint32_t packet_id = allocate_packet_id(client);
+    BitBuffer packet =
+        make_server_packet(options_.mtu_bytes, configured_packet_id_bits(options_), frame, packet_id, entity_count, records);
     track_packet_ack(client, packet_id, ack_records);
+    enforce_pending_packet_ack_limit(client);
     options_.transport(client.id, packet);
 }
 

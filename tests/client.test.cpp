@@ -52,7 +52,7 @@ std::vector<AckRecord> read_acks(kage::sync::BitBuffer packet) {
     return records;
 }
 
-UpdatePacket read_update(kage::sync::BitBuffer packet) {
+UpdatePacket read_update(kage::sync::BitBuffer packet, std::size_t sync_slot_count = 2U) {
     REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::server_update_message);
     UpdatePacket update;
     update.frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
@@ -62,16 +62,36 @@ UpdatePacket read_update(kage::sync::BitBuffer packet) {
     for (std::uint16_t index = 0; index < count; ++index) {
         UpdateRecord record;
         record.destroy = packet.read_bool();
-        record.network_id = static_cast<std::uint32_t>(packet.read_bits(kage::sync::protocol::network_entity_id_bits));
+        REQUIRE(kage::sync::protocol::read_network_entity_id(packet, record.network_id));
         if (!record.destroy) {
             record.full = packet.read_bool();
             if (record.full) {
                 record.entity = ecs::Entity{packet.read_unsigned_bits(64U)};
                 packet.read_bits(32U);
-                const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
-                const std::size_t sync_slot_bits = kage::sync::protocol::bits_for_range(2U);
+                const bool uses_presence_mask = packet.read_bool();
+                const std::size_t sync_slot_bits = kage::sync::protocol::bits_for_range(sync_slot_count);
+                std::uint16_t component_count = 0;
+                std::uint64_t presence_mask = 0;
+                if (uses_presence_mask) {
+                    presence_mask = packet.read_unsigned_bits(sync_slot_count);
+                    for (std::size_t slot = 0; slot < sync_slot_count; ++slot) {
+                        if ((presence_mask & (std::uint64_t{1} << slot)) != 0U) {
+                            ++component_count;
+                        }
+                    }
+                } else {
+                    component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+                }
                 for (std::uint16_t component = 0; component < component_count; ++component) {
-                    const auto component_index = static_cast<std::uint16_t>(packet.read_bits(sync_slot_bits));
+                    std::uint16_t component_index = 0;
+                    if (uses_presence_mask) {
+                        while ((presence_mask & (std::uint64_t{1} << component_index)) == 0U) {
+                            ++component_index;
+                        }
+                        presence_mask &= ~(std::uint64_t{1} << component_index);
+                    } else {
+                        component_index = static_cast<std::uint16_t>(packet.read_bits(sync_slot_bits));
+                    }
                     const std::size_t payload_bits = component_index == 1 ? 17U : sizeof(Health) * 8U;
                     for (std::size_t bit = 0; bit < payload_bits; ++bit) {
                         packet.read_bool();
@@ -119,10 +139,11 @@ kage::sync::BitBuffer make_position_packet(
     packet.push_bits(static_cast<std::uint16_t>(records.size()), 16U);
     for (const auto& record : records) {
         packet.push_bool(false);
-        packet.push_bits(test_network_id(record.first), kage::sync::protocol::network_entity_id_bits);
+        kage::sync::protocol::write_network_entity_id(packet, test_network_id(record.first));
         packet.push_bool(true);
         packet.push_unsigned_bits(record.first.value, 64U);
         packet.push_bits(0, 32U);
+        packet.push_bool(false);
         packet.push_bits(1, 16U);
         packet.push_bits(1, kage::sync::protocol::bits_for_range(sync_slot_count));
 
@@ -138,7 +159,7 @@ kage::sync::BitBuffer make_destroy_packet(kage::sync::SyncFrame frame, ecs::Enti
     packet.push_bits(frame, kage::sync::protocol::server_packet_id_bits);
     packet.push_bits(1, 16U);
     packet.push_bool(true);
-    packet.push_bits(test_network_id(server_entity), kage::sync::protocol::network_entity_id_bits);
+    kage::sync::protocol::write_network_entity_id(packet, test_network_id(server_entity));
     return packet;
 }
 
@@ -399,7 +420,7 @@ TEST_CASE("replication client rejects invalid deltas without ACKing") {
     packet.push_bits(1, kage::sync::protocol::server_packet_id_bits);
     packet.push_bits(1, 16U);
     packet.push_bool(false);
-    packet.push_bits(1, kage::sync::protocol::network_entity_id_bits);
+    kage::sync::protocol::write_network_entity_id(packet, 1);
     packet.push_bool(false);
     packet.push_bits(1, 16U);
     packet.push_bits(0, kage::sync::protocol::bits_for_range(2U));
@@ -439,7 +460,7 @@ TEST_CASE("replication client rejects malformed update packets without ACKing") 
     invalid_archetype.push_bits(1, kage::sync::protocol::server_packet_id_bits);
     invalid_archetype.push_bits(1, 16U);
     invalid_archetype.push_bool(false);
-    invalid_archetype.push_bits(1, kage::sync::protocol::network_entity_id_bits);
+    kage::sync::protocol::write_network_entity_id(invalid_archetype, 1);
     invalid_archetype.push_bool(true);
     invalid_archetype.push_unsigned_bits(ecs::Entity{42}.value, 64U);
     invalid_archetype.push_bits(99, 32U);
@@ -537,7 +558,7 @@ TEST_CASE("replication client packs ACKs within the configured MTU") {
 }
 
 TEST_CASE("replication client retains ACKs that cannot fit the configured MTU") {
-    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{6});
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{3});
     ecs::Registry server_registry;
     const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
     const ecs::Entity server_entity = server_registry.create();

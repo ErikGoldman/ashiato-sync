@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
 #include <stdexcept>
 
 TEST_CASE("bit buffer pushes and reads bits, bytes, and bools") {
@@ -142,4 +143,26 @@ TEST_CASE("protocol baseline frame encoding uses relative deltas when possible")
     REQUIRE(kage::sync::protocol::read_baseline_frame(full, 40U, decoded));
     REQUIRE(decoded == 40U - kage::sync::protocol::max_baseline_frame_delta - 1U);
     REQUIRE(full.remaining_bits() == 0U);
+}
+
+TEST_CASE("protocol network entity id encoding uses compact tiers") {
+    const std::uint32_t ids[] = {
+        1U,
+        kage::sync::protocol::network_entity_id_tier0_max,
+        kage::sync::protocol::network_entity_id_tier0_max + 1U,
+        kage::sync::protocol::network_entity_id_tier1_max,
+        kage::sync::protocol::network_entity_id_tier1_max + 1U,
+        0xffffffffU,
+    };
+
+    for (const std::uint32_t id : ids) {
+        kage::sync::BitBuffer buffer;
+        kage::sync::protocol::write_network_entity_id(buffer, id);
+        REQUIRE(buffer.bit_size() == kage::sync::protocol::network_entity_id_encoded_bits(id));
+
+        std::uint32_t decoded = 0;
+        REQUIRE(kage::sync::protocol::read_network_entity_id(buffer, decoded));
+        REQUIRE(decoded == id);
+        REQUIRE(buffer.remaining_bits() == 0U);
+    }
 }

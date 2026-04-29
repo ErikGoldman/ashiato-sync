@@ -45,7 +45,7 @@ bool start_sync(ecs::Registry& registry, ecs::Entity entity, kage::sync::SyncArc
     return registry.add<kage::sync::Replicated>(entity, kage::sync::Replicated{archetype}) != nullptr;
 }
 
-ServerUpdatePacket read_server_update(kage::sync::BitBuffer packet) {
+ServerUpdatePacket read_server_update(kage::sync::BitBuffer packet, std::size_t sync_slot_count = 2U) {
     ServerUpdatePacket update;
     update.message = static_cast<std::uint8_t>(packet.read_bits(8U));
     update.frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
@@ -55,7 +55,7 @@ ServerUpdatePacket read_server_update(kage::sync::BitBuffer packet) {
     for (std::uint16_t entity_index = 0; entity_index < entity_count; ++entity_index) {
         EntityRecord entity;
         entity.destroy = packet.read_bool();
-        entity.network_id = static_cast<std::uint32_t>(packet.read_bits(kage::sync::protocol::network_entity_id_bits));
+        REQUIRE(kage::sync::protocol::read_network_entity_id(packet, entity.network_id));
         if (entity.destroy) {
             update.entities.push_back(std::move(entity));
             continue;
@@ -65,12 +65,31 @@ ServerUpdatePacket read_server_update(kage::sync::BitBuffer packet) {
             entity.entity = ecs::Entity{packet.read_unsigned_bits(64U)};
             entity.archetype =
                 kage::sync::SyncArchetypeId{static_cast<std::uint32_t>(packet.read_bits(32U))};
-            const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
-            const std::size_t sync_slot_bits = kage::sync::protocol::bits_for_range(2U);
+            const bool uses_presence_mask = packet.read_bool();
+            const std::size_t sync_slot_bits = kage::sync::protocol::bits_for_range(sync_slot_count);
+            std::uint16_t component_count = 0;
+            std::uint64_t presence_mask = 0;
+            if (uses_presence_mask) {
+                presence_mask = packet.read_unsigned_bits(sync_slot_count);
+                for (std::size_t slot = 0; slot < sync_slot_count; ++slot) {
+                    if ((presence_mask & (std::uint64_t{1} << slot)) != 0U) {
+                        ++component_count;
+                    }
+                }
+            } else {
+                component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+            }
             entity.components.reserve(component_count);
             for (std::uint16_t component = 0; component < component_count; ++component) {
                 ComponentRecord record;
-                record.component_index = static_cast<std::uint16_t>(packet.read_bits(sync_slot_bits));
+                if (uses_presence_mask) {
+                    while ((presence_mask & (std::uint64_t{1} << record.component_index)) == 0U) {
+                        ++record.component_index;
+                    }
+                    presence_mask &= ~(std::uint64_t{1} << record.component_index);
+                } else {
+                    record.component_index = static_cast<std::uint16_t>(packet.read_bits(sync_slot_bits));
+                }
                 std::size_t payload_bits = packet.remaining_bits();
                 if (entity_index + 1U < entity_count || component + 1U < component_count) {
                     payload_bits = record.component_index == 1 ? 17U : sizeof(Health) * 8U;
@@ -399,7 +418,7 @@ TEST_CASE("replication server sends a full update after archetype replacement") 
     REQUIRE(start_sync(registry, entity, actor_archetype));
     server.tick(registry);
 
-    update = read_server_update(payloads.back());
+    update = read_server_update(payloads.back(), 3U);
     REQUIRE(update.entities.size() == 1);
     REQUIRE(update.entities[0].full);
     REQUIRE(update.entities[0].archetype == actor_archetype);
@@ -484,8 +503,8 @@ TEST_CASE("replication server filters owner-only serialized components") {
     server.tick(registry);
 
     REQUIRE(sends.size() == 2);
-    REQUIRE(sends[0] == std::pair<kage::sync::ClientId, std::size_t>{1, 32});
-    REQUIRE(sends[1] == std::pair<kage::sync::ClientId, std::size_t>{2, 36});
+    REQUIRE(sends[0] == std::pair<kage::sync::ClientId, std::size_t>{1, 25});
+    REQUIRE(sends[1] == std::pair<kage::sync::ClientId, std::size_t>{2, 29});
 }
 
 TEST_CASE("replication server serializes compact synced tag masks per client") {
@@ -529,14 +548,15 @@ TEST_CASE("replication server serializes compact synced tag masks per client") {
         packet.read_bits(kage::sync::protocol::server_packet_id_bits);
         REQUIRE(static_cast<std::uint16_t>(packet.read_bits(16U)) == 1);
         REQUIRE_FALSE(packet.read_bool());
-        REQUIRE(static_cast<std::uint32_t>(packet.read_bits(kage::sync::protocol::network_entity_id_bits)) != 0);
+        std::uint32_t network_id = 0;
+        REQUIRE(kage::sync::protocol::read_network_entity_id(packet, network_id));
+        REQUIRE(network_id != 0);
         REQUIRE(packet.read_bool());
         REQUIRE(ecs::Entity{packet.read_unsigned_bits(64U)} == entity);
         REQUIRE(kage::sync::SyncArchetypeId{static_cast<std::uint32_t>(packet.read_bits(32U))} == archetype);
-        REQUIRE(static_cast<std::uint16_t>(packet.read_bits(16U)) == 2);
-        REQUIRE(static_cast<std::uint16_t>(packet.read_bits(kage::sync::protocol::bits_for_range(2U))) == 0);
+        REQUIRE(packet.read_bool());
+        REQUIRE(packet.read_unsigned_bits(2U) == 3U);
         REQUIRE(packet.read_unsigned_bits(2U) == (sent.first == 1 ? 3U : 1U));
-        REQUIRE(static_cast<std::uint16_t>(packet.read_bits(kage::sync::protocol::bits_for_range(2U))) == 1);
         NetworkedPayload fields = read_networked_payload(packet);
         REQUIRE_FALSE(fields.delta);
         REQUIRE(fields.x == 10);
@@ -556,7 +576,9 @@ TEST_CASE("replication server serializes compact synced tag masks per client") {
         kage::sync::SyncFrame baseline_frame = 0;
         REQUIRE(static_cast<std::uint16_t>(packet.read_bits(16U)) == 1);
         REQUIRE_FALSE(packet.read_bool());
-        REQUIRE(static_cast<std::uint32_t>(packet.read_bits(kage::sync::protocol::network_entity_id_bits)) != 0);
+        std::uint32_t network_id = 0;
+        REQUIRE(kage::sync::protocol::read_network_entity_id(packet, network_id));
+        REQUIRE(network_id != 0);
         REQUIRE_FALSE(packet.read_bool());
         REQUIRE(kage::sync::protocol::read_baseline_frame(packet, frame, baseline_frame));
         REQUIRE(packet.read_bool());
@@ -594,7 +616,7 @@ TEST_CASE("replication server packs entity records up to the configured mtu") {
     server.tick(registry);
 
     REQUIRE(payloads.size() == 1);
-    REQUIRE(payloads[0].byte_size() == 52);
+    REQUIRE(payloads[0].byte_size() == 42);
     const ServerUpdatePacket update = read_server_update(payloads[0]);
     REQUIRE(update.entities.size() == 2);
 }
@@ -630,7 +652,7 @@ TEST_CASE("replication server splits packed updates at the mtu boundary") {
     REQUIRE(payloads.size() == 2);
     for (const kage::sync::BitBuffer& payload : payloads) {
         REQUIRE(payload.byte_size() <= options.mtu_bytes);
-        REQUIRE(payload.byte_size() == 32);
+        REQUIRE(payload.byte_size() == 25);
         REQUIRE(read_server_update(payload).entities.size() == 1);
     }
 }
@@ -650,8 +672,8 @@ TEST_CASE("replication server interleaves pending destroys with bandwidth-limite
 
     std::vector<kage::sync::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
-    options.bandwidth_limit_bytes_per_tick = 34;
-    options.mtu_bytes = 34;
+    options.bandwidth_limit_bytes_per_tick = 26;
+    options.mtu_bytes = 26;
     options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
         payloads.push_back(payload);
     };
@@ -864,14 +886,14 @@ TEST_CASE("replication server records bandwidth savings for ACKed delta updates"
     REQUIRE(start_sync(registry, entity, archetype));
 
     server.tick(registry);
-    REQUIRE(payloads.back().byte_size() == 34);
+    REQUIRE(payloads.back().byte_size() == 27);
     REQUIRE(server.acknowledge_entity(1, entity, read_server_update(payloads.back()).frame));
 
     registry.write<BandwidthProbe>(entity) = BandwidthProbe{105};
     server.tick(registry);
 
     const std::size_t expected_delta_bits = kage::sync::protocol::server_update_header_bits +
-        1U + kage::sync::protocol::network_entity_id_bits + 1U +
+        1U + kage::sync::protocol::network_entity_id_encoded_bits(1U) + 1U +
         (1U + kage::sync::protocol::baseline_frame_delta_bits) + 1U + 9U;
     REQUIRE(payloads.back().byte_size() == kage::sync::protocol::bytes_for_bits(expected_delta_bits));
 }

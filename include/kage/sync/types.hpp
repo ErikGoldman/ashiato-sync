@@ -1,6 +1,7 @@
 #pragma once
 
 #include "kage/sync/bit_buffer.hpp"
+#include "kage/sync/protocol.hpp"
 
 #include "ecs/ecs.hpp"
 
@@ -258,6 +259,7 @@ struct ReplicationServerOptions {
     std::size_t fixed_entity_replication_cost_bytes = 128;
     std::size_t mtu_bytes = 1200;
     std::size_t serialized_worker_threads = 1;
+    std::size_t max_pending_packet_acks_per_client = protocol::default_max_pending_packet_acks_per_client;
     TransportFn transport;
 };
 
