@@ -40,6 +40,9 @@ struct BandwidthProbe {
     std::int32_t value = 0;
 };
 
+struct Visible {};
+struct Secret {};
+
 inline NetworkedPayload read_networked_payload(kage::sync::BitBuffer payload) {
     return NetworkedPayload{
         payload.read_bool(),

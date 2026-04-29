@@ -12,7 +12,9 @@
 using kage_sync_tests::NetworkedPosition;
 using kage_sync_tests::Health;
 using kage_sync_tests::Position;
+using kage_sync_tests::Secret;
 using kage_sync_tests::SmoothPosition;
+using kage_sync_tests::Visible;
 
 namespace {
 
@@ -70,13 +72,15 @@ UpdatePacket read_update(kage::sync::BitBuffer packet) {
                 const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
                 for (std::uint16_t component = 0; component < component_count; ++component) {
                     const auto component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
-                    const std::size_t payload_bits = component_index == 0 ? 17U : sizeof(Health) * 8U;
+                    const std::size_t payload_bits = component_index == 1 ? 17U : sizeof(Health) * 8U;
                     for (std::size_t bit = 0; bit < payload_bits; ++bit) {
                         packet.read_bool();
                     }
                 }
             } else {
                 REQUIRE(kage::sync::protocol::read_baseline_frame(packet, update.frame, record.baseline_frame));
+                const bool tag_changed = packet.read_bool();
+                REQUIRE_FALSE(tag_changed);
                 const bool position_changed = packet.read_bool();
                 if (position_changed) {
                     for (std::size_t bit = 0; bit < 17U; ++bit) {
@@ -113,7 +117,7 @@ kage::sync::BitBuffer make_position_packet(
         packet.push_bool(true);
         packet.push_bits(0, 32U);
         packet.push_bits(1, 16U);
-        packet.push_bits(0, 16U);
+        packet.push_bits(1, 16U);
 
         packet.push_bytes(reinterpret_cast<const char*>(&record.second), sizeof(Position));
     }
@@ -828,6 +832,97 @@ TEST_CASE("replication client reconciles components when owner visibility change
     REQUIRE(client_two_registry.get<Health>(client_two_local).value == 42);
 }
 
+TEST_CASE("replication client applies synced tags and owner-filtered tag visibility") {
+    ecs::Registry server_registry;
+    const ecs::Entity server_visible = server_registry.register_component<Visible>("Visible");
+    const ecs::Entity server_secret = server_registry.register_component<Secret>("Secret");
+    const ecs::Entity server_position =
+        kage::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
+    const kage::sync::SyncArchetypeId server_archetype = kage::sync::define_archetype(
+        server_registry,
+        kage::sync::SyncArchetypeDesc{
+            "TaggedActor",
+            {{server_visible, kage::sync::ReplicationAudience::All},
+             {server_secret, kage::sync::ReplicationAudience::Owner}},
+            {{server_position, kage::sync::ReplicationAudience::All}},
+        });
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<NetworkedPosition>(server_entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
+    REQUIRE(server_registry.add_tag(server_entity, server_visible));
+    REQUIRE(server_registry.add_tag(server_entity, server_secret));
+    REQUIRE(kage::sync::set_owner(server_registry, server_entity, 1));
+
+    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& packet) {
+        packets.push_back({client, packet});
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(server.add_client(2));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+    ecs::Registry owner_registry;
+    const ecs::Entity owner_visible = owner_registry.register_component<Visible>("Visible");
+    const ecs::Entity owner_secret = owner_registry.register_component<Secret>("Secret");
+    const ecs::Entity owner_position =
+        kage::sync::register_sync_component<NetworkedPosition>(owner_registry, "NetworkedPosition");
+    REQUIRE(kage::sync::define_archetype(
+                owner_registry,
+                kage::sync::SyncArchetypeDesc{
+                    "TaggedActor",
+                    {{owner_visible, kage::sync::ReplicationAudience::All},
+                     {owner_secret, kage::sync::ReplicationAudience::Owner}},
+                    {{owner_position, kage::sync::ReplicationAudience::All}},
+                }) == server_archetype);
+    kage::sync::configure_client(owner_registry, 1);
+
+    ecs::Registry non_owner_registry;
+    const ecs::Entity non_owner_visible = non_owner_registry.register_component<Visible>("Visible");
+    const ecs::Entity non_owner_secret = non_owner_registry.register_component<Secret>("Secret");
+    const ecs::Entity non_owner_position =
+        kage::sync::register_sync_component<NetworkedPosition>(non_owner_registry, "NetworkedPosition");
+    REQUIRE(kage::sync::define_archetype(
+                non_owner_registry,
+                kage::sync::SyncArchetypeDesc{
+                    "TaggedActor",
+                    {{non_owner_visible, kage::sync::ReplicationAudience::All},
+                     {non_owner_secret, kage::sync::ReplicationAudience::Owner}},
+                    {{non_owner_position, kage::sync::ReplicationAudience::All}},
+                }) == server_archetype);
+    kage::sync::configure_client(non_owner_registry, 2);
+
+    kage::sync::ReplicationClient owner_client;
+    kage::sync::ReplicationClient non_owner_client;
+    server.tick(server_registry);
+    REQUIRE(owner_client.receive(owner_registry, packet_for(packets, 1)));
+    REQUIRE(non_owner_client.receive(non_owner_registry, packet_for(packets, 2)));
+
+    const ecs::Entity owner_local = owner_client.local_entity(server_entity);
+    const ecs::Entity non_owner_local = non_owner_client.local_entity(server_entity);
+    REQUIRE(owner_registry.has(owner_local, owner_visible));
+    REQUIRE(owner_registry.has(owner_local, owner_secret));
+    REQUIRE(non_owner_registry.has(non_owner_local, non_owner_visible));
+    REQUIRE_FALSE(non_owner_registry.has(non_owner_local, non_owner_secret));
+
+    for (const kage::sync::BitBuffer& ack : owner_client.drain_ack_packets()) {
+        REQUIRE(server.process_packet(1, ack));
+    }
+    for (const kage::sync::BitBuffer& ack : non_owner_client.drain_ack_packets()) {
+        REQUIRE(server.process_packet(2, ack));
+    }
+
+    REQUIRE(kage::sync::set_owner(server_registry, server_entity, 2));
+    packets.clear();
+    server.tick(server_registry);
+    REQUIRE(owner_client.receive(owner_registry, packet_for(packets, 1)));
+    REQUIRE(non_owner_client.receive(non_owner_registry, packet_for(packets, 2)));
+    REQUIRE(owner_registry.has(owner_local, owner_visible));
+    REQUIRE_FALSE(owner_registry.has(owner_local, owner_secret));
+    REQUIRE(non_owner_registry.has(non_owner_local, non_owner_visible));
+    REQUIRE(non_owner_registry.has(non_owner_local, non_owner_secret));
+}
+
 TEST_CASE("buffered interpolation delays entity creation until the target frame") {
     ecs::Registry server_registry;
     const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
@@ -1107,6 +1202,74 @@ TEST_CASE("buffered interpolation fills skipped frames with component trait inte
     REQUIRE(client_registry.get<SmoothPosition>(local).x == 20.0f);
     REQUIRE(client.apply_frame(client_registry, 6));
     REQUIRE(client_registry.get<SmoothPosition>(local).x == 30.0f);
+}
+
+TEST_CASE("buffered interpolation floors synced tags") {
+    ecs::Registry server_registry;
+    const ecs::Entity server_visible = server_registry.register_component<Visible>("Visible");
+    const ecs::Entity server_secret = server_registry.register_component<Secret>("Secret");
+    const ecs::Entity server_position =
+        kage::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
+    const kage::sync::SyncArchetypeId server_archetype = kage::sync::define_archetype(
+        server_registry,
+        kage::sync::SyncArchetypeDesc{
+            "TaggedActor",
+            {{server_visible, kage::sync::ReplicationAudience::All},
+             {server_secret, kage::sync::ReplicationAudience::All}},
+            {{server_position, kage::sync::ReplicationAudience::All}},
+        });
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<NetworkedPosition>(server_entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
+    REQUIRE(server_registry.add_tag(server_entity, server_visible));
+
+    std::vector<kage::sync::BitBuffer> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+    ecs::Registry client_registry;
+    const ecs::Entity client_visible = client_registry.register_component<Visible>("Visible");
+    const ecs::Entity client_secret = client_registry.register_component<Secret>("Secret");
+    const ecs::Entity client_position =
+        kage::sync::register_sync_component<NetworkedPosition>(client_registry, "NetworkedPosition");
+    REQUIRE(kage::sync::define_archetype(
+                client_registry,
+                kage::sync::SyncArchetypeDesc{
+                    "TaggedActor",
+                    {{client_visible, kage::sync::ReplicationAudience::All},
+                     {client_secret, kage::sync::ReplicationAudience::All}},
+                    {{client_position, kage::sync::ReplicationAudience::All}},
+                }) == server_archetype);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        1,
+        8});
+    server.tick(server_registry);
+    REQUIRE(client.receive(client_registry, packets.back()));
+    for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
+        REQUIRE(server.process_packet(1, ack));
+    }
+
+    REQUIRE(server_registry.add_tag(server_entity, server_secret));
+    packets.clear();
+    server.tick(server_registry);
+    REQUIRE(client.receive(client_registry, packets.back()));
+
+    REQUIRE(client.apply_frame(client_registry, 2));
+    const ecs::Entity local = client.local_entity(server_entity);
+    REQUIRE(client_registry.has(local, client_visible));
+    REQUIRE_FALSE(client_registry.has(local, client_secret));
+
+    REQUIRE(client.apply_frame(client_registry, 3));
+    REQUIRE(client_registry.has(local, client_visible));
+    REQUIRE(client_registry.has(local, client_secret));
 }
 
 TEST_CASE("buffered interpolation delays component removal and entity destroy") {

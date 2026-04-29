@@ -8,6 +8,8 @@ using kage_sync_tests::Health;
 using kage_sync_tests::NetworkedPayload;
 using kage_sync_tests::NetworkedPosition;
 using kage_sync_tests::Position;
+using kage_sync_tests::Secret;
+using kage_sync_tests::Visible;
 using kage_sync_tests::read_networked_payload;
 
 TEST_CASE("sync components register into the ecs registry") {
@@ -88,6 +90,57 @@ TEST_CASE("sync archetypes store component replication settings in the singleton
     REQUIRE(found_actor->components[1].audience == kage::sync::ReplicationAudience::Owner);
 
     REQUIRE(kage::sync::find_archetype(registry, kage::sync::SyncArchetypeId{99}) == nullptr);
+}
+
+TEST_CASE("sync archetypes store tag replication settings in reserved slot zero") {
+    ecs::Registry registry;
+    const ecs::Entity visible = registry.register_component<Visible>("Visible");
+    const ecs::Entity secret = registry.register_component<Secret>("Secret");
+    const ecs::Entity position_component = kage::sync::register_sync_component<Position>(registry, "Position");
+
+    const kage::sync::SyncArchetypeId actor = kage::sync::define_archetype(
+        registry,
+        kage::sync::SyncArchetypeDesc{
+            "TaggedActor",
+            {
+                {visible, kage::sync::ReplicationAudience::All},
+                {secret, kage::sync::ReplicationAudience::Owner},
+            },
+            {{position_component, kage::sync::ReplicationAudience::All}},
+        });
+
+    const kage::sync::SyncArchetype* found = kage::sync::find_archetype(registry, actor);
+    REQUIRE(found != nullptr);
+    REQUIRE(found->tags.size() == 2);
+    REQUIRE(found->tags[0].tag == visible);
+    REQUIRE(found->tags[0].audience == kage::sync::ReplicationAudience::All);
+    REQUIRE(found->tags[1].tag == secret);
+    REQUIRE(found->tags[1].audience == kage::sync::ReplicationAudience::Owner);
+    REQUIRE(found->components.size() == 1);
+}
+
+TEST_CASE("sync archetypes reject invalid tag declarations") {
+    ecs::Registry registry;
+    const ecs::Entity visible = registry.register_component<Visible>("Visible");
+    const ecs::Entity position = registry.register_component<Position>("Position");
+
+    REQUIRE_THROWS_AS(
+        kage::sync::define_archetype(
+            registry,
+            kage::sync::SyncArchetypeDesc{"Invalid", {{position, kage::sync::ReplicationAudience::All}}, {}}),
+        std::invalid_argument);
+
+    REQUIRE_THROWS_AS(
+        kage::sync::define_archetype(
+            registry,
+            kage::sync::SyncArchetypeDesc{
+                "Duplicate",
+                {
+                    {visible, kage::sync::ReplicationAudience::All},
+                    {visible, kage::sync::ReplicationAudience::Owner},
+                },
+                {}}),
+        std::invalid_argument);
 }
 
 TEST_CASE("sync archetypes reject unregistered component ids") {

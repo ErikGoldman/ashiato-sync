@@ -26,14 +26,28 @@ bool all_zero(const SyncComponentOps::QuantizedBytes& bytes) {
 }
 
 bool init_frame_data(const SyncArchetype& archetype, QuantizedFrameData& frame) {
-    if (archetype.components.size() > 64U ||
+    if (archetype.tags.size() > 64U ||
+        archetype.components.size() > 63U ||
         archetype.component_offsets.size() != archetype.components.size() ||
         archetype.component_ops.size() != archetype.components.size()) {
         return false;
     }
+    frame.tag_mask = 0;
     frame.present_mask = 0;
     frame.bytes.assign(archetype.total_quantized_bytes, 0U);
     return true;
+}
+
+std::size_t sync_slot_count(const SyncArchetype& archetype) noexcept {
+    return archetype.components.size() + 1U;
+}
+
+bool has_tag_slot(const SyncArchetype& archetype) noexcept {
+    return !archetype.tags.empty();
+}
+
+std::uint64_t sync_slot_bit(std::size_t slot) noexcept {
+    return std::uint64_t{1} << slot;
 }
 
 bool frame_has_component(const QuantizedFrameData& frame, std::size_t component_index) {
@@ -114,6 +128,34 @@ bool set_frame_component_bytes(
     return true;
 }
 
+bool tag_bit_set(std::uint64_t tag_mask, std::size_t tag_index) noexcept {
+    return tag_index < 64U && (tag_mask & (std::uint64_t{1} << tag_index)) != 0U;
+}
+
+bool apply_archetype_tags(
+    ecs::Registry& registry,
+    ecs::Entity entity,
+    const SyncArchetype& archetype,
+    std::uint64_t tag_mask) {
+    for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
+        const ecs::Entity tag = archetype.tags[tag_index].tag;
+        if (tag_bit_set(tag_mask, tag_index)) {
+            if (!registry.add_tag(entity, tag)) {
+                return false;
+            }
+        } else {
+            registry.remove_tag(entity, tag);
+        }
+    }
+    return true;
+}
+
+void remove_archetype_tags(ecs::Registry& registry, ecs::Entity entity, const SyncArchetype& archetype) {
+    for (const SyncTagReplication& replication : archetype.tags) {
+        registry.remove_tag(entity, replication.tag);
+    }
+}
+
 }  // namespace
 
 bool ReplicatedEntityUpdateView::try_get(
@@ -142,6 +184,20 @@ bool ReplicatedEntityUpdateView::try_get(
 
     found_ops->second.dequantize(found->bytes, out);
     return true;
+}
+
+bool ReplicatedEntityUpdateView::has_tag(const ecs::Registry& registry, ecs::Entity tag) const {
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    if (archetype.value >= settings.archetypes.size()) {
+        return false;
+    }
+    const SyncArchetype& definition = settings.archetypes[archetype.value];
+    for (std::size_t tag_index = 0; tag_index < definition.tags.size(); ++tag_index) {
+        if (definition.tags[tag_index].tag == tag) {
+            return tag_bit_set(tag_mask, tag_index);
+        }
+    }
+    return false;
 }
 
 bool DisplayEntitySample::try_get(
@@ -179,6 +235,20 @@ bool DisplayEntitySample::try_get(
 
     found_ops->second.dequantize(found->bytes, out);
     return true;
+}
+
+bool DisplayEntitySample::has_tag(const ecs::Registry& registry, ecs::Entity tag) const {
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    if (archetype.value >= settings.archetypes.size()) {
+        return false;
+    }
+    const SyncArchetype& definition = settings.archetypes[archetype.value];
+    for (std::size_t tag_index = 0; tag_index < definition.tags.size(); ++tag_index) {
+        if (definition.tags[tag_index].tag == tag) {
+            return tag_bit_set(tag_mask, tag_index);
+        }
+    }
+    return false;
 }
 
 ReplicationClient::ReplicationClient(ReplicationClientOptions options)
@@ -743,11 +813,19 @@ bool ReplicationClient::apply_upsert(
             decoded_updates.reserve(component_count);
         }
         for (std::uint16_t component = 0; component < component_count; ++component) {
-            const auto component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
-            if (component_index >= definition.components.size()) {
+            const auto sync_slot = static_cast<std::uint16_t>(packet.read_bits(16U));
+            if (sync_slot >= sync_slot_count(definition)) {
                 return false;
             }
+            if (sync_slot == 0U) {
+                if (!has_tag_slot(definition)) {
+                    return false;
+                }
+                received.tag_mask = packet.read_unsigned_bits(definition.tags.size());
+                continue;
+            }
 
+            const std::size_t component_index = static_cast<std::size_t>(sync_slot - 1U);
             const ecs::Entity component_entity = definition.components[component_index].component;
             if (component_index >= definition.component_ops.size()) {
                 return false;
@@ -789,13 +867,22 @@ bool ReplicationClient::apply_upsert(
         if (previous_baseline == nullptr) {
             return false;
         }
-        const std::uint64_t changed_mask = packet.read_unsigned_bits(definition.components.size());
+        const std::uint64_t changed_mask = packet.read_unsigned_bits(sync_slot_count(definition));
         if (collect_decoded_updates) {
             decoded_updates.reserve(definition.components.size());
         }
         merged = *previous_baseline;
+        if ((changed_mask & sync_slot_bit(0)) != 0U) {
+            if (!has_tag_slot(definition)) {
+                return false;
+            }
+            merged.tag_mask = packet.read_unsigned_bits(definition.tags.size());
+            if (!buffered_without_selector) {
+                decoded.tag_mask = merged.tag_mask;
+            }
+        }
         for (std::size_t component_index = 0; component_index < definition.components.size(); ++component_index) {
-            if ((changed_mask & (std::uint64_t{1} << component_index)) == 0U) {
+            if ((changed_mask & sync_slot_bit(component_index + 1U)) == 0U) {
                 continue;
             }
             const ecs::Entity component_entity = definition.components[component_index].component;
@@ -847,6 +934,9 @@ bool ReplicationClient::apply_upsert(
                 decoded_updates.push_back(std::move(baseline));
             }
         }
+        if (!buffered_without_selector) {
+            decoded.tag_mask = merged.tag_mask;
+        }
     }
 
     if (previous_state != nullptr && frame <= previous_state->frame) {
@@ -866,6 +956,7 @@ bool ReplicationClient::apply_upsert(
             update.local_entity = state.local;
             update.archetype = archetype;
             update.frame = frame;
+            update.tag_mask = merged.tag_mask;
             update.components = &decoded_updates;
             selected = options_.entity_mode_selector(update);
         }
@@ -877,6 +968,11 @@ bool ReplicationClient::apply_upsert(
         return apply_buffered_upsert(registry, settings, frame, server_entity, archetype, merged);
     }
 
+    if (full && state.local && registry.alive(state.local) &&
+        state.archetype != archetype &&
+        state.archetype.value < settings.archetypes.size()) {
+        remove_archetype_tags(registry, state.local, settings.archetypes[state.archetype.value]);
+    }
     state.archetype = archetype;
     if (!apply_snap_sample(registry, settings, state, decoded, full)) {
         return false;
@@ -1069,6 +1165,7 @@ bool ReplicationClient::write_buffered_frame(
     if (from == nullptr) {
         return true;
     }
+    sample.baseline.tag_mask = from->tag_mask;
 
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
         if (!frame_has_component(*from, component_index)) {
@@ -1136,6 +1233,12 @@ bool ReplicationClient::apply_buffered_sample(
     }
 
     const SyncArchetype& archetype = settings.archetypes[sample.archetype.value];
+    if (state.archetype != sample.archetype && state.archetype.value < settings.archetypes.size()) {
+        remove_archetype_tags(registry, state.local, settings.archetypes[state.archetype.value]);
+    }
+    if (!apply_archetype_tags(registry, state.local, archetype, sample.baseline.tag_mask)) {
+        return false;
+    }
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
         const std::uint64_t bit = std::uint64_t{1} << component_index;
         if ((state.applied_present_mask & bit) != 0U &&
@@ -1185,6 +1288,9 @@ bool ReplicationClient::apply_snap_sample(
     const SyncArchetype& archetype = settings.archetypes[state.archetype.value];
     if (state.baseline.bytes.size() != archetype.total_quantized_bytes &&
         !init_frame_data(archetype, state.baseline)) {
+        return false;
+    }
+    if (!apply_archetype_tags(registry, state.local, archetype, decoded.tag_mask)) {
         return false;
     }
     if (full) {
@@ -1277,6 +1383,7 @@ bool ReplicationClient::apply_snap_sample(
     }
 
     state.entity_present = true;
+    state.baseline.tag_mask = decoded.tag_mask;
     state.applied_present_mask = state.baseline.present_mask;
     sync_entity_memberships(state);
     return true;
@@ -1446,6 +1553,7 @@ bool ReplicationClient::write_display_samples(
             display.archetype = state.archetype;
             display.frame = state.frame;
             display.alpha = 0.0f;
+            display.tag_mask = state.baseline.tag_mask;
             display.components.clear();
             display.components.reserve(state.snap_errors.size());
             for (const EntityState::ComponentError& error : state.snap_errors) {
@@ -1509,6 +1617,7 @@ bool ReplicationClient::write_display_samples(
         display.archetype = floor_sample.archetype;
         display.frame = floor_frame;
         display.alpha = alpha;
+        display.tag_mask = floor_sample.baseline.tag_mask;
         display.components.clear();
         const SyncArchetype& display_archetype = settings.archetypes[floor_sample.archetype.value];
         display.components.reserve(display_archetype.components.size());

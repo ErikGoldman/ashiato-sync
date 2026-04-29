@@ -372,6 +372,7 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
 void configure_server(ecs::Registry& registry);
 void configure_client(ecs::Registry& registry, ClientId local_client);
 
+SyncArchetypeId define_archetype(ecs::Registry& registry, SyncArchetypeDesc desc);
 SyncArchetypeId define_archetype(
     ecs::Registry& registry,
     std::string name,

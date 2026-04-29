@@ -7,7 +7,8 @@
 namespace kage::sync {
 namespace {
 
-constexpr std::size_t max_archetype_components = 64;
+constexpr std::size_t max_archetype_tags = 64;
+constexpr std::size_t max_archetype_components = 63;
 constexpr std::size_t max_archetype_quantized_bytes = 1200;
 
 bool valid_archetype_id(const SyncSettings& settings, SyncArchetypeId id) {
@@ -20,6 +21,13 @@ void validate_component_replication(const ecs::Registry& registry, const Compone
     }
     if (find_component_ops(registry, replication.component) == nullptr) {
         throw std::invalid_argument("sync archetype references a component without sync traits");
+    }
+}
+
+void validate_tag_replication(const ecs::Registry& registry, const SyncTagReplication& replication) {
+    const ecs::ComponentInfo* info = registry.component_info(replication.tag);
+    if (!replication.tag || info == nullptr || !info->tag) {
+        throw std::invalid_argument("sync archetype references an unregistered tag");
     }
 }
 
@@ -83,26 +91,38 @@ void configure_client(ecs::Registry& registry, ClientId local_client) {
     settings.local_client = local_client;
 }
 
-SyncArchetypeId define_archetype(
-    ecs::Registry& registry,
-    std::string name,
-    std::vector<ComponentReplication> components) {
+SyncArchetypeId define_archetype(ecs::Registry& registry, SyncArchetypeDesc desc) {
     register_components(registry);
 
-    for (const ComponentReplication& replication : components) {
+    if (desc.tags.size() > max_archetype_tags) {
+        throw std::invalid_argument("sync archetypes may not contain more than 64 tags");
+    }
+    if (desc.components.size() > max_archetype_components) {
+        throw std::invalid_argument("sync archetypes may not contain more than 63 components");
+    }
+
+    for (const SyncTagReplication& replication : desc.tags) {
+        validate_tag_replication(registry, replication);
+    }
+    for (std::size_t lhs = 0; lhs < desc.tags.size(); ++lhs) {
+        for (std::size_t rhs = lhs + 1U; rhs < desc.tags.size(); ++rhs) {
+            if (desc.tags[lhs].tag == desc.tags[rhs].tag) {
+                throw std::invalid_argument("sync archetype contains duplicate tags");
+            }
+        }
+    }
+
+    for (const ComponentReplication& replication : desc.components) {
         validate_component_replication(registry, replication);
     }
 
     SyncSettings& settings = registry.write<SyncSettings>();
     std::vector<SyncComponentOps> component_ops;
     std::vector<std::uint32_t> component_offsets;
-    component_ops.reserve(components.size());
-    component_offsets.reserve(components.size());
-    if (components.size() > max_archetype_components) {
-        throw std::invalid_argument("sync archetypes may not contain more than 64 components");
-    }
+    component_ops.reserve(desc.components.size());
+    component_offsets.reserve(desc.components.size());
     std::size_t total_quantized_bytes = 0;
-    for (const ComponentReplication& replication : components) {
+    for (const ComponentReplication& replication : desc.components) {
         const auto found_ops = settings.component_ops.find(replication.component.value);
         if (found_ops == settings.component_ops.end()) {
             throw std::invalid_argument("sync archetype references a component without sync traits");
@@ -120,8 +140,9 @@ SyncArchetypeId define_archetype(
     }
     const SyncArchetypeId id{static_cast<std::uint32_t>(settings.archetypes.size())};
     settings.archetypes.push_back(SyncArchetype{
-        std::move(name),
-        std::move(components),
+        std::move(desc.name),
+        std::move(desc.tags),
+        std::move(desc.components),
         std::move(component_ops),
         std::move(component_offsets),
         static_cast<std::uint32_t>(total_quantized_bytes)});
@@ -135,6 +156,13 @@ const SyncArchetype* find_archetype(const ecs::Registry& registry, SyncArchetype
     }
 
     return &settings.archetypes[id.value];
+}
+
+SyncArchetypeId define_archetype(
+    ecs::Registry& registry,
+    std::string name,
+    std::vector<ComponentReplication> components) {
+    return define_archetype(registry, SyncArchetypeDesc{std::move(name), {}, std::move(components)});
 }
 
 bool set_owner(ecs::Registry& registry, ecs::Entity entity, ClientId client) {

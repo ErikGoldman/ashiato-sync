@@ -511,6 +511,59 @@ void BM_ServerTickOwnerAudienceMixed(benchmark::State& state) {
         state.iterations() * static_cast<std::int64_t>(entity_count) * static_cast<std::int64_t>(client_count));
 }
 
+void BM_ServerTickTaggedOwnerMixed(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int client_count = static_cast<int>(state.range(1));
+    const int tag_count = static_cast<int>(state.range(2));
+
+    ecs::Registry registry;
+    const TaggedSchema schema = define_tagged_archetype(registry, tag_count);
+    const std::vector<ecs::Entity> entities =
+        create_tagged_entities(registry, entity_count, client_count, schema.tags);
+
+    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    packets.reserve(static_cast<std::size_t>(entity_count) * static_cast<std::size_t>(client_count));
+    std::uint64_t sent = 0;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * 96U;
+    options.mtu_bytes = 1200;
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        packets.push_back({client, payload});
+        sent += client + payload.byte_size();
+        benchmark::DoNotOptimize(sent);
+    };
+
+    kage::sync::ReplicationServer server(options);
+    add_clients(server, client_count);
+    add_replication_configs(registry, entities, schema.archetype);
+    server.tick(registry);
+    for (int client_index = 0; client_index < client_count; ++client_index) {
+        const auto client = static_cast<kage::sync::ClientId>(client_index + 1);
+        for (const ecs::Entity entity : entities) {
+            benchmark::DoNotOptimize(server.acknowledge_entity(client, entity, 1));
+        }
+    }
+    packets.clear();
+
+    int tick = 0;
+    for (auto _ : state) {
+        const ecs::Entity tag = schema.tags[static_cast<std::size_t>(tick) % schema.tags.size()];
+        for (const ecs::Entity entity : entities) {
+            if ((tick & 1) == 0) {
+                registry.add_tag(entity, tag);
+            } else {
+                registry.remove_tag(entity, tag);
+            }
+        }
+        ++tick;
+        server.tick(registry);
+        packets.clear();
+    }
+
+    state.SetItemsProcessed(
+        state.iterations() * static_cast<std::int64_t>(entity_count) * static_cast<std::int64_t>(client_count));
+}
+
 void BM_ServerTickArchetypeDiversity(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int client_count = static_cast<int>(state.range(1));
@@ -671,6 +724,7 @@ BENCHMARK(BM_ServerTickDestroyBurst)->Apply(DestroyArgs);
 BENCHMARK(BM_ServerTickPendingDestroysBudgetLimited)->Apply(PendingDestroyArgs);
 BENCHMARK(BM_ServerTickMutatingAckedDelta)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickOwnerAudienceMixed)->Apply(TickArgs);
+BENCHMARK(BM_ServerTickTaggedOwnerMixed)->Args({1024, 4, 8})->Args({16384, 4, 16});
 BENCHMARK(BM_ServerTickArchetypeDiversity)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickStressScheduler)->Args({4096, 4, 1})->Args({4096, 4, 2})->Args({4096, 4, 4});
 BENCHMARK(BM_BitBufferUnalignedBytes)->Arg(64)->Arg(1024)->Arg(16384);

@@ -121,6 +121,9 @@ struct BallVisual {
     std::uint8_t a = 255;
 };
 
+struct BallSpawnTagged {};
+struct BallBounced {};
+
 struct ServerBall {
     ecs::Entity entity;
     Vector3 velocity{};
@@ -130,6 +133,8 @@ struct ServerBall {
 
 struct SyncSchema {
     kage::sync::SyncArchetypeId ball;
+    ecs::Entity spawn_tagged;
+    ecs::Entity bounced;
 };
 
 struct LinkSettings {
@@ -329,22 +334,32 @@ bool receive_packet(SocketHandle socket, kage::sync::BitBuffer& packet, sockaddr
 SyncSchema define_schema(ecs::Registry& registry, bool interpolate_position = false) {
     const ecs::Entity position = kage::sync::register_sync_component<BallPosition>(registry, "BallPosition");
     const ecs::Entity visual = kage::sync::register_sync_component<BallVisual>(registry, "BallVisual");
+    const ecs::Entity spawn_tagged = registry.register_component<BallSpawnTagged>("BallSpawnTagged");
+    const ecs::Entity bounced = registry.register_component<BallBounced>("BallBounced");
     if (interpolate_position) {
         kage::sync::set_display_interpolated(registry, position);
     }
-    return SyncSchema{kage::sync::define_archetype(
-        registry,
-        "Ball",
-        {
-            {position,
-             kage::sync::ReplicationAudience::All,
-             interpolate_position ? kage::sync::ComponentInterpolation::Interpolate
-                                  : kage::sync::ComponentInterpolation::Step},
-            {visual, kage::sync::ReplicationAudience::All},
-        })};
+    return SyncSchema{
+        kage::sync::define_archetype(
+            registry,
+            kage::sync::SyncArchetypeDesc{
+                "Ball",
+                {
+                    {spawn_tagged, kage::sync::ReplicationAudience::All},
+                    {bounced, kage::sync::ReplicationAudience::All},
+                },
+                {
+                    {position,
+                     kage::sync::ReplicationAudience::All,
+                     interpolate_position ? kage::sync::ComponentInterpolation::Interpolate
+                                          : kage::sync::ComponentInterpolation::Step},
+                    {visual, kage::sync::ReplicationAudience::All},
+                }}),
+        spawn_tagged,
+        bounced};
 }
 
-void spawn_ball(ecs::Registry& registry, std::vector<ServerBall>& balls, kage::sync::SyncArchetypeId archetype, int index) {
+void spawn_ball(ecs::Registry& registry, std::vector<ServerBall>& balls, SyncSchema schema, int index) {
     const ecs::Entity entity = registry.create();
     const float lane = static_cast<float>((index % 9) - 4);
     const float phase = static_cast<float>(index) * 0.73f;
@@ -357,7 +372,10 @@ void spawn_ball(ecs::Registry& registry, std::vector<ServerBall>& balls, kage::s
             static_cast<std::uint8_t>(100 + (index * 83) % 140),
             static_cast<std::uint8_t>(120 + (index * 31) % 120),
             255});
-    registry.add<kage::sync::Replicated>(entity, kage::sync::Replicated{archetype});
+    if (((index * 1103515245U + 12345U) & 3U) == 0U) {
+        registry.add_tag(entity, schema.spawn_tagged);
+    }
+    registry.add<kage::sync::Replicated>(entity, kage::sync::Replicated{schema.ball});
     balls.push_back(ServerBall{
         entity,
         Vector3{std::cos(phase) * 1.2f, std::sin(phase * 1.7f) * 0.8f, std::sin(phase) * 1.2f},
@@ -381,7 +399,7 @@ void update_server_world(
 
     int spawned = 0;
     while (balls.size() < target && spawned < 16) {
-        spawn_ball(registry, balls, schema.ball, spawn_index++);
+        spawn_ball(registry, balls, schema, spawn_index++);
         ++spawned;
     }
 
@@ -392,14 +410,21 @@ void update_server_world(
         position.y += ball.velocity.y * dt;
         position.z += ball.velocity.z * dt;
 
+        bool bounced = false;
         if (std::fabs(position.x) > 4.0f) {
             ball.velocity.x = -ball.velocity.x;
+            bounced = true;
         }
         if (std::fabs(position.y) > 2.5f) {
             ball.velocity.y = -ball.velocity.y;
+            bounced = true;
         }
         if (std::fabs(position.z) > 2.5f) {
             ball.velocity.z = -ball.velocity.z;
+            bounced = true;
+        }
+        if (bounced && !registry.has(ball.entity, schema.bounced)) {
+            registry.add_tag(ball.entity, schema.bounced);
         }
     }
 
@@ -699,7 +724,7 @@ int main(int argc, char** argv) {
 
     ecs::Registry client_registry;
     kage::sync::configure_client(client_registry, client_id);
-    define_schema(client_registry, true);
+    const SyncSchema client_schema = define_schema(client_registry, true);
 
     SocketHandle server_socket = make_udp_socket(server_port);
     SocketHandle client_socket = make_udp_socket(0);
@@ -818,16 +843,31 @@ int main(int argc, char** argv) {
         ClearBackground(Color{18, 20, 24, 255});
         BeginMode3D(camera);
         DrawGrid(12, 1.0f);
+        const float pulse_time = static_cast<float>(GetTime());
         for (const kage::sync::DisplayEntitySample& entity : client.display_frame(client_registry).entities) {
             BallPosition position;
             BallVisual visual;
             if (!entity.try_get(client_registry, position) || !entity.try_get(client_registry, visual)) {
                 continue;
             }
-            DrawSphere(
-                Vector3{position.x, position.y, position.z},
-                visual.radius,
-                Color{visual.r, visual.g, visual.b, visual.a});
+            Color color{visual.r, visual.g, visual.b, visual.a};
+            auto pulse_toward = [&](Color target, float phase) {
+                const float pulse = 0.35f + 0.25f * (0.5f + 0.5f * std::sin(pulse_time * 5.0f + phase));
+                auto blend = [&](std::uint8_t from, std::uint8_t to) {
+                    const float value = static_cast<float>(from) + (static_cast<float>(to) - static_cast<float>(from)) * pulse;
+                    return static_cast<std::uint8_t>(std::clamp(value, 0.0f, 255.0f));
+                };
+                color.r = blend(color.r, target.r);
+                color.g = blend(color.g, target.g);
+                color.b = blend(color.b, target.b);
+            };
+            if (entity.has_tag(client_registry, client_schema.spawn_tagged)) {
+                pulse_toward(Color{255, 210, 74, visual.a}, 0.0f);
+            }
+            if (entity.has_tag(client_registry, client_schema.bounced)) {
+                pulse_toward(Color{70, 220, 255, visual.a}, 2.1f);
+            }
+            DrawSphere(Vector3{position.x, position.y, position.z}, visual.radius, color);
         }
         EndMode3D();
         draw_stats_overlay(

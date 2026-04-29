@@ -67,9 +67,75 @@ TEST_CASE("ball stress bounce adds poison in configured range") {
 
     REQUIRE(balls.size() == 1);
     REQUIRE(registry.contains<stress::BallPoison>(balls[0].entity));
+    REQUIRE(registry.has(balls[0].entity, schema.bounced));
     REQUIRE(registry.get<stress::BallPoison>(balls[0].entity).remaining == 1);
     REQUIRE(report.poison_components_added == 1);
     REQUIRE(report.poison_ticks == 1);
+    REQUIRE(report.bounce_tags_added == 1);
+}
+
+TEST_CASE("ball stress spawn randomly assigns synced tags") {
+    ecs::Registry registry;
+    kage::sync::configure_server(registry);
+    const stress::SyncSchema schema = stress::define_schema(registry);
+    stress::StressConfig config = test_config();
+    config.max_balls = 32;
+    config.spawn_interval_ms = 1.0;
+    std::mt19937 rng(13);
+    stress::StressReport report;
+    double spawn_accumulator = 1.0;
+    std::vector<stress::ServerBall> balls;
+
+    stress::update_server_world(registry, balls, schema, config, 0.1, spawn_accumulator, rng, report);
+
+    std::size_t tagged = 0;
+    for (const stress::ServerBall& ball : balls) {
+        if (registry.has(ball.entity, schema.spawn_tagged)) {
+            ++tagged;
+        }
+    }
+    REQUIRE(tagged > 0);
+    REQUIRE(report.spawn_tags_added == tagged);
+}
+
+TEST_CASE("ball stress schema syncs multiple tags to clients") {
+    ecs::Registry server_registry;
+    kage::sync::configure_server(server_registry);
+    const stress::SyncSchema server_schema = stress::define_schema(server_registry);
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<stress::BallPosition>(
+                server_entity, stress::BallPosition{1.0f, 2.0f, 3.0f}) != nullptr);
+    REQUIRE(server_registry.add<stress::BallVisual>(server_entity, stress::BallVisual{}) != nullptr);
+    REQUIRE(server_registry.add<stress::BallHealth>(server_entity, stress::BallHealth{10}) != nullptr);
+    REQUIRE(server_registry.add_tag(server_entity, server_schema.spawn_tagged));
+    REQUIRE(server_registry.add_tag(server_entity, server_schema.bounced));
+    REQUIRE(
+        server_registry.add<kage::sync::Replicated>(
+            server_entity, kage::sync::Replicated{server_schema.ball})
+        != nullptr);
+
+    std::vector<kage::sync::BitBuffer> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    server.tick(server_registry);
+    REQUIRE(packets.size() == 1);
+
+    ecs::Registry client_registry;
+    kage::sync::configure_client(client_registry, 1);
+    const stress::SyncSchema client_schema = stress::define_schema(client_registry);
+    REQUIRE(client_schema.ball == server_schema.ball);
+
+    kage::sync::ReplicationClient client;
+    REQUIRE(client.receive(client_registry, packets[0]));
+
+    const ecs::Entity local = client.local_entity(server_entity);
+    REQUIRE(local);
+    REQUIRE(client_registry.has(local, client_schema.spawn_tagged));
+    REQUIRE(client_registry.has(local, client_schema.bounced));
 }
 
 TEST_CASE("ball stress poison ticks health and removes component") {
@@ -220,16 +286,20 @@ TEST_CASE("ball stress packet classifier counts update record kinds") {
     packet.push_unsigned_bits(100, 64U);
     packet.push_bool(true);
     packet.push_bits(1, 32U);
+    packet.push_bits(1, 16U);
     packet.push_bits(0, 16U);
+    packet.push_unsigned_bits(3U, 2U);
 
     packet.push_bool(false);
     packet.push_unsigned_bits(101, 64U);
     packet.push_bool(false);
     kage::sync::protocol::write_baseline_frame(packet, 7, 6);
+    packet.push_bool(true);
     packet.push_bool(false);
     packet.push_bool(false);
     packet.push_bool(false);
     packet.push_bool(false);
+    packet.push_unsigned_bits(1U, 2U);
 
     packet.push_bool(true);
     packet.push_unsigned_bits(102, 64U);

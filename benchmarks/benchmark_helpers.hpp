@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -36,6 +37,11 @@ struct TinyFlags {
 struct DestroyPackets {
     std::vector<BitBuffer> initial;
     std::vector<BitBuffer> destroys;
+};
+
+struct TaggedSchema {
+    SyncArchetypeId archetype;
+    std::vector<ecs::Entity> tags;
 };
 
 }  // namespace kage::sync::benchmarks
@@ -172,6 +178,30 @@ inline SyncArchetypeId define_delta_archetype(ecs::Registry& registry, bool inte
           interpolate ? ComponentInterpolation::Interpolate : ComponentInterpolation::Step}});
 }
 
+inline TaggedSchema define_tagged_archetype(ecs::Registry& registry, int tag_count) {
+    const ecs::Entity position = register_sync_component<Position>(registry, "Position");
+    std::vector<SyncTagReplication> tags;
+    tags.reserve(static_cast<std::size_t>(tag_count));
+    std::vector<ecs::Entity> tag_entities;
+    tag_entities.reserve(static_cast<std::size_t>(tag_count));
+    for (int index = 0; index < tag_count; ++index) {
+        const ecs::Entity tag = registry.register_tag("BenchTag" + std::to_string(index));
+        tag_entities.push_back(tag);
+        tags.push_back(SyncTagReplication{
+            tag,
+            (index % 4) == 0 ? ReplicationAudience::Owner : ReplicationAudience::All});
+    }
+    return TaggedSchema{
+        ::kage::sync::define_archetype(
+            registry,
+            SyncArchetypeDesc{
+                "TaggedActor",
+                std::move(tags),
+                {{position, ReplicationAudience::All}},
+            }),
+        std::move(tag_entities)};
+}
+
 inline std::vector<SyncArchetypeId> define_diverse_archetypes(ecs::Registry& registry) {
     const ecs::Entity position = register_sync_component<Position>(registry, "Position");
     const ecs::Entity health = register_sync_component<Health>(registry, "Health");
@@ -216,6 +246,29 @@ inline std::vector<ecs::Entity> create_position_entities(ecs::Registry& registry
     for (int i = 0; i < count; ++i) {
         const ecs::Entity entity = registry.create();
         registry.add<Position>(entity, Position{static_cast<float>(i), static_cast<float>(i + 1)});
+        entities.push_back(entity);
+    }
+    return entities;
+}
+
+inline std::vector<ecs::Entity> create_tagged_entities(
+    ecs::Registry& registry,
+    int count,
+    int client_count,
+    const std::vector<ecs::Entity>& tags) {
+    std::vector<ecs::Entity> entities;
+    entities.reserve(static_cast<std::size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        const ecs::Entity entity = registry.create();
+        registry.add<Position>(entity, Position{static_cast<float>(i), static_cast<float>(i + 1)});
+        registry.add<NetworkOwner>(
+            entity,
+            NetworkOwner{static_cast<ClientId>((i % client_count) + 1)});
+        for (std::size_t tag_index = 0; tag_index < tags.size(); ++tag_index) {
+            if (((static_cast<std::size_t>(i) + tag_index) & 1U) == 0U) {
+                registry.add_tag(entity, tags[tag_index]);
+            }
+        }
         entities.push_back(entity);
     }
     return entities;
@@ -330,8 +383,10 @@ inline void ack_packets(
                 std::uint32_t baseline_frame = 0;
                 benchmark::DoNotOptimize(protocol::read_baseline_frame(packet, frame, baseline_frame));
                 benchmark::DoNotOptimize(baseline_frame);
-                const bool changed = packet.read_bool();
-                if (changed) {
+                const bool tag_changed = packet.read_bool();
+                benchmark::DoNotOptimize(static_cast<int>(tag_changed));
+                const bool position_changed = packet.read_bool();
+                if (position_changed) {
                     for (std::size_t bit = 0; bit < 16U; ++bit) {
                         benchmark::DoNotOptimize(packet.read_bool());
                     }

@@ -65,6 +65,17 @@ struct ComponentReplication {
     ComponentInterpolation interpolation = ComponentInterpolation::Step;
 };
 
+struct SyncTagReplication {
+    ecs::Entity tag;
+    ReplicationAudience audience = ReplicationAudience::All;
+};
+
+struct SyncArchetypeDesc {
+    std::string name;
+    std::vector<SyncTagReplication> tags;
+    std::vector<ComponentReplication> components;
+};
+
 class QuantizedBytes {
 public:
     static constexpr std::size_t inline_capacity = 16;
@@ -206,6 +217,7 @@ struct SyncComponentOps {
 
 struct SyncArchetype {
     std::string name;
+    std::vector<SyncTagReplication> tags;
     std::vector<ComponentReplication> components;
     std::vector<SyncComponentOps> component_ops;
     std::vector<std::uint32_t> component_offsets;
@@ -213,10 +225,12 @@ struct SyncArchetype {
 };
 
 struct QuantizedFrameData {
+    std::uint64_t tag_mask = 0;
     std::uint64_t present_mask = 0;
     std::vector<std::uint8_t> bytes;
 
     void clear() {
+        tag_mask = 0;
         present_mask = 0;
         bytes.clear();
     }

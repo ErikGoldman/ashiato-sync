@@ -20,6 +20,7 @@ struct ReplicatedEntityUpdateView {
     ecs::Entity local_entity;
     SyncArchetypeId archetype;
     SyncFrame frame = 0;
+    std::uint64_t tag_mask = 0;
 
     template <typename T>
     bool try_get(const ecs::Registry& registry, T& out) const {
@@ -28,6 +29,7 @@ struct ReplicatedEntityUpdateView {
     }
 
     bool try_get(const ecs::Registry& registry, ecs::Entity component, void* out) const;
+    bool has_tag(const ecs::Registry& registry, ecs::Entity tag) const;
 
 private:
     friend class ReplicationClient;
@@ -41,6 +43,7 @@ struct DisplayEntitySample {
     SyncArchetypeId archetype;
     SyncFrame frame = 0;
     float alpha = 0.0f;
+    std::uint64_t tag_mask = 0;
     std::vector<ReplicatedComponentUpdate> components;
 
     template <typename T>
@@ -50,6 +53,7 @@ struct DisplayEntitySample {
     }
 
     bool try_get(const ecs::Registry& registry, ecs::Entity component, void* out) const;
+    bool has_tag(const ecs::Registry& registry, ecs::Entity tag) const;
 };
 
 struct DisplaySampleBuffer {

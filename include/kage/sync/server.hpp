@@ -118,6 +118,8 @@ private:
     bool slot_is_replicable(const ecs::Registry& registry, std::uint32_t slot) const;
     void capture_dirty_components(const ecs::Registry& registry, const SyncSettings& settings);
     void mark_dirty_component(const SyncSettings& settings, std::uint32_t slot, ecs::Entity component);
+    void mark_dirty_tag(const SyncSettings& settings, std::uint32_t slot, ecs::Entity tag);
+    void mark_dirty_tags(const SyncSettings& settings, std::uint32_t slot);
     void mark_owner_visibility_dirty(const SyncSettings& settings, std::uint32_t slot);
     static bool archetype_is_same_frame_cacheable(const SyncArchetype& archetype);
     void tick_serialized(ecs::Registry& registry);

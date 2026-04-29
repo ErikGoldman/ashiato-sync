@@ -81,8 +81,13 @@ struct BallPoison {
     float tick_accumulator = 0.0f;
 };
 
+struct BallSpawnTagged {};
+struct BallBounced {};
+
 struct SyncSchema {
     SyncArchetypeId ball;
+    ecs::Entity spawn_tagged;
+    ecs::Entity bounced;
 };
 
 struct StressConfig {
@@ -206,6 +211,8 @@ struct StressReport {
     std::uint64_t poison_components_added = 0;
     std::uint64_t poison_components_removed = 0;
     std::uint64_t poison_ticks = 0;
+    std::uint64_t spawn_tags_added = 0;
+    std::uint64_t bounce_tags_added = 0;
     std::uint32_t live_balls = 0;
 };
 
@@ -341,15 +348,18 @@ inline PacketBreakdown classify_packet(BitBuffer packet) {
                     const auto component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
                     switch (component_index) {
                         case 0:
-                            packet.skip_bits(sizeof(BallPosition) * 8U);
+                            packet.skip_bits(2U);
                             break;
                         case 1:
-                            packet.skip_bits(sizeof(BallVisual) * 8U);
+                            packet.skip_bits(sizeof(BallPosition) * 8U);
                             break;
                         case 2:
-                            packet.skip_bits(sizeof(BallHealth) * 8U);
+                            packet.skip_bits(sizeof(BallVisual) * 8U);
                             break;
                         case 3:
+                            packet.skip_bits(sizeof(BallHealth) * 8U);
+                            break;
+                        case 4:
                             packet.skip_bits(sizeof(BallPoison) * 8U);
                             break;
                         default:
@@ -364,25 +374,28 @@ inline PacketBreakdown classify_packet(BitBuffer packet) {
                     result = PacketBreakdown{};
                     return result;
                 }
-                bool changed[4] = {};
-                for (std::size_t component_index = 0; component_index < 4U; ++component_index) {
-                    changed[component_index] = packet.read_bool();
+                bool changed[5] = {};
+                for (std::size_t slot = 0; slot < 5U; ++slot) {
+                    changed[slot] = packet.read_bool();
                 }
-                for (std::size_t component_index = 0; component_index < 4U; ++component_index) {
-                    if (!changed[component_index]) {
+                if (changed[0]) {
+                    packet.skip_bits(2U);
+                }
+                for (std::size_t slot = 1; slot < 5U; ++slot) {
+                    if (!changed[slot]) {
                         continue;
                     }
-                    switch (component_index) {
-                        case 0:
+                    switch (slot) {
+                        case 1:
                             packet.skip_bits(sizeof(BallPosition) * 8U);
                             break;
-                        case 1:
+                        case 2:
                             packet.skip_bits(sizeof(BallVisual) * 8U);
                             break;
-                        case 2:
+                        case 3:
                             packet.skip_bits(sizeof(BallHealth) * 8U);
                             break;
-                        case 3:
+                        case 4:
                             packet.skip_bits(sizeof(BallPoison) * 8U);
                             break;
                     }
@@ -450,17 +463,27 @@ inline SyncSchema define_schema(ecs::Registry& registry, bool interpolate_positi
     const ecs::Entity visual = register_sync_component<BallVisual>(registry, "BallVisual");
     const ecs::Entity health = register_sync_component<BallHealth>(registry, "BallHealth");
     const ecs::Entity poison = register_sync_component<BallPoison>(registry, "BallPoison");
-    return SyncSchema{define_archetype(
-        registry,
-        "StressBall",
-        {
-            {position,
-             ReplicationAudience::All,
-             interpolate_position ? ComponentInterpolation::Interpolate : ComponentInterpolation::Step},
-            {visual, ReplicationAudience::All},
-            {health, ReplicationAudience::All},
-            {poison, ReplicationAudience::All},
-        })};
+    const ecs::Entity spawn_tagged = registry.register_component<BallSpawnTagged>("BallSpawnTagged");
+    const ecs::Entity bounced = registry.register_component<BallBounced>("BallBounced");
+    return SyncSchema{
+        define_archetype(
+            registry,
+            SyncArchetypeDesc{
+                "StressBall",
+                {
+                    {spawn_tagged, ReplicationAudience::All},
+                    {bounced, ReplicationAudience::All},
+                },
+                {
+                    {position,
+                     ReplicationAudience::All,
+                     interpolate_position ? ComponentInterpolation::Interpolate : ComponentInterpolation::Step},
+                    {visual, ReplicationAudience::All},
+                    {health, ReplicationAudience::All},
+                    {poison, ReplicationAudience::All},
+                }}),
+        spawn_tagged,
+        bounced};
 }
 
 inline void validate_config(const StressConfig& config) {
@@ -520,7 +543,7 @@ inline void validate_config(const StressConfig& config) {
 inline void spawn_ball(
     ecs::Registry& registry,
     std::vector<ServerBall>& balls,
-    SyncArchetypeId archetype,
+    SyncSchema schema,
     const StressConfig& config,
     std::mt19937& rng,
     StressReport& report) {
@@ -543,7 +566,12 @@ inline void spawn_ball(
             static_cast<std::uint8_t>(color(rng)),
             255});
     registry.add<BallHealth>(entity, BallHealth{health(rng)});
-    registry.add<Replicated>(entity, Replicated{archetype});
+    std::bernoulli_distribution spawn_tag(0.35);
+    if (spawn_tag(rng)) {
+        registry.add_tag(entity, schema.spawn_tagged);
+        ++report.spawn_tags_added;
+    }
+    registry.add<Replicated>(entity, Replicated{schema.ball});
 
     auto non_zero_velocity = [&](float value) {
         if (value >= 0.0f && value < 1.0f) {
@@ -602,7 +630,7 @@ inline void update_server_world(
     const double spawn_interval_seconds = config.spawn_interval_ms / 1000.0;
     while (spawn_accumulator >= spawn_interval_seconds && balls.size() < config.max_balls) {
         spawn_accumulator -= spawn_interval_seconds;
-        spawn_ball(registry, balls, schema.ball, config, rng, report);
+        spawn_ball(registry, balls, schema, config, rng, report);
     }
 
     constexpr float min_x = -10.0f;
@@ -635,6 +663,10 @@ inline void update_server_world(
             bounced = true;
         }
         if (bounced) {
+            if (!registry.has(ball.entity, schema.bounced)) {
+                registry.add_tag(ball.entity, schema.bounced);
+                ++report.bounce_tags_added;
+            }
             add_poison(registry, ball.entity, config, rng, report);
         }
 
@@ -829,6 +861,8 @@ inline StressReport run_stress(const StressConfig& input_config) {
             server_registry.clear_all_dirty<BallVisual>();
             server_registry.clear_all_dirty<BallHealth>();
             server_registry.clear_all_dirty<BallPoison>();
+            server_registry.clear_all_dirty<BallSpawnTagged>();
+            server_registry.clear_all_dirty<BallBounced>();
         }
 
         if ((tick % 16U) == 0U) {
@@ -938,6 +972,8 @@ inline void write_report_text(std::ostream& out, const StressReport& report) {
     out << "poison added_components=" << report.poison_components_added
         << " removed_components=" << report.poison_components_removed
         << " ticks=" << report.poison_ticks << '\n';
+    out << "tags spawn_added=" << report.spawn_tags_added
+        << " bounce_added=" << report.bounce_tags_added << '\n';
     out << std::fixed << std::setprecision(6);
     out << "timing wall=" << report.timing.wall_seconds
         << " server_sim=" << report.timing.server_simulation_seconds
@@ -1007,6 +1043,8 @@ inline void write_report_json(std::ostream& out, const StressReport& report) {
     out << "\"poison\":{\"added_components\":" << report.poison_components_added
         << ",\"removed_components\":" << report.poison_components_removed
         << ",\"ticks\":" << report.poison_ticks << "},";
+    out << "\"tags\":{\"spawn_added\":" << report.spawn_tags_added
+        << ",\"bounce_added\":" << report.bounce_tags_added << "},";
     out << "\"timing\":{\"wall_seconds\":" << report.timing.wall_seconds
         << ",\"server_simulation_seconds\":" << report.timing.server_simulation_seconds
         << ",\"server_replication_seconds\":" << report.timing.server_replication_seconds

@@ -26,14 +26,28 @@ struct OutboundPacket {
 };
 
 bool init_frame_data(const SyncArchetype& archetype, QuantizedFrameData& frame) {
-    if (archetype.components.size() > 64U ||
+    if (archetype.tags.size() > 64U ||
+        archetype.components.size() > 63U ||
         archetype.component_offsets.size() != archetype.components.size() ||
         archetype.component_ops.size() != archetype.components.size()) {
         return false;
     }
+    frame.tag_mask = 0;
     frame.present_mask = 0;
     frame.bytes.assign(archetype.total_quantized_bytes, 0U);
     return true;
+}
+
+std::size_t sync_slot_count(const SyncArchetype& archetype) noexcept {
+    return archetype.components.size() + 1U;
+}
+
+bool has_tag_slot(const SyncArchetype& archetype) noexcept {
+    return !archetype.tags.empty();
+}
+
+std::uint64_t sync_slot_bit(std::size_t slot) noexcept {
+    return std::uint64_t{1} << slot;
 }
 
 bool frame_has_component(const QuantizedFrameData& frame, std::size_t component_index) {
@@ -93,6 +107,26 @@ bool set_frame_component_bytes(
     std::memcpy(frame.bytes.data() + offset, bytes.data(), bytes.size());
     frame.present_mask |= (std::uint64_t{1} << component_index);
     return true;
+}
+
+std::uint64_t visible_tag_mask(
+    const ecs::Registry& registry,
+    const SyncArchetype& archetype,
+    ecs::Entity entity,
+    ClientId client) {
+    std::uint64_t mask = 0;
+    const NetworkOwner* owner = registry.try_get<NetworkOwner>(entity);
+    for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
+        const SyncTagReplication& replication = archetype.tags[tag_index];
+        if (replication.audience == ReplicationAudience::Owner &&
+            (owner == nullptr || owner->client != client)) {
+            continue;
+        }
+        if (registry.has(entity, replication.tag)) {
+            mask |= std::uint64_t{1} << tag_index;
+        }
+    }
+    return mask;
 }
 
 BitBuffer make_server_packet(
@@ -872,6 +906,23 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
 }
 
 void ReplicationServer::capture_dirty_components(const ecs::Registry& registry, const SyncSettings& settings) {
+    for (const SyncArchetype& archetype : settings.archetypes) {
+        for (const SyncTagReplication& tag_replication : archetype.tags) {
+            registry.each_dirty(tag_replication.tag, [&](ecs::Entity entity, const void*) {
+                const auto found = entity_to_slot_.find(entity.value);
+                if (found != entity_to_slot_.end()) {
+                    mark_dirty_tag(settings, found->second, tag_replication.tag);
+                }
+            });
+            registry.each_removed(tag_replication.tag, [&](ecs::Registry::ComponentRemoval removal) {
+                const auto found = entity_index_to_slot_.find(removal.entity_index);
+                if (found != entity_index_to_slot_.end()) {
+                    mark_dirty_tag(settings, found->second, tag_replication.tag);
+                }
+            });
+        }
+    }
+
     for (const auto& component_ops : settings.component_ops) {
         const ecs::Entity component{component_ops.first};
         registry.each_dirty(component, [&](ecs::Entity entity, const void*) {
@@ -914,17 +965,56 @@ void ReplicationServer::mark_dirty_component(
         return;
     }
     const SyncArchetype& archetype = settings.archetypes[replicated.archetype.value];
-    if (replicated.component_dirty_generations.size() < archetype.components.size()) {
-        replicated.component_dirty_generations.resize(archetype.components.size(), 1U);
+    if (replicated.component_dirty_generations.size() < sync_slot_count(archetype)) {
+        replicated.component_dirty_generations.resize(sync_slot_count(archetype), 1U);
     }
     for (std::size_t index = 0; index < archetype.components.size(); ++index) {
         if (archetype.components[index].component == component) {
-            ++replicated.component_dirty_generations[index];
-            if (replicated.component_dirty_generations[index] == 0) {
-                replicated.component_dirty_generations[index] = 1;
+            const std::size_t dirty_index = index + 1U;
+            ++replicated.component_dirty_generations[dirty_index];
+            if (replicated.component_dirty_generations[dirty_index] == 0) {
+                replicated.component_dirty_generations[dirty_index] = 1;
             }
             return;
         }
+    }
+}
+
+void ReplicationServer::mark_dirty_tag(const SyncSettings& settings, std::uint32_t slot, ecs::Entity tag) {
+    if (slot >= replicated_.size() || !replicated_[slot].active) {
+        return;
+    }
+    const ReplicatedSlot& replicated = replicated_[slot];
+    if (replicated.archetype.value >= settings.archetypes.size()) {
+        return;
+    }
+    const SyncArchetype& archetype = settings.archetypes[replicated.archetype.value];
+    for (const SyncTagReplication& replication : archetype.tags) {
+        if (replication.tag == tag) {
+            mark_dirty_tags(settings, slot);
+            return;
+        }
+    }
+}
+
+void ReplicationServer::mark_dirty_tags(const SyncSettings& settings, std::uint32_t slot) {
+    if (slot >= replicated_.size() || !replicated_[slot].active) {
+        return;
+    }
+    ReplicatedSlot& replicated = replicated_[slot];
+    if (replicated.archetype.value >= settings.archetypes.size()) {
+        return;
+    }
+    const SyncArchetype& archetype = settings.archetypes[replicated.archetype.value];
+    if (archetype.tags.empty()) {
+        return;
+    }
+    if (replicated.component_dirty_generations.size() < sync_slot_count(archetype)) {
+        replicated.component_dirty_generations.resize(sync_slot_count(archetype), 1U);
+    }
+    ++replicated.component_dirty_generations[0];
+    if (replicated.component_dirty_generations[0] == 0) {
+        replicated.component_dirty_generations[0] = 1;
     }
 }
 
@@ -937,20 +1027,35 @@ void ReplicationServer::mark_owner_visibility_dirty(const SyncSettings& settings
         return;
     }
     const SyncArchetype& archetype = settings.archetypes[replicated.archetype.value];
-    if (replicated.component_dirty_generations.size() < archetype.components.size()) {
-        replicated.component_dirty_generations.resize(archetype.components.size(), 1U);
+    if (replicated.component_dirty_generations.size() < sync_slot_count(archetype)) {
+        replicated.component_dirty_generations.resize(sync_slot_count(archetype), 1U);
+    }
+    for (const SyncTagReplication& replication : archetype.tags) {
+        if (replication.audience == ReplicationAudience::Owner) {
+            ++replicated.component_dirty_generations[0];
+            if (replicated.component_dirty_generations[0] == 0) {
+                replicated.component_dirty_generations[0] = 1;
+            }
+            break;
+        }
     }
     for (std::size_t index = 0; index < archetype.components.size(); ++index) {
         if (archetype.components[index].audience == ReplicationAudience::Owner) {
-            ++replicated.component_dirty_generations[index];
-            if (replicated.component_dirty_generations[index] == 0) {
-                replicated.component_dirty_generations[index] = 1;
+            const std::size_t dirty_index = index + 1U;
+            ++replicated.component_dirty_generations[dirty_index];
+            if (replicated.component_dirty_generations[dirty_index] == 0) {
+                replicated.component_dirty_generations[dirty_index] = 1;
             }
         }
     }
 }
 
 bool ReplicationServer::archetype_is_same_frame_cacheable(const SyncArchetype& archetype) {
+    for (const SyncTagReplication& replication : archetype.tags) {
+        if (replication.audience != ReplicationAudience::All) {
+            return false;
+        }
+    }
     for (const ComponentReplication& replication : archetype.components) {
         if (replication.audience != ReplicationAudience::All) {
             return false;
@@ -1034,7 +1139,13 @@ std::uint32_t ReplicationServer::find_or_create_quantized_frame(
     if (!init_frame_data(archetype, scratch)) {
         return invalid_quantized_frame_id;
     }
-    scratch_dirty_generations.assign(archetype.components.size(), 0U);
+    scratch_dirty_generations.assign(sync_slot_count(archetype), 0U);
+    if (has_tag_slot(archetype)) {
+        scratch.tag_mask = visible_tag_mask(registry, archetype, replicated.entity, client.id);
+        scratch_dirty_generations[0] = !replicated.component_dirty_generations.empty()
+            ? replicated.component_dirty_generations[0]
+            : 0;
+    }
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
         const ComponentReplication& replication = archetype.components[component_index];
         if (replication.audience == ReplicationAudience::Owner &&
@@ -1052,18 +1163,19 @@ std::uint32_t ReplicationServer::find_or_create_quantized_frame(
         }
         const SyncComponentOps& ops = archetype.component_ops[component_index];
 
-        const std::uint64_t dirty_generation = component_index < replicated.component_dirty_generations.size()
-            ? replicated.component_dirty_generations[component_index]
+        const std::size_t dirty_index = component_index + 1U;
+        const std::uint64_t dirty_generation = dirty_index < replicated.component_dirty_generations.size()
+            ? replicated.component_dirty_generations[dirty_index]
             : 0;
-        scratch_dirty_generations[component_index] = dirty_generation;
+        scratch_dirty_generations[dirty_index] = dirty_generation;
 
         std::uint8_t* destination = mutable_frame_component_data(archetype, scratch, component_index);
         if (destination == nullptr) {
             return invalid_quantized_frame_id;
         }
         if (baseline_quantized_frame != nullptr &&
-            component_index < baseline_quantized_frame->dirty_generations.size() &&
-            baseline_quantized_frame->dirty_generations[component_index] == dirty_generation &&
+            dirty_index < baseline_quantized_frame->dirty_generations.size() &&
+            baseline_quantized_frame->dirty_generations[dirty_index] == dirty_generation &&
             frame_has_component(baseline_quantized_frame->data, component_index)) {
             const std::size_t offset = archetype.component_offsets[component_index];
             const std::size_t size = archetype.component_ops[component_index].quantized_size;
@@ -1084,7 +1196,7 @@ std::uint32_t ReplicationServer::find_or_create_quantized_frame(
         }
     }
 
-    if (scratch.present_mask == 0U) {
+    if (scratch.present_mask == 0U && !has_tag_slot(archetype)) {
         return invalid_quantized_frame_id;
     }
 
@@ -1201,7 +1313,8 @@ bool ReplicationServer::same_quantized_frame_components(
     const QuantizedFrame& quantized_frame,
     const QuantizedFrameData& data,
     const std::vector<std::uint64_t>& dirty_generations) const {
-    if (quantized_frame.data.present_mask != data.present_mask ||
+    if (quantized_frame.data.tag_mask != data.tag_mask ||
+        quantized_frame.data.present_mask != data.present_mask ||
         quantized_frame.data.bytes != data.bytes ||
         quantized_frame.dirty_generations.size() != dirty_generations.size()) {
         return false;
@@ -1244,6 +1357,20 @@ void ReplicationServer::write_entity_record(
     if (delta) {
         const QuantizedFrame& baseline_quantized_frame = quantized_frames_[entity_state.baseline];
         std::uint64_t changed_mask = 0;
+        if (has_tag_slot(archetype)) {
+            const std::uint64_t tag_bit_mask = archetype.tags.size() == 64U
+                ? std::numeric_limits<std::uint64_t>::max()
+                : ((std::uint64_t{1} << archetype.tags.size()) - 1U);
+            const bool tags_changed =
+                (quantized_frame.data.tag_mask & tag_bit_mask) !=
+                (baseline_quantized_frame.data.tag_mask & tag_bit_mask);
+            out.push_bool(tags_changed);
+            if (tags_changed) {
+                changed_mask |= sync_slot_bit(0);
+            }
+        } else {
+            out.push_bool(false);
+        }
         for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
             if (!frame_has_component(quantized_frame.data, component_index)) {
                 out.push_bool(false);
@@ -1262,11 +1389,14 @@ void ReplicationServer::write_entity_record(
                     size) != 0;
             out.push_bool(component_changed);
             if (component_changed) {
-                changed_mask |= (std::uint64_t{1} << component_index);
+                changed_mask |= sync_slot_bit(component_index + 1U);
             }
         }
+        if ((changed_mask & sync_slot_bit(0)) != 0U) {
+            out.push_unsigned_bits(quantized_frame.data.tag_mask, archetype.tags.size());
+        }
         for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
-            if ((changed_mask & (std::uint64_t{1} << component_index)) == 0U) {
+            if ((changed_mask & sync_slot_bit(component_index + 1U)) == 0U) {
                 continue;
             }
             if (component_index >= archetype.component_ops.size()) {
@@ -1293,12 +1423,19 @@ void ReplicationServer::write_entity_record(
     }
 
     std::uint16_t component_count = 0;
+    if (has_tag_slot(archetype)) {
+        ++component_count;
+    }
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
         if (frame_has_component(quantized_frame.data, component_index)) {
             ++component_count;
         }
     }
     out.push_bits(static_cast<std::int64_t>(component_count), 16U);
+    if (has_tag_slot(archetype)) {
+        out.push_bits(0, 16U);
+        out.push_unsigned_bits(quantized_frame.data.tag_mask, archetype.tags.size());
+    }
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
         if (!frame_has_component(quantized_frame.data, component_index)) {
             continue;
@@ -1312,7 +1449,7 @@ void ReplicationServer::write_entity_record(
             throw std::logic_error("replicated quantized frame component bytes are missing");
         }
 
-        out.push_bits(static_cast<std::int64_t>(component_index), 16U);
+        out.push_bits(static_cast<std::int64_t>(component_index + 1U), 16U);
         if (ops.serialize_bytes != nullptr) {
             ops.serialize_bytes(nullptr, current, out);
         } else {
@@ -1365,7 +1502,7 @@ bool ReplicationServer::upsert_replicated(ecs::Registry& registry, ecs::Entity e
             replicated_[found->second].same_frame_cacheable =
                 archetype_is_same_frame_cacheable(settings.archetypes[archetype.value]);
             replicated_[found->second].component_dirty_generations.assign(
-                settings.archetypes[archetype.value].components.size(),
+                sync_slot_count(settings.archetypes[archetype.value]),
                 1U);
         }
         for (ClientState& client : clients_) {
@@ -1384,7 +1521,7 @@ bool ReplicationServer::upsert_replicated(ecs::Registry& registry, ecs::Entity e
         replicated_[slot].same_frame_cacheable =
             archetype_is_same_frame_cacheable(settings.archetypes[archetype.value]);
         replicated_[slot].component_dirty_generations.assign(
-            settings.archetypes[archetype.value].components.size(),
+            sync_slot_count(settings.archetypes[archetype.value]),
             1U);
     }
     entity_to_slot_[key] = slot;

@@ -12,6 +12,8 @@ using kage_sync_tests::Health;
 using kage_sync_tests::BandwidthProbe;
 using kage_sync_tests::NetworkedPayload;
 using kage_sync_tests::NetworkedPosition;
+using kage_sync_tests::Secret;
+using kage_sync_tests::Visible;
 using kage_sync_tests::define_position_archetype;
 using kage_sync_tests::read_networked_payload;
 
@@ -66,7 +68,7 @@ ServerUpdatePacket read_server_update(kage::sync::BitBuffer packet) {
                 record.component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
                 std::size_t payload_bits = packet.remaining_bits();
                 if (entity_index + 1U < entity_count || component + 1U < component_count) {
-                    payload_bits = record.component_index == 0 ? 17U : sizeof(Health) * 8U;
+                    payload_bits = record.component_index == 1 ? 17U : sizeof(Health) * 8U;
                 }
                 for (std::size_t bit = 0; bit < payload_bits; ++bit) {
                     record.payload.push_bool(packet.read_bool());
@@ -75,12 +77,14 @@ ServerUpdatePacket read_server_update(kage::sync::BitBuffer packet) {
             }
         } else {
             REQUIRE(kage::sync::protocol::read_baseline_frame(packet, update.frame, entity.baseline_frame));
-            const bool component_changed = packet.read_bool();
-            if (component_changed) {
-                ComponentRecord record;
-                record.component_index = 0;
-                const std::size_t payload_bits = packet.remaining_bits();
-                for (std::size_t bit = 0; bit < payload_bits; ++bit) {
+                const bool tag_changed = packet.read_bool();
+                REQUIRE_FALSE(tag_changed);
+                const bool position_changed = packet.read_bool();
+                if (position_changed) {
+                    ComponentRecord record;
+                    record.component_index = 1;
+                    const std::size_t payload_bits = packet.remaining_bits();
+                    for (std::size_t bit = 0; bit < payload_bits; ++bit) {
                     record.payload.push_bool(packet.read_bool());
                 }
                 entity.components.push_back(std::move(record));
@@ -479,6 +483,80 @@ TEST_CASE("replication server filters owner-only serialized components") {
     REQUIRE(sends.size() == 2);
     REQUIRE(sends[0] == std::pair<kage::sync::ClientId, std::size_t>{1, 26});
     REQUIRE(sends[1] == std::pair<kage::sync::ClientId, std::size_t>{2, 32});
+}
+
+TEST_CASE("replication server serializes compact synced tag masks per client") {
+    ecs::Registry registry;
+    const ecs::Entity visible = registry.register_component<Visible>("Visible");
+    const ecs::Entity secret = registry.register_component<Secret>("Secret");
+    const ecs::Entity position =
+        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        kage::sync::SyncArchetypeDesc{
+            "TaggedActor",
+            {{visible, kage::sync::ReplicationAudience::All},
+             {secret, kage::sync::ReplicationAudience::Owner}},
+            {{position, kage::sync::ReplicationAudience::All}},
+        });
+    const ecs::Entity entity = registry.create();
+    REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
+    REQUIRE(registry.add_tag(entity, visible));
+    REQUIRE(registry.add_tag(entity, secret));
+    REQUIRE(kage::sync::set_owner(registry, entity, 1));
+
+    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 1024;
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        payloads.push_back({client, payload});
+    };
+
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(server.add_client(2));
+    REQUIRE(start_sync(registry, entity, archetype));
+
+    server.tick(registry);
+    REQUIRE(payloads.size() == 2);
+    for (auto sent : payloads) {
+        kage::sync::BitBuffer packet = sent.second;
+        REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::server_update_message);
+        const auto frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
+        REQUIRE(static_cast<std::uint16_t>(packet.read_bits(16U)) == 1);
+        REQUIRE_FALSE(packet.read_bool());
+        REQUIRE(ecs::Entity{packet.read_unsigned_bits(64U)} == entity);
+        REQUIRE(packet.read_bool());
+        REQUIRE(kage::sync::SyncArchetypeId{static_cast<std::uint32_t>(packet.read_bits(32U))} == archetype);
+        REQUIRE(static_cast<std::uint16_t>(packet.read_bits(16U)) == 2);
+        REQUIRE(static_cast<std::uint16_t>(packet.read_bits(16U)) == 0);
+        REQUIRE(packet.read_unsigned_bits(2U) == (sent.first == 1 ? 3U : 1U));
+        REQUIRE(static_cast<std::uint16_t>(packet.read_bits(16U)) == 1);
+        NetworkedPayload fields = read_networked_payload(packet);
+        REQUIRE_FALSE(fields.delta);
+        REQUIRE(fields.x == 10);
+        REQUIRE(fields.y == 20);
+        REQUIRE(server.acknowledge_entity(sent.first, entity, frame));
+    }
+
+    REQUIRE(registry.remove_tag(entity, visible));
+    payloads.clear();
+    server.tick(registry);
+    REQUIRE(payloads.size() == 2);
+    for (auto sent : payloads) {
+        kage::sync::BitBuffer packet = sent.second;
+        packet.read_bits(8U);
+        const auto frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
+        kage::sync::SyncFrame baseline_frame = 0;
+        REQUIRE(static_cast<std::uint16_t>(packet.read_bits(16U)) == 1);
+        REQUIRE_FALSE(packet.read_bool());
+        REQUIRE(ecs::Entity{packet.read_unsigned_bits(64U)} == entity);
+        REQUIRE_FALSE(packet.read_bool());
+        REQUIRE(kage::sync::protocol::read_baseline_frame(packet, frame, baseline_frame));
+        REQUIRE(packet.read_bool());
+        REQUIRE_FALSE(packet.read_bool());
+        REQUIRE(packet.read_unsigned_bits(2U) == (sent.first == 1 ? 2U : 0U));
+    }
 }
 
 TEST_CASE("replication server packs entity records up to the configured mtu") {
