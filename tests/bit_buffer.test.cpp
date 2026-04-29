@@ -1,6 +1,8 @@
 #include "kage/sync/bit_buffer.hpp"
+#include "kage/sync/delta.hpp"
 #include "kage/sync/protocol.hpp"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
@@ -169,4 +171,60 @@ TEST_CASE("protocol network entity id encoding uses compact tiers") {
             REQUIRE(buffer.remaining_bits() == 0U);
         }
     }
+}
+
+TEST_CASE("delta helpers quantize floats and vectors with changed-value masks") {
+    const kage::sync::delta::FloatConfig config{-10.0f, 10.0f, 0.25f};
+
+    kage::sync::BitBuffer scalar;
+    kage::sync::delta::write_float(scalar, 1.12f, config);
+    REQUIRE(scalar.bit_size() == kage::sync::delta::float_bits(config));
+    float scalar_out = 0.0f;
+    REQUIRE(kage::sync::delta::read_float(scalar, config, scalar_out));
+    REQUIRE(scalar_out == Catch::Approx(1.0f));
+
+    kage::sync::BitBuffer delta;
+    kage::sync::delta::write_delta_vec3(
+        delta,
+        kage::sync::delta::Vec3{1.0f, 2.0f, 3.0f},
+        kage::sync::delta::Vec3{1.0f, 2.5f, 3.0f},
+        config);
+    REQUIRE(delta.bit_size() == 3U + kage::sync::delta::float_bits(config));
+
+    kage::sync::delta::Vec3 decoded;
+    REQUIRE(kage::sync::delta::read_delta_vec3(
+        delta,
+        kage::sync::delta::Vec3{1.0f, 2.0f, 3.0f},
+        config,
+        decoded));
+    REQUIRE(decoded.x == Catch::Approx(1.0f));
+    REQUIRE(decoded.y == Catch::Approx(2.5f));
+    REQUIRE(decoded.z == Catch::Approx(3.0f));
+}
+
+TEST_CASE("delta helpers encode integer and quaternion deltas") {
+    kage::sync::BitBuffer ints;
+    kage::sync::delta::write_delta_int(ints, 100, 93, 8U);
+    std::int64_t int_out = 0;
+    REQUIRE(kage::sync::delta::read_delta_int(ints, 100, 8U, int_out));
+    REQUIRE(int_out == 93);
+
+    const kage::sync::delta::FloatConfig quat_config{-1.0f, 1.0f, 0.01f};
+    kage::sync::BitBuffer quaternion;
+    kage::sync::delta::write_delta_quaternion(
+        quaternion,
+        kage::sync::delta::Quaternion{0.0f, 0.0f, 0.0f, 1.0f},
+        kage::sync::delta::Quaternion{0.0f, 0.25f, 0.0f, 0.97f},
+        quat_config);
+
+    kage::sync::delta::Quaternion out;
+    REQUIRE(kage::sync::delta::read_delta_quaternion(
+        quaternion,
+        kage::sync::delta::Quaternion{0.0f, 0.0f, 0.0f, 1.0f},
+        quat_config,
+        out));
+    REQUIRE(out.x == Catch::Approx(0.0f));
+    REQUIRE(out.y == Catch::Approx(0.25f));
+    REQUIRE(out.z == Catch::Approx(0.0f));
+    REQUIRE(out.w == Catch::Approx(0.97f));
 }
