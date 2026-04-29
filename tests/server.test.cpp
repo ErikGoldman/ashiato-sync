@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -43,6 +44,13 @@ struct ServerUpdatePacket {
 
 bool start_sync(ecs::Registry& registry, ecs::Entity entity, kage::sync::SyncArchetypeId archetype) {
     return registry.add<kage::sync::Replicated>(entity, kage::sync::Replicated{archetype}) != nullptr;
+}
+
+kage::sync::BitBuffer make_connect_request(const std::string& token) {
+    kage::sync::BitBuffer packet;
+    packet.push_bits(kage::sync::protocol::client_connect_request_message, 8U);
+    kage::sync::protocol::write_string(packet, token);
+    return packet;
 }
 
 ServerUpdatePacket read_server_update(kage::sync::BitBuffer packet, std::size_t sync_slot_count = 2U) {
@@ -169,6 +177,61 @@ TEST_CASE("replication server tracks clients and replicated component changes") 
 
     REQUIRE(server.remove_client(7));
     REQUIRE_FALSE(server.has_client(7));
+}
+
+TEST_CASE("server connect response resends until client id is ACKed") {
+    ecs::Registry registry;
+    define_position_archetype(registry);
+
+    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> sent;
+    kage::sync::ReplicationServerOptions options;
+    options.connect_handler = [](const std::string& token, kage::sync::ClientId& client, std::string& error) {
+        if (token != "token") {
+            error = "bad token";
+            return false;
+        }
+        client = 7;
+        return true;
+    };
+    options.transport = [&](kage::sync::ClientId peer, const kage::sync::BitBuffer& packet) {
+        sent.push_back({peer, packet});
+    };
+    kage::sync::ReplicationServer server(options);
+
+    REQUIRE(server.process_packet(99, make_connect_request("token")));
+    REQUIRE(server.has_client(7));
+    REQUIRE(sent.size() == 1);
+    REQUIRE(sent.back().first == 99);
+    REQUIRE(static_cast<std::uint8_t>(sent.back().second.read_bits(8U)) ==
+            kage::sync::protocol::server_connect_response_message);
+    REQUIRE(sent.back().second.read_bool());
+    REQUIRE(sent.back().second.read_unsigned_bits(64U) == 7);
+
+    sent.clear();
+    for (int tick = 0; tick < 16; ++tick) {
+        server.tick(registry);
+    }
+    REQUIRE(sent.size() == 1);
+    REQUIRE(static_cast<std::uint8_t>(sent.back().second.read_bits(8U)) ==
+            kage::sync::protocol::server_connect_response_message);
+
+    kage::sync::BitBuffer ack;
+    ack.push_bits(kage::sync::protocol::client_connect_ack_message, 8U);
+    ack.push_unsigned_bits(7, 64U);
+    REQUIRE(server.process_packet(99, ack));
+
+    sent.clear();
+    server.tick(registry);
+    REQUIRE(sent.empty());
+
+    REQUIRE(server.process_packet(100, make_connect_request("no")));
+    REQUIRE(sent.size() == 1);
+    REQUIRE(static_cast<std::uint8_t>(sent.back().second.read_bits(8U)) ==
+            kage::sync::protocol::server_connect_response_message);
+    REQUIRE_FALSE(sent.back().second.read_bool());
+    std::string error;
+    REQUIRE(kage::sync::protocol::read_string(sent.back().second, error));
+    REQUIRE(error == "bad token");
 }
 
 TEST_CASE("replication server rejects malformed ACK packets") {
@@ -743,6 +806,145 @@ TEST_CASE("replication server resends pending destroys until ACKed") {
     payloads.clear();
     server.tick(registry);
     REQUIRE(payloads.empty());
+}
+
+TEST_CASE("replication server reuses global network ids after every destroy ACK") {
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+
+    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        payloads.push_back({client, payload});
+    };
+
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(server.add_client(2));
+
+    auto spawn = [&](float x) {
+        const ecs::Entity entity = registry.create();
+        REQUIRE(registry.add<kage_sync_tests::Position>(entity, kage_sync_tests::Position{x, x}) != nullptr);
+        REQUIRE(start_sync(registry, entity, archetype));
+        return entity;
+    };
+    auto update_for = [&](kage::sync::ClientId client, ecs::Entity entity) {
+        for (const auto& sent : payloads) {
+            if (sent.first != client) {
+                continue;
+            }
+            ServerUpdatePacket update = read_server_update(sent.second);
+            const auto found = std::find_if(update.entities.begin(), update.entities.end(), [&](const EntityRecord& record) {
+                return record.entity == entity;
+            });
+            if (found != update.entities.end()) {
+                return update;
+            }
+        }
+        return ServerUpdatePacket{};
+    };
+    auto update_for_any_client = [&](ecs::Entity entity) {
+        for (const auto& sent : payloads) {
+            ServerUpdatePacket update = read_server_update(sent.second);
+            const auto found = std::find_if(update.entities.begin(), update.entities.end(), [&](const EntityRecord& record) {
+                return record.entity == entity;
+            });
+            if (found != update.entities.end()) {
+                return update;
+            }
+        }
+        return ServerUpdatePacket{};
+    };
+    auto destroy_for = [&](kage::sync::ClientId client, std::uint32_t network_id) {
+        for (const auto& sent : payloads) {
+            if (sent.first != client) {
+                continue;
+            }
+            ServerUpdatePacket update = read_server_update(sent.second);
+            const auto found = std::find_if(update.entities.begin(), update.entities.end(), [&](const EntityRecord& record) {
+                return record.destroy && record.network_id == network_id;
+            });
+            if (found != update.entities.end()) {
+                return update;
+            }
+        }
+        return ServerUpdatePacket{};
+    };
+    auto packet_id = [](kage::sync::BitBuffer packet) {
+        packet.read_bits(8U);
+        packet.read_bits(32U);
+        return static_cast<std::uint32_t>(packet.read_bits(kage::sync::protocol::server_packet_id_bits));
+    };
+
+    const ecs::Entity first = spawn(1.0f);
+    server.tick(registry);
+    ServerUpdatePacket first_update = update_for(1, first);
+    REQUIRE(first_update.entities.size() == 1);
+    const std::uint32_t reusable_network_id = first_update.entities[0].network_id;
+    REQUIRE(reusable_network_id != 0);
+
+    payloads.clear();
+    REQUIRE(registry.destroy(first));
+    server.tick(registry);
+    ServerUpdatePacket client_one_destroy = destroy_for(1, reusable_network_id);
+    ServerUpdatePacket client_two_destroy = destroy_for(2, reusable_network_id);
+    REQUIRE(client_one_destroy.entities.size() == 1);
+    REQUIRE(client_two_destroy.entities.size() == 1);
+    REQUIRE(server.process_packet(1, write_ack_packet(client_one_destroy.packet_id)));
+
+    payloads.clear();
+    const ecs::Entity second = spawn(2.0f);
+    server.tick(registry);
+    ServerUpdatePacket second_update = update_for(1, second);
+    REQUIRE(second_update.entities.size() == 1);
+    REQUIRE(second_update.entities[0].network_id != reusable_network_id);
+
+    for (const auto& sent : payloads) {
+        REQUIRE(server.process_packet(sent.first, write_ack_packet(packet_id(sent.second))));
+    }
+    payloads.clear();
+    const ecs::Entity third = spawn(3.0f);
+    server.tick(registry);
+    ServerUpdatePacket third_update = update_for_any_client(third);
+    const auto third_record = std::find_if(
+        third_update.entities.begin(),
+        third_update.entities.end(),
+        [&](const EntityRecord& record) {
+            return record.entity == third;
+        });
+    REQUIRE(third_record != third_update.entities.end());
+    REQUIRE(third_record->network_id == reusable_network_id);
+}
+
+TEST_CASE("replication server reuses network ids immediately when no clients have pending destroys") {
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+
+    std::vector<kage::sync::BitBuffer> payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+        payloads.push_back(payload);
+    };
+
+    kage::sync::ReplicationServer server(options);
+    const ecs::Entity first = registry.create();
+    REQUIRE(registry.add<kage_sync_tests::Position>(first, kage_sync_tests::Position{1.0f, 1.0f}) != nullptr);
+    REQUIRE(start_sync(registry, first, archetype));
+    server.tick(registry);
+    REQUIRE(registry.destroy(first));
+    server.tick(registry);
+
+    const ecs::Entity second = registry.create();
+    REQUIRE(registry.add<kage_sync_tests::Position>(second, kage_sync_tests::Position{2.0f, 2.0f}) != nullptr);
+    REQUIRE(start_sync(registry, second, archetype));
+    REQUIRE(server.add_client(1));
+    server.tick(registry);
+
+    REQUIRE(payloads.size() == 1);
+    const ServerUpdatePacket update = read_server_update(payloads.back());
+    REQUIRE(update.entities.size() == 1);
+    REQUIRE(update.entities[0].entity == second);
+    REQUIRE(update.entities[0].network_id == 1);
 }
 
 TEST_CASE("replication server accepts delayed entity ACKs for retained quantized frames") {

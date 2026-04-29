@@ -23,6 +23,7 @@ namespace kage::sync {
 using ClientId = std::uint64_t;
 using SyncFrame = std::uint32_t;
 using TransportFn = std::function<void(ClientId, const BitBuffer&)>;
+using ConnectHandlerFn = std::function<bool(const std::string&, ClientId&, std::string&)>;
 
 inline constexpr ClientId invalid_client_id = std::numeric_limits<ClientId>::max();
 
@@ -260,6 +261,9 @@ struct ReplicationServerOptions {
     std::size_t mtu_bytes = 1200;
     std::size_t serialized_worker_threads = 1;
     std::size_t max_pending_packet_acks_per_client = protocol::default_max_pending_packet_acks_per_client;
+    double fixed_dt_seconds = 1.0 / 60.0;
+    double connect_resend_interval_seconds = 0.25;
+    ConnectHandlerFn connect_handler;
     TransportFn transport;
 };
 

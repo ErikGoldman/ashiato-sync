@@ -14,6 +14,7 @@ namespace kage::sync {
 namespace {
 
 constexpr std::size_t max_baseline_history_per_entity = 64;
+constexpr std::size_t max_destroy_tombstones = 65536;
 
 std::size_t configured_packet_id_bits(const ReplicationClientOptions& options) noexcept {
     return protocol::packet_id_bits_for_max_pending(options.max_pending_packet_acks_per_client);
@@ -285,6 +286,16 @@ ReplicationClient::ReplicationClient(ReplicationClientOptions options)
     if (options_.fixed_dt_seconds <= 0.0 || !std::isfinite(options_.fixed_dt_seconds)) {
         throw std::invalid_argument("fixed dt seconds must be finite and positive");
     }
+    if (options_.connect_resend_interval_seconds <= 0.0 ||
+        !std::isfinite(options_.connect_resend_interval_seconds)) {
+        throw std::invalid_argument("connect resend interval seconds must be finite and positive");
+    }
+    if (options_.ping_interval_seconds <= 0.0 || !std::isfinite(options_.ping_interval_seconds)) {
+        throw std::invalid_argument("ping interval seconds must be finite and positive");
+    }
+    if (options_.connect_token.empty()) {
+        connection_state_ = ReplicationClientConnectionState::Ready;
+    }
     timing_stats_.desired_interpolation_buffer_frames = options_.interpolation_buffer_frames;
     timing_stats_.target_interpolation_buffer_frames = options_.interpolation_buffer_frames;
     timing_stats_.current_interpolation_buffer_frames = options_.interpolation_buffer_frames;
@@ -461,6 +472,33 @@ void ReplicationClient::sync_entity_memberships(EntityState& state) {
         state.mode == ReplicationClientMode::Snap && !state.snap_errors.empty());
 }
 
+bool ReplicationClient::destroy_tombstone_blocks(ecs::Entity server_entity, SyncFrame frame) const {
+    const auto found = destroy_tombstones_.find(server_entity.value);
+    return found != destroy_tombstones_.end() && frame <= found->second;
+}
+
+void ReplicationClient::record_destroy_tombstone(ecs::Entity server_entity, SyncFrame frame) {
+    if (!server_entity) {
+        return;
+    }
+
+    auto [found, inserted] = destroy_tombstones_.try_emplace(server_entity.value, frame);
+    if (!inserted && frame > found->second) {
+        found->second = frame;
+    }
+    if (destroy_tombstones_.size() <= max_destroy_tombstones) {
+        return;
+    }
+
+    auto erase = destroy_tombstones_.begin();
+    if (erase != destroy_tombstones_.end() && erase->first == server_entity.value) {
+        ++erase;
+    }
+    if (erase != destroy_tombstones_.end()) {
+        destroy_tombstones_.erase(erase);
+    }
+}
+
 const QuantizedFrameData* ReplicationClient::find_baseline(
     const EntityState& state,
     SyncFrame frame) const noexcept {
@@ -485,6 +523,12 @@ bool ReplicationClient::receive(ecs::Registry& registry, BitBuffer packet) {
             return false;
         }
         const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
+        if (message == protocol::server_connect_response_message) {
+            return receive_connect_response(registry, packet);
+        }
+        if (message == protocol::server_pong_message) {
+            return receive_pong(packet, receive_frame_);
+        }
         if (message != protocol::server_update_message) {
             return false;
         }
@@ -493,7 +537,8 @@ bool ReplicationClient::receive(ecs::Registry& registry, BitBuffer packet) {
         const auto record_count = static_cast<std::uint16_t>(packet.read_bits(16U));
         const bool applied = apply_update(registry, packet, packet_id, frame, record_count);
         if (applied) {
-            record_timing_sample(frame, receive_frame_, playback_frame_);
+            connection_state_ = ReplicationClientConnectionState::Ready;
+            record_update_timing(frame, receive_frame_, playback_frame_);
         }
         return applied;
     } catch (const std::exception&) {
@@ -511,10 +556,17 @@ bool ReplicationClient::receive(
     SyncFrame receive_frame,
     SyncFrame playback_frame) {
     try {
+        advance_control_time_to(receive_frame);
         if (packet.remaining_bits() < 8U) {
             return false;
         }
         const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
+        if (message == protocol::server_connect_response_message) {
+            return receive_connect_response(registry, packet);
+        }
+        if (message == protocol::server_pong_message) {
+            return receive_pong(packet, receive_frame);
+        }
         if (message != protocol::server_update_message) {
             return false;
         }
@@ -523,7 +575,8 @@ bool ReplicationClient::receive(
         const auto record_count = static_cast<std::uint16_t>(packet.read_bits(16U));
         const bool applied = apply_update(registry, packet, packet_id, frame, record_count);
         if (applied) {
-            record_timing_sample(frame, receive_frame, playback_frame);
+            connection_state_ = ReplicationClientConnectionState::Ready;
+            record_update_timing(frame, receive_frame, playback_frame);
         }
         return applied;
     } catch (const std::exception&) {
@@ -586,6 +639,15 @@ bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds) {
     while (receive_accumulator_seconds_ >= options_.fixed_dt_seconds) {
         receive_accumulator_seconds_ -= options_.fixed_dt_seconds;
         ++receive_frame_;
+    }
+
+    if (connection_state_ == ReplicationClientConnectionState::Connecting ||
+        connection_state_ == ReplicationClientConnectionState::Accepted) {
+        connect_resend_accumulator_seconds_ += dt_seconds;
+    }
+    if (connection_state_ == ReplicationClientConnectionState::Accepted ||
+        connection_state_ == ReplicationClientConnectionState::Ready) {
+        ping_accumulator_seconds_ += dt_seconds;
     }
 
     playback_accumulator_seconds_ += dt_seconds * static_cast<double>(timing_stats_.time_dilation);
@@ -671,17 +733,30 @@ const DisplaySampleBuffer& ReplicationClient::display_frame(const ecs::Registry&
     return display_frame_;
 }
 
+std::vector<BitBuffer> ReplicationClient::drain_packets() {
+    std::vector<BitBuffer> packets;
+    drain_connect_packets(packets);
+    drain_ping_packets(packets);
+    drain_ack_packets_into(packets);
+    return packets;
+}
+
 std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
     std::vector<BitBuffer> packets;
+    drain_ack_packets_into(packets);
+    return packets;
+}
+
+void ReplicationClient::drain_ack_packets_into(std::vector<BitBuffer>& packets) {
     if (pending_acks_.empty()) {
         pending_acks_.clear();
-        return packets;
+        return;
     }
 
     const std::size_t packet_id_bits = configured_packet_id_bits(options_);
     const std::size_t one_ack_bytes = protocol::bytes_for_bits(protocol::client_ack_header_bits + packet_id_bits);
     if (one_ack_bytes > options_.mtu_bytes) {
-        return packets;
+        return;
     }
 
     const std::size_t mtu_bits = options_.mtu_bytes * 8U;
@@ -690,10 +765,10 @@ std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
             std::numeric_limits<std::uint16_t>::max(),
             (mtu_bits - protocol::client_ack_header_bits) / packet_id_bits);
     if (max_acks_per_packet == 0U) {
-        return packets;
+        return;
     }
 
-    packets.reserve((pending_acks_.size() + max_acks_per_packet - 1U) / max_acks_per_packet);
+    packets.reserve(packets.size() + (pending_acks_.size() + max_acks_per_packet - 1U) / max_acks_per_packet);
     BitBuffer packet;
     std::uint16_t packet_ack_count = 0;
     std::size_t packet_count_offset = 0;
@@ -726,7 +801,6 @@ std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
     finish_packet();
 
     pending_acks_.clear();
-    return packets;
 }
 
 std::size_t ReplicationClient::pending_ack_count() const noexcept {
@@ -787,6 +861,9 @@ bool ReplicationClient::apply_upsert(
     if (full) {
         server_entity = ecs::Entity{packet.read_unsigned_bits(64U)};
         if (!server_entity) {
+            return false;
+        }
+        if (destroy_tombstone_blocks(server_entity, frame)) {
             return false;
         }
         found_state = find_entity_state(server_entity);
@@ -1049,7 +1126,11 @@ bool ReplicationClient::apply_upsert(
     }
 
     if (state.mode == ReplicationClientMode::BufferedInterpolation) {
-        return apply_buffered_upsert(registry, settings, frame, server_entity, archetype, merged);
+        const bool applied = apply_buffered_upsert(registry, settings, frame, server_entity, archetype, merged);
+        if (applied && full) {
+            destroy_tombstones_.erase(server_entity.value);
+        }
+        return applied;
     }
 
     if (full && state.local && registry.alive(state.local) &&
@@ -1068,6 +1149,9 @@ bool ReplicationClient::apply_upsert(
 
     state.frame = frame;
     state.entity_present = true;
+    if (full) {
+        destroy_tombstones_.erase(server_entity.value);
+    }
     remember_baseline(state);
     return true;
 }
@@ -1079,11 +1163,16 @@ bool ReplicationClient::apply_destroy(ecs::Registry& registry, SyncFrame frame, 
     }
     const ecs::Entity server_entity{state->server_entity};
     if (state->mode == ReplicationClientMode::BufferedInterpolation) {
-        return apply_buffered_destroy(registry, frame, server_entity);
+        const bool applied = apply_buffered_destroy(registry, frame, server_entity);
+        if (applied) {
+            record_destroy_tombstone(server_entity, frame);
+        }
+        return applied;
     }
     if (frame <= state->frame) {
         return false;
     }
+    record_destroy_tombstone(server_entity, frame);
     erase_entity_state(registry, ecs::Registry::entity_index(server_entity), true);
     return true;
 }
@@ -1802,14 +1891,124 @@ void ReplicationClient::queue_ack(std::uint32_t packet_id) {
     pending_acks_.push_back(packet_id);
 }
 
-void ReplicationClient::record_timing_sample(
-    SyncFrame server_frame,
-    SyncFrame receive_frame,
-    SyncFrame playback_frame) noexcept {
-    const float sample = receive_frame >= server_frame
-        ? static_cast<float>(receive_frame - server_frame)
-        : 0.0f;
+void ReplicationClient::advance_control_time_to(SyncFrame receive_frame) noexcept {
+    if (receive_frame <= receive_frame_) {
+        return;
+    }
+    const double elapsed = static_cast<double>(receive_frame - receive_frame_) * options_.fixed_dt_seconds;
+    receive_frame_ = receive_frame;
+    if (connection_state_ == ReplicationClientConnectionState::Connecting ||
+        connection_state_ == ReplicationClientConnectionState::Accepted) {
+        connect_resend_accumulator_seconds_ += elapsed;
+    }
+    if (connection_state_ == ReplicationClientConnectionState::Accepted ||
+        connection_state_ == ReplicationClientConnectionState::Ready) {
+        ping_accumulator_seconds_ += elapsed;
+    }
+}
 
+bool ReplicationClient::receive_connect_response(ecs::Registry& registry, BitBuffer& packet) {
+    if (packet.remaining_bits() < 1U) {
+        return false;
+    }
+    const bool accepted = packet.read_bool();
+    if (accepted) {
+        if (packet.remaining_bits() < 64U) {
+            return false;
+        }
+        client_id_ = static_cast<ClientId>(packet.read_unsigned_bits(64U));
+        if (client_id_ == invalid_client_id) {
+            return false;
+        }
+        connect_error_.clear();
+        connection_state_ = ReplicationClientConnectionState::Accepted;
+        connect_resend_accumulator_seconds_ = options_.connect_resend_interval_seconds;
+        configure_client(registry, client_id_);
+        return true;
+    }
+
+    std::string error;
+    if (!protocol::read_string(packet, error)) {
+        return false;
+    }
+    client_id_ = invalid_client_id;
+    connect_error_ = std::move(error);
+    connection_state_ = ReplicationClientConnectionState::Rejected;
+    return true;
+}
+
+bool ReplicationClient::receive_pong(BitBuffer& packet, SyncFrame receive_frame) {
+    if (packet.remaining_bits() < 64U) {
+        return false;
+    }
+    const auto sequence = static_cast<std::uint32_t>(packet.read_bits(32U));
+    const auto send_frame = static_cast<SyncFrame>(packet.read_bits(32U));
+    const auto found = pending_pings_.find(sequence);
+    if (found == pending_pings_.end() || found->second != send_frame || receive_frame < send_frame) {
+        return false;
+    }
+    pending_pings_.erase(found);
+    record_ping_sample(static_cast<float>(receive_frame - send_frame) * 0.5f);
+    return true;
+}
+
+void ReplicationClient::drain_connect_packets(std::vector<BitBuffer>& packets) {
+    if (connection_state_ == ReplicationClientConnectionState::Connecting) {
+        if (sent_initial_connect_request_ &&
+            connect_resend_accumulator_seconds_ < options_.connect_resend_interval_seconds) {
+            return;
+        }
+
+        BitBuffer packet;
+        packet.reserve_bytes(options_.mtu_bytes);
+        packet.push_bits(protocol::client_connect_request_message, 8U);
+        protocol::write_string(packet, options_.connect_token);
+        if (packet.byte_size() <= options_.mtu_bytes) {
+            packets.push_back(std::move(packet));
+            sent_initial_connect_request_ = true;
+            connect_resend_accumulator_seconds_ = 0.0;
+        }
+        return;
+    }
+
+    if (connection_state_ == ReplicationClientConnectionState::Accepted && client_id_ != invalid_client_id) {
+        if (connect_resend_accumulator_seconds_ < options_.connect_resend_interval_seconds) {
+            return;
+        }
+
+        BitBuffer packet;
+        packet.reserve_bytes(options_.mtu_bytes);
+        packet.push_bits(protocol::client_connect_ack_message, 8U);
+        packet.push_unsigned_bits(client_id_, 64U);
+        packets.push_back(std::move(packet));
+        connect_resend_accumulator_seconds_ = 0.0;
+    }
+}
+
+void ReplicationClient::drain_ping_packets(std::vector<BitBuffer>& packets) {
+    if (connection_state_ != ReplicationClientConnectionState::Accepted &&
+        connection_state_ != ReplicationClientConnectionState::Ready) {
+        return;
+    }
+    if (sent_initial_ping_ && ping_accumulator_seconds_ < options_.ping_interval_seconds) {
+        return;
+    }
+
+    const std::uint32_t sequence = next_ping_sequence_++;
+    const SyncFrame send_frame = receive_frame_;
+    pending_pings_[sequence] = send_frame;
+
+    BitBuffer packet;
+    packet.reserve_bytes(options_.mtu_bytes);
+    packet.push_bits(protocol::client_ping_message, 8U);
+    packet.push_bits(sequence, 32U);
+    packet.push_bits(send_frame, 32U);
+    packets.push_back(std::move(packet));
+    sent_initial_ping_ = true;
+    ping_accumulator_seconds_ = 0.0;
+}
+
+void ReplicationClient::record_ping_sample(float sample) noexcept {
     if (timing_stats_.sample_count == 0) {
         timing_stats_.latency_frames = sample;
         timing_stats_.jitter_frames = 0.0f;
@@ -1830,6 +2029,13 @@ void ReplicationClient::record_timing_sample(
     target = std::min(target, max_frames);
     timing_stats_.desired_interpolation_buffer_frames = target;
     timing_stats_.target_interpolation_buffer_frames = target;
+}
+
+void ReplicationClient::record_update_timing(
+    SyncFrame server_frame,
+    SyncFrame receive_frame,
+    SyncFrame playback_frame) noexcept {
+    const SyncFrame target = timing_stats_.target_interpolation_buffer_frames;
 
     const SyncFrame current = options_.interpolation_buffer_frames;
     const SyncFrame applied_frame = playback_frame >= current ? playback_frame - current : 0U;

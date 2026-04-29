@@ -96,8 +96,11 @@ private:
 
     struct ClientState {
         ClientId id = invalid_client_id;
+        ClientId peer = invalid_client_id;
         std::uint64_t epoch = 0;
         std::uint32_t next_packet_id = 1;
+        bool ready_for_updates = true;
+        double connect_resend_accumulator_seconds = 0.0;
         std::vector<std::uint32_t> order;
         std::vector<std::uint64_t> reset_epochs;
         std::vector<ClientEntityState> entity_states;
@@ -130,6 +133,8 @@ private:
     void deactivate_slot(std::uint32_t slot);
     void deactivate_entity_index(std::uint32_t entity_index);
     void remove_slot_from_client_orders(std::uint32_t slot);
+    std::uint32_t allocate_network_id();
+    void try_reclaim_network_id(std::uint32_t network_id);
     bool slot_is_replicable(const ecs::Registry& registry, std::uint32_t slot) const;
     void capture_dirty_components(const ecs::Registry& registry, const SyncSettings& settings);
     void mark_dirty_component(const SyncSettings& settings, std::uint32_t slot, ecs::Entity component);
@@ -182,6 +187,9 @@ private:
         std::uint16_t entity_count,
         const BitBuffer& records,
         const std::vector<PacketAckRecord>& ack_records);
+    bool add_client_for_peer(ClientId peer, ClientId client, bool ready_for_updates);
+    void send_connect_response(ClientState& client);
+    void send_pong(ClientId peer, std::uint32_t sequence, SyncFrame send_frame);
     static void track_packet_ack(
         ClientState& client,
         std::uint32_t packet_id,
@@ -190,14 +198,18 @@ private:
     ReplicationServerOptions options_;
     std::vector<ReplicatedSlot> replicated_;
     std::vector<std::uint32_t> free_replicated_slots_;
+    std::vector<std::uint32_t> free_network_ids_;
+    std::vector<std::uint8_t> network_id_reclaim_pending_;
     std::vector<QuantizedFrame> quantized_frames_;
     std::vector<std::uint32_t> free_quantized_frames_;
     std::unordered_map<EntityKey, std::uint32_t> entity_to_slot_;
     std::unordered_map<std::uint32_t, std::uint32_t> entity_index_to_slot_;
     std::vector<ClientState> clients_;
     std::unordered_map<ClientId, std::size_t> client_to_index_;
+    std::unordered_map<ClientId, std::size_t> peer_to_index_;
     std::size_t active_replicated_count_ = 0;
     std::uint32_t next_network_id_ = 1;
+    ClientId next_connect_client_id_ = 1;
     SyncFrame frame_ = 0;
     bool replicated_initialized_ = false;
 };

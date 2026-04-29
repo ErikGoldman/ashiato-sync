@@ -120,6 +120,7 @@ struct StressConfig {
     double time_dilation_min = 0.95;
     double time_dilation_max = 1.05;
     double time_dilation_gain = 0.05;
+    double ping_interval_seconds = 3.0;
     bool wire_diagnostics = false;
     bool json = false;
 };
@@ -139,7 +140,11 @@ enum class Direction {
 enum class PacketType {
     ServerUpdate,
     ClientAck,
-    ClientHello,
+    ClientConnectRequest,
+    ServerConnectResponse,
+    ClientConnectAck,
+    ClientPing,
+    ServerPong,
     Unknown
 };
 
@@ -194,8 +199,16 @@ struct DirectionStats {
     std::uint64_t server_update_bytes = 0;
     std::uint64_t client_ack_packets = 0;
     std::uint64_t client_ack_bytes = 0;
-    std::uint64_t client_hello_packets = 0;
-    std::uint64_t client_hello_bytes = 0;
+    std::uint64_t client_connect_request_packets = 0;
+    std::uint64_t client_connect_request_bytes = 0;
+    std::uint64_t server_connect_response_packets = 0;
+    std::uint64_t server_connect_response_bytes = 0;
+    std::uint64_t client_connect_ack_packets = 0;
+    std::uint64_t client_connect_ack_bytes = 0;
+    std::uint64_t client_ping_packets = 0;
+    std::uint64_t client_ping_bytes = 0;
+    std::uint64_t server_pong_packets = 0;
+    std::uint64_t server_pong_bytes = 0;
     std::uint64_t unknown_packets = 0;
     std::uint64_t unknown_bytes = 0;
     std::uint64_t full_upserts = 0;
@@ -287,8 +300,16 @@ inline const char* packet_type_name(PacketType type) {
         return "server_update";
     case PacketType::ClientAck:
         return "client_ack";
-    case PacketType::ClientHello:
-        return "client_hello";
+    case PacketType::ClientConnectRequest:
+        return "client_connect_request";
+    case PacketType::ServerConnectResponse:
+        return "server_connect_response";
+    case PacketType::ClientConnectAck:
+        return "client_connect_ack";
+    case PacketType::ClientPing:
+        return "client_ping";
+    case PacketType::ServerPong:
+        return "server_pong";
     case PacketType::Unknown:
         return "unknown";
     }
@@ -334,9 +355,25 @@ inline void add_packet_stats(DirectionStats& stats, const BitBuffer& packet, con
         ++stats.client_ack_packets;
         stats.client_ack_bytes += bytes;
         break;
-    case PacketType::ClientHello:
-        ++stats.client_hello_packets;
-        stats.client_hello_bytes += bytes;
+    case PacketType::ClientConnectRequest:
+        ++stats.client_connect_request_packets;
+        stats.client_connect_request_bytes += bytes;
+        break;
+    case PacketType::ServerConnectResponse:
+        ++stats.server_connect_response_packets;
+        stats.server_connect_response_bytes += bytes;
+        break;
+    case PacketType::ClientConnectAck:
+        ++stats.client_connect_ack_packets;
+        stats.client_connect_ack_bytes += bytes;
+        break;
+    case PacketType::ClientPing:
+        ++stats.client_ping_packets;
+        stats.client_ping_bytes += bytes;
+        break;
+    case PacketType::ServerPong:
+        ++stats.server_pong_packets;
+        stats.server_pong_bytes += bytes;
         break;
     case PacketType::Unknown:
         ++stats.unknown_packets;
@@ -421,8 +458,24 @@ inline PacketBreakdown classify_packet(BitBuffer packet, WireFormatStats* wire =
             }
             return result;
         }
-        if (message == protocol::client_hello_message) {
-            result.type = PacketType::ClientHello;
+        if (message == protocol::client_connect_request_message) {
+            result.type = PacketType::ClientConnectRequest;
+            return result;
+        }
+        if (message == protocol::server_connect_response_message) {
+            result.type = PacketType::ServerConnectResponse;
+            return result;
+        }
+        if (message == protocol::client_connect_ack_message) {
+            result.type = PacketType::ClientConnectAck;
+            return result;
+        }
+        if (message == protocol::client_ping_message) {
+            result.type = PacketType::ClientPing;
+            return result;
+        }
+        if (message == protocol::server_pong_message) {
+            result.type = PacketType::ServerPong;
             return result;
         }
         if (message != protocol::server_update_message) {
@@ -752,6 +805,9 @@ inline void validate_config(const StressConfig& config) {
     if (config.time_dilation_gain < 0.0) {
         throw std::invalid_argument("--time-dilation-gain must be non-negative");
     }
+    if (config.ping_interval_seconds <= 0.0) {
+        throw std::invalid_argument("--ping-interval-seconds must be positive");
+    }
 }
 
 inline void spawn_ball(
@@ -983,6 +1039,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
     server_options.bandwidth_limit_bytes_per_tick = config.bandwidth_limit;
     server_options.mtu_bytes = config.mtu;
     server_options.serialized_worker_threads = config.server_worker_threads;
+    server_options.fixed_dt_seconds = 1.0 / config.tick_rate;
     server_options.transport = [&](ClientId client, const BitBuffer& packet) {
         enqueue_packet(
             server_to_clients,
@@ -1000,18 +1057,21 @@ inline StressReport run_stress(const StressConfig& input_config) {
     std::vector<ReplicationClient> clients;
     clients.reserve(config.clients);
     for (std::uint32_t client_index = 0; client_index < config.clients; ++client_index) {
-        clients.emplace_back(ReplicationClientOptions{
-            config.mtu,
-            config.client_mode,
-            config.interpolation_buffer_frames,
-            config.interpolation_buffer_capacity_frames,
-            true,
-            1,
-            2.0f,
-            0.1f,
-            static_cast<float>(config.time_dilation_min),
-            static_cast<float>(config.time_dilation_max),
-            static_cast<float>(config.time_dilation_gain)});
+        ReplicationClientOptions client_options;
+        client_options.mtu_bytes = config.mtu;
+        client_options.default_entity_mode = config.client_mode;
+        client_options.interpolation_buffer_frames = config.interpolation_buffer_frames;
+        client_options.interpolation_buffer_capacity_frames = config.interpolation_buffer_capacity_frames;
+        client_options.auto_interpolation_buffer_frames = true;
+        client_options.auto_interpolation_min_frames = 1;
+        client_options.auto_interpolation_jitter_multiplier = 2.0f;
+        client_options.auto_interpolation_smoothing = 0.1f;
+        client_options.auto_interpolation_time_dilation_min = static_cast<float>(config.time_dilation_min);
+        client_options.auto_interpolation_time_dilation_max = static_cast<float>(config.time_dilation_max);
+        client_options.auto_interpolation_time_dilation_gain = static_cast<float>(config.time_dilation_gain);
+        client_options.fixed_dt_seconds = 1.0 / config.tick_rate;
+        client_options.ping_interval_seconds = config.ping_interval_seconds;
+        clients.emplace_back(std::move(client_options));
     }
 
     std::vector<ServerBall> balls;
@@ -1055,7 +1115,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
         {
             ScopedTimer timer(report.timing.ack_processing_seconds);
             for (std::size_t index = 0; index < clients.size(); ++index) {
-                for (const BitBuffer& ack : clients[index].drain_ack_packets()) {
+                for (const BitBuffer& ack : clients[index].drain_packets()) {
                     enqueue_packet(
                         clients_to_server,
                         report.clients_to_server,
@@ -1102,7 +1162,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
         }
     });
     for (std::size_t index = 0; index < clients.size(); ++index) {
-        for (const BitBuffer& ack : clients[index].drain_ack_packets()) {
+        for (const BitBuffer& ack : clients[index].drain_packets()) {
             enqueue_packet(
                 clients_to_server,
                 report.clients_to_server,
@@ -1168,7 +1228,14 @@ inline void write_direction_text(std::ostream& out, const char* name, const Dire
         << " full_upserts=" << stats.full_upserts << " delta_upserts=" << stats.delta_upserts
         << " destroys=" << stats.destroys << '\n';
     out << "  client_ack packets=" << stats.client_ack_packets << " bytes=" << stats.client_ack_bytes << '\n';
-    out << "  client_hello packets=" << stats.client_hello_packets << " bytes=" << stats.client_hello_bytes << '\n';
+    out << "  client_connect_request packets=" << stats.client_connect_request_packets
+        << " bytes=" << stats.client_connect_request_bytes << '\n';
+    out << "  server_connect_response packets=" << stats.server_connect_response_packets
+        << " bytes=" << stats.server_connect_response_bytes << '\n';
+    out << "  client_connect_ack packets=" << stats.client_connect_ack_packets
+        << " bytes=" << stats.client_connect_ack_bytes << '\n';
+    out << "  client_ping packets=" << stats.client_ping_packets << " bytes=" << stats.client_ping_bytes << '\n';
+    out << "  server_pong packets=" << stats.server_pong_packets << " bytes=" << stats.server_pong_bytes << '\n';
     out << "  unknown packets=" << stats.unknown_packets << " bytes=" << stats.unknown_bytes << '\n';
 }
 
@@ -1221,6 +1288,7 @@ inline void write_report_text(std::ostream& out, const StressReport& report) {
     out << "client_mode=" << client_mode_name(report.config.client_mode)
         << " interpolation_buffer_frames=" << report.config.interpolation_buffer_frames
         << " interpolation_buffer_capacity_frames=" << report.config.interpolation_buffer_capacity_frames
+        << " ping_interval_seconds=" << report.config.ping_interval_seconds
         << " wire_diagnostics=" << (report.config.wire_diagnostics ? "true" : "false") << '\n';
     out << "network latency_ms=" << report.config.latency_ms
         << " jitter_ms=" << report.config.jitter_ms
@@ -1278,7 +1346,16 @@ inline void write_direction_json(std::ostream& out, const DirectionStats& stats)
         << ",\"full_upserts\":" << stats.full_upserts << ",\"delta_upserts\":" << stats.delta_upserts
         << ",\"destroys\":" << stats.destroys << "},"
         << "\"client_ack\":{\"packets\":" << stats.client_ack_packets << ",\"bytes\":" << stats.client_ack_bytes << "},"
-        << "\"client_hello\":{\"packets\":" << stats.client_hello_packets << ",\"bytes\":" << stats.client_hello_bytes << "},"
+        << "\"client_connect_request\":{\"packets\":" << stats.client_connect_request_packets
+        << ",\"bytes\":" << stats.client_connect_request_bytes << "},"
+        << "\"server_connect_response\":{\"packets\":" << stats.server_connect_response_packets
+        << ",\"bytes\":" << stats.server_connect_response_bytes << "},"
+        << "\"client_connect_ack\":{\"packets\":" << stats.client_connect_ack_packets
+        << ",\"bytes\":" << stats.client_connect_ack_bytes << "},"
+        << "\"client_ping\":{\"packets\":" << stats.client_ping_packets
+        << ",\"bytes\":" << stats.client_ping_bytes << "},"
+        << "\"server_pong\":{\"packets\":" << stats.server_pong_packets
+        << ",\"bytes\":" << stats.server_pong_bytes << "},"
         << "\"unknown\":{\"packets\":" << stats.unknown_packets << ",\"bytes\":" << stats.unknown_bytes << "}"
         << "}";
 }
@@ -1334,6 +1411,7 @@ inline void write_report_json(std::ostream& out, const StressReport& report) {
     out << "\"interpolation_buffer_frames\":" << report.config.interpolation_buffer_frames << ",";
     out << "\"interpolation_buffer_capacity_frames\":"
         << report.config.interpolation_buffer_capacity_frames << ",";
+    out << "\"ping_interval_seconds\":" << report.config.ping_interval_seconds << ",";
     out << "\"wire_diagnostics\":" << (report.config.wire_diagnostics ? "true" : "false") << ",";
     out << "\"network\":{\"latency_ms\":" << report.config.latency_ms
         << ",\"jitter_ms\":" << report.config.jitter_ms
@@ -1496,6 +1574,8 @@ inline StressConfig parse_args(int argc, char** argv) {
             config.time_dilation_max = parse_double(arg, require_value());
         } else if (arg == "--time-dilation-gain") {
             config.time_dilation_gain = parse_double(arg, require_value());
+        } else if (arg == "--ping-interval-seconds") {
+            config.ping_interval_seconds = parse_double(arg, require_value());
         } else if (arg == "--wire-diagnostics") {
             config.wire_diagnostics = true;
         } else if (arg == "--report") {
@@ -1537,6 +1617,7 @@ inline void write_usage(std::ostream& out) {
         << "  --interpolation-buffer-frames N\n"
         << "  --interpolation-buffer-capacity-frames N\n"
         << "  --time-dilation-min N --time-dilation-max N --time-dilation-gain N\n"
+        << "  --ping-interval-seconds N\n"
         << "  --wire-diagnostics\n"
         << "  --report text|json\n";
 }

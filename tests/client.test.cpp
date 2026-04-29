@@ -52,6 +52,34 @@ std::vector<AckRecord> read_acks(kage::sync::BitBuffer packet) {
     return records;
 }
 
+bool record_ping_sample(
+    kage::sync::ReplicationClient& client,
+    ecs::Registry& registry,
+    kage::sync::SyncFrame receive_frame) {
+    std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
+    if (packets.empty()) {
+        REQUIRE(client.tick(registry, client.options().ping_interval_seconds));
+        packets = client.drain_packets();
+    }
+    for (kage::sync::BitBuffer packet : packets) {
+        if (packet.remaining_bits() < 8U) {
+            continue;
+        }
+        const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
+        if (message != kage::sync::protocol::client_ping_message) {
+            continue;
+        }
+        const auto sequence = static_cast<std::uint32_t>(packet.read_bits(32U));
+        const auto send_frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
+        kage::sync::BitBuffer pong;
+        pong.push_bits(kage::sync::protocol::server_pong_message, 8U);
+        pong.push_bits(sequence, 32U);
+        pong.push_bits(send_frame, 32U);
+        return client.receive(registry, pong, receive_frame);
+    }
+    return false;
+}
+
 UpdatePacket read_update(kage::sync::BitBuffer packet, std::size_t sync_slot_count = 2U) {
     REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::server_update_message);
     UpdatePacket update;
@@ -2025,6 +2053,63 @@ TEST_CASE("buffered interpolation rejects stale duplicate packets without ACKing
     REQUIRE(client.pending_ack_count() == 0);
 }
 
+TEST_CASE("replication client rejects stale full after destroy and accepts reused network id") {
+    ecs::Registry server_registry;
+    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
+
+    std::vector<kage::sync::BitBuffer> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype == server_archetype);
+    kage::sync::configure_client(client_registry, 1);
+    kage::sync::ReplicationClient client;
+
+    auto process_client_acks = [&]() {
+        for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
+            REQUIRE(server.process_packet(1, ack));
+        }
+    };
+
+    const ecs::Entity first = server_registry.create();
+    REQUIRE(server_registry.add<Position>(first, Position{1.0f, 2.0f}) != nullptr);
+    REQUIRE(start_sync(server_registry, first, server_archetype));
+    server.tick(server_registry);
+    const kage::sync::BitBuffer first_full = packets.back();
+    const UpdatePacket first_update = read_update(first_full);
+    REQUIRE(first_update.records.size() == 1);
+    const std::uint32_t reused_network_id = first_update.records[0].network_id;
+    REQUIRE(client.receive(client_registry, first_full));
+    process_client_acks();
+
+    packets.clear();
+    REQUIRE(server_registry.destroy(first));
+    server.tick(server_registry);
+    const kage::sync::BitBuffer destroy = packets.back();
+    REQUIRE(client.receive(client_registry, destroy));
+    process_client_acks();
+    REQUIRE_FALSE(client.receive(client_registry, first_full));
+    REQUIRE(client.pending_ack_count() == 0);
+
+    packets.clear();
+    const ecs::Entity second = server_registry.create();
+    REQUIRE(server_registry.add<Position>(second, Position{3.0f, 4.0f}) != nullptr);
+    REQUIRE(start_sync(server_registry, second, server_archetype));
+    server.tick(server_registry);
+    const UpdatePacket second_update = read_update(packets.back());
+    REQUIRE(second_update.records.size() == 1);
+    REQUIRE(second_update.records[0].entity == second);
+    REQUIRE(second_update.records[0].network_id == reused_network_id);
+    REQUIRE(client.receive(client_registry, packets.back()));
+    REQUIRE(client.local_entity(second));
+}
+
 TEST_CASE("buffered interpolation delays component additions from full updates") {
     ecs::Registry server_registry;
     const ecs::Entity server_position = kage::sync::register_sync_component<Position>(server_registry, "Position");
@@ -2336,6 +2421,7 @@ TEST_CASE("frame-aware receive records latency and emits dilation without jumpin
         0.10f});
     const ecs::Entity server_entity{42};
 
+    REQUIRE(record_ping_sample(client, client_registry, 8));
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}), 5));
     REQUIRE(client.timing_stats().sample_count == 1);
     REQUIRE(client.timing_stats().latency_frames == Catch::Approx(4.0f));
@@ -2347,10 +2433,10 @@ TEST_CASE("frame-aware receive records latency and emits dilation without jumpin
     REQUIRE(client.options().interpolation_buffer_frames == 1);
 
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{3.0f, 4.0f}}}), 4));
-    REQUIRE(client.timing_stats().sample_count == 2);
-    REQUIRE(client.timing_stats().latency_frames == Catch::Approx(2.0f));
-    REQUIRE(client.timing_stats().jitter_frames == Catch::Approx(2.0f));
-    REQUIRE(client.timing_stats().target_interpolation_buffer_frames == 6);
+    REQUIRE(client.timing_stats().sample_count == 1);
+    REQUIRE(client.timing_stats().latency_frames == Catch::Approx(4.0f));
+    REQUIRE(client.timing_stats().jitter_frames == Catch::Approx(0.0f));
+    REQUIRE(client.timing_stats().target_interpolation_buffer_frames == 4);
     REQUIRE(client.options().interpolation_buffer_frames == 1);
 }
 
@@ -2374,6 +2460,7 @@ TEST_CASE("auto interpolation buffer moves one frame when dilation creates headr
         0.10f});
     const ecs::Entity server_entity{42};
 
+    REQUIRE(record_ping_sample(client, client_registry, 8));
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}), 5));
     REQUIRE(client.options().interpolation_buffer_frames == 1);
 
@@ -2429,6 +2516,7 @@ TEST_CASE("auto interpolation buffer shrinks one frame at a time and returns to 
         0.10f});
     const ecs::Entity server_entity{42};
 
+    REQUIRE(record_ping_sample(client, client_registry, 0));
     REQUIRE(client.receive(client_registry, make_position_packet(10, {{server_entity, Position{1.0f, 2.0f}}}), 11));
     REQUIRE(client.timing_stats().desired_interpolation_buffer_frames == 1);
     REQUIRE(client.timing_stats().measured_interpolation_buffer_frames == Catch::Approx(3.0f));
@@ -2467,6 +2555,7 @@ TEST_CASE("auto interpolation buffer clamps and can be disabled") {
         0.90f,
         1.10f,
         0.10f});
+    REQUIRE(record_ping_sample(clamped, client_registry, 20));
     REQUIRE(clamped.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}), 20));
     REQUIRE(clamped.timing_stats().target_interpolation_buffer_frames == 3);
     REQUIRE(clamped.timing_stats().time_dilation == Catch::Approx(0.90f));
@@ -2487,6 +2576,7 @@ TEST_CASE("auto interpolation buffer clamps and can be disabled") {
         0.90f,
         1.10f,
         0.10f});
+    REQUIRE(record_ping_sample(manual, manual_registry, 8));
     REQUIRE(manual.receive(manual_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}), 5));
     REQUIRE(manual.timing_stats().target_interpolation_buffer_frames == 4);
     REQUIRE(manual.timing_stats().current_interpolation_buffer_frames == 2);
@@ -2568,6 +2658,7 @@ TEST_CASE("snap mode records timing without emitting playback dilation") {
         0.90f,
         1.10f,
         0.10f});
+    REQUIRE(record_ping_sample(client, client_registry, 8));
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}), 5));
 
     REQUIRE(client.timing_stats().sample_count == 1);
@@ -2600,6 +2691,7 @@ TEST_CASE("zero dilation gain keeps playback speed neutral while tracking desire
         0.90f,
         1.10f,
         0.0f});
+    REQUIRE(record_ping_sample(client, client_registry, 8));
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}), 5));
     REQUIRE(client.timing_stats().desired_interpolation_buffer_frames == 4);
     REQUIRE(client.timing_stats().time_dilation == Catch::Approx(1.0f));
@@ -2625,6 +2717,7 @@ TEST_CASE("manual buffer override resets auto timing target and dilation") {
         0.90f,
         1.10f,
         0.10f});
+    REQUIRE(record_ping_sample(client, client_registry, 8));
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}), 5));
     REQUIRE(client.timing_stats().desired_interpolation_buffer_frames == 4);
     REQUIRE(client.timing_stats().time_dilation == Catch::Approx(0.90f));
@@ -2657,6 +2750,7 @@ TEST_CASE("buffered interpolation applies correct target frame after auto buffer
         1.10f,
         0.10f});
 
+    REQUIRE(record_ping_sample(client, client_registry, 8));
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}), 5));
     REQUIRE(client.options().interpolation_buffer_frames == 1);
     REQUIRE(client.receive(client_registry, make_position_packet(6, {{server_entity, Position{6.0f, 2.0f}}}), 6));
@@ -2690,8 +2784,57 @@ TEST_CASE("normal receive records timing from the client-owned clock without mov
         2,
         8});
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
-    REQUIRE(client.timing_stats().sample_count == 1);
+    REQUIRE(client.timing_stats().sample_count == 0);
     REQUIRE(client.options().interpolation_buffer_frames == 2);
+}
+
+TEST_CASE("client connect handshake ACKs accepted id until first update") {
+    ecs::Registry client_registry;
+    kage_sync_tests::define_position_archetype(client_registry);
+
+    kage::sync::ReplicationClientOptions options;
+    options.connect_token = "token";
+    kage::sync::ReplicationClient client(options);
+
+    std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
+    REQUIRE(packets.size() == 1);
+    REQUIRE(static_cast<std::uint8_t>(packets[0].read_bits(8U)) ==
+            kage::sync::protocol::client_connect_request_message);
+    std::string token;
+    REQUIRE(kage::sync::protocol::read_string(packets[0], token));
+    REQUIRE(token == "token");
+
+    kage::sync::BitBuffer accepted;
+    accepted.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
+    accepted.push_bool(true);
+    accepted.push_unsigned_bits(7, 64U);
+    REQUIRE(client.receive(client_registry, accepted));
+    REQUIRE(client.client_id() == 7);
+    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Accepted);
+    REQUIRE(client_registry.get<kage::sync::SyncSettings>().local_client == 7);
+
+    packets = client.drain_packets();
+    REQUIRE_FALSE(packets.empty());
+    bool saw_connect_ack = false;
+    for (kage::sync::BitBuffer packet : packets) {
+        const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
+        if (message == kage::sync::protocol::client_connect_ack_message) {
+            saw_connect_ack = true;
+            REQUIRE(packet.read_unsigned_bits(64U) == 7);
+        }
+    }
+    REQUIRE(saw_connect_ack);
+
+    const ecs::Entity server_entity{42};
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
+    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Ready);
+
+    REQUIRE(client.tick(client_registry, client.options().connect_resend_interval_seconds));
+    packets = client.drain_packets();
+    for (kage::sync::BitBuffer packet : packets) {
+        REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) !=
+                kage::sync::protocol::client_connect_ack_message);
+    }
 }
 
 TEST_CASE("buffered interpolation does not recreate destroyed entities before the new target frame") {

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <string>
 
 #ifndef KAGE_SYNC_BASELINE_FRAME_DELTA_BITS
 #define KAGE_SYNC_BASELINE_FRAME_DELTA_BITS 5
@@ -14,13 +15,20 @@ namespace kage::sync::protocol {
 
 inline constexpr std::uint8_t server_update_message = 1;
 inline constexpr std::uint8_t client_ack_message = 2;
-inline constexpr std::uint8_t client_hello_message = 3;
+inline constexpr std::uint8_t client_connect_request_message = 3;
+inline constexpr std::uint8_t server_connect_response_message = 4;
+inline constexpr std::uint8_t client_connect_ack_message = 5;
+inline constexpr std::uint8_t client_ping_message = 6;
+inline constexpr std::uint8_t server_pong_message = 7;
 
 inline constexpr std::size_t default_max_pending_packet_acks_per_client = 255U;
 inline constexpr std::size_t network_entity_id_bits = 32U;
 inline constexpr std::uint32_t network_entity_id_tier0_max = (std::uint32_t{1} << 15U) - 1U;
 inline constexpr std::uint32_t network_entity_id_tier1_max = (std::uint32_t{1} << 23U) - 1U;
 inline constexpr std::size_t client_ack_header_bits = 8U + 16U;
+inline constexpr std::size_t client_connect_ack_bits = 8U + 64U;
+inline constexpr std::size_t client_ping_bits = 8U + 32U + 32U;
+inline constexpr std::size_t server_pong_bits = 8U + 32U + 32U;
 inline constexpr std::size_t baseline_frame_delta_bits = KAGE_SYNC_BASELINE_FRAME_DELTA_BITS;
 
 static_assert(baseline_frame_delta_bits > 0U, "KAGE_SYNC_BASELINE_FRAME_DELTA_BITS must be at least 1");
@@ -100,6 +108,29 @@ inline bool read_network_entity_id(BitBuffer& in, std::uint32_t& network_id) {
     network_id |= static_cast<std::uint32_t>(in.read_bits(8U)) << 15U;
     if (in.read_bool()) {
         network_id |= static_cast<std::uint32_t>(in.read_bits(9U)) << 23U;
+    }
+    return true;
+}
+
+inline void write_string(BitBuffer& out, const std::string& value) {
+    const std::size_t length = value.size() > std::numeric_limits<std::uint16_t>::max()
+        ? std::numeric_limits<std::uint16_t>::max()
+        : value.size();
+    out.push_bits(static_cast<std::uint16_t>(length), 16U);
+    out.push_bytes(value.data(), length);
+}
+
+inline bool read_string(BitBuffer& in, std::string& value) {
+    if (in.remaining_bits() < 16U) {
+        return false;
+    }
+    const auto length = static_cast<std::uint16_t>(in.read_bits(16U));
+    if (in.remaining_bits() < static_cast<std::size_t>(length) * 8U) {
+        return false;
+    }
+    value.resize(length);
+    if (length != 0U) {
+        in.read_bytes(value.data(), length);
     }
     return true;
 }

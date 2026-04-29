@@ -198,3 +198,79 @@ Conclusion: accepted. Full-upsert bits dropped from `261932080` to
 `250704306` despite more full records in the run, and downstream bytes dropped
 from `207773924` to `206490083`. The stress archetype is dense enough that all
 full upserts selected presence-mask mode.
+
+## Experiment 7: Reuse ACKed Global Network IDs
+
+Rationale: tiered entity-id encoding works best while network ids stay in the
+small-id tier. This experiment keeps ids server-global, but recycles a destroyed
+entity's id once every connected client has ACKed the destroy or disconnected.
+The client also keeps destroy tombstones so delayed full packets for the old
+server entity cannot recreate it after the id is reused.
+
+Result:
+
+- `wall=11.237633`
+- `server_replication=7.392518`
+- `client_receive=3.285498`
+- `ack_processing=0.408407`
+- `server_to_clients.bytes=206446790`
+- `clients_to_server.bytes=101423`
+- `clients_to_server.ack_records=90662`
+- `clients_to_server.ack_record_bits=725296`
+- `server_to_clients.full_upsert_bits=249983530`
+- `server_to_clients.delta_upsert_bits=1388931774`
+- `server_to_clients.destroy_record_bits=852244`
+
+CPU comparison against Experiment 6:
+
+- `wall`: `11.595590` -> `11.237633`
+- `server_replication`: `7.596421` -> `7.392518`
+- `client_receive`: `3.425211` -> `3.285498`
+- `ack_processing`: `0.429267` -> `0.408407`
+
+Conclusion: accepted. The optimized reclaim path did not show a CPU regression
+in the canonical stress run, and total measured traffic changed only slightly.
+
+## Experiment 8: Dedicated Ping Timing Packets
+
+Rationale: update-arrival timing couples interpolation latency/jitter estimates
+to replication cadence and loss. This experiment adds dedicated ping/pong
+control packets on a configurable cadence, defaulting to 3 seconds, and uses
+RTT/2 ping samples for client latency/jitter. Server update receive still tracks
+measured interpolation buffer depth, but no longer changes latency/jitter.
+
+Command:
+
+```sh
+./build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --wire-diagnostics --report text
+```
+
+Artifact: `build-bench/kage_sync_ball_stress`
+
+Result:
+
+- `wall=11.818390`
+- `server_replication=7.649816`
+- `client_receive=3.573520`
+- `ack_processing=0.450216`
+- `server_to_clients.bytes=206159340`
+- `clients_to_server.bytes=101468`
+- `server_to_clients.server_pong_packets=40`
+- `server_to_clients.server_pong_bytes=360`
+- `clients_to_server.client_ping_packets=40`
+- `clients_to_server.client_ping_bytes=360`
+- `clients_to_server.ack_records=90341`
+- `clients_to_server.ack_record_bits=722728`
+
+CPU comparison against Experiment 7:
+
+- `wall`: `11.237633` -> `11.818390`
+- `server_replication`: `7.392518` -> `7.649816`
+- `client_receive`: `3.285498` -> `3.573520`
+- `ack_processing`: `0.408407` -> `0.450216`
+
+Conclusion: accepted with follow-up watch item. Ping control traffic is tiny
+(`720` total ping/pong bytes in this run), and total traffic stayed effectively
+flat. CPU timings are higher than Experiment 7 in this single canonical run, so
+repeat measurements should be taken before attributing the delta to ping logic
+rather than benchmark variance or the changed interpolation timing target.

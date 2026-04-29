@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace kage::sync {
@@ -66,6 +68,14 @@ struct DisplaySampleBuffer {
 
 using EntityModeSelector = std::function<ReplicationClientMode(const ReplicatedEntityUpdateView&)>;
 
+enum class ReplicationClientConnectionState {
+    Disconnected,
+    Connecting,
+    Accepted,
+    Ready,
+    Rejected
+};
+
 struct ReplicationClientOptions {
     std::size_t mtu_bytes = 1200;
     ReplicationClientMode default_entity_mode = ReplicationClientMode::Snap;
@@ -81,6 +91,9 @@ struct ReplicationClientOptions {
     EntityModeSelector entity_mode_selector;
     double fixed_dt_seconds = 1.0 / 60.0;
     std::size_t max_pending_packet_acks_per_client = protocol::default_max_pending_packet_acks_per_client;
+    std::string connect_token;
+    double connect_resend_interval_seconds = 0.25;
+    double ping_interval_seconds = 3.0;
 };
 
 struct ReplicationClientTimingStats {
@@ -124,8 +137,18 @@ public:
         double client_frame,
         DisplaySampleBuffer& out) const;
     const DisplaySampleBuffer& display_frame(const ecs::Registry& registry);
+    std::vector<BitBuffer> drain_packets();
     std::vector<BitBuffer> drain_ack_packets();
     std::size_t pending_ack_count() const noexcept;
+    ClientId client_id() const noexcept {
+        return client_id_;
+    }
+    ReplicationClientConnectionState connection_state() const noexcept {
+        return connection_state_;
+    }
+    const std::string& connect_error() const noexcept {
+        return connect_error_;
+    }
     ecs::Entity local_entity(ecs::Entity server_entity) const;
     SyncFrame receive_frame() const noexcept {
         return receive_frame_;
@@ -190,6 +213,8 @@ private:
     void set_buffered_membership(std::uint32_t entity_index, bool active);
     void set_snap_error_membership(std::uint32_t entity_index, bool active);
     void sync_entity_memberships(EntityState& state);
+    bool destroy_tombstone_blocks(ecs::Entity server_entity, SyncFrame frame) const;
+    void record_destroy_tombstone(ecs::Entity server_entity, SyncFrame frame);
     const QuantizedFrameData* find_baseline(const EntityState& state, SyncFrame frame) const noexcept;
     bool apply_update(
         ecs::Registry& registry,
@@ -260,7 +285,14 @@ private:
         ecs::Entity component) const;
     void remember_baseline(EntityState& state);
     void queue_ack(std::uint32_t packet_id);
-    void record_timing_sample(SyncFrame server_frame, SyncFrame receive_frame, SyncFrame playback_frame) noexcept;
+    void record_update_timing(SyncFrame server_frame, SyncFrame receive_frame, SyncFrame playback_frame) noexcept;
+    void record_ping_sample(float latency_frames) noexcept;
+    void advance_control_time_to(SyncFrame receive_frame) noexcept;
+    bool receive_connect_response(ecs::Registry& registry, BitBuffer& packet);
+    bool receive_pong(BitBuffer& packet, SyncFrame receive_frame);
+    void drain_connect_packets(std::vector<BitBuffer>& packets);
+    void drain_ping_packets(std::vector<BitBuffer>& packets);
+    void drain_ack_packets_into(std::vector<BitBuffer>& packets);
 
     ReplicationClientOptions options_;
     ReplicationClientTimingStats timing_stats_;
@@ -270,8 +302,18 @@ private:
     std::vector<std::uint32_t> snap_error_entities_;
     std::vector<std::uint32_t> network_entity_indices_;
     std::vector<std::uint32_t> pending_acks_;
+    std::unordered_map<std::uint32_t, SyncFrame> pending_pings_;
+    std::unordered_map<std::uint64_t, SyncFrame> destroy_tombstones_;
     DisplaySampleBuffer display_frame_;
     DisplaySampleBuffer display_scratch_;
+    std::string connect_error_;
+    ClientId client_id_ = invalid_client_id;
+    ReplicationClientConnectionState connection_state_ = ReplicationClientConnectionState::Connecting;
+    double connect_resend_accumulator_seconds_ = 0.0;
+    double ping_accumulator_seconds_ = 0.0;
+    std::uint32_t next_ping_sequence_ = 1;
+    bool sent_initial_connect_request_ = false;
+    bool sent_initial_ping_ = false;
     double receive_accumulator_seconds_ = 0.0;
     double playback_accumulator_seconds_ = 0.0;
     double display_accumulator_seconds_ = 0.0;
