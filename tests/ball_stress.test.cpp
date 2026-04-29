@@ -359,6 +359,23 @@ TEST_CASE("ball stress packet classifier records ACK wire diagnostics") {
     REQUIRE(wire.ack_record_bits == 2U * kage::sync::protocol::client_ack_record_bits);
 }
 
+TEST_CASE("ball stress packet classifier honors custom network id tier width") {
+    kage::sync::BitBuffer packet;
+    packet.push_bits(kage::sync::protocol::server_update_message, 8U);
+    packet.push_bits(1, 32U);
+    packet.push_bits(1, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(1, 16U);
+    packet.push_bool(true);
+    kage::sync::protocol::write_network_entity_id(packet, 255U, 8U);
+
+    stress::WireFormatStats wire;
+    const stress::PacketBreakdown breakdown = stress::classify_packet(packet, &wire, 8U);
+
+    REQUIRE(breakdown.type == stress::PacketType::ServerUpdate);
+    REQUIRE(breakdown.destroys == 1);
+    REQUIRE(wire.destroy_record_bits == 10U);
+}
+
 TEST_CASE("ball stress shared latency and loss defaults apply to both directions") {
     stress::StressConfig config = test_config();
     config.duration_seconds = 0.1;

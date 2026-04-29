@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -56,7 +57,9 @@ kage::sync::BitBuffer make_connect_request(const std::string& token) {
 ServerUpdatePacket read_server_update(
     kage::sync::BitBuffer packet,
     std::size_t sync_slot_count = 2U,
-    std::size_t component_one_payload_bits = 17U) {
+    std::size_t component_one_payload_bits = 17U,
+    std::size_t network_entity_id_tier0_bits =
+        kage::sync::protocol::default_network_entity_id_tier0_bits) {
     ServerUpdatePacket update;
     update.message = static_cast<std::uint8_t>(packet.read_bits(8U));
     update.frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
@@ -66,7 +69,10 @@ ServerUpdatePacket read_server_update(
     for (std::uint16_t entity_index = 0; entity_index < entity_count; ++entity_index) {
         EntityRecord entity;
         entity.destroy = packet.read_bool();
-        REQUIRE(kage::sync::protocol::read_network_entity_id(packet, entity.network_id));
+        REQUIRE(kage::sync::protocol::read_network_entity_id(
+            packet,
+            entity.network_id,
+            network_entity_id_tier0_bits));
         if (entity.destroy) {
             update.entities.push_back(std::move(entity));
             continue;
@@ -243,6 +249,96 @@ TEST_CASE("replication client and server templates configure network id tier wid
 
     kage::sync::ReplicationServerT<8> server;
     REQUIRE(server.options().network_entity_id_tier0_bits == 8U);
+}
+
+TEST_CASE("replication client and server reject invalid network id tier widths") {
+    kage::sync::ReplicationClientOptions client_options;
+    client_options.network_entity_id_tier0_bits = 0U;
+    REQUIRE_THROWS_AS(kage::sync::ReplicationClient(client_options), std::invalid_argument);
+    client_options.network_entity_id_tier0_bits = 23U;
+    REQUIRE_THROWS_AS(kage::sync::ReplicationClient(client_options), std::invalid_argument);
+
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.network_entity_id_tier0_bits = 0U;
+    REQUIRE_THROWS_AS(kage::sync::ReplicationServer(server_options), std::invalid_argument);
+    server_options.network_entity_id_tier0_bits = 23U;
+    REQUIRE_THROWS_AS(kage::sync::ReplicationServer(server_options), std::invalid_argument);
+}
+
+TEST_CASE("replication client and server interoperate with custom network id tier width") {
+    ecs::Registry server_registry;
+    const kage::sync::SyncArchetypeId server_archetype = define_position_archetype(server_registry);
+    const ecs::Entity entity = server_registry.create();
+    REQUIRE(server_registry.add<kage_sync_tests::Position>(
+                entity,
+                kage_sync_tests::Position{1.0f, 2.0f}) != nullptr);
+    REQUIRE(start_sync(server_registry, entity, server_archetype));
+
+    std::vector<kage::sync::BitBuffer> payloads;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.bandwidth_limit_bytes_per_tick = 1024;
+    server_options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        REQUIRE(client == 1);
+        payloads.push_back(payload);
+    };
+    kage::sync::ReplicationServerT<8> server(server_options);
+    REQUIRE(server.add_client(1));
+    server.tick(server_registry);
+    REQUIRE(payloads.size() == 1);
+
+    const ServerUpdatePacket update = read_server_update(
+        payloads[0],
+        2U,
+        sizeof(kage_sync_tests::Position) * 8U,
+        kage::sync::ReplicationServerT<8>::network_entity_id_tier0_bits);
+    REQUIRE(update.entities.size() == 1);
+    REQUIRE(update.entities[0].network_id == 1U);
+
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == server_archetype.value);
+    kage::sync::configure_client(client_registry, 1);
+    kage::sync::ReplicationClientT<8> client;
+    REQUIRE(client.receive(client_registry, payloads[0]));
+
+    const kage::sync::ClientEntityNetworkId client_network_id =
+        kage::sync::make_client_entity_network_id(1, update.entities[0].network_id, 1U);
+    const ecs::Entity local = client.local_entity(client_network_id);
+    REQUIRE(local);
+    REQUIRE(client_registry.alive(local));
+    REQUIRE(client_registry.get<kage_sync_tests::Position>(local).x == 1.0f);
+    REQUIRE(client_registry.get<kage_sync_tests::Position>(local).y == 2.0f);
+    REQUIRE(client.drain_ack_packets().size() == 1);
+}
+
+TEST_CASE("replication rejects client ids that cannot fit in client entity network ids") {
+    kage::sync::ReplicationServer server;
+    REQUIRE_FALSE(server.add_client(kage::sync::max_client_entity_network_id_client + 1U));
+
+    ecs::Registry registry;
+    REQUIRE_THROWS_AS(
+        kage::sync::configure_client(registry, kage::sync::max_client_entity_network_id_client + 1U),
+        std::invalid_argument);
+
+    std::vector<kage::sync::BitBuffer> responses;
+    kage::sync::ReplicationServerOptions options;
+    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+        responses.push_back(payload);
+    };
+    options.connect_handler = [](const std::string&, kage::sync::ClientId& accepted, std::string&) {
+        accepted = kage::sync::max_client_entity_network_id_client + 1U;
+        return true;
+    };
+    kage::sync::ReplicationServer connect_server(options);
+    REQUIRE(connect_server.process_packet(99, make_connect_request("token")));
+    REQUIRE_FALSE(connect_server.has_client(kage::sync::max_client_entity_network_id_client + 1U));
+    REQUIRE(responses.size() == 1);
+    REQUIRE(static_cast<std::uint8_t>(responses[0].read_bits(8U)) ==
+            kage::sync::protocol::server_connect_response_message);
+    REQUIRE_FALSE(responses[0].read_bool());
+    std::string error;
+    REQUIRE(kage::sync::protocol::read_string(responses[0], error));
+    REQUIRE(error == "client id out of range");
 }
 
 TEST_CASE("replication server rejects malformed ACK packets") {
@@ -815,6 +911,61 @@ TEST_CASE("replication server resends pending destroys until ACKed") {
     payloads.clear();
     server.tick(registry);
     REQUIRE(payloads.empty());
+}
+
+TEST_CASE("replication server does not reuse client-local network ids before destroy ACK") {
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+
+    std::vector<kage::sync::BitBuffer> payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+        payloads.push_back(payload);
+    };
+
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+
+    auto spawn = [&](float x) {
+        const ecs::Entity entity = registry.create();
+        REQUIRE(registry.add<kage_sync_tests::Position>(entity, kage_sync_tests::Position{x, x}) != nullptr);
+        REQUIRE(start_sync(registry, entity, archetype));
+        return entity;
+    };
+
+    const ecs::Entity first = spawn(1.0f);
+    server.tick(registry);
+    REQUIRE(payloads.size() == 1);
+    const ServerUpdatePacket first_update =
+        read_server_update(payloads.back(), 2U, sizeof(kage_sync_tests::Position) * 8U);
+    REQUIRE(first_update.entities.size() == 1);
+    const std::uint32_t first_network_id = first_update.entities[0].network_id;
+    REQUIRE(first_network_id != 0);
+
+    payloads.clear();
+    REQUIRE(registry.destroy(first));
+    server.tick(registry);
+    REQUIRE(payloads.size() == 1);
+    const ServerUpdatePacket destroy_update =
+        read_server_update(payloads.back(), 2U, sizeof(kage_sync_tests::Position) * 8U);
+    REQUIRE(destroy_update.entities.size() == 1);
+    REQUIRE(destroy_update.entities[0].destroy);
+
+    payloads.clear();
+    spawn(2.0f);
+    server.tick(registry);
+    REQUIRE(payloads.size() == 1);
+    const ServerUpdatePacket second_update =
+        read_server_update(payloads.back(), 2U, sizeof(kage_sync_tests::Position) * 8U);
+    REQUIRE(second_update.entities.size() == 2);
+    const auto upsert = std::find_if(
+        second_update.entities.begin(),
+        second_update.entities.end(),
+        [](const EntityRecord& record) {
+            return !record.destroy;
+        });
+    REQUIRE(upsert != second_update.entities.end());
+    REQUIRE(upsert->network_id != first_network_id);
 }
 
 TEST_CASE("replication server reuses client-local network ids after each client's destroy ACK") {

@@ -186,6 +186,7 @@ bool ReplicationServer::add_client(ClientId client) {
 
 bool ReplicationServer::add_client_for_peer(ClientId peer, ClientId client, bool ready_for_updates) {
     if (client == invalid_client_id ||
+        client > max_client_entity_network_id_client ||
         peer == invalid_client_id ||
         client_to_index_.find(client) != client_to_index_.end() ||
         peer_to_index_.find(peer) != peer_to_index_.end()) {
@@ -363,7 +364,11 @@ bool ReplicationServer::process_packet(ClientId client, BitBuffer packet) {
             if (options_.connect_handler) {
                 accepted = options_.connect_handler(token, accepted_client, error);
             }
-            if (!accepted || accepted_client == invalid_client_id) {
+            if (!accepted || accepted_client == invalid_client_id ||
+                accepted_client > max_client_entity_network_id_client) {
+                if (accepted && error.empty() && accepted_client > max_client_entity_network_id_client) {
+                    error = "client id out of range";
+                }
                 BitBuffer response;
                 response.reserve_bytes(options_.mtu_bytes);
                 response.push_bits(protocol::server_connect_response_message, 8U);

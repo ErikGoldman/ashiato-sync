@@ -28,13 +28,14 @@ using ConnectHandlerFn = std::function<bool(const std::string&, ClientId&, std::
 
 inline constexpr ClientId invalid_client_id = std::numeric_limits<ClientId>::max();
 inline constexpr ClientEntityNetworkId invalid_client_entity_network_id = 0;
+inline constexpr ClientId max_client_entity_network_id_client = 0xfffULL;
 inline constexpr std::uint32_t max_client_local_wire_network_id = (std::uint32_t{1} << 20U) - 1U;
 
 inline constexpr ClientEntityNetworkId make_client_entity_network_id(
     ClientId client,
     std::uint32_t wire_network_id,
     std::uint32_t version) noexcept {
-    return ((client & 0xfffULL) << 52U) |
+    return ((client & max_client_entity_network_id_client) << 52U) |
         ((static_cast<std::uint64_t>(wire_network_id) & 0xfffffULL) << 32U) |
         static_cast<std::uint64_t>(version);
 }

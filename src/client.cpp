@@ -888,7 +888,7 @@ ecs::Entity ReplicationClient::local_entity(ClientEntityNetworkId network_id) co
 
 bool ReplicationClient::is_alive_network_id(ClientEntityNetworkId network_id) const noexcept {
     const EntityState* state = find_entity_state(network_id);
-    return state != nullptr && state->entity_present && state->local;
+    return state != nullptr && state->local;
 }
 
 ClientEntityNetworkId ReplicationClient::client_entity_network_id_for_wire(std::uint32_t wire_network_id) {

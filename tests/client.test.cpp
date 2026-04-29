@@ -2909,6 +2909,40 @@ TEST_CASE("buffered interpolation applies late destroys for already sampled targ
     REQUIRE(records[0].packet_id == 2);
 }
 
+TEST_CASE("buffered interpolation keeps client entity network ids alive until destroy frame applies") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        2,
+        8});
+    const ecs::Entity server_entity{42};
+    const kage::sync::ClientEntityNetworkId client_entity_network_id =
+        test_client_entity_network_id(1, test_network_id(server_entity), 1U);
+
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
+    REQUIRE(client.apply_frame(client_registry, 3));
+    const ecs::Entity local = client.local_entity(client_entity_network_id);
+    REQUIRE(local);
+    REQUIRE(client_registry.alive(local));
+    REQUIRE(client.is_alive_network_id(client_entity_network_id));
+    REQUIRE(client.drain_ack_packets().size() == 1);
+
+    REQUIRE(client.receive(client_registry, make_destroy_packet(2, server_entity)));
+    REQUIRE(client_registry.alive(local));
+    REQUIRE(client.local_entity(client_entity_network_id) == local);
+    REQUIRE(client.is_alive_network_id(client_entity_network_id));
+
+    REQUIRE(client.apply_frame(client_registry, 4));
+    REQUIRE_FALSE(client_registry.alive(local));
+    REQUIRE_FALSE(client.is_alive_network_id(client_entity_network_id));
+    REQUIRE(client.drain_ack_packets().size() == 1);
+}
+
 TEST_CASE("replication client rejects stale client entity network ids after wire id reuse") {
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);

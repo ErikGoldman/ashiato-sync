@@ -85,6 +85,9 @@ void configure_server(ecs::Registry& registry) {
 
 void configure_client(ecs::Registry& registry, ClientId local_client) {
     register_components(registry);
+    if (local_client > max_client_entity_network_id_client) {
+        throw std::invalid_argument("client id exceeds ClientEntityNetworkId client field");
+    }
 
     SyncSettings& settings = registry.write<SyncSettings>();
     settings.role = SyncRole::Client;

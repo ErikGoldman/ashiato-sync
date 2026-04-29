@@ -430,7 +430,10 @@ inline void record_wire_slot(WireFormatStats& wire, std::size_t slot, bool has_i
     stats.payload_bits += stress_slot_payload_bits(slot);
 }
 
-inline PacketBreakdown classify_packet(BitBuffer packet, WireFormatStats* wire = nullptr) {
+inline PacketBreakdown classify_packet(
+    BitBuffer packet,
+    WireFormatStats* wire = nullptr,
+    std::size_t network_entity_id_tier0_bits = protocol::default_network_entity_id_tier0_bits) {
     PacketBreakdown result;
     try {
         if (packet.remaining_bits() < 8U) {
@@ -497,7 +500,8 @@ inline PacketBreakdown classify_packet(BitBuffer packet, WireFormatStats* wire =
             const bool destroy = packet.read_bool();
             const std::size_t network_id_start = packet.read_offset_bits();
             std::uint32_t network_id = 0;
-            if (!protocol::read_network_entity_id(packet, network_id) || network_id == 0U) {
+            if (!protocol::read_network_entity_id(packet, network_id, network_entity_id_tier0_bits) ||
+                network_id == 0U) {
                 result = PacketBreakdown{};
                 return result;
             }
