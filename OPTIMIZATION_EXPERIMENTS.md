@@ -678,3 +678,87 @@ state much faster. The candidate merge scheduler improved wall time, but it
 changed packet/update counts slightly, so it should be treated as a scheduling
 policy change rather than a pure CPU optimization. The final cumulative state
 cuts wall time by about 31.5% versus the immediate baseline.
+
+## Experiment 16: Server-Side Serialized Packet Parallelism
+
+Rationale: This experiment only parallelizes server-side replication fanout across server
+client states.
+
+The first attempt ran each server client on a worker thread and guarded
+snapshot creation/retention/release with one shared mutex. It preserved packet
+counts, but lock contention around `serialize_entity` dominated:
+
+- 1 worker: `wall=14.882651`, `server_replication=7.468835`,
+  `client_receive=5.852739`, `ack_processing=1.262971`
+- 2 workers: `wall=16.938433`, `server_replication=9.289803`,
+  `client_receive=6.188095`, `ack_processing=1.186295`
+- 4 workers: `wall=22.046163`, `server_replication=14.195213`,
+  `client_receive=6.331154`, `ack_processing=1.243985`
+- 8 workers: `wall=22.636699`, `server_replication=14.470752`,
+  `client_receive=6.571749`, `ack_processing=1.300797`
+
+The accepted version uses two phases. It prepares candidate order and
+quantized snapshots serially, retaining each prepared snapshot. Workers then
+write entity records, pack packets, and mutate only their own server-side
+client state. Snapshot releases and transport callbacks are committed serially
+after workers join.
+
+Stress results:
+
+- 1 worker: `wall=15.296896`, `server_replication=7.781807`,
+  `client_receive=5.967734`, `ack_processing=1.265170`
+- 2 workers: `wall=12.115623`, `server_replication=4.674807`,
+  `client_receive=5.984037`, `ack_processing=1.183565`
+- 4 workers: `wall=10.549999`, `server_replication=3.122620`,
+  `client_receive=5.997861`, `ack_processing=1.154988`
+- 8 workers: `wall=10.706439`, `server_replication=3.156206`,
+  `client_receive=6.110277`, `ack_processing=1.165487`
+
+All stress runs produced identical packet/update counts:
+`server_to_clients packets=207106 bytes=243226067 full_upserts=489921
+delta_upserts=7332075 destroys=45716` and
+`clients_to_server packets=61172 bytes=70817714`.
+
+Stress command:
+
+```sh
+build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --server-worker-threads N --report text
+```
+
+Stress artifact: `build-bench/kage_sync_ball_stress`
+
+Focused benchmark command:
+
+```sh
+build-bench/kage_sync_benchmark --benchmark_filter='BM_ServerTickStressScheduler' --benchmark_min_time=0.05s
+```
+
+Focused artifact: `build-bench/kage_sync_benchmark`
+
+Focused results:
+
+- `BM_ServerTickStressScheduler/4096/4/1`: `7099466 ns`
+- `BM_ServerTickStressScheduler/4096/4/2`: `6174418 ns`
+- `BM_ServerTickStressScheduler/4096/4/4`: `4663740 ns`
+
+Profile command:
+
+```sh
+cmake --build build-bench-gprof --target run_kage_sync_ball_stress
+```
+
+Profile artifact: `/tmp/kage_sync_ball_stress_gprof.txt`
+
+Profiled 4-worker stress result: `wall=15.492355`,
+`server_replication=5.647791`, `client_receive=7.856186`,
+`ack_processing=1.425256`. The flat profile still shows the parallel server
+packing worker as the largest bucket, followed by client `apply_upsert`,
+component serialization, client `apply_frame`, ACK processing, and serial
+snapshot preparation.
+
+Conclusion: keep the two-phase server-side parallel serialization path as an
+opt-in `ReplicationServerOptions::serialized_worker_threads`. The useful limit
+is the number of server-side client states; in this 4-client stress case, 4
+workers is best and 8 workers adds no value. Do not parallelize simulated
+client receive work for this benchmark, because that does not correspond to a
+single real client's performance.

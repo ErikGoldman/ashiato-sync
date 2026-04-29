@@ -3,11 +3,15 @@
 #include "kage/sync/protocol.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 namespace kage::sync {
@@ -15,6 +19,11 @@ namespace {
 
 constexpr std::size_t destroy_record_bits = 1U + 64U;
 constexpr std::size_t max_pending_snapshots_per_entity = 64;
+
+struct OutboundPacket {
+    ClientId client = invalid_client_id;
+    BitBuffer packet;
+};
 
 bool init_frame_data(const SyncArchetype& archetype, QuantizedFrameData& frame) {
     if (archetype.components.size() > 64U ||
@@ -84,6 +93,20 @@ bool set_frame_component_bytes(
     std::memcpy(frame.bytes.data() + offset, bytes.data(), bytes.size());
     frame.present_mask |= (std::uint64_t{1} << component_index);
     return true;
+}
+
+BitBuffer make_server_packet(
+    std::size_t mtu_bytes,
+    SyncFrame frame,
+    std::uint16_t entity_count,
+    const BitBuffer& records) {
+    BitBuffer packet;
+    packet.reserve_bytes(mtu_bytes);
+    packet.push_bits(protocol::server_update_message, 8U);
+    packet.push_bits(frame, 32U);
+    packet.push_bits(entity_count, 16U);
+    packet.push_buffer_bits(records);
+    return packet;
 }
 
 }  // namespace
@@ -346,6 +369,11 @@ void ReplicationServer::tick(ecs::Registry& registry, const ReplicateFn& replica
 }
 
 void ReplicationServer::tick_serialized(ecs::Registry& registry) {
+    if (options_.serialized_worker_threads > 1U && clients_.size() > 1U) {
+        tick_serialized_parallel(registry);
+        return;
+    }
+
     refresh_replicated(registry);
 
     const SyncSettings& settings = registry.get<SyncSettings>();
@@ -545,6 +573,301 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
         }
         unsent.insert(unsent.end(), sent.begin(), sent.end());
         client.order = std::move(unsent);
+    }
+}
+
+void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
+    refresh_replicated(registry);
+
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    capture_dirty_components(registry, settings);
+    ++frame_;
+
+    for (std::uint32_t slot = 0; slot < replicated_.size(); ++slot) {
+        if (replicated_[slot].active && !slot_is_replicable(registry, slot)) {
+            deactivate_slot(slot);
+        }
+    }
+
+    const std::size_t worker_count =
+        std::min<std::size_t>(options_.serialized_worker_threads, clients_.size());
+    struct PreparedCandidate {
+        SerializedCandidate candidate;
+        std::uint32_t snapshot = invalid_snapshot_id;
+    };
+    struct PreparedClient {
+        std::vector<PreparedCandidate> candidates;
+    };
+
+    std::vector<PreparedClient> prepared(clients_.size());
+    std::vector<std::vector<OutboundPacket>> packets_by_client(clients_.size());
+    std::vector<std::vector<std::uint32_t>> releases_by_client(clients_.size());
+    std::vector<SerializedCandidate> update_candidates;
+    std::vector<std::size_t> destroy_order;
+    QuantizedFrameData snapshot_scratch;
+    std::vector<std::uint64_t> snapshot_dirty_scratch;
+
+    for (std::size_t client_index = 0; client_index < clients_.size(); ++client_index) {
+        ClientState& client = clients_[client_index];
+        ++client.epoch;
+
+        PreparedClient& prepared_client = prepared[client_index];
+        prepared_client.candidates.clear();
+        prepared_client.candidates.reserve(client.order.size() + client.pending_destroys.size());
+        update_candidates.clear();
+        update_candidates.reserve(client.order.size());
+        destroy_order.clear();
+        destroy_order.reserve(client.pending_destroys.size());
+
+        for (const std::uint32_t slot : client.order) {
+            if (!slot_is_replicable(registry, slot)) {
+                continue;
+            }
+            const std::uint64_t priority = slot < client.reset_epochs.size()
+                ? client.epoch - client.reset_epochs[slot]
+                : 0;
+            update_candidates.push_back(SerializedCandidate{SerializedCandidate::Kind::Update, slot, 0, priority});
+        }
+
+        auto append_prepared_update = [&](const SerializedCandidate& candidate) {
+            std::uint32_t snapshot = invalid_snapshot_id;
+            if (candidate.slot < client.entity_states.size()) {
+                snapshot = find_or_create_snapshot(
+                    registry,
+                    settings,
+                    client,
+                    candidate.slot,
+                    frame_,
+                    snapshot_scratch,
+                    snapshot_dirty_scratch);
+                retain_snapshot(snapshot);
+            }
+            prepared_client.candidates.push_back(PreparedCandidate{candidate, snapshot});
+        };
+
+        auto append_prepared_destroy = [&](std::size_t destroy_index) {
+            const ClientDestroyState& destroy = client.pending_destroys[destroy_index];
+            prepared_client.candidates.push_back(PreparedCandidate{
+                SerializedCandidate{
+                    SerializedCandidate::Kind::Destroy,
+                    0,
+                    destroy_index,
+                    client.epoch - destroy.reset_epoch},
+                invalid_snapshot_id});
+        };
+
+        if (client.pending_destroys.empty()) {
+            for (const SerializedCandidate& candidate : update_candidates) {
+                append_prepared_update(candidate);
+            }
+        } else {
+            for (std::size_t index = 0; index < client.pending_destroys.size(); ++index) {
+                destroy_order.push_back(index);
+            }
+            std::stable_sort(
+                destroy_order.begin(),
+                destroy_order.end(),
+                [&](std::size_t lhs, std::size_t rhs) {
+                    const ClientDestroyState& left = client.pending_destroys[lhs];
+                    const ClientDestroyState& right = client.pending_destroys[rhs];
+                    if (left.reset_epoch != right.reset_epoch) {
+                        return left.reset_epoch < right.reset_epoch;
+                    }
+                    return lhs < rhs;
+                });
+
+            std::size_t destroy_cursor = 0;
+            for (const SerializedCandidate& update : update_candidates) {
+                const std::uint64_t update_priority = update.priority;
+                while (destroy_cursor < destroy_order.size()) {
+                    const ClientDestroyState& destroy = client.pending_destroys[destroy_order[destroy_cursor]];
+                    const std::uint64_t destroy_priority = client.epoch - destroy.reset_epoch;
+                    if (update_priority >= destroy_priority) {
+                        break;
+                    }
+                    append_prepared_destroy(destroy_order[destroy_cursor++]);
+                }
+                append_prepared_update(update);
+            }
+            while (destroy_cursor < destroy_order.size()) {
+                append_prepared_destroy(destroy_order[destroy_cursor++]);
+            }
+        }
+    }
+
+    std::atomic<std::size_t> next_client{0};
+    std::mutex exception_mutex;
+    std::exception_ptr worker_exception;
+
+    auto pack_client = [&](std::size_t client_index) {
+        ClientState& client = clients_[client_index];
+        const PreparedClient& prepared_client = prepared[client_index];
+        std::vector<std::uint32_t> sent;
+        std::vector<std::uint32_t> unsent;
+        BitBuffer records;
+        SerializedEntity serialized;
+
+        sent.reserve(client.order.size());
+        unsent.reserve(client.order.size());
+        records.reserve_bytes(options_.mtu_bytes);
+
+        std::size_t remaining = options_.bandwidth_limit_bytes_per_tick;
+        std::uint16_t packet_entities = 0;
+
+        auto emit_records = [&]() {
+            if (packet_entities == 0U) {
+                return;
+            }
+            packets_by_client[client_index].push_back(OutboundPacket{
+                client.id,
+                make_server_packet(options_.mtu_bytes, frame_, packet_entities, records)});
+            records.clear();
+            packet_entities = 0;
+        };
+
+        auto release_prepared_snapshot = [&](std::uint32_t snapshot) {
+            releases_by_client[client_index].push_back(snapshot);
+        };
+
+        for (const PreparedCandidate& prepared_candidate : prepared_client.candidates) {
+            const SerializedCandidate& candidate = prepared_candidate.candidate;
+            if (candidate.kind == SerializedCandidate::Kind::Destroy) {
+                if (candidate.destroy_index >= client.pending_destroys.size()) {
+                    continue;
+                }
+                ClientDestroyState& destroy = client.pending_destroys[candidate.destroy_index];
+                const std::size_t next_packet_bits =
+                    protocol::server_update_header_bits + records.bit_size() + destroy_record_bits;
+                if (!records.empty() && protocol::bytes_for_bits(next_packet_bits) > options_.mtu_bytes) {
+                    const std::size_t packet_bytes =
+                        protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
+                    if (packet_bytes > remaining) {
+                        break;
+                    }
+                    emit_records();
+                    remaining -= packet_bytes;
+                }
+
+                const std::size_t packet_bytes = protocol::bytes_for_bits(
+                    protocol::server_update_header_bits + records.bit_size() + destroy_record_bits);
+                if (packet_bytes > options_.mtu_bytes || packet_bytes > remaining) {
+                    continue;
+                }
+
+                destroy.frame = frame_;
+                destroy.reset_epoch = client.epoch;
+                records.push_bool(true);
+                records.push_unsigned_bits(destroy.entity.value, 64U);
+                ++packet_entities;
+                continue;
+            }
+
+            const std::uint32_t slot = candidate.slot;
+            if (prepared_candidate.snapshot == invalid_snapshot_id ||
+                prepared_candidate.snapshot >= snapshots_.size() ||
+                !snapshots_[prepared_candidate.snapshot].active) {
+                unsent.push_back(slot);
+                continue;
+            }
+
+            serialized.payload.clear();
+            serialized.snapshot = prepared_candidate.snapshot;
+            write_entity_record(registry, settings, client, slot, snapshots_[serialized.snapshot], serialized.payload);
+            if (serialized.payload.empty()) {
+                release_prepared_snapshot(serialized.snapshot);
+                unsent.push_back(slot);
+                continue;
+            }
+
+            const std::size_t next_packet_bits =
+                protocol::server_update_header_bits + records.bit_size() + 1U + serialized.payload.bit_size();
+            if (!records.empty() && protocol::bytes_for_bits(next_packet_bits) > options_.mtu_bytes) {
+                const std::size_t packet_bytes =
+                    protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
+                if (packet_bytes > remaining) {
+                    release_prepared_snapshot(serialized.snapshot);
+                    unsent.push_back(slot);
+                    continue;
+                }
+                emit_records();
+                remaining -= packet_bytes;
+            }
+
+            const std::size_t single_packet_bits =
+                protocol::server_update_header_bits + records.bit_size() + 1U + serialized.payload.bit_size();
+            const std::size_t packet_bytes = protocol::bytes_for_bits(single_packet_bits);
+            if (packet_bytes > options_.mtu_bytes || packet_bytes > remaining) {
+                release_prepared_snapshot(serialized.snapshot);
+                unsent.push_back(slot);
+                continue;
+            }
+
+            records.push_bool(false);
+            records.push_buffer_bits(serialized.payload);
+            ++packet_entities;
+            client.reset_epochs[slot] = client.epoch;
+            ClientEntityState& entity_state = client.entity_states[slot];
+            entity_state.pending.push_back(ClientEntityState::PendingSnapshot{serialized.snapshot, frame_});
+            while (entity_state.pending.size() > max_pending_snapshots_per_entity) {
+                const std::uint32_t snapshot = entity_state.pending.front().snapshot;
+                release_prepared_snapshot(snapshot);
+                entity_state.pending.erase(entity_state.pending.begin());
+            }
+            sent.push_back(slot);
+        }
+
+        if (!records.empty()) {
+            const std::size_t packet_bytes =
+                protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
+            if (packet_bytes <= remaining) {
+                emit_records();
+            }
+        }
+        unsent.insert(unsent.end(), sent.begin(), sent.end());
+        client.order = std::move(unsent);
+    };
+
+    auto worker = [&]() {
+        try {
+            for (;;) {
+                const std::size_t client_index = next_client.fetch_add(1U, std::memory_order_relaxed);
+                if (client_index >= clients_.size()) {
+                    break;
+                }
+                pack_client(client_index);
+            }
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(exception_mutex);
+            if (worker_exception == nullptr) {
+                worker_exception = std::current_exception();
+            }
+        }
+    };
+
+    std::vector<std::thread> workers;
+    workers.reserve(worker_count);
+    for (std::size_t index = 0; index < worker_count; ++index) {
+        workers.emplace_back(worker);
+    }
+    for (std::thread& thread : workers) {
+        thread.join();
+    }
+    if (worker_exception != nullptr) {
+        std::rethrow_exception(worker_exception);
+    }
+
+    for (const std::vector<std::uint32_t>& releases : releases_by_client) {
+        for (const std::uint32_t snapshot : releases) {
+            release_snapshot(snapshot);
+        }
+    }
+
+    if (options_.transport) {
+        for (const std::vector<OutboundPacket>& client_packets : packets_by_client) {
+            for (const OutboundPacket& outbound : client_packets) {
+                options_.transport(outbound.client, outbound.packet);
+            }
+        }
     }
 }
 

@@ -243,6 +243,7 @@ struct ReplicationServerOptions {
     std::size_t bandwidth_limit_bytes_per_tick = 1024;
     std::size_t fixed_entity_replication_cost_bytes = 128;
     std::size_t mtu_bytes = 1200;
+    std::size_t serialized_worker_threads = 1;
     TransportFn transport;
 };
 

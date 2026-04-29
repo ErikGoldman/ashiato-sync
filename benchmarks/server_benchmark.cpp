@@ -544,6 +544,7 @@ void BM_ServerTickArchetypeDiversity(benchmark::State& state) {
 void BM_ServerTickStressScheduler(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int client_count = static_cast<int>(state.range(1));
+    const int worker_threads = static_cast<int>(state.range(2));
 
     ecs::Registry registry;
     const kage::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
@@ -553,6 +554,7 @@ void BM_ServerTickStressScheduler(benchmark::State& state) {
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024U * 1024U;
     options.mtu_bytes = 1200;
+    options.serialized_worker_threads = static_cast<std::size_t>(worker_threads);
     options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
@@ -670,7 +672,7 @@ BENCHMARK(BM_ServerTickPendingDestroysBudgetLimited)->Apply(PendingDestroyArgs);
 BENCHMARK(BM_ServerTickMutatingAckedDelta)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickOwnerAudienceMixed)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickArchetypeDiversity)->Apply(TickArgs);
-BENCHMARK(BM_ServerTickStressScheduler)->Args({4096, 4});
+BENCHMARK(BM_ServerTickStressScheduler)->Args({4096, 4, 1})->Args({4096, 4, 2})->Args({4096, 4, 4});
 BENCHMARK(BM_BitBufferUnalignedBytes)->Arg(64)->Arg(1024)->Arg(16384);
 BENCHMARK(BM_BitBufferUnalignedReadUnsigned)->Arg(1024)->Arg(16384);
 BENCHMARK(BM_BitBufferAppendBits)->Arg(512)->Arg(8192)->Arg(131072);
