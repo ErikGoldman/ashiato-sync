@@ -762,3 +762,82 @@ is the number of server-side client states; in this 4-client stress case, 4
 workers is best and 8 workers adds no value. Do not parallelize simulated
 client receive work for this benchmark, because that does not correspond to a
 single real client's performance.
+
+## Experiment 17: Serial Client State Locality
+
+Rationale: improve real single-client performance without parallelizing
+simulated clients. The client previously stored replicated entity state in an
+`unordered_map` keyed by full server entity value and scanned that map for
+buffered apply/display and snap-error blending. This experiment changed the
+client to direct sparse storage keyed by `ecs::Registry::entity_index`, added
+dense active/buffered/snap-error index lists, and changed per-entity baseline
+history to ring-style replacement.
+
+Focused baseline:
+
+- `BM_ClientReceiveSnap/4096/16`: `7214368 ns`
+- `BM_ClientReceiveBufferedInterpolation/4096/16`: `9138283 ns`
+- `BM_ClientReceiveMixedEntityModes/4096/16`: `8005884 ns`
+- `BM_ClientApplyBufferedInterpolation/4096/16`: `3750218 ns`
+- `BM_ClientSampleDisplayInterpolation/4096/16`: `4615188 ns`
+- `BM_ClientDrainDuplicateHeavyAckPackets/4096/64`: `5393868 ns`
+- `BM_ClientTickBufferedAutoInterpolation/4096/16`: `28556498 ns`
+
+Focused final:
+
+- `BM_ClientReceiveSnap/4096/16`: `7538320 ns`
+- `BM_ClientReceiveBufferedInterpolation/4096/16`: `7986956 ns`
+- `BM_ClientReceiveMixedEntityModes/4096/16`: `8465797 ns`
+- `BM_ClientApplyBufferedInterpolation/4096/16`: `3097993 ns`
+- `BM_ClientSampleDisplayInterpolation/4096/16`: `3837330 ns`
+- `BM_ClientDrainDuplicateHeavyAckPackets/4096/64`: `5020239 ns`
+- `BM_ClientTickBufferedAutoInterpolation/4096/16`: `16780657 ns`
+
+Focused command:
+
+```sh
+build-bench/kage_sync_benchmark --benchmark_filter='BM_ClientReceiveSnap|BM_ClientReceiveBufferedInterpolation|BM_ClientReceiveMixedEntityModes|BM_ClientApplyBufferedInterpolation|BM_ClientSampleDisplayInterpolation|BM_ClientTickBufferedAutoInterpolation|BM_ClientDrainDuplicateHeavyAckPackets' --benchmark_min_time=0.05s
+```
+
+Focused artifact: `build-bench/kage_sync_benchmark`
+
+Stress result:
+
+- `wall=13.832802`, `server_replication=7.279544`,
+  `client_receive=5.149021`, `ack_processing=1.175458`,
+  `rss_peak_bytes=157884416`
+- Packet/update counts changed slightly because stale lower-generation packets
+  for reused entity indices are now rejected instead of creating a second
+  client state for the old generation:
+  `server_to_clients packets=207118 bytes=243233732 full_upserts=490132
+  delta_upserts=7331864 destroys=45735`;
+  `clients_to_server packets=61211 bytes=70858348`.
+
+Stress command:
+
+```sh
+build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --report text
+```
+
+Stress artifact: `build-bench/kage_sync_ball_stress`
+
+Profile command:
+
+```sh
+cmake --build build-bench-gprof --target run_kage_sync_ball_stress
+```
+
+Profile artifact: `/tmp/kage_sync_ball_stress_gprof.txt`
+
+Profiled final-state stress result: `wall=19.174335`,
+`server_replication=9.528776`, `client_receive=7.536991`,
+`ack_processing=1.564016`. The flat profile's largest bucket is still default
+single-worker server serialization; the remaining client-side buckets are
+`apply_upsert`, `remember_baseline`, and `apply_frame`.
+
+Conclusion: keep the direct indexed client state, dense buffered/snap-error
+iteration lists, and ring baseline history. Large buffered client paths improve
+substantially, especially full receive+tick. Large snap and mixed-mode receive
+are neutral to slightly slower, but the stress run improves wall time, client
+receive time, ACK processing, and RSS. The generation-reuse behavior is also
+stricter and avoids stale packets mutating the wrong entity slot.

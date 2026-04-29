@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
-#include <unordered_map>
 #include <vector>
 
 namespace kage::sync {
@@ -135,6 +134,7 @@ public:
 
 private:
     using ComponentBaseline = ReplicatedComponentUpdate;
+    static constexpr std::size_t invalid_ack_index = std::numeric_limits<std::size_t>::max();
 
     struct EntityState {
         struct FrameBaseline {
@@ -155,6 +155,7 @@ private:
         bool mode_selected = false;
         QuantizedFrameData baseline;
         std::vector<FrameBaseline> history;
+        std::size_t history_next = 0;
 
         struct BufferedFrame {
             SyncFrame frame = 0;
@@ -167,6 +168,10 @@ private:
         std::vector<BufferedFrame> buffered_frames;
         std::uint64_t applied_present_mask = 0;
         std::vector<ComponentError> snap_errors;
+        std::uint64_t server_entity = 0;
+        std::size_t active_index = invalid_ack_index;
+        std::size_t buffered_index = invalid_ack_index;
+        std::size_t snap_error_index = invalid_ack_index;
     };
 
     struct AckRecord {
@@ -176,14 +181,20 @@ private:
         bool active = true;
     };
 
-    static constexpr std::size_t invalid_ack_index = std::numeric_limits<std::size_t>::max();
-
     struct AckIndexEntry {
         std::uint64_t entity = 0;
         std::size_t update = invalid_ack_index;
         std::size_t destroy = invalid_ack_index;
     };
 
+    EntityState* find_entity_state(ecs::Entity server_entity) noexcept;
+    const EntityState* find_entity_state(ecs::Entity server_entity) const noexcept;
+    EntityState* ensure_entity_state(ecs::Registry& registry, ecs::Entity server_entity);
+    void erase_entity_state(ecs::Registry& registry, std::uint32_t entity_index, bool destroy_local);
+    void set_buffered_membership(std::uint32_t entity_index, bool active);
+    void set_snap_error_membership(std::uint32_t entity_index, bool active);
+    void sync_entity_memberships(EntityState& state);
+    const QuantizedFrameData* find_baseline(const EntityState& state, SyncFrame frame) const noexcept;
     bool apply_update(
         ecs::Registry& registry,
         BitBuffer& packet,
@@ -256,7 +267,10 @@ private:
 
     ReplicationClientOptions options_;
     ReplicationClientTimingStats timing_stats_;
-    std::unordered_map<std::uint64_t, EntityState> entities_;
+    std::vector<EntityState> entities_;
+    std::vector<std::uint32_t> active_entities_;
+    std::vector<std::uint32_t> buffered_entities_;
+    std::vector<std::uint32_t> snap_error_entities_;
     std::vector<AckRecord> pending_acks_;
     std::vector<AckIndexEntry> pending_ack_index_;
     std::size_t pending_ack_live_count_ = 0;

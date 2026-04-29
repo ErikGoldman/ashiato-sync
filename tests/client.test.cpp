@@ -2559,3 +2559,61 @@ TEST_CASE("buffered interpolation applies late destroys for already sampled targ
     REQUIRE(records[0].frame == 2);
     REQUIRE(records[0].destroy);
 }
+
+TEST_CASE("replication client ignores stale server entity generations on reused indices") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    const ecs::Entity newer{(std::uint64_t{2} << 32U) | 42U};
+    const ecs::Entity stale{(std::uint64_t{1} << 32U) | 42U};
+    kage::sync::ReplicationClient client;
+
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{newer, Position{5.0f, 6.0f}}})));
+    const ecs::Entity local = client.local_entity(newer);
+    REQUIRE(local);
+    REQUIRE(client_registry.alive(local));
+    REQUIRE(client_registry.get<Position>(local).x == 5.0f);
+    REQUIRE(client.drain_ack_packets().size() == 1);
+
+    REQUIRE_FALSE(client.receive(client_registry, make_position_packet(2, {{stale, Position{1.0f, 2.0f}}})));
+    REQUIRE(client.local_entity(newer) == local);
+    REQUIRE(client_registry.alive(local));
+    REQUIRE(client_registry.get<Position>(local).x == 5.0f);
+    REQUIRE_FALSE(client.local_entity(stale));
+    REQUIRE(client.drain_ack_packets().empty());
+}
+
+TEST_CASE("replication client replaces older server entity generations on reused indices") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    const ecs::Entity older{(std::uint64_t{1} << 32U) | 42U};
+    const ecs::Entity newer{(std::uint64_t{2} << 32U) | 42U};
+    kage::sync::ReplicationClient client;
+
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{older, Position{1.0f, 2.0f}}})));
+    const ecs::Entity old_local = client.local_entity(older);
+    REQUIRE(old_local);
+    REQUIRE(client_registry.alive(old_local));
+    REQUIRE(client.drain_ack_packets().size() == 1);
+
+    REQUIRE(client.receive(client_registry, make_position_packet(2, {{newer, Position{5.0f, 6.0f}}})));
+    REQUIRE_FALSE(client_registry.alive(old_local));
+    REQUIRE_FALSE(client.local_entity(older));
+    const ecs::Entity new_local = client.local_entity(newer);
+    REQUIRE(new_local);
+    REQUIRE(new_local != old_local);
+    REQUIRE(client_registry.alive(new_local));
+    REQUIRE(client_registry.get<Position>(new_local).x == 5.0f);
+
+    const std::vector<kage::sync::BitBuffer> acks = client.drain_ack_packets();
+    REQUIRE(acks.size() == 1);
+    const std::vector<AckRecord> records = read_acks(acks[0]);
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].entity == newer);
+    REQUIRE_FALSE(records[0].destroy);
+}
