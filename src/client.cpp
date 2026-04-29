@@ -15,6 +15,7 @@ namespace {
 
 constexpr std::size_t max_baseline_history_per_entity = 64;
 constexpr std::size_t max_destroy_tombstones = 65536;
+constexpr std::uint32_t server_update_packet_loss_window = 64;
 
 std::size_t configured_packet_id_bits(const ReplicationClientOptions& options) noexcept {
     return protocol::packet_id_bits_for_max_pending(options.max_pending_packet_acks_per_client);
@@ -22,6 +23,33 @@ std::size_t configured_packet_id_bits(const ReplicationClientOptions& options) n
 
 bool is_power_of_two(std::size_t value) {
     return value != 0U && (value & (value - 1U)) == 0U;
+}
+
+std::uint32_t count_bits(std::uint64_t value) noexcept {
+    std::uint32_t count = 0;
+    while (value != 0U) {
+        value &= value - 1U;
+        ++count;
+    }
+    return count;
+}
+
+std::uint32_t packet_id_forward_distance(
+    std::uint32_t from,
+    std::uint32_t to,
+    std::uint32_t max_packet_id) noexcept {
+    return to >= from ? to - from : max_packet_id - from + to;
+}
+
+std::uint32_t packet_id_window_size(std::uint32_t max_packet_id) noexcept {
+    if (max_packet_id <= 1U) {
+        return 1U;
+    }
+    return std::min(server_update_packet_loss_window, max_packet_id / 2U);
+}
+
+std::uint64_t low_bit_mask(std::uint32_t bit_count) noexcept {
+    return bit_count >= 64U ? std::numeric_limits<std::uint64_t>::max() : ((std::uint64_t{1} << bit_count) - 1U);
 }
 
 bool all_zero(const SyncComponentOps::QuantizedBytes& bytes) {
@@ -582,6 +610,7 @@ bool ReplicationClient::receive(ecs::Registry& registry, BitBuffer packet) {
         const bool applied = apply_update(registry, packet, packet_id, frame, record_count);
         if (applied) {
             connection_state_ = ReplicationClientConnectionState::Ready;
+            record_server_packet_sequence(packet_id);
             record_update_timing(frame, receive_frame_, playback_frame_);
         }
         return applied;
@@ -620,6 +649,7 @@ bool ReplicationClient::receive(
         const bool applied = apply_update(registry, packet, packet_id, frame, record_count);
         if (applied) {
             connection_state_ = ReplicationClientConnectionState::Ready;
+            record_server_packet_sequence(packet_id);
             record_update_timing(frame, receive_frame, playback_frame);
         }
         return applied;
@@ -2024,6 +2054,68 @@ void ReplicationClient::remember_baseline(EntityState& state) {
 
 void ReplicationClient::queue_ack(std::uint32_t packet_id) {
     pending_acks_.push_back(packet_id);
+}
+
+void ReplicationClient::record_server_packet_sequence(std::uint32_t packet_id) noexcept {
+    const std::size_t packet_id_bits = configured_packet_id_bits(options_);
+    const std::uint32_t max_packet_id = protocol::packet_id_mask(packet_id_bits);
+    if (packet_id == 0U || packet_id > max_packet_id) {
+        return;
+    }
+
+    ++timing_stats_.server_update_packets_received;
+
+    const std::uint32_t window_size = packet_id_window_size(max_packet_id);
+    if (!has_server_update_packet_window_) {
+        highest_server_update_packet_id_ = packet_id;
+        server_update_packet_window_mask_ = 1U;
+        server_update_packet_window_span_ = 1U;
+        has_server_update_packet_window_ = true;
+    } else {
+        const std::uint32_t forward_distance =
+            packet_id_forward_distance(highest_server_update_packet_id_, packet_id, max_packet_id);
+        const std::uint32_t backward_distance =
+            packet_id_forward_distance(packet_id, highest_server_update_packet_id_, max_packet_id);
+
+        if (forward_distance != 0U && forward_distance <= backward_distance) {
+            const std::uint32_t new_span =
+                std::min(window_size, server_update_packet_window_span_ + forward_distance);
+            const std::uint32_t finalized_count =
+                server_update_packet_window_span_ + forward_distance - new_span;
+
+            if (finalized_count != 0U) {
+                std::uint32_t finalized_received = 0;
+                if (forward_distance < 64U) {
+                    const std::uint32_t retained_old_count =
+                        new_span > forward_distance ? new_span - forward_distance : 0U;
+                    const std::uint64_t retained_old_mask = low_bit_mask(retained_old_count);
+                    finalized_received =
+                        count_bits(server_update_packet_window_mask_ & ~retained_old_mask);
+                } else {
+                    finalized_received = count_bits(server_update_packet_window_mask_);
+                }
+                timing_stats_.server_update_packets_missing += finalized_count - finalized_received;
+            }
+
+            server_update_packet_window_mask_ =
+                forward_distance >= 64U ? 0U : (server_update_packet_window_mask_ << forward_distance);
+            server_update_packet_window_mask_ |= 1U;
+            server_update_packet_window_mask_ &= low_bit_mask(window_size);
+            server_update_packet_window_span_ = new_span;
+            highest_server_update_packet_id_ = packet_id;
+        } else {
+            ++timing_stats_.server_update_packets_reordered_or_duplicate;
+            if (backward_distance < server_update_packet_window_span_ && backward_distance < 64U) {
+                server_update_packet_window_mask_ |= std::uint64_t{1} << backward_distance;
+            }
+        }
+    }
+
+    const std::uint64_t total =
+        timing_stats_.server_update_packets_received + timing_stats_.server_update_packets_missing;
+    timing_stats_.server_update_packet_loss = total == 0U
+        ? 0.0f
+        : static_cast<float>(timing_stats_.server_update_packets_missing) / static_cast<float>(total);
 }
 
 void ReplicationClient::advance_control_time_to(SyncFrame receive_frame) noexcept {

@@ -109,6 +109,10 @@ struct ReplicationClientTimingStats {
     SyncFrame target_interpolation_buffer_frames = 0;
     SyncFrame current_interpolation_buffer_frames = 0;
     float time_dilation = 1.0f;
+    std::uint64_t server_update_packets_received = 0;
+    std::uint64_t server_update_packets_missing = 0;
+    std::uint64_t server_update_packets_reordered_or_duplicate = 0;
+    float server_update_packet_loss = 0.0f;
 };
 
 class ReplicationClient {
@@ -296,6 +300,7 @@ private:
         ecs::Entity component) const;
     void remember_baseline(EntityState& state);
     void queue_ack(std::uint32_t packet_id);
+    void record_server_packet_sequence(std::uint32_t packet_id) noexcept;
     void record_update_timing(SyncFrame server_frame, SyncFrame receive_frame, SyncFrame playback_frame) noexcept;
     void record_ping_sample(float latency_frames) noexcept;
     void advance_control_time_to(SyncFrame receive_frame) noexcept;
@@ -343,6 +348,10 @@ private:
     SyncFrame last_applied_buffered_frame_ = 0;
     bool has_applied_buffered_frame_ = false;
     bool has_display_target_frame_ = false;
+    std::uint32_t highest_server_update_packet_id_ = 0;
+    std::uint64_t server_update_packet_window_mask_ = 0;
+    std::uint32_t server_update_packet_window_span_ = 0;
+    bool has_server_update_packet_window_ = false;
 };
 
 template <std::size_t NetworkEntityIdTier0Bits = protocol::default_network_entity_id_tier0_bits>

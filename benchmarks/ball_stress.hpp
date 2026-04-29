@@ -245,6 +245,10 @@ struct ClientTimingSummary {
     SyncFrame max_desired_interpolation_buffer_frames = 0;
     SyncFrame max_target_interpolation_buffer_frames = 0;
     SyncFrame max_current_interpolation_buffer_frames = 0;
+    std::uint64_t server_update_packets_received = 0;
+    std::uint64_t server_update_packets_missing = 0;
+    std::uint64_t server_update_packets_reordered_or_duplicate = 0;
+    double server_update_packet_loss = 0.0;
 };
 
 struct StressReport {
@@ -1205,6 +1209,10 @@ inline StressReport run_stress(const StressConfig& input_config) {
         report.client_timing.max_current_interpolation_buffer_frames = std::max(
             report.client_timing.max_current_interpolation_buffer_frames,
             timing.current_interpolation_buffer_frames);
+        report.client_timing.server_update_packets_received += timing.server_update_packets_received;
+        report.client_timing.server_update_packets_missing += timing.server_update_packets_missing;
+        report.client_timing.server_update_packets_reordered_or_duplicate +=
+            timing.server_update_packets_reordered_or_duplicate;
     }
     if (!clients.empty()) {
         report.client_timing.average_latency_frames /= static_cast<double>(clients.size());
@@ -1212,6 +1220,13 @@ inline StressReport run_stress(const StressConfig& input_config) {
         report.client_timing.average_measured_interpolation_buffer_frames /= static_cast<double>(clients.size());
         report.client_timing.average_time_dilation /= static_cast<double>(clients.size());
     }
+    const std::uint64_t server_update_packet_total =
+        report.client_timing.server_update_packets_received +
+        report.client_timing.server_update_packets_missing;
+    report.client_timing.server_update_packet_loss = server_update_packet_total == 0U
+        ? 0.0
+        : static_cast<double>(report.client_timing.server_update_packets_missing) /
+            static_cast<double>(server_update_packet_total);
     report.live_balls = static_cast<std::uint32_t>(balls.size());
     report.ticks = total_ticks;
     return report;
@@ -1308,7 +1323,12 @@ inline void write_report_text(std::ostream& out, const StressReport& report) {
         << " desired_interpolation_buffer_frames="
         << report.client_timing.max_desired_interpolation_buffer_frames
         << " target_interpolation_buffer_frames=" << report.client_timing.max_target_interpolation_buffer_frames
-        << " current_interpolation_buffer_frames=" << report.client_timing.max_current_interpolation_buffer_frames << '\n';
+        << " current_interpolation_buffer_frames=" << report.client_timing.max_current_interpolation_buffer_frames
+        << " server_update_packets_received=" << report.client_timing.server_update_packets_received
+        << " server_update_packets_missing=" << report.client_timing.server_update_packets_missing
+        << " server_update_packets_reordered_or_duplicate="
+        << report.client_timing.server_update_packets_reordered_or_duplicate
+        << " server_update_packet_loss=" << report.client_timing.server_update_packet_loss << '\n';
     out << "poison added_components=" << report.poison_components_added
         << " removed_components=" << report.poison_components_removed
         << " ticks=" << report.poison_ticks << '\n';
@@ -1433,7 +1453,15 @@ inline void write_report_json(std::ostream& out, const StressReport& report) {
         << ",\"target_interpolation_buffer_frames\":"
         << report.client_timing.max_target_interpolation_buffer_frames
         << ",\"current_interpolation_buffer_frames\":"
-        << report.client_timing.max_current_interpolation_buffer_frames << "},";
+        << report.client_timing.max_current_interpolation_buffer_frames
+        << ",\"server_update_packets_received\":"
+        << report.client_timing.server_update_packets_received
+        << ",\"server_update_packets_missing\":"
+        << report.client_timing.server_update_packets_missing
+        << ",\"server_update_packets_reordered_or_duplicate\":"
+        << report.client_timing.server_update_packets_reordered_or_duplicate
+        << ",\"server_update_packet_loss\":"
+        << report.client_timing.server_update_packet_loss << "},";
     out << "\"live_balls\":" << report.live_balls << ",";
     out << "\"spawned\":" << report.spawned << ",";
     out << "\"despawned\":" << report.despawned << ",";

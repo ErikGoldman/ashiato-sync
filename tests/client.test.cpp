@@ -165,11 +165,12 @@ kage::sync::ClientEntityNetworkId test_client_entity_network_id(
 kage::sync::BitBuffer make_position_packet(
     kage::sync::SyncFrame frame,
     const std::vector<std::pair<ecs::Entity, Position>>& records,
-    std::size_t sync_slot_count = 2U) {
+    std::size_t sync_slot_count = 2U,
+    std::uint32_t packet_id = 0U) {
     kage::sync::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
-    packet.push_bits(frame, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(packet_id == 0U ? frame : packet_id, kage::sync::protocol::server_packet_id_bits);
     packet.push_bits(static_cast<std::uint16_t>(records.size()), 16U);
     for (const auto& record : records) {
         packet.push_bool(false);
@@ -2441,6 +2442,184 @@ TEST_CASE("frame-aware receive records latency and emits dilation without jumpin
     REQUIRE(client.timing_stats().jitter_frames == Catch::Approx(0.0f));
     REQUIRE(client.timing_stats().target_interpolation_buffer_frames == 4);
     REQUIRE(client.options().interpolation_buffer_frames == 1);
+}
+
+TEST_CASE("replication client delays server update packet loss until gaps leave the receive window") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client;
+    const ecs::Entity server_entity{42};
+
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}, 2U, 1U),
+        1));
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(2, {{server_entity, Position{3.0f, 4.0f}}}, 2U, 3U),
+        2));
+
+    const kage::sync::ReplicationClientTimingStats stats = client.timing_stats();
+    REQUIRE(stats.server_update_packets_received == 2);
+    REQUIRE(stats.server_update_packets_missing == 0);
+    REQUIRE(stats.server_update_packets_reordered_or_duplicate == 0);
+    REQUIRE(stats.server_update_packet_loss == Catch::Approx(0.0f));
+}
+
+TEST_CASE("replication client fills packet loss gaps from reordered server update packets") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client;
+    const ecs::Entity first_entity{42};
+    const ecs::Entity second_entity{43};
+    const ecs::Entity reordered_entity{44};
+
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(1, {{first_entity, Position{1.0f, 2.0f}}}, 2U, 1U),
+        1));
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(3, {{second_entity, Position{3.0f, 4.0f}}}, 2U, 3U),
+        3));
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(4, {{reordered_entity, Position{2.0f, 3.0f}}}, 2U, 2U),
+        4));
+
+    const kage::sync::ReplicationClientTimingStats stats = client.timing_stats();
+    REQUIRE(stats.server_update_packets_received == 3);
+    REQUIRE(stats.server_update_packets_missing == 0);
+    REQUIRE(stats.server_update_packets_reordered_or_duplicate == 1);
+    REQUIRE(stats.server_update_packet_loss == Catch::Approx(0.0f));
+}
+
+TEST_CASE("replication client counts packet loss when gaps leave the receive window") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client;
+    const ecs::Entity server_entity{42};
+
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}, 2U, 1U),
+        1));
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(3, {{server_entity, Position{3.0f, 4.0f}}}, 2U, 3U),
+        3));
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(66, {{server_entity, Position{6.0f, 6.0f}}}, 2U, 66U),
+        66));
+
+    const kage::sync::ReplicationClientTimingStats stats = client.timing_stats();
+    REQUIRE(stats.server_update_packets_received == 3);
+    REQUIRE(stats.server_update_packets_missing == 1);
+    REQUIRE(stats.server_update_packets_reordered_or_duplicate == 0);
+    REQUIRE(stats.server_update_packet_loss == Catch::Approx(1.0f / 4.0f));
+}
+
+TEST_CASE("replication client treats duplicate server update packet ids as duplicate without loss") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client;
+    const ecs::Entity first_entity{42};
+    const ecs::Entity duplicate_packet_id_entity{43};
+
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(1, {{first_entity, Position{1.0f, 2.0f}}}, 2U, 1U),
+        1));
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(2, {{duplicate_packet_id_entity, Position{1.0f, 2.0f}}}, 2U, 1U),
+        2));
+
+    const kage::sync::ReplicationClientTimingStats stats = client.timing_stats();
+    REQUIRE(stats.server_update_packets_received == 2);
+    REQUIRE(stats.server_update_packets_missing == 0);
+    REQUIRE(stats.server_update_packets_reordered_or_duplicate == 1);
+    REQUIRE(stats.server_update_packet_loss == Catch::Approx(0.0f));
+}
+
+TEST_CASE("replication client fills packet loss gaps from reordered wrapped packet ids") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client;
+    const ecs::Entity first_entity{42};
+    const ecs::Entity second_entity{43};
+    const ecs::Entity reordered_entity{44};
+
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(1, {{first_entity, Position{1.0f, 2.0f}}}, 2U, 254U),
+        1));
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(2, {{second_entity, Position{3.0f, 4.0f}}}, 2U, 1U),
+        2));
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(3, {{reordered_entity, Position{2.0f, 3.0f}}}, 2U, 255U),
+        3));
+
+    const kage::sync::ReplicationClientTimingStats stats = client.timing_stats();
+    REQUIRE(stats.server_update_packets_received == 3);
+    REQUIRE(stats.server_update_packets_missing == 0);
+    REQUIRE(stats.server_update_packets_reordered_or_duplicate == 1);
+    REQUIRE(stats.server_update_packet_loss == Catch::Approx(0.0f));
+}
+
+TEST_CASE("replication client does not undo confirmed loss for packets older than the receive window") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client;
+    const ecs::Entity first_entity{42};
+    const ecs::Entity second_entity{43};
+    const ecs::Entity far_entity{44};
+    const ecs::Entity late_entity{45};
+
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(1, {{first_entity, Position{1.0f, 2.0f}}}, 2U, 1U),
+        1));
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(3, {{second_entity, Position{3.0f, 4.0f}}}, 2U, 3U),
+        3));
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(66, {{far_entity, Position{6.0f, 6.0f}}}, 2U, 66U),
+        66));
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(67, {{late_entity, Position{2.0f, 3.0f}}}, 2U, 2U),
+        67));
+
+    const kage::sync::ReplicationClientTimingStats stats = client.timing_stats();
+    REQUIRE(stats.server_update_packets_received == 4);
+    REQUIRE(stats.server_update_packets_missing == 1);
+    REQUIRE(stats.server_update_packets_reordered_or_duplicate == 1);
+    REQUIRE(stats.server_update_packet_loss == Catch::Approx(1.0f / 5.0f));
 }
 
 TEST_CASE("auto interpolation buffer moves one frame when dilation creates headroom") {
