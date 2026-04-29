@@ -53,7 +53,10 @@ kage::sync::BitBuffer make_connect_request(const std::string& token) {
     return packet;
 }
 
-ServerUpdatePacket read_server_update(kage::sync::BitBuffer packet, std::size_t sync_slot_count = 2U) {
+ServerUpdatePacket read_server_update(
+    kage::sync::BitBuffer packet,
+    std::size_t sync_slot_count = 2U,
+    std::size_t component_one_payload_bits = 17U) {
     ServerUpdatePacket update;
     update.message = static_cast<std::uint8_t>(packet.read_bits(8U));
     update.frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
@@ -70,7 +73,6 @@ ServerUpdatePacket read_server_update(kage::sync::BitBuffer packet, std::size_t 
         }
         entity.full = packet.read_bool();
         if (entity.full) {
-            entity.entity = ecs::Entity{packet.read_unsigned_bits(64U)};
             entity.archetype =
                 kage::sync::SyncArchetypeId{static_cast<std::uint32_t>(packet.read_bits(32U))};
             const bool uses_presence_mask = packet.read_bool();
@@ -100,7 +102,7 @@ ServerUpdatePacket read_server_update(kage::sync::BitBuffer packet, std::size_t 
                 }
                 std::size_t payload_bits = packet.remaining_bits();
                 if (entity_index + 1U < entity_count || component + 1U < component_count) {
-                    payload_bits = record.component_index == 1 ? 17U : sizeof(Health) * 8U;
+                    payload_bits = record.component_index == 1 ? component_one_payload_bits : sizeof(Health) * 8U;
                 }
                 for (std::size_t bit = 0; bit < payload_bits; ++bit) {
                     record.payload.push_bool(packet.read_bool());
@@ -115,7 +117,8 @@ ServerUpdatePacket read_server_update(kage::sync::BitBuffer packet, std::size_t 
                 if (position_changed) {
                     ComponentRecord record;
                     record.component_index = 1;
-                    const std::size_t payload_bits = packet.remaining_bits();
+                    const std::size_t payload_bits =
+                        entity_index + 1U < entity_count ? component_one_payload_bits : packet.remaining_bits();
                     for (std::size_t bit = 0; bit < payload_bits; ++bit) {
                     record.payload.push_bool(packet.read_bool());
                 }
@@ -232,6 +235,14 @@ TEST_CASE("server connect response resends until client id is ACKed") {
     std::string error;
     REQUIRE(kage::sync::protocol::read_string(sent.back().second, error));
     REQUIRE(error == "bad token");
+}
+
+TEST_CASE("replication client and server templates configure network id tier width") {
+    kage::sync::ReplicationClientT<8> client;
+    REQUIRE(client.options().network_entity_id_tier0_bits == 8U);
+
+    kage::sync::ReplicationServerT<8> server;
+    REQUIRE(server.options().network_entity_id_tier0_bits == 8U);
 }
 
 TEST_CASE("replication server rejects malformed ACK packets") {
@@ -503,7 +514,7 @@ TEST_CASE("replication server applies bandwidth limits to actual serialized byte
 
     std::vector<kage::sync::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
-    options.bandwidth_limit_bytes_per_tick = 34;
+    options.bandwidth_limit_bytes_per_tick = 17;
     options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
         payloads.push_back(payload);
     };
@@ -566,8 +577,8 @@ TEST_CASE("replication server filters owner-only serialized components") {
     server.tick(registry);
 
     REQUIRE(sends.size() == 2);
-    REQUIRE(sends[0] == std::pair<kage::sync::ClientId, std::size_t>{1, 25});
-    REQUIRE(sends[1] == std::pair<kage::sync::ClientId, std::size_t>{2, 29});
+    REQUIRE(sends[0] == std::pair<kage::sync::ClientId, std::size_t>{1, 17});
+    REQUIRE(sends[1] == std::pair<kage::sync::ClientId, std::size_t>{2, 21});
 }
 
 TEST_CASE("replication server serializes compact synced tag masks per client") {
@@ -615,7 +626,6 @@ TEST_CASE("replication server serializes compact synced tag masks per client") {
         REQUIRE(kage::sync::protocol::read_network_entity_id(packet, network_id));
         REQUIRE(network_id != 0);
         REQUIRE(packet.read_bool());
-        REQUIRE(ecs::Entity{packet.read_unsigned_bits(64U)} == entity);
         REQUIRE(kage::sync::SyncArchetypeId{static_cast<std::uint32_t>(packet.read_bits(32U))} == archetype);
         REQUIRE(packet.read_bool());
         REQUIRE(packet.read_unsigned_bits(2U) == 3U);
@@ -679,7 +689,7 @@ TEST_CASE("replication server packs entity records up to the configured mtu") {
     server.tick(registry);
 
     REQUIRE(payloads.size() == 1);
-    REQUIRE(payloads[0].byte_size() == 42);
+    REQUIRE(payloads[0].byte_size() == 25);
     const ServerUpdatePacket update = read_server_update(payloads[0]);
     REQUIRE(update.entities.size() == 2);
 }
@@ -700,7 +710,7 @@ TEST_CASE("replication server splits packed updates at the mtu boundary") {
     std::vector<kage::sync::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.mtu_bytes = 34;
+    options.mtu_bytes = 17;
     options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
         payloads.push_back(payload);
     };
@@ -715,7 +725,7 @@ TEST_CASE("replication server splits packed updates at the mtu boundary") {
     REQUIRE(payloads.size() == 2);
     for (const kage::sync::BitBuffer& payload : payloads) {
         REQUIRE(payload.byte_size() <= options.mtu_bytes);
-        REQUIRE(payload.byte_size() == 25);
+        REQUIRE(payload.byte_size() == 17);
         REQUIRE(read_server_update(payload).entities.size() == 1);
     }
 }
@@ -735,8 +745,8 @@ TEST_CASE("replication server interleaves pending destroys with bandwidth-limite
 
     std::vector<kage::sync::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
-    options.bandwidth_limit_bytes_per_tick = 26;
-    options.mtu_bytes = 26;
+    options.bandwidth_limit_bytes_per_tick = 17;
+    options.mtu_bytes = 17;
     options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
         payloads.push_back(payload);
     };
@@ -755,7 +765,6 @@ TEST_CASE("replication server interleaves pending destroys with bandwidth-limite
     ServerUpdatePacket update = read_server_update(payloads.back());
     REQUIRE(update.entities.size() == 1);
     REQUIRE_FALSE(update.entities[0].destroy);
-    REQUIRE(update.entities[0].entity == live);
     payloads.clear();
 
     server.tick(registry);
@@ -808,7 +817,7 @@ TEST_CASE("replication server resends pending destroys until ACKed") {
     REQUIRE(payloads.empty());
 }
 
-TEST_CASE("replication server reuses global network ids after every destroy ACK") {
+TEST_CASE("replication server reuses client-local network ids after each client's destroy ACK") {
     ecs::Registry registry;
     const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
 
@@ -828,26 +837,14 @@ TEST_CASE("replication server reuses global network ids after every destroy ACK"
         REQUIRE(start_sync(registry, entity, archetype));
         return entity;
     };
-    auto update_for = [&](kage::sync::ClientId client, ecs::Entity entity) {
+    auto update_for = [&](kage::sync::ClientId client) {
         for (const auto& sent : payloads) {
             if (sent.first != client) {
                 continue;
             }
-            ServerUpdatePacket update = read_server_update(sent.second);
-            const auto found = std::find_if(update.entities.begin(), update.entities.end(), [&](const EntityRecord& record) {
-                return record.entity == entity;
-            });
-            if (found != update.entities.end()) {
-                return update;
-            }
-        }
-        return ServerUpdatePacket{};
-    };
-    auto update_for_any_client = [&](ecs::Entity entity) {
-        for (const auto& sent : payloads) {
-            ServerUpdatePacket update = read_server_update(sent.second);
-            const auto found = std::find_if(update.entities.begin(), update.entities.end(), [&](const EntityRecord& record) {
-                return record.entity == entity;
+            ServerUpdatePacket update = read_server_update(sent.second, 2U, sizeof(kage_sync_tests::Position) * 8U);
+            const auto found = std::find_if(update.entities.begin(), update.entities.end(), [](const EntityRecord& record) {
+                return !record.destroy;
             });
             if (found != update.entities.end()) {
                 return update;
@@ -860,7 +857,7 @@ TEST_CASE("replication server reuses global network ids after every destroy ACK"
             if (sent.first != client) {
                 continue;
             }
-            ServerUpdatePacket update = read_server_update(sent.second);
+            ServerUpdatePacket update = read_server_update(sent.second, 2U, sizeof(kage_sync_tests::Position) * 8U);
             const auto found = std::find_if(update.entities.begin(), update.entities.end(), [&](const EntityRecord& record) {
                 return record.destroy && record.network_id == network_id;
             });
@@ -878,7 +875,7 @@ TEST_CASE("replication server reuses global network ids after every destroy ACK"
 
     const ecs::Entity first = spawn(1.0f);
     server.tick(registry);
-    ServerUpdatePacket first_update = update_for(1, first);
+    ServerUpdatePacket first_update = update_for(1);
     REQUIRE(first_update.entities.size() == 1);
     const std::uint32_t reusable_network_id = first_update.entities[0].network_id;
     REQUIRE(reusable_network_id != 0);
@@ -893,27 +890,43 @@ TEST_CASE("replication server reuses global network ids after every destroy ACK"
     REQUIRE(server.process_packet(1, write_ack_packet(client_one_destroy.packet_id)));
 
     payloads.clear();
-    const ecs::Entity second = spawn(2.0f);
+    spawn(2.0f);
     server.tick(registry);
-    ServerUpdatePacket second_update = update_for(1, second);
+    ServerUpdatePacket second_update = update_for(1);
     REQUIRE(second_update.entities.size() == 1);
-    REQUIRE(second_update.entities[0].network_id != reusable_network_id);
+    REQUIRE(second_update.entities[0].network_id == reusable_network_id);
+    ServerUpdatePacket client_two_second_update = update_for(2);
+    REQUIRE(client_two_second_update.entities.size() == 2);
+    const auto client_two_second = std::find_if(
+        client_two_second_update.entities.begin(),
+        client_two_second_update.entities.end(),
+        [](const EntityRecord& record) {
+            return !record.destroy;
+        });
+    REQUIRE(client_two_second != client_two_second_update.entities.end());
+    REQUIRE(client_two_second->network_id != reusable_network_id);
 
     for (const auto& sent : payloads) {
         REQUIRE(server.process_packet(sent.first, write_ack_packet(packet_id(sent.second))));
     }
     payloads.clear();
-    const ecs::Entity third = spawn(3.0f);
+    spawn(3.0f);
     server.tick(registry);
-    ServerUpdatePacket third_update = update_for_any_client(third);
+    ServerUpdatePacket third_update = update_for(2);
     const auto third_record = std::find_if(
         third_update.entities.begin(),
         third_update.entities.end(),
-        [&](const EntityRecord& record) {
-            return record.entity == third;
+        [](const EntityRecord& record) {
+            return !record.destroy;
         });
     REQUIRE(third_record != third_update.entities.end());
-    REQUIRE(third_record->network_id == reusable_network_id);
+    const bool saw_reused_network_id = std::any_of(
+        third_update.entities.begin(),
+        third_update.entities.end(),
+        [reusable_network_id](const EntityRecord& record) {
+            return !record.destroy && record.network_id == reusable_network_id;
+        });
+    REQUIRE(saw_reused_network_id);
 }
 
 TEST_CASE("replication server reuses network ids immediately when no clients have pending destroys") {
@@ -943,7 +956,6 @@ TEST_CASE("replication server reuses network ids immediately when no clients hav
     REQUIRE(payloads.size() == 1);
     const ServerUpdatePacket update = read_server_update(payloads.back());
     REQUIRE(update.entities.size() == 1);
-    REQUIRE(update.entities[0].entity == second);
     REQUIRE(update.entities[0].network_id == 1);
 }
 
@@ -1088,7 +1100,7 @@ TEST_CASE("replication server records bandwidth savings for ACKed delta updates"
     REQUIRE(start_sync(registry, entity, archetype));
 
     server.tick(registry);
-    REQUIRE(payloads.back().byte_size() == 27);
+    REQUIRE(payloads.back().byte_size() == 19);
     REQUIRE(server.acknowledge_entity(1, entity, read_server_update(payloads.back()).frame));
 
     registry.write<BandwidthProbe>(entity) = BandwidthProbe{105};

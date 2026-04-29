@@ -23,8 +23,10 @@ inline constexpr std::uint8_t server_pong_message = 7;
 
 inline constexpr std::size_t default_max_pending_packet_acks_per_client = 255U;
 inline constexpr std::size_t network_entity_id_bits = 32U;
-inline constexpr std::uint32_t network_entity_id_tier0_max = (std::uint32_t{1} << 15U) - 1U;
-inline constexpr std::uint32_t network_entity_id_tier1_max = (std::uint32_t{1} << 23U) - 1U;
+inline constexpr std::size_t default_network_entity_id_tier0_bits = 11U;
+inline constexpr std::size_t network_entity_id_tier1_bits = 23U;
+inline constexpr std::uint32_t network_entity_id_tier1_max =
+    (std::uint32_t{1} << network_entity_id_tier1_bits) - 1U;
 inline constexpr std::size_t client_ack_header_bits = 8U + 16U;
 inline constexpr std::size_t client_connect_ack_bits = 8U + 64U;
 inline constexpr std::size_t client_ping_bits = 8U + 32U + 32U;
@@ -73,9 +75,20 @@ inline constexpr std::size_t server_packet_id_bits =
 inline constexpr std::size_t server_update_header_bits = 8U + 32U + server_packet_id_bits + 16U;
 inline constexpr std::size_t client_ack_record_bits = server_packet_id_bits;
 
-inline constexpr std::size_t network_entity_id_encoded_bits(std::uint32_t network_id) noexcept {
-    if (network_id <= network_entity_id_tier0_max) {
-        return 16U;
+inline constexpr bool valid_network_entity_id_tier0_bits(std::size_t tier0_bits) noexcept {
+    return tier0_bits > 0U && tier0_bits < network_entity_id_tier1_bits;
+}
+
+inline constexpr std::uint32_t network_entity_id_tier0_max(
+    std::size_t tier0_bits = default_network_entity_id_tier0_bits) noexcept {
+    return (std::uint32_t{1} << tier0_bits) - 1U;
+}
+
+inline constexpr std::size_t network_entity_id_encoded_bits(
+    std::uint32_t network_id,
+    std::size_t tier0_bits = default_network_entity_id_tier0_bits) noexcept {
+    if (network_id <= network_entity_id_tier0_max(tier0_bits)) {
+        return tier0_bits + 1U;
     }
     if (network_id <= network_entity_id_tier1_max) {
         return 25U;
@@ -83,31 +96,42 @@ inline constexpr std::size_t network_entity_id_encoded_bits(std::uint32_t networ
     return 34U;
 }
 
-inline void write_network_entity_id(BitBuffer& out, std::uint32_t network_id) {
-    out.push_bits(network_id & network_entity_id_tier0_max, 15U);
-    const bool needs_tier1 = network_id > network_entity_id_tier0_max;
+inline void write_network_entity_id(
+    BitBuffer& out,
+    std::uint32_t network_id,
+    std::size_t tier0_bits = default_network_entity_id_tier0_bits) {
+    const std::uint32_t tier0_max = network_entity_id_tier0_max(tier0_bits);
+    out.push_bits(network_id & tier0_max, tier0_bits);
+    const bool needs_tier1 = network_id > tier0_max;
     out.push_bool(needs_tier1);
     if (!needs_tier1) {
         return;
     }
 
-    out.push_bits((network_id >> 15U) & 0xffU, 8U);
+    out.push_bits(
+        (network_id >> tier0_bits) &
+            ((std::uint32_t{1} << (network_entity_id_tier1_bits - tier0_bits)) - 1U),
+        network_entity_id_tier1_bits - tier0_bits);
     const bool needs_tier2 = network_id > network_entity_id_tier1_max;
     out.push_bool(needs_tier2);
     if (needs_tier2) {
-        out.push_bits(network_id >> 23U, 9U);
+        out.push_bits(network_id >> network_entity_id_tier1_bits, 9U);
     }
 }
 
-inline bool read_network_entity_id(BitBuffer& in, std::uint32_t& network_id) {
-    network_id = static_cast<std::uint32_t>(in.read_bits(15U));
+inline bool read_network_entity_id(
+    BitBuffer& in,
+    std::uint32_t& network_id,
+    std::size_t tier0_bits = default_network_entity_id_tier0_bits) {
+    network_id = static_cast<std::uint32_t>(in.read_bits(tier0_bits));
     if (!in.read_bool()) {
         return true;
     }
 
-    network_id |= static_cast<std::uint32_t>(in.read_bits(8U)) << 15U;
+    network_id |=
+        static_cast<std::uint32_t>(in.read_bits(network_entity_id_tier1_bits - tier0_bits)) << tier0_bits;
     if (in.read_bool()) {
-        network_id |= static_cast<std::uint32_t>(in.read_bits(9U)) << 23U;
+        network_id |= static_cast<std::uint32_t>(in.read_bits(9U)) << network_entity_id_tier1_bits;
     }
     return true;
 }

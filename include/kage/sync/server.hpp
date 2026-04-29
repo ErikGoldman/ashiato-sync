@@ -7,6 +7,7 @@
 #include <functional>
 #include <limits>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace kage::sync {
@@ -47,7 +48,6 @@ private:
     struct ReplicatedSlot {
         ecs::Entity entity;
         SyncArchetypeId archetype;
-        std::uint32_t network_id = 0;
         std::vector<std::uint32_t> quantized_frames;
         std::vector<std::uint64_t> component_dirty_generations;
         std::uint32_t same_frame_quantized_frame = invalid_quantized_frame_id;
@@ -73,6 +73,9 @@ private:
         };
 
         std::uint32_t baseline = invalid_quantized_frame_id;
+        std::uint32_t network_id = 0;
+        std::uint32_t network_version = 0;
+        bool has_network_id = false;
         std::vector<PendingQuantizedFrame> pending;
     };
 
@@ -81,6 +84,7 @@ private:
         SyncFrame frame = 0;
         std::uint64_t reset_epoch = 0;
         std::uint32_t network_id = 0;
+        std::uint32_t network_version = 0;
     };
 
     struct PacketAckRecord {
@@ -106,6 +110,14 @@ private:
         std::vector<ClientEntityState> entity_states;
         std::vector<ClientDestroyState> pending_destroys;
         std::vector<PendingPacketAck> pending_packet_acks;
+        struct NetworkIdEntry {
+            std::uint32_t slot_or_next_free = 0;
+            std::uint32_t version = 0;
+            bool active = false;
+            bool pending_destroy = false;
+        };
+        std::vector<NetworkIdEntry> network_ids;
+        std::uint32_t free_network_id = 0;
     };
 
     using EntityKey = std::uint64_t;
@@ -133,8 +145,9 @@ private:
     void deactivate_slot(std::uint32_t slot);
     void deactivate_entity_index(std::uint32_t entity_index);
     void remove_slot_from_client_orders(std::uint32_t slot);
-    std::uint32_t allocate_network_id();
-    void try_reclaim_network_id(std::uint32_t network_id);
+    std::uint32_t allocate_network_id(ClientState& client, std::uint32_t slot);
+    void free_network_id(ClientState& client, std::uint32_t network_id);
+    std::uint32_t network_id_for_slot(ClientState& client, std::uint32_t slot);
     bool slot_is_replicable(const ecs::Registry& registry, std::uint32_t slot) const;
     void capture_dirty_components(const ecs::Registry& registry, const SyncSettings& settings);
     void mark_dirty_component(const SyncSettings& settings, std::uint32_t slot, ecs::Entity component);
@@ -177,10 +190,10 @@ private:
     void write_entity_record(
         const ecs::Registry& registry,
         const SyncSettings& settings,
-        const ClientState& client,
+        ClientState& client,
         std::uint32_t slot,
         const QuantizedFrame& quantized_frame,
-        BitBuffer& out) const;
+        BitBuffer& out);
     void send_packet(
         ClientState& client,
         SyncFrame frame,
@@ -198,8 +211,6 @@ private:
     ReplicationServerOptions options_;
     std::vector<ReplicatedSlot> replicated_;
     std::vector<std::uint32_t> free_replicated_slots_;
-    std::vector<std::uint32_t> free_network_ids_;
-    std::vector<std::uint8_t> network_id_reclaim_pending_;
     std::vector<QuantizedFrame> quantized_frames_;
     std::vector<std::uint32_t> free_quantized_frames_;
     std::unordered_map<EntityKey, std::uint32_t> entity_to_slot_;
@@ -208,10 +219,28 @@ private:
     std::unordered_map<ClientId, std::size_t> client_to_index_;
     std::unordered_map<ClientId, std::size_t> peer_to_index_;
     std::size_t active_replicated_count_ = 0;
-    std::uint32_t next_network_id_ = 1;
     ClientId next_connect_client_id_ = 1;
     SyncFrame frame_ = 0;
     bool replicated_initialized_ = false;
+};
+
+template <std::size_t NetworkEntityIdTier0Bits = protocol::default_network_entity_id_tier0_bits>
+class ReplicationServerT : public ReplicationServer {
+    static_assert(
+        protocol::valid_network_entity_id_tier0_bits(NetworkEntityIdTier0Bits),
+        "NetworkEntityIdTier0Bits must be in [1, 22]");
+
+public:
+    static constexpr std::size_t network_entity_id_tier0_bits = NetworkEntityIdTier0Bits;
+
+    explicit ReplicationServerT(ReplicationServerOptions options = {})
+        : ReplicationServer(configure(std::move(options))) {}
+
+private:
+    static ReplicationServerOptions configure(ReplicationServerOptions options) {
+        options.network_entity_id_tier0_bits = NetworkEntityIdTier0Bits;
+        return options;
+    }
 };
 
 }  // namespace kage::sync

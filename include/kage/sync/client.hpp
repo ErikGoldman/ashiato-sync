@@ -8,6 +8,7 @@
 #include <limits>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace kage::sync {
@@ -18,6 +19,7 @@ struct ReplicatedComponentUpdate {
 };
 
 struct ReplicatedEntityUpdateView {
+    ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
     ecs::Entity server_entity;
     ecs::Entity local_entity;
     SyncArchetypeId archetype;
@@ -40,6 +42,7 @@ private:
 };
 
 struct DisplayEntitySample {
+    ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
     ecs::Entity server_entity;
     ecs::Entity local_entity;
     SyncArchetypeId archetype;
@@ -94,6 +97,7 @@ struct ReplicationClientOptions {
     std::string connect_token;
     double connect_resend_interval_seconds = 0.25;
     double ping_interval_seconds = 3.0;
+    std::size_t network_entity_id_tier0_bits = protocol::default_network_entity_id_tier0_bits;
 };
 
 struct ReplicationClientTimingStats {
@@ -140,6 +144,8 @@ public:
     std::vector<BitBuffer> drain_packets();
     std::vector<BitBuffer> drain_ack_packets();
     std::size_t pending_ack_count() const noexcept;
+    bool is_alive_network_id(ClientEntityNetworkId network_id) const noexcept;
+    ecs::Entity local_entity(ClientEntityNetworkId network_id) const;
     ClientId client_id() const noexcept {
         return client_id_;
     }
@@ -197,8 +203,8 @@ private:
         std::vector<BufferedFrame> buffered_frames;
         std::uint64_t applied_present_mask = 0;
         std::vector<ComponentError> snap_errors;
-        std::uint64_t server_entity = 0;
-        std::uint32_t network_id = 0;
+        ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
+        std::uint32_t wire_network_id = 0;
         std::size_t active_index = invalid_ack_index;
         std::size_t buffered_index = invalid_ack_index;
         std::size_t snap_error_index = invalid_ack_index;
@@ -206,15 +212,20 @@ private:
 
     EntityState* find_entity_state(ecs::Entity server_entity) noexcept;
     const EntityState* find_entity_state(ecs::Entity server_entity) const noexcept;
+    EntityState* find_entity_state(ClientEntityNetworkId network_id) noexcept;
+    const EntityState* find_entity_state(ClientEntityNetworkId network_id) const noexcept;
     EntityState* find_entity_state(std::uint32_t network_id) noexcept;
     const EntityState* find_entity_state(std::uint32_t network_id) const noexcept;
-    EntityState* ensure_entity_state(ecs::Registry& registry, ecs::Entity server_entity, std::uint32_t network_id);
+    EntityState* ensure_entity_state(
+        ecs::Registry& registry,
+        ClientEntityNetworkId network_id,
+        std::uint32_t wire_network_id);
     void erase_entity_state(ecs::Registry& registry, std::uint32_t entity_index, bool destroy_local);
     void set_buffered_membership(std::uint32_t entity_index, bool active);
     void set_snap_error_membership(std::uint32_t entity_index, bool active);
     void sync_entity_memberships(EntityState& state);
-    bool destroy_tombstone_blocks(ecs::Entity server_entity, SyncFrame frame) const;
-    void record_destroy_tombstone(ecs::Entity server_entity, SyncFrame frame);
+    bool destroy_tombstone_blocks(std::uint32_t wire_network_id, SyncFrame frame) const;
+    void record_destroy_tombstone(std::uint32_t wire_network_id, SyncFrame frame);
     const QuantizedFrameData* find_baseline(const EntityState& state, SyncFrame frame) const noexcept;
     bool apply_update(
         ecs::Registry& registry,
@@ -233,10 +244,10 @@ private:
         ecs::Registry& registry,
         const SyncSettings& settings,
         SyncFrame frame,
-        ecs::Entity server_entity,
+        ClientEntityNetworkId network_id,
         SyncArchetypeId archetype,
         QuantizedFrameData& decoded);
-    bool apply_buffered_destroy(ecs::Registry& registry, SyncFrame frame, ecs::Entity server_entity);
+    bool apply_buffered_destroy(ecs::Registry& registry, SyncFrame frame, ClientEntityNetworkId network_id);
     bool validate_buffered_archetype(const SyncSettings& settings, SyncArchetypeId archetype) const;
     bool fill_buffered_frames(
         const SyncSettings& settings,
@@ -293,6 +304,14 @@ private:
     void drain_connect_packets(std::vector<BitBuffer>& packets);
     void drain_ping_packets(std::vector<BitBuffer>& packets);
     void drain_ack_packets_into(std::vector<BitBuffer>& packets);
+    ClientEntityNetworkId client_entity_network_id_for_wire(std::uint32_t wire_network_id);
+    void advance_wire_network_id_version(std::uint32_t wire_network_id);
+
+    struct WireNetworkIdState {
+        std::uint32_t version = 0;
+        std::uint32_t entity_index = invalid_entity_index;
+        bool alive = false;
+    };
 
     ReplicationClientOptions options_;
     ReplicationClientTimingStats timing_stats_;
@@ -300,10 +319,11 @@ private:
     std::vector<std::uint32_t> active_entities_;
     std::vector<std::uint32_t> buffered_entities_;
     std::vector<std::uint32_t> snap_error_entities_;
-    std::vector<std::uint32_t> network_entity_indices_;
+    std::vector<WireNetworkIdState> wire_network_ids_;
+    std::unordered_map<ClientEntityNetworkId, std::uint32_t> network_entity_indices_;
     std::vector<std::uint32_t> pending_acks_;
     std::unordered_map<std::uint32_t, SyncFrame> pending_pings_;
-    std::unordered_map<std::uint64_t, SyncFrame> destroy_tombstones_;
+    std::unordered_map<std::uint32_t, SyncFrame> destroy_tombstones_;
     DisplaySampleBuffer display_frame_;
     DisplaySampleBuffer display_scratch_;
     std::string connect_error_;
@@ -323,6 +343,25 @@ private:
     SyncFrame last_applied_buffered_frame_ = 0;
     bool has_applied_buffered_frame_ = false;
     bool has_display_target_frame_ = false;
+};
+
+template <std::size_t NetworkEntityIdTier0Bits = protocol::default_network_entity_id_tier0_bits>
+class ReplicationClientT : public ReplicationClient {
+    static_assert(
+        protocol::valid_network_entity_id_tier0_bits(NetworkEntityIdTier0Bits),
+        "NetworkEntityIdTier0Bits must be in [1, 22]");
+
+public:
+    static constexpr std::size_t network_entity_id_tier0_bits = NetworkEntityIdTier0Bits;
+
+    explicit ReplicationClientT(ReplicationClientOptions options = {})
+        : ReplicationClient(configure(std::move(options))) {}
+
+private:
+    static ReplicationClientOptions configure(ReplicationClientOptions options) {
+        options.network_entity_id_tier0_bits = NetworkEntityIdTier0Bits;
+        return options;
+    }
 };
 
 }  // namespace kage::sync

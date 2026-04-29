@@ -94,7 +94,6 @@ UpdatePacket read_update(kage::sync::BitBuffer packet, std::size_t sync_slot_cou
         if (!record.destroy) {
             record.full = packet.read_bool();
             if (record.full) {
-                record.entity = ecs::Entity{packet.read_unsigned_bits(64U)};
                 packet.read_bits(32U);
                 const bool uses_presence_mask = packet.read_bool();
                 const std::size_t sync_slot_bits = kage::sync::protocol::bits_for_range(sync_slot_count);
@@ -156,6 +155,13 @@ std::uint32_t test_network_id(ecs::Entity entity) {
     return ecs::Registry::entity_index(entity) + 1U;
 }
 
+kage::sync::ClientEntityNetworkId test_client_entity_network_id(
+    kage::sync::ClientId client,
+    std::uint32_t wire_network_id,
+    std::uint32_t version = 1U) {
+    return kage::sync::make_client_entity_network_id(client, wire_network_id, version);
+}
+
 kage::sync::BitBuffer make_position_packet(
     kage::sync::SyncFrame frame,
     const std::vector<std::pair<ecs::Entity, Position>>& records,
@@ -169,7 +175,6 @@ kage::sync::BitBuffer make_position_packet(
         packet.push_bool(false);
         kage::sync::protocol::write_network_entity_id(packet, test_network_id(record.first));
         packet.push_bool(true);
-        packet.push_unsigned_bits(record.first.value, 64U);
         packet.push_bits(0, 32U);
         packet.push_bool(false);
         packet.push_bits(1, 16U);
@@ -374,13 +379,8 @@ TEST_CASE("replication client decodes mixed-baseline deltas in one packet") {
     REQUIRE(full_update.records.size() == 2);
     std::uint32_t first_network_id = 0;
     std::uint32_t second_network_id = 0;
-    for (const UpdateRecord& record : full_update.records) {
-        if (record.entity == first) {
-            first_network_id = record.network_id;
-        } else if (record.entity == second) {
-            second_network_id = record.network_id;
-        }
-    }
+    first_network_id = full_update.records[0].network_id;
+    second_network_id = full_update.records[1].network_id;
     REQUIRE(first_network_id != 0);
     REQUIRE(second_network_id != 0);
     REQUIRE(client.receive(client_registry, packets.back()));
@@ -423,8 +423,8 @@ TEST_CASE("replication client decodes mixed-baseline deltas in one packet") {
     REQUIRE(saw_second_from_full);
 
     REQUIRE(client.receive(client_registry, packets.back()));
-    const ecs::Entity first_local = client.local_entity(first);
-    const ecs::Entity second_local = client.local_entity(second);
+    const ecs::Entity first_local = client.local_entity(test_client_entity_network_id(1, first_network_id));
+    const ecs::Entity second_local = client.local_entity(test_client_entity_network_id(1, second_network_id));
     REQUIRE(client_registry.get<NetworkedPosition>(first_local).x == 3.0f);
     REQUIRE(client_registry.get<NetworkedPosition>(first_local).y == 3.0f);
     REQUIRE(client_registry.get<NetworkedPosition>(second_local).x == 12.0f);
@@ -490,7 +490,6 @@ TEST_CASE("replication client rejects malformed update packets without ACKing") 
     invalid_archetype.push_bool(false);
     kage::sync::protocol::write_network_entity_id(invalid_archetype, 1);
     invalid_archetype.push_bool(true);
-    invalid_archetype.push_unsigned_bits(ecs::Entity{42}.value, 64U);
     invalid_archetype.push_bits(99, 32U);
     REQUIRE_FALSE(client.receive(registry, invalid_archetype));
 
@@ -560,7 +559,7 @@ TEST_CASE("replication client packs ACKs within the configured MTU") {
 
     std::vector<kage::sync::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.mtu_bytes = 40;
+    server_options.mtu_bytes = 25;
     server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
         packets.push_back(packet);
     };
@@ -1578,6 +1577,10 @@ TEST_CASE("display interpolation samples fractional frames without mutating ECS"
     packets.clear();
     server_registry.write<SmoothPosition>(server_entity) = SmoothPosition{10.0f, 0.0f};
     server.tick(server_registry);
+    const UpdatePacket update = read_update(packets.back(), 1U);
+    REQUIRE(update.records.size() == 1);
+    const kage::sync::ClientEntityNetworkId client_entity_network_id =
+        test_client_entity_network_id(1, update.records[0].network_id);
     REQUIRE(client.receive(client_registry, packets.back()));
 
     REQUIRE(client.apply_frame(client_registry, 2));
@@ -1588,7 +1591,7 @@ TEST_CASE("display interpolation samples fractional frames without mutating ECS"
     kage::sync::DisplaySampleBuffer display;
     REQUIRE(client.sample_display_frame(client_registry, 2.5, display));
     REQUIRE(display.entities.size() == 1);
-    REQUIRE(display.entities[0].server_entity == server_entity);
+    REQUIRE(display.entities[0].client_entity_network_id == client_entity_network_id);
     REQUIRE(display.entities[0].local_entity == local);
     REQUIRE(display.entities[0].frame == 1);
     REQUIRE(display.entities[0].alpha == Catch::Approx(0.5f));
@@ -1785,7 +1788,8 @@ TEST_CASE("client-owned display frame exposes snap and buffered entities in one 
     options.interpolation_buffer_capacity_frames = 8;
     options.fixed_dt_seconds = 1.0;
     options.entity_mode_selector = [](const kage::sync::ReplicatedEntityUpdateView& update) {
-        return update.server_entity.value == 42
+        return kage::sync::client_entity_network_id_wire_id(update.client_entity_network_id) ==
+                test_network_id(ecs::Entity{42})
             ? kage::sync::ReplicationClientMode::BufferedInterpolation
             : kage::sync::ReplicationClientMode::Snap;
     };
@@ -1801,11 +1805,11 @@ TEST_CASE("client-owned display frame exposes snap and buffered entities in one 
     for (const kage::sync::DisplayEntitySample& entity : display.entities) {
         SmoothPosition sampled;
         REQUIRE(entity.try_get(client_registry, sampled));
-        if (entity.server_entity.value == 42) {
+        if (entity.client_entity_network_id == test_client_entity_network_id(1, test_network_id(ecs::Entity{42}))) {
             REQUIRE(sampled.x == Catch::Approx(10.0f));
             ++found;
         }
-        if (entity.server_entity.value == 43) {
+        if (entity.client_entity_network_id == test_client_entity_network_id(1, test_network_id(ecs::Entity{43}))) {
             REQUIRE(sampled.x == Catch::Approx(20.0f));
             ++found;
         }
@@ -1850,11 +1854,11 @@ TEST_CASE("client-owned display frame keeps previous entities while committing n
     for (const kage::sync::DisplayEntitySample& entity : display.entities) {
         SmoothPosition sampled;
         REQUIRE(entity.try_get(client_registry, sampled));
-        if (entity.server_entity == existing) {
+        if (entity.client_entity_network_id == test_client_entity_network_id(1, test_network_id(existing))) {
             REQUIRE(sampled.x == Catch::Approx(10.0f));
             ++found;
         }
-        if (entity.server_entity == incoming) {
+        if (entity.client_entity_network_id == test_client_entity_network_id(1, test_network_id(incoming))) {
             REQUIRE(sampled.x == Catch::Approx(20.0f));
             ++found;
         }
@@ -2104,10 +2108,9 @@ TEST_CASE("replication client rejects stale full after destroy and accepts reuse
     server.tick(server_registry);
     const UpdatePacket second_update = read_update(packets.back());
     REQUIRE(second_update.records.size() == 1);
-    REQUIRE(second_update.records[0].entity == second);
     REQUIRE(second_update.records[0].network_id == reused_network_id);
     REQUIRE(client.receive(client_registry, packets.back()));
-    REQUIRE(client.local_entity(second));
+    REQUIRE(client.local_entity(test_client_entity_network_id(1, reused_network_id, 2U)));
 }
 
 TEST_CASE("buffered interpolation delays component additions from full updates") {
@@ -2906,59 +2909,68 @@ TEST_CASE("buffered interpolation applies late destroys for already sampled targ
     REQUIRE(records[0].packet_id == 2);
 }
 
-TEST_CASE("replication client ignores stale server entity generations on reused indices") {
+TEST_CASE("replication client rejects stale client entity network ids after wire id reuse") {
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
     kage::sync::configure_client(client_registry, 1);
 
-    const ecs::Entity newer{(std::uint64_t{2} << 32U) | 42U};
-    const ecs::Entity stale{(std::uint64_t{1} << 32U) | 42U};
+    const ecs::Entity server_entity{42};
+    const std::uint32_t wire_id = test_network_id(server_entity);
+    const kage::sync::ClientEntityNetworkId first_id = test_client_entity_network_id(1, wire_id, 1U);
+    const kage::sync::ClientEntityNetworkId second_id = test_client_entity_network_id(1, wire_id, 2U);
     kage::sync::ReplicationClient client;
 
-    REQUIRE(client.receive(client_registry, make_position_packet(1, {{newer, Position{5.0f, 6.0f}}})));
-    const ecs::Entity local = client.local_entity(newer);
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{5.0f, 6.0f}}})));
+    const ecs::Entity first_local = client.local_entity(first_id);
+    REQUIRE(first_local);
+    REQUIRE(client_registry.alive(first_local));
+    REQUIRE(client.is_alive_network_id(first_id));
+    REQUIRE(client.drain_ack_packets().size() == 1);
+
+    REQUIRE(client.receive(client_registry, make_destroy_packet(2, server_entity)));
+    REQUIRE_FALSE(client_registry.alive(first_local));
+    REQUIRE_FALSE(client.is_alive_network_id(first_id));
+    REQUIRE(client.drain_ack_packets().size() == 1);
+
+    REQUIRE(client.receive(client_registry, make_position_packet(3, {{server_entity, Position{1.0f, 2.0f}}})));
+    const ecs::Entity second_local = client.local_entity(second_id);
+    REQUIRE(second_local);
+    REQUIRE(second_local != first_local);
+    REQUIRE(client.is_alive_network_id(second_id));
+    REQUIRE_FALSE(client.local_entity(first_id));
+}
+
+TEST_CASE("replication client does not advance implicit versions twice for destroy resends") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    const ecs::Entity server_entity{42};
+    const std::uint32_t wire_id = test_network_id(server_entity);
+    const kage::sync::ClientEntityNetworkId second_id = test_client_entity_network_id(1, wire_id, 2U);
+    const kage::sync::ClientEntityNetworkId third_id = test_client_entity_network_id(1, wire_id, 3U);
+    kage::sync::ReplicationClient client;
+
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
+    REQUIRE(client.drain_ack_packets().size() == 1);
+
+    REQUIRE(client.receive(client_registry, make_destroy_packet(2, server_entity)));
+    REQUIRE(client.drain_ack_packets().size() == 1);
+    REQUIRE(client.receive(client_registry, make_destroy_packet(3, server_entity)));
+    REQUIRE(client.drain_ack_packets().size() == 1);
+
+    REQUIRE(client.receive(client_registry, make_position_packet(4, {{server_entity, Position{5.0f, 6.0f}}})));
+    const ecs::Entity local = client.local_entity(second_id);
     REQUIRE(local);
     REQUIRE(client_registry.alive(local));
     REQUIRE(client_registry.get<Position>(local).x == 5.0f);
-    REQUIRE(client.drain_ack_packets().size() == 1);
-
-    REQUIRE_FALSE(client.receive(client_registry, make_position_packet(2, {{stale, Position{1.0f, 2.0f}}})));
-    REQUIRE(client.local_entity(newer) == local);
-    REQUIRE(client_registry.alive(local));
-    REQUIRE(client_registry.get<Position>(local).x == 5.0f);
-    REQUIRE_FALSE(client.local_entity(stale));
-    REQUIRE(client.drain_ack_packets().empty());
-}
-
-TEST_CASE("replication client replaces older server entity generations on reused indices") {
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
-    REQUIRE(client_archetype.value == 0);
-    kage::sync::configure_client(client_registry, 1);
-
-    const ecs::Entity older{(std::uint64_t{1} << 32U) | 42U};
-    const ecs::Entity newer{(std::uint64_t{2} << 32U) | 42U};
-    kage::sync::ReplicationClient client;
-
-    REQUIRE(client.receive(client_registry, make_position_packet(1, {{older, Position{1.0f, 2.0f}}})));
-    const ecs::Entity old_local = client.local_entity(older);
-    REQUIRE(old_local);
-    REQUIRE(client_registry.alive(old_local));
-    REQUIRE(client.drain_ack_packets().size() == 1);
-
-    REQUIRE(client.receive(client_registry, make_position_packet(2, {{newer, Position{5.0f, 6.0f}}})));
-    REQUIRE_FALSE(client_registry.alive(old_local));
-    REQUIRE_FALSE(client.local_entity(older));
-    const ecs::Entity new_local = client.local_entity(newer);
-    REQUIRE(new_local);
-    REQUIRE(new_local != old_local);
-    REQUIRE(client_registry.alive(new_local));
-    REQUIRE(client_registry.get<Position>(new_local).x == 5.0f);
+    REQUIRE_FALSE(client.local_entity(third_id));
 
     const std::vector<kage::sync::BitBuffer> acks = client.drain_ack_packets();
     REQUIRE(acks.size() == 1);
     const std::vector<AckRecord> records = read_acks(acks[0]);
     REQUIRE(records.size() == 1);
-    REQUIRE(records[0].packet_id == 2);
+    REQUIRE(records[0].packet_id == 4);
 }

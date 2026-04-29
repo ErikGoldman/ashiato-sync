@@ -513,7 +513,6 @@ inline PacketBreakdown classify_packet(BitBuffer packet, WireFormatStats* wire =
             const bool full = packet.read_bool();
             if (full) {
                 ++result.full_upserts;
-                packet.read_unsigned_bits(64U);
                 packet.read_bits(32U);
                 const bool uses_presence_mask = packet.read_bool();
                 std::uint64_t presence_mask = 0;
@@ -601,7 +600,7 @@ inline PacketBreakdown classify_packet(BitBuffer packet, WireFormatStats* wire =
                     wire->full_upsert_bits += record_bits;
                     wire->full_upsert_payload_bits +=
                         record_bits -
-                        (1U + network_id_bits + 1U + 64U + 32U + 1U + full_index_bits);
+                        (1U + network_id_bits + 1U + 32U + 1U + full_index_bits);
                 }
             } else {
                 ++result.delta_upserts;

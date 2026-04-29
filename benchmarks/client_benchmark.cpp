@@ -73,7 +73,7 @@ void BM_ClientReceiveMixedEntityModes(benchmark::State& state) {
         options.interpolation_buffer_frames = 2;
         options.interpolation_buffer_capacity_frames = 64;
         options.entity_mode_selector = [](const kage::sync::ReplicatedEntityUpdateView& update) {
-            return (update.server_entity.value & 1U) == 0U
+            return (kage::sync::client_entity_network_id_wire_id(update.client_entity_network_id) & 1U) == 0U
                 ? kage::sync::ReplicationClientMode::BufferedInterpolation
                 : kage::sync::ReplicationClientMode::Snap;
         };

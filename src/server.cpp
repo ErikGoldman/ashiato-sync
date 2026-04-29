@@ -28,9 +28,11 @@ std::size_t server_update_header_bits(const ReplicationServerOptions& options) n
     return 8U + 32U + configured_packet_id_bits(options) + 16U;
 }
 
-std::size_t destroy_record_bits(std::uint32_t network_id) noexcept {
-    return 1U + protocol::network_entity_id_encoded_bits(network_id);
+std::size_t destroy_record_bits(std::uint32_t network_id, std::size_t tier0_bits) noexcept {
+    return 1U + protocol::network_entity_id_encoded_bits(network_id, tier0_bits);
 }
+
+constexpr std::uint32_t invalid_slot_or_free = std::numeric_limits<std::uint32_t>::max();
 
 struct OutboundPacket {
     ClientId client = invalid_client_id;
@@ -162,6 +164,9 @@ BitBuffer make_server_packet(
 
 ReplicationServer::ReplicationServer(ReplicationServerOptions options)
     : options_(options) {
+    if (!protocol::valid_network_entity_id_tier0_bits(options_.network_entity_id_tier0_bits)) {
+        throw std::invalid_argument("network entity id tier0 bits must be in [1, 22]");
+    }
     if (options_.fixed_dt_seconds <= 0.0 || !std::isfinite(options_.fixed_dt_seconds)) {
         throw std::invalid_argument("fixed dt seconds must be finite and positive");
     }
@@ -217,11 +222,6 @@ bool ReplicationServer::remove_client(ClientId client) {
 
     const std::size_t index = found->second;
     const ClientId removed_peer = clients_[index].peer;
-    std::vector<std::uint32_t> pending_destroy_network_ids;
-    pending_destroy_network_ids.reserve(clients_[index].pending_destroys.size());
-    for (const ClientDestroyState& destroy : clients_[index].pending_destroys) {
-        pending_destroy_network_ids.push_back(destroy.network_id);
-    }
     for (ClientEntityState& entity_state : clients_[index].entity_states) {
         clear_client_entity_state(entity_state);
     }
@@ -236,9 +236,6 @@ bool ReplicationServer::remove_client(ClientId client) {
     clients_.pop_back();
     client_to_index_.erase(found);
     peer_to_index_.erase(removed_peer);
-    for (const std::uint32_t network_id : pending_destroy_network_ids) {
-        try_reclaim_network_id(network_id);
-    }
     return true;
 }
 
@@ -637,7 +634,8 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
                     continue;
                 }
                 ClientDestroyState& destroy = client.pending_destroys[candidate.destroy_index];
-                const std::size_t destroy_bits = destroy_record_bits(destroy.network_id);
+                const std::size_t destroy_bits =
+                    destroy_record_bits(destroy.network_id, options_.network_entity_id_tier0_bits);
                 const std::size_t next_packet_bits =
                     update_header_bits + records.bit_size() + destroy_bits;
                 if (!records.empty() && protocol::bytes_for_bits(next_packet_bits) > options_.mtu_bytes) {
@@ -662,7 +660,10 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
                 destroy.frame = frame_;
                 destroy.reset_epoch = client.epoch;
                 records.push_bool(true);
-                protocol::write_network_entity_id(records, destroy.network_id);
+                protocol::write_network_entity_id(
+                    records,
+                    destroy.network_id,
+                    options_.network_entity_id_tier0_bits);
                 packet_ack_records.push_back(PacketAckRecord{destroy.entity, frame_, true});
                 ++packet_entities;
                 continue;
@@ -926,7 +927,8 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
                 }
                 ClientDestroyState& destroy = client.pending_destroys[candidate.destroy_index];
                 const std::size_t update_header_bits = server_update_header_bits(options_);
-                const std::size_t destroy_bits = destroy_record_bits(destroy.network_id);
+                const std::size_t destroy_bits =
+                    destroy_record_bits(destroy.network_id, options_.network_entity_id_tier0_bits);
                 const std::size_t next_packet_bits =
                     update_header_bits + records.bit_size() + destroy_bits;
                 if (!records.empty() && protocol::bytes_for_bits(next_packet_bits) > options_.mtu_bytes) {
@@ -948,7 +950,10 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
                 destroy.frame = frame_;
                 destroy.reset_epoch = client.epoch;
                 records.push_bool(true);
-                protocol::write_network_entity_id(records, destroy.network_id);
+                protocol::write_network_entity_id(
+                    records,
+                    destroy.network_id,
+                    options_.network_entity_id_tier0_bits);
                 packet_ack_records.push_back(PacketAckRecord{destroy.entity, frame_, true});
                 ++packet_entities;
                 continue;
@@ -1451,6 +1456,9 @@ void ReplicationServer::clear_client_entity_state(ClientEntityState& state) {
     }
     state.baseline = invalid_quantized_frame_id;
     state.pending.clear();
+    state.network_id = 0;
+    state.network_version = 0;
+    state.has_network_id = false;
 }
 
 bool ReplicationServer::acknowledge_destroy(ClientState& client, ecs::Entity entity, SyncFrame frame) {
@@ -1466,7 +1474,7 @@ bool ReplicationServer::acknowledge_destroy(ClientState& client, ecs::Entity ent
 
     const std::uint32_t network_id = found->network_id;
     client.pending_destroys.erase(found);
-    try_reclaim_network_id(network_id);
+    free_network_id(client, network_id);
     return true;
 }
 
@@ -1582,11 +1590,10 @@ bool ReplicationServer::same_quantized_frame_components(
 void ReplicationServer::write_entity_record(
     const ecs::Registry& registry,
     const SyncSettings& settings,
-    const ClientState& client,
+    ClientState& client,
     std::uint32_t slot,
     const QuantizedFrame& quantized_frame,
-    BitBuffer& out) const {
-    const ReplicatedSlot& replicated = replicated_[slot];
+    BitBuffer& out) {
     const ClientEntityState& entity_state = client.entity_states[slot];
     bool delta = entity_state.baseline != invalid_quantized_frame_id &&
         entity_state.baseline < quantized_frames_.size() &&
@@ -1597,10 +1604,13 @@ void ReplicationServer::write_entity_record(
         delta = baseline.data.present_mask == quantized_frame.data.present_mask;
     }
 
-    protocol::write_network_entity_id(out, replicated.network_id);
+    const std::uint32_t network_id = network_id_for_slot(client, slot);
+    if (network_id == 0U) {
+        return;
+    }
+    protocol::write_network_entity_id(out, network_id, options_.network_entity_id_tier0_bits);
     out.push_bool(!delta);
     if (!delta) {
-        out.push_unsigned_bits(replicated.entity.value, 64U);
         out.push_bits(quantized_frame.archetype.value, 32U);
     } else {
         protocol::write_baseline_frame(out, quantized_frame.frame, quantized_frames_[entity_state.baseline].frame);
@@ -1812,7 +1822,13 @@ bool ReplicationServer::upsert_replicated(ecs::Registry& registry, ecs::Entity e
         }
         for (ClientState& client : clients_) {
             if (found->second < client.entity_states.size()) {
+                const std::uint32_t network_id = client.entity_states[found->second].network_id;
+                const std::uint32_t network_version = client.entity_states[found->second].network_version;
+                const bool has_network_id = client.entity_states[found->second].has_network_id;
                 clear_client_entity_state(client.entity_states[found->second]);
+                client.entity_states[found->second].network_id = network_id;
+                client.entity_states[found->second].network_version = network_version;
+                client.entity_states[found->second].has_network_id = has_network_id;
             }
         }
         return true;
@@ -1846,12 +1862,11 @@ bool ReplicationServer::upsert_replicated(ecs::Registry& registry, ecs::Entity e
 }
 
 std::uint32_t ReplicationServer::allocate_slot(ecs::Entity entity, SyncArchetypeId archetype) {
-    const std::uint32_t network_id = allocate_network_id();
     if (!free_replicated_slots_.empty()) {
         const std::uint32_t slot = free_replicated_slots_.back();
         free_replicated_slots_.pop_back();
         replicated_[slot] =
-            ReplicatedSlot{entity, archetype, network_id, {}, {}, invalid_quantized_frame_id, 0, false, true};
+            ReplicatedSlot{entity, archetype, {}, {}, invalid_quantized_frame_id, 0, false, true};
         return slot;
     }
 
@@ -1861,49 +1876,63 @@ std::uint32_t ReplicationServer::allocate_slot(ecs::Entity entity, SyncArchetype
 
     const std::uint32_t slot = static_cast<std::uint32_t>(replicated_.size());
     replicated_.push_back(
-        ReplicatedSlot{entity, archetype, network_id, {}, {}, invalid_quantized_frame_id, 0, false, true});
+        ReplicatedSlot{entity, archetype, {}, {}, invalid_quantized_frame_id, 0, false, true});
     return slot;
 }
 
-std::uint32_t ReplicationServer::allocate_network_id() {
-    if (!free_network_ids_.empty()) {
-        const std::uint32_t network_id = free_network_ids_.back();
-        free_network_ids_.pop_back();
-        if (network_id >= network_id_reclaim_pending_.size()) {
-            network_id_reclaim_pending_.resize(static_cast<std::size_t>(network_id) + 1U, 0U);
+std::uint32_t ReplicationServer::allocate_network_id(ClientState& client, std::uint32_t slot) {
+    if (client.network_ids.empty()) {
+        client.network_ids.push_back(ClientState::NetworkIdEntry{});
+    }
+    std::uint32_t network_id = 0;
+    if (client.free_network_id != 0U) {
+        network_id = client.free_network_id;
+        ClientState::NetworkIdEntry& entry = client.network_ids[network_id];
+        client.free_network_id = entry.slot_or_next_free;
+        entry.slot_or_next_free = slot;
+        entry.active = true;
+        entry.pending_destroy = false;
+    } else {
+        if (client.network_ids.size() > max_client_local_wire_network_id) {
+            throw std::length_error("kage sync client-local network id space exhausted");
         }
-        network_id_reclaim_pending_[network_id] = 0U;
-        return network_id;
+        network_id = static_cast<std::uint32_t>(client.network_ids.size());
+        client.network_ids.push_back(ClientState::NetworkIdEntry{slot, 1U, true, false});
     }
-    if (next_network_id_ == 0U) {
-        throw std::length_error("kage sync network entity id space exhausted");
-    }
-    const std::uint32_t network_id = next_network_id_++;
-    if (network_id >= network_id_reclaim_pending_.size()) {
-        network_id_reclaim_pending_.resize(static_cast<std::size_t>(network_id) + 1U, 0U);
-    }
+    ClientEntityState& state = client.entity_states[slot];
+    state.network_id = network_id;
+    state.network_version = client.network_ids[network_id].version;
+    state.has_network_id = true;
     return network_id;
 }
 
-void ReplicationServer::try_reclaim_network_id(std::uint32_t network_id) {
-    if (network_id == 0U ||
-        network_id >= network_id_reclaim_pending_.size() ||
-        network_id_reclaim_pending_[network_id] == 0U) {
+void ReplicationServer::free_network_id(ClientState& client, std::uint32_t network_id) {
+    if (network_id == 0U || network_id >= client.network_ids.size()) {
         return;
     }
-    for (const ClientState& client : clients_) {
-        const auto pending_destroy = std::find_if(
-            client.pending_destroys.begin(),
-            client.pending_destroys.end(),
-            [network_id](const ClientDestroyState& destroy) {
-                return destroy.network_id == network_id;
-            });
-        if (pending_destroy != client.pending_destroys.end()) {
-            return;
-        }
+    ClientState::NetworkIdEntry& entry = client.network_ids[network_id];
+    if (!entry.pending_destroy) {
+        return;
     }
-    network_id_reclaim_pending_[network_id] = 0U;
-    free_network_ids_.push_back(network_id);
+    ++entry.version;
+    if (entry.version == 0U) {
+        entry.version = 1U;
+    }
+    entry.slot_or_next_free = client.free_network_id;
+    entry.active = false;
+    entry.pending_destroy = false;
+    client.free_network_id = network_id;
+}
+
+std::uint32_t ReplicationServer::network_id_for_slot(ClientState& client, std::uint32_t slot) {
+    if (slot >= client.entity_states.size()) {
+        return 0U;
+    }
+    ClientEntityState& state = client.entity_states[slot];
+    if (state.has_network_id) {
+        return state.network_id;
+    }
+    return allocate_network_id(client, slot);
 }
 
 void ReplicationServer::deactivate_slot(std::uint32_t slot) {
@@ -1912,7 +1941,6 @@ void ReplicationServer::deactivate_slot(std::uint32_t slot) {
     }
 
     const ecs::Entity entity = replicated_[slot].entity;
-    const std::uint32_t network_id = replicated_[slot].network_id;
     entity_to_slot_.erase(entity.value);
     entity_index_to_slot_.erase(ecs::Registry::entity_index(entity));
     replicated_[slot].active = false;
@@ -1920,16 +1948,23 @@ void ReplicationServer::deactivate_slot(std::uint32_t slot) {
     replicated_[slot].same_frame_quantized_frame = invalid_quantized_frame_id;
     replicated_[slot].same_frame_quantized_frame_frame = 0;
     replicated_[slot].same_frame_cacheable = false;
-    if (network_id >= network_id_reclaim_pending_.size()) {
-        network_id_reclaim_pending_.resize(static_cast<std::size_t>(network_id) + 1U, 0U);
-    }
-    network_id_reclaim_pending_[network_id] = 1U;
     free_replicated_slots_.push_back(slot);
     --active_replicated_count_;
     for (ClientState& client : clients_) {
+        std::uint32_t network_id = 0;
+        std::uint32_t network_version = 0;
         if (slot < client.entity_states.size()) {
+            network_id = client.entity_states[slot].network_id;
+            network_version = client.entity_states[slot].network_version;
             clear_client_entity_state(client.entity_states[slot]);
         }
+        if (network_id == 0U || network_id >= client.network_ids.size()) {
+            continue;
+        }
+        ClientState::NetworkIdEntry& network = client.network_ids[network_id];
+        network.active = false;
+        network.pending_destroy = true;
+        network.slot_or_next_free = invalid_slot_or_free;
         const auto found_destroy = std::find_if(
             client.pending_destroys.begin(),
             client.pending_destroys.end(),
@@ -1937,10 +1972,9 @@ void ReplicationServer::deactivate_slot(std::uint32_t slot) {
                 return pending.entity == entity;
             });
         if (found_destroy == client.pending_destroys.end()) {
-            client.pending_destroys.push_back(ClientDestroyState{entity, frame_, 0, network_id});
+            client.pending_destroys.push_back(ClientDestroyState{entity, frame_, 0, network_id, network_version});
         }
     }
-    try_reclaim_network_id(network_id);
     remove_slot_from_client_orders(slot);
 }
 

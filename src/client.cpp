@@ -258,6 +258,9 @@ bool DisplayEntitySample::has_tag(const ecs::Registry& registry, ecs::Entity tag
 
 ReplicationClient::ReplicationClient(ReplicationClientOptions options)
     : options_(options) {
+    if (!protocol::valid_network_entity_id_tier0_bits(options_.network_entity_id_tier0_bits)) {
+        throw std::invalid_argument("network entity id tier0 bits must be in [1, 22]");
+    }
     if (!is_power_of_two(options_.interpolation_buffer_capacity_frames)) {
         throw std::invalid_argument("interpolation buffer capacity must be a nonzero power of two");
     }
@@ -302,85 +305,117 @@ ReplicationClient::ReplicationClient(ReplicationClientOptions options)
 }
 
 ReplicationClient::EntityState* ReplicationClient::find_entity_state(ecs::Entity server_entity) noexcept {
-    const std::uint32_t entity_index = ecs::Registry::entity_index(server_entity);
-    if (entity_index >= entities_.size()) {
-        return nullptr;
+    const std::uint32_t wire_id = ecs::Registry::entity_index(server_entity) + 1U;
+    if (EntityState* state = find_entity_state(wire_id)) {
+        return state;
     }
-    EntityState& state = entities_[entity_index];
-    return state.server_entity == server_entity.value ? &state : nullptr;
+
+    EntityState* unique = nullptr;
+    for (EntityState& candidate : entities_) {
+        if (candidate.client_entity_network_id == invalid_client_entity_network_id ||
+            !candidate.local) {
+            continue;
+        }
+        if (unique != nullptr) {
+            return nullptr;
+        }
+        unique = &candidate;
+    }
+    return unique;
 }
 
 const ReplicationClient::EntityState* ReplicationClient::find_entity_state(ecs::Entity server_entity) const noexcept {
-    const std::uint32_t entity_index = ecs::Registry::entity_index(server_entity);
-    if (entity_index >= entities_.size()) {
+    const std::uint32_t wire_id = ecs::Registry::entity_index(server_entity) + 1U;
+    if (const EntityState* state = find_entity_state(wire_id)) {
+        return state;
+    }
+
+    const EntityState* unique = nullptr;
+    for (const EntityState& candidate : entities_) {
+        if (candidate.client_entity_network_id == invalid_client_entity_network_id ||
+            !candidate.local) {
+            continue;
+        }
+        if (unique != nullptr) {
+            return nullptr;
+        }
+        unique = &candidate;
+    }
+    return unique;
+}
+
+ReplicationClient::EntityState* ReplicationClient::find_entity_state(ClientEntityNetworkId network_id) noexcept {
+    const auto found = network_entity_indices_.find(network_id);
+    if (found == network_entity_indices_.end() || found->second >= entities_.size()) {
         return nullptr;
     }
-    const EntityState& state = entities_[entity_index];
-    return state.server_entity == server_entity.value ? &state : nullptr;
+    EntityState& state = entities_[found->second];
+    return state.client_entity_network_id == network_id ? &state : nullptr;
+}
+
+const ReplicationClient::EntityState* ReplicationClient::find_entity_state(
+    ClientEntityNetworkId network_id) const noexcept {
+    const auto found = network_entity_indices_.find(network_id);
+    if (found == network_entity_indices_.end() || found->second >= entities_.size()) {
+        return nullptr;
+    }
+    const EntityState& state = entities_[found->second];
+    return state.client_entity_network_id == network_id ? &state : nullptr;
 }
 
 ReplicationClient::EntityState* ReplicationClient::find_entity_state(std::uint32_t network_id) noexcept {
-    if (network_id == 0U || network_id >= network_entity_indices_.size()) {
+    if (network_id == 0U || network_id >= wire_network_ids_.size()) {
         return nullptr;
     }
-    const std::uint32_t entity_index = network_entity_indices_[network_id];
+    const std::uint32_t entity_index = wire_network_ids_[network_id].entity_index;
     if (entity_index >= entities_.size()) {
         return nullptr;
     }
     EntityState& state = entities_[entity_index];
-    return state.network_id == network_id ? &state : nullptr;
+    return state.wire_network_id == network_id ? &state : nullptr;
 }
 
 const ReplicationClient::EntityState* ReplicationClient::find_entity_state(std::uint32_t network_id) const noexcept {
-    if (network_id == 0U || network_id >= network_entity_indices_.size()) {
+    if (network_id == 0U || network_id >= wire_network_ids_.size()) {
         return nullptr;
     }
-    const std::uint32_t entity_index = network_entity_indices_[network_id];
+    const std::uint32_t entity_index = wire_network_ids_[network_id].entity_index;
     if (entity_index >= entities_.size()) {
         return nullptr;
     }
     const EntityState& state = entities_[entity_index];
-    return state.network_id == network_id ? &state : nullptr;
+    return state.wire_network_id == network_id ? &state : nullptr;
 }
 
 ReplicationClient::EntityState* ReplicationClient::ensure_entity_state(
     ecs::Registry& registry,
-    ecs::Entity server_entity,
-    std::uint32_t network_id) {
-    if (!server_entity || network_id == 0U) {
+    ClientEntityNetworkId network_id,
+    std::uint32_t wire_network_id) {
+    (void)registry;
+    if (network_id == invalid_client_entity_network_id || wire_network_id == 0U) {
         return nullptr;
     }
 
-    const std::uint32_t entity_index = ecs::Registry::entity_index(server_entity);
-    if (entity_index >= entities_.size()) {
-        entities_.resize(static_cast<std::size_t>(entity_index) + 1U);
+    if (EntityState* existing = find_entity_state(network_id)) {
+        return existing;
     }
 
-    EntityState& state = entities_[entity_index];
-    if (state.server_entity == server_entity.value) {
-        return &state;
+    if (entities_.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+        throw std::length_error("kage sync client entity state space exhausted");
     }
-
-    if (state.server_entity != 0U) {
-        const auto stored_version =
-            ecs::Registry::entity_version(ecs::Entity{state.server_entity});
-        const auto incoming_version = ecs::Registry::entity_version(server_entity);
-        if (incoming_version < stored_version) {
-            return nullptr;
-        }
-        erase_entity_state(registry, entity_index, true);
-    }
-
+    const std::uint32_t entity_index = static_cast<std::uint32_t>(entities_.size());
+    entities_.emplace_back();
     EntityState& fresh = entities_[entity_index];
-    fresh = EntityState{};
-    fresh.server_entity = server_entity.value;
-    fresh.network_id = network_id;
+    fresh.client_entity_network_id = network_id;
+    fresh.wire_network_id = wire_network_id;
     fresh.active_index = active_entities_.size();
     active_entities_.push_back(entity_index);
-    if (network_id >= network_entity_indices_.size()) {
-        network_entity_indices_.resize(static_cast<std::size_t>(network_id) + 1U, invalid_entity_index);
-    }
     network_entity_indices_[network_id] = entity_index;
+    if (wire_network_id >= wire_network_ids_.size()) {
+        wire_network_ids_.resize(static_cast<std::size_t>(wire_network_id) + 1U);
+    }
+    wire_network_ids_[wire_network_id].entity_index = entity_index;
+    wire_network_ids_[wire_network_id].alive = true;
     return &fresh;
 }
 
@@ -393,12 +428,17 @@ void ReplicationClient::erase_entity_state(
     }
 
     EntityState& state = entities_[entity_index];
-    if (state.server_entity == 0U) {
+    if (state.client_entity_network_id == invalid_client_entity_network_id) {
         return;
     }
-    if (state.network_id < network_entity_indices_.size() &&
-        network_entity_indices_[state.network_id] == entity_index) {
-        network_entity_indices_[state.network_id] = invalid_entity_index;
+    const auto found = network_entity_indices_.find(state.client_entity_network_id);
+    if (found != network_entity_indices_.end() && found->second == entity_index) {
+        network_entity_indices_.erase(found);
+    }
+    if (state.wire_network_id < wire_network_ids_.size() &&
+        wire_network_ids_[state.wire_network_id].entity_index == entity_index) {
+        wire_network_ids_[state.wire_network_id].entity_index = invalid_entity_index;
+        wire_network_ids_[state.wire_network_id].alive = false;
     }
 
     if (destroy_local && state.local && registry.alive(state.local)) {
@@ -462,27 +502,31 @@ void ReplicationClient::set_snap_error_membership(std::uint32_t entity_index, bo
 }
 
 void ReplicationClient::sync_entity_memberships(EntityState& state) {
-    if (state.server_entity == 0U) {
+    if (state.client_entity_network_id == invalid_client_entity_network_id) {
         return;
     }
-    const std::uint32_t entity_index = ecs::Registry::entity_index(ecs::Entity{state.server_entity});
+    const auto found = network_entity_indices_.find(state.client_entity_network_id);
+    if (found == network_entity_indices_.end()) {
+        return;
+    }
+    const std::uint32_t entity_index = found->second;
     set_buffered_membership(entity_index, state.mode == ReplicationClientMode::BufferedInterpolation);
     set_snap_error_membership(
         entity_index,
         state.mode == ReplicationClientMode::Snap && !state.snap_errors.empty());
 }
 
-bool ReplicationClient::destroy_tombstone_blocks(ecs::Entity server_entity, SyncFrame frame) const {
-    const auto found = destroy_tombstones_.find(server_entity.value);
+bool ReplicationClient::destroy_tombstone_blocks(std::uint32_t wire_network_id, SyncFrame frame) const {
+    const auto found = destroy_tombstones_.find(wire_network_id);
     return found != destroy_tombstones_.end() && frame <= found->second;
 }
 
-void ReplicationClient::record_destroy_tombstone(ecs::Entity server_entity, SyncFrame frame) {
-    if (!server_entity) {
+void ReplicationClient::record_destroy_tombstone(std::uint32_t wire_network_id, SyncFrame frame) {
+    if (wire_network_id == 0U) {
         return;
     }
 
-    auto [found, inserted] = destroy_tombstones_.try_emplace(server_entity.value, frame);
+    auto [found, inserted] = destroy_tombstones_.try_emplace(wire_network_id, frame);
     if (!inserted && frame > found->second) {
         found->second = frame;
     }
@@ -491,7 +535,7 @@ void ReplicationClient::record_destroy_tombstone(ecs::Entity server_entity, Sync
     }
 
     auto erase = destroy_tombstones_.begin();
-    if (erase != destroy_tombstones_.end() && erase->first == server_entity.value) {
+    if (erase != destroy_tombstones_.end() && erase->first == wire_network_id) {
         ++erase;
     }
     if (erase != destroy_tombstones_.end()) {
@@ -687,6 +731,16 @@ bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame client_fr
         const std::size_t mask = state.buffered_frames.size() - 1U;
         const EntityState::BufferedFrame& sample = state.buffered_frames[target_frame & mask];
         if (!sample.valid || sample.frame != target_frame) {
+            const bool reused_future_entity =
+                state.entity_present &&
+                target_frame < state.frame &&
+                client_entity_network_id_version(state.client_entity_network_id) > 1U;
+            const bool destroyed_past_entity =
+                !state.entity_present &&
+                target_frame > state.frame;
+            if (!state.local && (reused_future_entity || destroyed_past_entity)) {
+                continue;
+            }
             all_valid = false;
             continue;
         }
@@ -809,7 +863,67 @@ std::size_t ReplicationClient::pending_ack_count() const noexcept {
 
 ecs::Entity ReplicationClient::local_entity(ecs::Entity server_entity) const {
     const EntityState* state = find_entity_state(server_entity);
+    if (state != nullptr) {
+        return state->local;
+    }
+
+    ecs::Entity local;
+    for (const EntityState& candidate : entities_) {
+        if (candidate.client_entity_network_id == invalid_client_entity_network_id ||
+            !candidate.local) {
+            continue;
+        }
+        if (local) {
+            return ecs::Entity{};
+        }
+        local = candidate.local;
+    }
+    return local;
+}
+
+ecs::Entity ReplicationClient::local_entity(ClientEntityNetworkId network_id) const {
+    const EntityState* state = find_entity_state(network_id);
     return state != nullptr ? state->local : ecs::Entity{};
+}
+
+bool ReplicationClient::is_alive_network_id(ClientEntityNetworkId network_id) const noexcept {
+    const EntityState* state = find_entity_state(network_id);
+    return state != nullptr && state->entity_present && state->local;
+}
+
+ClientEntityNetworkId ReplicationClient::client_entity_network_id_for_wire(std::uint32_t wire_network_id) {
+    if (wire_network_id == 0U || wire_network_id > max_client_local_wire_network_id) {
+        return invalid_client_entity_network_id;
+    }
+    if (wire_network_id >= wire_network_ids_.size()) {
+        wire_network_ids_.resize(static_cast<std::size_t>(wire_network_id) + 1U);
+    }
+    WireNetworkIdState& state = wire_network_ids_[wire_network_id];
+    if (state.version == 0U) {
+        state.version = 1U;
+    }
+    const ClientId id = client_id_ == invalid_client_id ? 0U : client_id_;
+    return make_client_entity_network_id(id, wire_network_id, state.version);
+}
+
+void ReplicationClient::advance_wire_network_id_version(std::uint32_t wire_network_id) {
+    if (wire_network_id == 0U || wire_network_id > max_client_local_wire_network_id) {
+        return;
+    }
+    if (wire_network_id >= wire_network_ids_.size()) {
+        wire_network_ids_.resize(static_cast<std::size_t>(wire_network_id) + 1U);
+    }
+    WireNetworkIdState& state = wire_network_ids_[wire_network_id];
+    if (state.version == 0U) {
+        state.version = 1U;
+    } else {
+        ++state.version;
+        if (state.version == 0U) {
+            state.version = 1U;
+        }
+    }
+    state.entity_index = invalid_entity_index;
+    state.alive = false;
 }
 
 bool ReplicationClient::apply_update(
@@ -819,12 +933,15 @@ bool ReplicationClient::apply_update(
     SyncFrame frame,
     std::uint16_t record_count) {
     const SyncSettings& settings = registry.get<SyncSettings>();
+    if (client_id_ == invalid_client_id && settings.local_client != invalid_client_id) {
+        client_id_ = settings.local_client;
+    }
     bool applied_any = false;
 
     for (std::uint16_t record = 0; record < record_count; ++record) {
         const bool destroy = packet.read_bool();
         std::uint32_t network_id = 0;
-        if (!protocol::read_network_entity_id(packet, network_id)) {
+        if (!protocol::read_network_entity_id(packet, network_id, options_.network_entity_id_tier0_bits)) {
             return false;
         }
         if (network_id == 0U) {
@@ -853,25 +970,21 @@ bool ReplicationClient::apply_upsert(
     std::uint32_t network_id,
     BitBuffer& packet) {
     const bool full = packet.read_bool();
-    ecs::Entity server_entity;
+    const ClientEntityNetworkId client_entity_network_id = client_entity_network_id_for_wire(network_id);
+    if (client_entity_network_id == invalid_client_entity_network_id) {
+        return false;
+    }
     SyncArchetypeId archetype = invalid_sync_archetype_id;
     SyncFrame baseline_frame = 0;
 
     EntityState* found_state = nullptr;
     if (full) {
-        server_entity = ecs::Entity{packet.read_unsigned_bits(64U)};
-        if (!server_entity) {
+        if (destroy_tombstone_blocks(network_id, frame)) {
             return false;
         }
-        if (destroy_tombstone_blocks(server_entity, frame)) {
-            return false;
-        }
-        found_state = find_entity_state(server_entity);
+        found_state = find_entity_state(client_entity_network_id);
     } else {
         found_state = find_entity_state(network_id);
-        if (found_state != nullptr) {
-            server_entity = ecs::Entity{found_state->server_entity};
-        }
     }
     const bool previous_absent = found_state != nullptr &&
         !found_state->entity_present &&
@@ -1104,7 +1217,7 @@ bool ReplicationClient::apply_upsert(
         return false;
     }
 
-    EntityState* ensured_state = ensure_entity_state(registry, server_entity, network_id);
+    EntityState* ensured_state = ensure_entity_state(registry, client_entity_network_id, network_id);
     if (ensured_state == nullptr) {
         return false;
     }
@@ -1113,7 +1226,8 @@ bool ReplicationClient::apply_upsert(
         ReplicationClientMode selected = options_.default_entity_mode;
         if (options_.entity_mode_selector) {
             ReplicatedEntityUpdateView update;
-            update.server_entity = server_entity;
+            update.client_entity_network_id = client_entity_network_id;
+            update.server_entity = ecs::Entity{client_entity_network_id};
             update.local_entity = state.local;
             update.archetype = archetype;
             update.frame = frame;
@@ -1126,9 +1240,10 @@ bool ReplicationClient::apply_upsert(
     }
 
     if (state.mode == ReplicationClientMode::BufferedInterpolation) {
-        const bool applied = apply_buffered_upsert(registry, settings, frame, server_entity, archetype, merged);
+        const bool applied =
+            apply_buffered_upsert(registry, settings, frame, client_entity_network_id, archetype, merged);
         if (applied && full) {
-            destroy_tombstones_.erase(server_entity.value);
+            destroy_tombstones_.erase(network_id);
         }
         return applied;
     }
@@ -1150,7 +1265,7 @@ bool ReplicationClient::apply_upsert(
     state.frame = frame;
     state.entity_present = true;
     if (full) {
-        destroy_tombstones_.erase(server_entity.value);
+        destroy_tombstones_.erase(network_id);
     }
     remember_baseline(state);
     return true;
@@ -1159,21 +1274,36 @@ bool ReplicationClient::apply_upsert(
 bool ReplicationClient::apply_destroy(ecs::Registry& registry, SyncFrame frame, std::uint32_t network_id) {
     EntityState* state = find_entity_state(network_id);
     if (state == nullptr) {
+        const auto found_tombstone = destroy_tombstones_.find(network_id);
+        if (found_tombstone != destroy_tombstones_.end()) {
+            if (frame <= found_tombstone->second) {
+                return false;
+            }
+            found_tombstone->second = frame;
+            return true;
+        }
+        record_destroy_tombstone(network_id, frame);
+        advance_wire_network_id_version(network_id);
         return true;
     }
-    const ecs::Entity server_entity{state->server_entity};
+    const ClientEntityNetworkId client_entity_network_id = state->client_entity_network_id;
     if (state->mode == ReplicationClientMode::BufferedInterpolation) {
-        const bool applied = apply_buffered_destroy(registry, frame, server_entity);
+        const bool applied = apply_buffered_destroy(registry, frame, client_entity_network_id);
         if (applied) {
-            record_destroy_tombstone(server_entity, frame);
+            record_destroy_tombstone(network_id, frame);
+            advance_wire_network_id_version(network_id);
         }
         return applied;
     }
     if (frame <= state->frame) {
         return false;
     }
-    record_destroy_tombstone(server_entity, frame);
-    erase_entity_state(registry, ecs::Registry::entity_index(server_entity), true);
+    record_destroy_tombstone(network_id, frame);
+    const auto found = network_entity_indices_.find(client_entity_network_id);
+    if (found != network_entity_indices_.end()) {
+        erase_entity_state(registry, found->second, true);
+    }
+    advance_wire_network_id_version(network_id);
     return true;
 }
 
@@ -1181,14 +1311,14 @@ bool ReplicationClient::apply_buffered_upsert(
     ecs::Registry& registry,
     const SyncSettings& settings,
     SyncFrame frame,
-    ecs::Entity server_entity,
+    ClientEntityNetworkId network_id,
     SyncArchetypeId archetype,
     QuantizedFrameData& decoded) {
     if (!validate_buffered_archetype(settings, archetype)) {
         return false;
     }
 
-    EntityState* ensured_state = find_entity_state(server_entity);
+    EntityState* ensured_state = find_entity_state(network_id);
     if (ensured_state == nullptr) {
         return false;
     }
@@ -1214,8 +1344,11 @@ bool ReplicationClient::apply_buffered_upsert(
     return true;
 }
 
-bool ReplicationClient::apply_buffered_destroy(ecs::Registry& registry, SyncFrame frame, ecs::Entity server_entity) {
-    EntityState* state_ptr = find_entity_state(server_entity);
+bool ReplicationClient::apply_buffered_destroy(
+    ecs::Registry& registry,
+    SyncFrame frame,
+    ClientEntityNetworkId network_id) {
+    EntityState* state_ptr = find_entity_state(network_id);
     if (state_ptr == nullptr) {
         return false;
     }
@@ -1678,17 +1811,17 @@ bool ReplicationClient::write_display_samples(
     const SyncSettings& settings = registry.get<SyncSettings>();
     bool all_valid = target_valid || !has_buffered_entities();
     std::size_t sampled_count = 0;
-    auto previous_display = [&](std::uint64_t server_entity) -> const DisplayEntitySample* {
+    auto previous_display = [&](ClientEntityNetworkId network_id) -> const DisplayEntitySample* {
         const auto found = std::find_if(
             display_frame_.entities.begin(),
             display_frame_.entities.end(),
-            [server_entity](const DisplayEntitySample& sample) {
-                return sample.server_entity.value == server_entity;
+            [network_id](const DisplayEntitySample& sample) {
+                return sample.client_entity_network_id == network_id;
             });
         return found != display_frame_.entities.end() ? &*found : nullptr;
     };
-    auto append_previous_display = [&](std::uint64_t server_entity) {
-        const DisplayEntitySample* previous = previous_display(server_entity);
+    auto append_previous_display = [&](ClientEntityNetworkId network_id) {
+        const DisplayEntitySample* previous = previous_display(network_id);
         if (previous == nullptr) {
             return false;
         }
@@ -1705,7 +1838,7 @@ bool ReplicationClient::write_display_samples(
             continue;
         }
         const EntityState& state = entities_[entity_index];
-        if (state.server_entity == 0U) {
+        if (state.client_entity_network_id == invalid_client_entity_network_id) {
             continue;
         }
         if (state.mode != ReplicationClientMode::BufferedInterpolation) {
@@ -1717,7 +1850,8 @@ bool ReplicationClient::write_display_samples(
                 out.entities.emplace_back();
             }
             DisplayEntitySample& display = out.entities[sampled_count++];
-            display.server_entity = ecs::Entity{state.server_entity};
+            display.client_entity_network_id = state.client_entity_network_id;
+            display.server_entity = ecs::Entity{state.client_entity_network_id};
             display.local_entity = state.local;
             display.archetype = state.archetype;
             display.frame = state.frame;
@@ -1750,7 +1884,7 @@ bool ReplicationClient::write_display_samples(
         }
 
         if (state.buffered_frames.empty() || !target_valid) {
-            if (!include_empty_buffered || !append_previous_display(state.server_entity)) {
+            if (!include_empty_buffered || !append_previous_display(state.client_entity_network_id)) {
                 all_valid = false;
             }
             continue;
@@ -1759,7 +1893,7 @@ bool ReplicationClient::write_display_samples(
         const std::size_t mask = state.buffered_frames.size() - 1U;
         const EntityState::BufferedFrame& floor_sample = state.buffered_frames[floor_frame & mask];
         if (!floor_sample.valid || floor_sample.frame != floor_frame) {
-            if (!include_empty_buffered || !append_previous_display(state.server_entity)) {
+            if (!include_empty_buffered || !append_previous_display(state.client_entity_network_id)) {
                 all_valid = false;
             }
             continue;
@@ -1781,7 +1915,8 @@ bool ReplicationClient::write_display_samples(
             out.entities.emplace_back();
         }
         DisplayEntitySample& display = out.entities[sampled_count];
-        display.server_entity = ecs::Entity{state.server_entity};
+        display.client_entity_network_id = state.client_entity_network_id;
+        display.server_entity = ecs::Entity{state.client_entity_network_id};
         display.local_entity = state.local;
         display.archetype = floor_sample.archetype;
         display.frame = floor_frame;

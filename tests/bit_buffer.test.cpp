@@ -148,8 +148,8 @@ TEST_CASE("protocol baseline frame encoding uses relative deltas when possible")
 TEST_CASE("protocol network entity id encoding uses compact tiers") {
     const std::uint32_t ids[] = {
         1U,
-        kage::sync::protocol::network_entity_id_tier0_max,
-        kage::sync::protocol::network_entity_id_tier0_max + 1U,
+        kage::sync::protocol::network_entity_id_tier0_max(),
+        kage::sync::protocol::network_entity_id_tier0_max() + 1U,
         kage::sync::protocol::network_entity_id_tier1_max,
         kage::sync::protocol::network_entity_id_tier1_max + 1U,
         0xffffffffU,
@@ -165,4 +165,12 @@ TEST_CASE("protocol network entity id encoding uses compact tiers") {
         REQUIRE(decoded == id);
         REQUIRE(buffer.remaining_bits() == 0U);
     }
+
+    constexpr std::size_t narrow_tier_bits = 8U;
+    kage::sync::BitBuffer narrow;
+    kage::sync::protocol::write_network_entity_id(narrow, 255U, narrow_tier_bits);
+    REQUIRE(narrow.bit_size() == 9U);
+    std::uint32_t decoded = 0;
+    REQUIRE(kage::sync::protocol::read_network_entity_id(narrow, decoded, narrow_tier_bits));
+    REQUIRE(decoded == 255U);
 }

@@ -274,3 +274,137 @@ Conclusion: accepted with follow-up watch item. Ping control traffic is tiny
 flat. CPU timings are higher than Experiment 7 in this single canonical run, so
 repeat measurements should be taken before attributing the delta to ping logic
 rather than benchmark variance or the changed interpolation timing target.
+
+## Experiment 9: Client-Local Wire IDs with ClientEntityNetworkId
+
+Rationale: server-global network ids grow with total replicated lifetime and
+make the compact-id tiers less effective. This experiment makes the over-the-wire
+entity id client-local, reuses ids after that client ACKs the destroy, and has
+the client immediately expand the compact wire id to a 64-bit
+`ClientEntityNetworkId` containing client id, wire id, and implicit version. Full
+upserts no longer serialize the server ECS entity id.
+
+Command:
+
+```sh
+./build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --wire-diagnostics --report text
+```
+
+Artifact: `build-bench/kage_sync_ball_stress`
+
+Profile artifact: `/tmp/kage_sync_client_local_wire_ids_gprof.txt` from
+`build-bench-gprof/kage_sync_ball_stress`
+
+Result:
+
+- `wall=12.762600`
+- `server_replication=8.176837`
+- `client_receive=3.953091`
+- `ack_processing=0.485833`
+- `server_to_clients.bytes=200414848`
+- `clients_to_server.bytes=103028`
+- `server_to_clients.full_upsert_bits=198771664`
+- `server_to_clients.delta_upsert_bits=1392255400`
+- `server_to_clients.destroy_record_bits=820505`
+- `clients_to_server.ack_records=91907`
+- `clients_to_server.ack_record_bits=735256`
+
+CPU comparison against Experiment 8:
+
+- `wall`: `11.818390` -> `12.762600`
+- `server_replication`: `7.649816` -> `8.176837`
+- `client_receive`: `3.573520` -> `3.953091`
+- `ack_processing`: `0.450216` -> `0.485833`
+
+Conclusion: bandwidth win with CPU follow-up needed. Downstream bytes dropped
+by about `5.74 MB` versus Experiment 8, and full-upsert bits dropped by about
+`51.9 Mbits`, which is the intended effect of removing the 64-bit server entity
+from full upserts and keeping wire ids dense per client. CPU timings are higher
+in this single run. The gprof flat profile still points primarily at the
+existing replication path (`tick_serialized`, quantized-frame lookup, client
+upsert/baseline work); the new client-id lookup helpers are visible but small
+(`find_entity_state(unsigned long)` sampled at `0.02s` self).
+
+## Experiment 10: 8-bit Lowest Network ID Tier
+
+Rationale: client-local wire ids make low values more common, so this experiment
+changes the first network-id tier from 15 payload bits plus an extension bit to
+8 payload bits plus an extension bit. IDs `1..255` encode in `9` bits instead
+of `16`; IDs `256..8388607` encode in `25` bits.
+
+Command:
+
+```sh
+./build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --wire-diagnostics --report text
+```
+
+Artifact: `build-bench/kage_sync_ball_stress`
+
+Result:
+
+- `wall=12.660091`
+- `server_replication=8.329575`
+- `client_receive=3.661622`
+- `ack_processing=0.503279`
+- `server_to_clients.bytes=208561525`
+- `clients_to_server.bytes=99172`
+- `server_to_clients.full_upsert_bits=214940513`
+- `server_to_clients.delta_upsert_bits=1440379227`
+- `server_to_clients.destroy_record_bits=1198542`
+- `clients_to_server.ack_records=88051`
+- `clients_to_server.ack_record_bits=704408`
+
+Bandwidth comparison against Experiment 9:
+
+- `server_to_clients.bytes`: `200414848` -> `208561525`
+- `server_to_clients.full_upsert_bits`: `198771664` -> `214940513`
+- `server_to_clients.delta_upsert_bits`: `1392255400` -> `1440379227`
+- `server_to_clients.destroy_record_bits`: `820505` -> `1198542`
+
+Conclusion: rejected for this workload. The stress test has thousands of live
+entities per client, so most entity records use ids above `255`. Those ids moved
+from the old 16-bit tier to the 25-bit tier, which outweighed the savings for
+the first 255 ids and increased downstream traffic by about `8.15 MB` over the
+30-second run.
+
+## Experiment 11: 11-bit Default Network ID Tier
+
+Rationale: the 8-bit tier regressed once more than 255 entities were live per
+client. This experiment keeps the tier width configurable on the client and
+server and defaults the low tier to 11 bits, so ids `1..2047` encode in `12`
+bits while ids above that still use the 25-bit middle tier. The fixed
+`ReplicationClient` and `ReplicationServer` types use the default; templated
+`ReplicationClientT<bits>` and `ReplicationServerT<bits>` wrappers set the
+width from a compile-time argument.
+
+Command:
+
+```sh
+./build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --wire-diagnostics --report text
+```
+
+Artifact: `build-bench/kage_sync_ball_stress`
+
+Result:
+
+- `wall=12.542076`
+- `server_replication=7.615497`
+- `client_receive=4.169951`
+- `ack_processing=0.592262`
+- `server_to_clients.bytes=200610468`
+- `clients_to_server.bytes=99628`
+- `server_to_clients.full_upsert_bits=210966631`
+- `server_to_clients.delta_upsert_bits=1381630696`
+- `server_to_clients.destroy_record_bits=758550`
+- `clients_to_server.ack_records=88507`
+- `clients_to_server.ack_record_bits=708056`
+
+Bandwidth comparison:
+
+- vs 15-bit default from Experiment 9: `200414848` -> `200610468`
+- vs 8-bit default from Experiment 10: `208561525` -> `200610468`
+
+Conclusion: accepted as the configurable default requested, with a workload
+note. It is much better than the 8-bit tier for this stress case, but slightly
+worse than the previous 15-bit tier in total downstream bytes because enough
+records still use ids above `2047` and pay the 25-bit middle tier.

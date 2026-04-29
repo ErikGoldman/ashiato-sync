@@ -22,10 +22,34 @@ namespace kage::sync {
 
 using ClientId = std::uint64_t;
 using SyncFrame = std::uint32_t;
+using ClientEntityNetworkId = std::uint64_t;
 using TransportFn = std::function<void(ClientId, const BitBuffer&)>;
 using ConnectHandlerFn = std::function<bool(const std::string&, ClientId&, std::string&)>;
 
 inline constexpr ClientId invalid_client_id = std::numeric_limits<ClientId>::max();
+inline constexpr ClientEntityNetworkId invalid_client_entity_network_id = 0;
+inline constexpr std::uint32_t max_client_local_wire_network_id = (std::uint32_t{1} << 20U) - 1U;
+
+inline constexpr ClientEntityNetworkId make_client_entity_network_id(
+    ClientId client,
+    std::uint32_t wire_network_id,
+    std::uint32_t version) noexcept {
+    return ((client & 0xfffULL) << 52U) |
+        ((static_cast<std::uint64_t>(wire_network_id) & 0xfffffULL) << 32U) |
+        static_cast<std::uint64_t>(version);
+}
+
+inline constexpr ClientId client_entity_network_id_client(ClientEntityNetworkId id) noexcept {
+    return (id >> 52U) & 0xfffULL;
+}
+
+inline constexpr std::uint32_t client_entity_network_id_wire_id(ClientEntityNetworkId id) noexcept {
+    return static_cast<std::uint32_t>((id >> 32U) & 0xfffffULL);
+}
+
+inline constexpr std::uint32_t client_entity_network_id_version(ClientEntityNetworkId id) noexcept {
+    return static_cast<std::uint32_t>(id & 0xffffffffULL);
+}
 
 enum class SyncRole {
     Server,
@@ -263,6 +287,7 @@ struct ReplicationServerOptions {
     std::size_t max_pending_packet_acks_per_client = protocol::default_max_pending_packet_acks_per_client;
     double fixed_dt_seconds = 1.0 / 60.0;
     double connect_resend_interval_seconds = 0.25;
+    std::size_t network_entity_id_tier0_bits = protocol::default_network_entity_id_tier0_bits;
     ConnectHandlerFn connect_handler;
     TransportFn transport;
 };
