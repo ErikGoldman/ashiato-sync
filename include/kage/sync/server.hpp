@@ -47,6 +47,7 @@ private:
     struct ReplicatedSlot {
         ecs::Entity entity;
         SyncArchetypeId archetype;
+        std::uint32_t network_id = 0;
         std::vector<std::uint32_t> quantized_frames;
         std::vector<std::uint64_t> component_dirty_generations;
         std::uint32_t same_frame_quantized_frame = invalid_quantized_frame_id;
@@ -79,15 +80,29 @@ private:
         ecs::Entity entity;
         SyncFrame frame = 0;
         std::uint64_t reset_epoch = 0;
+        std::uint32_t network_id = 0;
+    };
+
+    struct PacketAckRecord {
+        ecs::Entity entity;
+        SyncFrame frame = 0;
+        bool destroy = false;
+    };
+
+    struct PendingPacketAck {
+        std::uint32_t packet_id = 0;
+        std::vector<PacketAckRecord> records;
     };
 
     struct ClientState {
         ClientId id = invalid_client_id;
         std::uint64_t epoch = 0;
+        std::uint32_t next_packet_id = 1;
         std::vector<std::uint32_t> order;
         std::vector<std::uint64_t> reset_epochs;
         std::vector<ClientEntityState> entity_states;
         std::vector<ClientDestroyState> pending_destroys;
+        std::vector<PendingPacketAck> pending_packet_acks;
     };
 
     using EntityKey = std::uint64_t;
@@ -144,6 +159,9 @@ private:
     void retain_quantized_frame(std::uint32_t quantized_frame);
     void release_quantized_frame(std::uint32_t quantized_frame);
     void clear_client_entity_state(ClientEntityState& state);
+    bool acknowledge_packet(ClientState& client, std::uint32_t packet_id);
+    bool packet_ack_record_pending(const ClientState& client, const PacketAckRecord& record) const;
+    void cleanup_packet_acks(ClientState& client);
     bool acknowledge_destroy(ClientState& client, ecs::Entity entity, SyncFrame frame);
     bool same_quantized_frame_components(
         const QuantizedFrame& quantized_frame,
@@ -156,7 +174,16 @@ private:
         std::uint32_t slot,
         const QuantizedFrame& quantized_frame,
         BitBuffer& out) const;
-    void send_packet(ClientId client, SyncFrame frame, std::uint16_t entity_count, const BitBuffer& records) const;
+    void send_packet(
+        ClientState& client,
+        SyncFrame frame,
+        std::uint16_t entity_count,
+        const BitBuffer& records,
+        const std::vector<PacketAckRecord>& ack_records);
+    static void track_packet_ack(
+        ClientState& client,
+        std::uint32_t packet_id,
+        const std::vector<PacketAckRecord>& records);
 
     ReplicationServerOptions options_;
     std::vector<ReplicatedSlot> replicated_;
@@ -168,6 +195,7 @@ private:
     std::vector<ClientState> clients_;
     std::unordered_map<ClientId, std::size_t> client_to_index_;
     std::size_t active_replicated_count_ = 0;
+    std::uint32_t next_network_id_ = 1;
     SyncFrame frame_ = 0;
     bool replicated_initialized_ = false;
 };

@@ -23,3 +23,4 @@ This is a high-performance project. Always consider the performance effect of an
 ## Optimization
 
 - Previous optimization experiments are in OPTIMIZATION\_EXPERIMENTS.md -- read it for context and update it when trying new experiments.
+- Bandwidth optimization experiments are in BANDWIDTH\_EXPERIMENTS.md

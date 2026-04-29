@@ -3,6 +3,7 @@
 #include "kage/sync/sync.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -119,6 +120,7 @@ struct StressConfig {
     double time_dilation_min = 0.95;
     double time_dilation_max = 1.05;
     double time_dilation_gain = 0.05;
+    bool wire_diagnostics = false;
     bool json = false;
 };
 
@@ -148,6 +150,36 @@ struct PacketBreakdown {
     std::uint32_t destroys = 0;
 };
 
+struct WireSlotStats {
+    std::uint64_t records = 0;
+    std::uint64_t index_bits = 0;
+    std::uint64_t payload_bits = 0;
+};
+
+struct WireFormatStats {
+    static constexpr std::size_t slot_count = 5;
+
+    std::uint64_t packet_bits = 0;
+    std::uint64_t padding_bits = 0;
+    std::uint64_t server_update_header_bits = 0;
+    std::uint64_t server_update_entities = 0;
+    std::uint64_t max_server_update_entities_per_packet = 0;
+    std::uint64_t max_packet_bytes = 0;
+    std::uint64_t destroy_record_bits = 0;
+    std::uint64_t full_upsert_bits = 0;
+    std::uint64_t full_upsert_payload_bits = 0;
+    std::uint64_t delta_upsert_bits = 0;
+    std::uint64_t delta_upsert_payload_bits = 0;
+    std::uint64_t delta_baseline_bits = 0;
+    std::uint64_t delta_baseline_relative = 0;
+    std::uint64_t delta_baseline_absolute = 0;
+    std::uint64_t delta_change_mask_bits = 0;
+    std::uint64_t ack_header_bits = 0;
+    std::uint64_t ack_records = 0;
+    std::uint64_t ack_record_bits = 0;
+    std::array<WireSlotStats, slot_count> slots{};
+};
+
 struct DirectionStats {
     std::uint64_t packets = 0;
     std::uint64_t bytes = 0;
@@ -166,6 +198,7 @@ struct DirectionStats {
     std::uint64_t full_upserts = 0;
     std::uint64_t delta_upserts = 0;
     std::uint64_t destroys = 0;
+    WireFormatStats wire;
 };
 
 struct TimingStats {
@@ -309,15 +342,80 @@ inline void add_packet_stats(DirectionStats& stats, const BitBuffer& packet, con
     }
 }
 
-inline PacketBreakdown classify_packet(BitBuffer packet) {
+inline const char* wire_slot_name(std::size_t slot) {
+    switch (slot) {
+    case 0:
+        return "tags";
+    case 1:
+        return "BallPosition";
+    case 2:
+        return "BallVisual";
+    case 3:
+        return "BallHealth";
+    case 4:
+        return "BallPoison";
+    }
+    return "unknown";
+}
+
+inline std::size_t stress_slot_payload_bits(std::size_t slot) {
+    switch (slot) {
+    case 0:
+        return 2U;
+    case 1:
+        return sizeof(BallPosition) * 8U;
+    case 2:
+        return sizeof(BallVisual) * 8U;
+    case 3:
+        return sizeof(BallHealth) * 8U;
+    case 4:
+        return sizeof(BallPoison) * 8U;
+    }
+    return 0;
+}
+
+inline std::size_t stress_slot_index_bits() {
+    return protocol::bits_for_range(WireFormatStats::slot_count);
+}
+
+inline void record_wire_slot(WireFormatStats& wire, std::size_t slot, bool has_index) {
+    if (slot >= WireFormatStats::slot_count) {
+        return;
+    }
+    WireSlotStats& stats = wire.slots[slot];
+    ++stats.records;
+    if (has_index) {
+        stats.index_bits += stress_slot_index_bits();
+    }
+    stats.payload_bits += stress_slot_payload_bits(slot);
+}
+
+inline PacketBreakdown classify_packet(BitBuffer packet, WireFormatStats* wire = nullptr) {
     PacketBreakdown result;
     try {
         if (packet.remaining_bits() < 8U) {
             return result;
         }
+        if (wire != nullptr) {
+            wire->packet_bits += packet.bit_size();
+            wire->padding_bits += packet.byte_size() * 8U - packet.bit_size();
+            wire->max_packet_bytes = std::max<std::uint64_t>(wire->max_packet_bytes, packet.byte_size());
+        }
         const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
         if (message == protocol::client_ack_message) {
             result.type = PacketType::ClientAck;
+            if (wire != nullptr) {
+                if (packet.remaining_bits() < 16U) {
+                    result = PacketBreakdown{};
+                    return result;
+                }
+                const auto ack_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+                packet.skip_bits(static_cast<std::size_t>(ack_count) * protocol::client_ack_record_bits);
+                wire->ack_header_bits += protocol::client_ack_header_bits;
+                wire->ack_records += ack_count;
+                wire->ack_record_bits +=
+                    static_cast<std::uint64_t>(ack_count) * protocol::client_ack_record_bits;
+            }
             return result;
         }
         if (message == protocol::client_hello_message) {
@@ -330,58 +428,113 @@ inline PacketBreakdown classify_packet(BitBuffer packet) {
 
         result.type = PacketType::ServerUpdate;
         const auto frame = static_cast<std::uint32_t>(packet.read_bits(32U));
+        packet.read_bits(protocol::server_packet_id_bits);
         const auto entity_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+        if (wire != nullptr) {
+            wire->server_update_header_bits += protocol::server_update_header_bits;
+            wire->server_update_entities += entity_count;
+            wire->max_server_update_entities_per_packet =
+                std::max<std::uint64_t>(wire->max_server_update_entities_per_packet, entity_count);
+        }
         for (std::uint16_t entity_index = 0; entity_index < entity_count; ++entity_index) {
+            const std::size_t record_start = packet.read_offset_bits();
             const bool destroy = packet.read_bool();
-            packet.read_unsigned_bits(64U);
+            packet.read_bits(protocol::network_entity_id_bits);
             if (destroy) {
                 ++result.destroys;
+                if (wire != nullptr) {
+                    wire->destroy_record_bits += packet.read_offset_bits() - record_start;
+                }
                 continue;
             }
 
             const bool full = packet.read_bool();
             if (full) {
                 ++result.full_upserts;
+                packet.read_unsigned_bits(64U);
                 packet.read_bits(32U);
                 const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
                 for (std::uint16_t component = 0; component < component_count; ++component) {
-                    const auto component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
+                    const auto component_index =
+                        static_cast<std::uint16_t>(packet.read_bits(stress_slot_index_bits()));
                     switch (component_index) {
                         case 0:
                             packet.skip_bits(2U);
+                            if (wire != nullptr) {
+                                record_wire_slot(*wire, 0, true);
+                            }
                             break;
                         case 1:
                             packet.skip_bits(sizeof(BallPosition) * 8U);
+                            if (wire != nullptr) {
+                                record_wire_slot(*wire, 1, true);
+                            }
                             break;
                         case 2:
                             packet.skip_bits(sizeof(BallVisual) * 8U);
+                            if (wire != nullptr) {
+                                record_wire_slot(*wire, 2, true);
+                            }
                             break;
                         case 3:
                             packet.skip_bits(sizeof(BallHealth) * 8U);
+                            if (wire != nullptr) {
+                                record_wire_slot(*wire, 3, true);
+                            }
                             break;
                         case 4:
                             packet.skip_bits(sizeof(BallPoison) * 8U);
+                            if (wire != nullptr) {
+                                record_wire_slot(*wire, 4, true);
+                            }
                             break;
                         default:
                             result = PacketBreakdown{};
                             return result;
                     }
                 }
+                if (wire != nullptr) {
+                    const std::uint64_t record_bits = packet.read_offset_bits() - record_start;
+                    wire->full_upsert_bits += record_bits;
+                    wire->full_upsert_payload_bits +=
+                        record_bits -
+                        (1U + protocol::network_entity_id_bits + 1U + 64U + 32U + 16U +
+                         static_cast<std::uint64_t>(component_count) * stress_slot_index_bits());
+                }
             } else {
                 ++result.delta_upserts;
-                std::uint32_t baseline_frame = 0;
-                if (!protocol::read_baseline_frame(packet, frame, baseline_frame)) {
-                    result = PacketBreakdown{};
-                    return result;
+                const bool uses_delta_baseline = packet.read_bool();
+                if (uses_delta_baseline) {
+                    const auto delta = static_cast<std::uint32_t>(packet.read_bits(protocol::baseline_frame_delta_bits));
+                    if (delta > frame) {
+                        result = PacketBreakdown{};
+                        return result;
+                    }
+                    if (wire != nullptr) {
+                        wire->delta_baseline_bits += 1U + protocol::baseline_frame_delta_bits;
+                        ++wire->delta_baseline_relative;
+                    }
+                } else {
+                    packet.read_bits(32U);
+                    if (wire != nullptr) {
+                        wire->delta_baseline_bits += 33U;
+                        ++wire->delta_baseline_absolute;
+                    }
                 }
-                bool changed[5] = {};
-                for (std::size_t slot = 0; slot < 5U; ++slot) {
+                if (wire != nullptr) {
+                    wire->delta_change_mask_bits += WireFormatStats::slot_count;
+                }
+                bool changed[WireFormatStats::slot_count] = {};
+                for (std::size_t slot = 0; slot < WireFormatStats::slot_count; ++slot) {
                     changed[slot] = packet.read_bool();
                 }
                 if (changed[0]) {
                     packet.skip_bits(2U);
+                    if (wire != nullptr) {
+                        record_wire_slot(*wire, 0, false);
+                    }
                 }
-                for (std::size_t slot = 1; slot < 5U; ++slot) {
+                for (std::size_t slot = 1; slot < WireFormatStats::slot_count; ++slot) {
                     if (!changed[slot]) {
                         continue;
                     }
@@ -399,6 +552,17 @@ inline PacketBreakdown classify_packet(BitBuffer packet) {
                             packet.skip_bits(sizeof(BallPoison) * 8U);
                             break;
                     }
+                    if (wire != nullptr) {
+                        record_wire_slot(*wire, slot, false);
+                    }
+                }
+                if (wire != nullptr) {
+                    const std::uint64_t record_bits = packet.read_offset_bits() - record_start;
+                    wire->delta_upsert_bits += record_bits;
+                    wire->delta_upsert_payload_bits +=
+                        record_bits - (1U + protocol::network_entity_id_bits + 1U) -
+                        (uses_delta_baseline ? 1U + protocol::baseline_frame_delta_bits : 33U) -
+                        WireFormatStats::slot_count;
                 }
             }
         }
@@ -430,8 +594,9 @@ inline void enqueue_packet(
     DirectionStats& stats,
     ClientId client,
     const BitBuffer& packet,
-    double now_seconds) {
-    const PacketBreakdown breakdown = classify_packet(packet);
+    double now_seconds,
+    bool wire_diagnostics = false) {
+    const PacketBreakdown breakdown = classify_packet(packet, wire_diagnostics ? &stats.wire : nullptr);
     add_packet_stats(stats, packet, breakdown);
 
     if (drops_packet(link)) {
@@ -770,7 +935,13 @@ inline StressReport run_stress(const StressConfig& input_config) {
     server_options.mtu_bytes = config.mtu;
     server_options.serialized_worker_threads = config.server_worker_threads;
     server_options.transport = [&](ClientId client, const BitBuffer& packet) {
-        enqueue_packet(server_to_clients, report.server_to_clients, client, packet, static_cast<double>(report.ticks) / config.tick_rate);
+        enqueue_packet(
+            server_to_clients,
+            report.server_to_clients,
+            client,
+            packet,
+            static_cast<double>(report.ticks) / config.tick_rate,
+            config.wire_diagnostics);
     };
     ReplicationServer server(server_options);
     for (std::uint32_t client_index = 0; client_index < config.clients; ++client_index) {
@@ -841,7 +1012,8 @@ inline StressReport run_stress(const StressConfig& input_config) {
                         report.clients_to_server,
                         static_cast<ClientId>(index + 1U),
                         ack,
-                        now);
+                        now,
+                        config.wire_diagnostics);
                 }
             }
             deliver_ready(clients_to_server, report.clients_to_server, now, [&](ClientId client_id, const BitBuffer& packet) {
@@ -882,7 +1054,13 @@ inline StressReport run_stress(const StressConfig& input_config) {
     });
     for (std::size_t index = 0; index < clients.size(); ++index) {
         for (const BitBuffer& ack : clients[index].drain_ack_packets()) {
-            enqueue_packet(clients_to_server, report.clients_to_server, static_cast<ClientId>(index + 1U), ack, end_time);
+            enqueue_packet(
+                clients_to_server,
+                report.clients_to_server,
+                static_cast<ClientId>(index + 1U),
+                ack,
+                end_time,
+                config.wire_diagnostics);
         }
     }
     deliver_ready(clients_to_server, report.clients_to_server, end_time + 60.0, [&](ClientId client_id, const BitBuffer& packet) {
@@ -945,6 +1123,44 @@ inline void write_direction_text(std::ostream& out, const char* name, const Dire
     out << "  unknown packets=" << stats.unknown_packets << " bytes=" << stats.unknown_bytes << '\n';
 }
 
+inline void write_wire_text(
+    std::ostream& out,
+    const char* name,
+    const DirectionStats& stats,
+    std::size_t mtu_bytes) {
+    const WireFormatStats& wire = stats.wire;
+    const double average_mtu_fill = stats.packets == 0 || mtu_bytes == 0
+        ? 0.0
+        : static_cast<double>(stats.bytes) / static_cast<double>(stats.packets * mtu_bytes);
+    out << "wire_format " << name
+        << " packet_bits=" << wire.packet_bits
+        << " padding_bits=" << wire.padding_bits
+        << " max_packet_bytes=" << wire.max_packet_bytes
+        << " average_mtu_fill=" << average_mtu_fill
+        << " server_update_header_bits=" << wire.server_update_header_bits
+        << " server_update_entities=" << wire.server_update_entities
+        << " max_server_update_entities_per_packet=" << wire.max_server_update_entities_per_packet
+        << " destroy_record_bits=" << wire.destroy_record_bits
+        << " full_upsert_bits=" << wire.full_upsert_bits
+        << " full_upsert_payload_bits=" << wire.full_upsert_payload_bits
+        << " delta_upsert_bits=" << wire.delta_upsert_bits
+        << " delta_upsert_payload_bits=" << wire.delta_upsert_payload_bits
+        << " delta_baseline_bits=" << wire.delta_baseline_bits
+        << " delta_baseline_relative=" << wire.delta_baseline_relative
+        << " delta_baseline_absolute=" << wire.delta_baseline_absolute
+        << " delta_change_mask_bits=" << wire.delta_change_mask_bits
+        << " ack_header_bits=" << wire.ack_header_bits
+        << " ack_records=" << wire.ack_records
+        << " ack_record_bits=" << wire.ack_record_bits << '\n';
+    for (std::size_t slot = 0; slot < WireFormatStats::slot_count; ++slot) {
+        const WireSlotStats& slot_stats = wire.slots[slot];
+        out << "  slot name=" << wire_slot_name(slot)
+            << " records=" << slot_stats.records
+            << " index_bits=" << slot_stats.index_bits
+            << " payload_bits=" << slot_stats.payload_bits << '\n';
+    }
+}
+
 inline void write_report_text(std::ostream& out, const StressReport& report) {
     out << "kage-sync ball stress\n";
     out << "ticks=" << report.ticks << " clients=" << report.config.clients
@@ -952,7 +1168,8 @@ inline void write_report_text(std::ostream& out, const StressReport& report) {
         << " despawned=" << report.despawned << '\n';
     out << "client_mode=" << client_mode_name(report.config.client_mode)
         << " interpolation_buffer_frames=" << report.config.interpolation_buffer_frames
-        << " interpolation_buffer_capacity_frames=" << report.config.interpolation_buffer_capacity_frames << '\n';
+        << " interpolation_buffer_capacity_frames=" << report.config.interpolation_buffer_capacity_frames
+        << " wire_diagnostics=" << (report.config.wire_diagnostics ? "true" : "false") << '\n';
     out << "network latency_ms=" << report.config.latency_ms
         << " jitter_ms=" << report.config.jitter_ms
         << " server_to_client_latency_ms=" << report.config.server_to_client_latency_ms
@@ -982,6 +1199,10 @@ inline void write_report_text(std::ostream& out, const StressReport& report) {
         << " ack_processing=" << report.timing.ack_processing_seconds << '\n';
     write_direction_text(out, "server_to_clients", report.server_to_clients);
     write_direction_text(out, "clients_to_server", report.clients_to_server);
+    if (report.config.wire_diagnostics) {
+        write_wire_text(out, "server_to_clients", report.server_to_clients, report.config.mtu);
+        write_wire_text(out, "clients_to_server", report.clients_to_server, report.config.mtu);
+    }
     out << "memory rss_start_bytes=" << report.memory.rss_start_bytes
         << " rss_peak_bytes=" << report.memory.rss_peak_bytes
         << " rss_end_bytes=" << report.memory.rss_end_bytes
@@ -1010,6 +1231,45 @@ inline void write_direction_json(std::ostream& out, const DirectionStats& stats)
         << "}";
 }
 
+inline void write_wire_json(std::ostream& out, const DirectionStats& stats, std::size_t mtu_bytes) {
+    const WireFormatStats& wire = stats.wire;
+    const double average_mtu_fill = stats.packets == 0 || mtu_bytes == 0
+        ? 0.0
+        : static_cast<double>(stats.bytes) / static_cast<double>(stats.packets * mtu_bytes);
+    out << "{"
+        << "\"packet_bits\":" << wire.packet_bits << ","
+        << "\"padding_bits\":" << wire.padding_bits << ","
+        << "\"max_packet_bytes\":" << wire.max_packet_bytes << ","
+        << "\"average_mtu_fill\":" << average_mtu_fill << ","
+        << "\"server_update_header_bits\":" << wire.server_update_header_bits << ","
+        << "\"server_update_entities\":" << wire.server_update_entities << ","
+        << "\"max_server_update_entities_per_packet\":" << wire.max_server_update_entities_per_packet << ","
+        << "\"destroy_record_bits\":" << wire.destroy_record_bits << ","
+        << "\"full_upsert_bits\":" << wire.full_upsert_bits << ","
+        << "\"full_upsert_payload_bits\":" << wire.full_upsert_payload_bits << ","
+        << "\"delta_upsert_bits\":" << wire.delta_upsert_bits << ","
+        << "\"delta_upsert_payload_bits\":" << wire.delta_upsert_payload_bits << ","
+        << "\"delta_baseline_bits\":" << wire.delta_baseline_bits << ","
+        << "\"delta_baseline_relative\":" << wire.delta_baseline_relative << ","
+        << "\"delta_baseline_absolute\":" << wire.delta_baseline_absolute << ","
+        << "\"delta_change_mask_bits\":" << wire.delta_change_mask_bits << ","
+        << "\"ack_header_bits\":" << wire.ack_header_bits << ","
+        << "\"ack_records\":" << wire.ack_records << ","
+        << "\"ack_record_bits\":" << wire.ack_record_bits << ","
+        << "\"slots\":{";
+    for (std::size_t slot = 0; slot < WireFormatStats::slot_count; ++slot) {
+        if (slot != 0U) {
+            out << ",";
+        }
+        const WireSlotStats& slot_stats = wire.slots[slot];
+        out << "\"" << wire_slot_name(slot) << "\":{"
+            << "\"records\":" << slot_stats.records << ","
+            << "\"index_bits\":" << slot_stats.index_bits << ","
+            << "\"payload_bits\":" << slot_stats.payload_bits << "}";
+    }
+    out << "}}";
+}
+
 inline void write_report_json(std::ostream& out, const StressReport& report) {
     out << std::fixed << std::setprecision(9);
     out << "{";
@@ -1019,6 +1279,7 @@ inline void write_report_json(std::ostream& out, const StressReport& report) {
     out << "\"interpolation_buffer_frames\":" << report.config.interpolation_buffer_frames << ",";
     out << "\"interpolation_buffer_capacity_frames\":"
         << report.config.interpolation_buffer_capacity_frames << ",";
+    out << "\"wire_diagnostics\":" << (report.config.wire_diagnostics ? "true" : "false") << ",";
     out << "\"network\":{\"latency_ms\":" << report.config.latency_ms
         << ",\"jitter_ms\":" << report.config.jitter_ms
         << ",\"server_to_client_latency_ms\":" << report.config.server_to_client_latency_ms
@@ -1055,6 +1316,13 @@ inline void write_report_json(std::ostream& out, const StressReport& report) {
     out << ",\"clients_to_server\":";
     write_direction_json(out, report.clients_to_server);
     out << "},";
+    if (report.config.wire_diagnostics) {
+        out << "\"wire_format\":{\"server_to_clients\":";
+        write_wire_json(out, report.server_to_clients, report.config.mtu);
+        out << ",\"clients_to_server\":";
+        write_wire_json(out, report.clients_to_server, report.config.mtu);
+        out << "},";
+    }
     out << "\"memory\":{\"rss_start_bytes\":" << report.memory.rss_start_bytes
         << ",\"rss_peak_bytes\":" << report.memory.rss_peak_bytes
         << ",\"rss_end_bytes\":" << report.memory.rss_end_bytes
@@ -1173,6 +1441,8 @@ inline StressConfig parse_args(int argc, char** argv) {
             config.time_dilation_max = parse_double(arg, require_value());
         } else if (arg == "--time-dilation-gain") {
             config.time_dilation_gain = parse_double(arg, require_value());
+        } else if (arg == "--wire-diagnostics") {
+            config.wire_diagnostics = true;
         } else if (arg == "--report") {
             const std::string value = require_value();
             if (value == "json") {
@@ -1212,6 +1482,7 @@ inline void write_usage(std::ostream& out) {
         << "  --interpolation-buffer-frames N\n"
         << "  --interpolation-buffer-capacity-frames N\n"
         << "  --time-dilation-min N --time-dilation-max N --time-dilation-gain N\n"
+        << "  --wire-diagnostics\n"
         << "  --report text|json\n";
 }
 

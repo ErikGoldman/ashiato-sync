@@ -304,10 +304,35 @@ const ReplicationClient::EntityState* ReplicationClient::find_entity_state(ecs::
     return state.server_entity == server_entity.value ? &state : nullptr;
 }
 
+ReplicationClient::EntityState* ReplicationClient::find_entity_state(std::uint32_t network_id) noexcept {
+    if (network_id == 0U || network_id >= network_entity_indices_.size()) {
+        return nullptr;
+    }
+    const std::uint32_t entity_index = network_entity_indices_[network_id];
+    if (entity_index >= entities_.size()) {
+        return nullptr;
+    }
+    EntityState& state = entities_[entity_index];
+    return state.network_id == network_id ? &state : nullptr;
+}
+
+const ReplicationClient::EntityState* ReplicationClient::find_entity_state(std::uint32_t network_id) const noexcept {
+    if (network_id == 0U || network_id >= network_entity_indices_.size()) {
+        return nullptr;
+    }
+    const std::uint32_t entity_index = network_entity_indices_[network_id];
+    if (entity_index >= entities_.size()) {
+        return nullptr;
+    }
+    const EntityState& state = entities_[entity_index];
+    return state.network_id == network_id ? &state : nullptr;
+}
+
 ReplicationClient::EntityState* ReplicationClient::ensure_entity_state(
     ecs::Registry& registry,
-    ecs::Entity server_entity) {
-    if (!server_entity) {
+    ecs::Entity server_entity,
+    std::uint32_t network_id) {
+    if (!server_entity || network_id == 0U) {
         return nullptr;
     }
 
@@ -334,8 +359,13 @@ ReplicationClient::EntityState* ReplicationClient::ensure_entity_state(
     EntityState& fresh = entities_[entity_index];
     fresh = EntityState{};
     fresh.server_entity = server_entity.value;
+    fresh.network_id = network_id;
     fresh.active_index = active_entities_.size();
     active_entities_.push_back(entity_index);
+    if (network_id >= network_entity_indices_.size()) {
+        network_entity_indices_.resize(static_cast<std::size_t>(network_id) + 1U, invalid_entity_index);
+    }
+    network_entity_indices_[network_id] = entity_index;
     return &fresh;
 }
 
@@ -350,6 +380,10 @@ void ReplicationClient::erase_entity_state(
     EntityState& state = entities_[entity_index];
     if (state.server_entity == 0U) {
         return;
+    }
+    if (state.network_id < network_entity_indices_.size() &&
+        network_entity_indices_[state.network_id] == entity_index) {
+        network_entity_indices_[state.network_id] = invalid_entity_index;
     }
 
     if (destroy_local && state.local && registry.alive(state.local)) {
@@ -451,8 +485,9 @@ bool ReplicationClient::receive(ecs::Registry& registry, BitBuffer packet) {
             return false;
         }
         const auto frame = static_cast<SyncFrame>(packet.read_bits(32U));
+        const auto packet_id = static_cast<std::uint32_t>(packet.read_bits(protocol::server_packet_id_bits));
         const auto record_count = static_cast<std::uint16_t>(packet.read_bits(16U));
-        const bool applied = apply_update(registry, packet, frame, record_count);
+        const bool applied = apply_update(registry, packet, packet_id, frame, record_count);
         if (applied) {
             record_timing_sample(frame, receive_frame_, playback_frame_);
         }
@@ -480,8 +515,9 @@ bool ReplicationClient::receive(
             return false;
         }
         const auto frame = static_cast<SyncFrame>(packet.read_bits(32U));
+        const auto packet_id = static_cast<std::uint32_t>(packet.read_bits(protocol::server_packet_id_bits));
         const auto record_count = static_cast<std::uint16_t>(packet.read_bits(16U));
-        const bool applied = apply_update(registry, packet, frame, record_count);
+        const bool applied = apply_update(registry, packet, packet_id, frame, record_count);
         if (applied) {
             record_timing_sample(frame, receive_frame, playback_frame);
         }
@@ -633,9 +669,8 @@ const DisplaySampleBuffer& ReplicationClient::display_frame(const ecs::Registry&
 
 std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
     std::vector<BitBuffer> packets;
-    if (pending_ack_live_count_ == 0U) {
+    if (pending_acks_.empty()) {
         pending_acks_.clear();
-        pending_ack_index_.clear();
         return packets;
     }
 
@@ -654,7 +689,7 @@ std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
         return packets;
     }
 
-    packets.reserve((pending_ack_live_count_ + max_acks_per_packet - 1U) / max_acks_per_packet);
+    packets.reserve((pending_acks_.size() + max_acks_per_packet - 1U) / max_acks_per_packet);
     BitBuffer packet;
     std::uint16_t packet_ack_count = 0;
     std::size_t packet_count_offset = 0;
@@ -676,29 +711,22 @@ std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
     };
 
     begin_packet();
-    for (const AckRecord& ack : pending_acks_) {
-        if (!ack.active) {
-            continue;
-        }
+    for (const std::uint32_t packet_id : pending_acks_) {
         if (packet_ack_count == max_acks_per_packet) {
             finish_packet();
             begin_packet();
         }
-        packet.push_bool(ack.destroy);
-        packet.push_bits(ack.frame, 32U);
-        packet.push_unsigned_bits(ack.entity.value, 64U);
+        packet.push_bits(packet_id, protocol::server_packet_id_bits);
         ++packet_ack_count;
     }
     finish_packet();
 
     pending_acks_.clear();
-    pending_ack_index_.clear();
-    pending_ack_live_count_ = 0;
     return packets;
 }
 
 std::size_t ReplicationClient::pending_ack_count() const noexcept {
-    return pending_ack_live_count_;
+    return pending_acks_.size();
 }
 
 ecs::Entity ReplicationClient::local_entity(ecs::Entity server_entity) const {
@@ -709,6 +737,7 @@ ecs::Entity ReplicationClient::local_entity(ecs::Entity server_entity) const {
 bool ReplicationClient::apply_update(
     ecs::Registry& registry,
     BitBuffer& packet,
+    std::uint32_t packet_id,
     SyncFrame frame,
     std::uint16_t record_count) {
     const SyncSettings& settings = registry.get<SyncSettings>();
@@ -716,20 +745,23 @@ bool ReplicationClient::apply_update(
 
     for (std::uint16_t record = 0; record < record_count; ++record) {
         const bool destroy = packet.read_bool();
-        const ecs::Entity server_entity{packet.read_unsigned_bits(64U)};
-        if (!server_entity) {
+        const auto network_id = static_cast<std::uint32_t>(packet.read_bits(protocol::network_entity_id_bits));
+        if (network_id == 0U) {
             return false;
         }
 
         const bool applied = destroy
-            ? apply_destroy(registry, frame, server_entity)
-            : apply_upsert(registry, settings, frame, server_entity, packet);
+            ? apply_destroy(registry, frame, network_id)
+            : apply_upsert(registry, settings, frame, network_id, packet);
         if (!applied) {
             return false;
         }
         applied_any = true;
     }
 
+    if (applied_any) {
+        queue_ack(packet_id);
+    }
     return applied_any;
 }
 
@@ -737,13 +769,26 @@ bool ReplicationClient::apply_upsert(
     ecs::Registry& registry,
     const SyncSettings& settings,
     SyncFrame frame,
-    ecs::Entity server_entity,
+    std::uint32_t network_id,
     BitBuffer& packet) {
     const bool full = packet.read_bool();
+    ecs::Entity server_entity;
     SyncArchetypeId archetype = invalid_sync_archetype_id;
     SyncFrame baseline_frame = 0;
 
-    EntityState* found_state = find_entity_state(server_entity);
+    EntityState* found_state = nullptr;
+    if (full) {
+        server_entity = ecs::Entity{packet.read_unsigned_bits(64U)};
+        if (!server_entity) {
+            return false;
+        }
+        found_state = find_entity_state(server_entity);
+    } else {
+        found_state = find_entity_state(network_id);
+        if (found_state != nullptr) {
+            server_entity = ecs::Entity{found_state->server_entity};
+        }
+    }
     const bool previous_absent = found_state != nullptr &&
         !found_state->entity_present &&
         !found_state->local;
@@ -812,8 +857,9 @@ bool ReplicationClient::apply_upsert(
         if (collect_decoded_updates) {
             decoded_updates.reserve(component_count);
         }
+        const std::size_t sync_slot_bits = protocol::bits_for_range(sync_slot_count(definition));
         for (std::uint16_t component = 0; component < component_count; ++component) {
-            const auto sync_slot = static_cast<std::uint16_t>(packet.read_bits(16U));
+            const auto sync_slot = static_cast<std::uint16_t>(packet.read_bits(sync_slot_bits));
             if (sync_slot >= sync_slot_count(definition)) {
                 return false;
             }
@@ -943,7 +989,7 @@ bool ReplicationClient::apply_upsert(
         return false;
     }
 
-    EntityState* ensured_state = ensure_entity_state(registry, server_entity);
+    EntityState* ensured_state = ensure_entity_state(registry, server_entity, network_id);
     if (ensured_state == nullptr) {
         return false;
     }
@@ -985,16 +1031,15 @@ bool ReplicationClient::apply_upsert(
     state.frame = frame;
     state.entity_present = true;
     remember_baseline(state);
-    queue_ack(server_entity, frame, false);
     return true;
 }
 
-bool ReplicationClient::apply_destroy(ecs::Registry& registry, SyncFrame frame, ecs::Entity server_entity) {
-    EntityState* state = find_entity_state(server_entity);
+bool ReplicationClient::apply_destroy(ecs::Registry& registry, SyncFrame frame, std::uint32_t network_id) {
+    EntityState* state = find_entity_state(network_id);
     if (state == nullptr) {
-        queue_ack(server_entity, frame, true);
         return true;
     }
+    const ecs::Entity server_entity{state->server_entity};
     if (state->mode == ReplicationClientMode::BufferedInterpolation) {
         return apply_buffered_destroy(registry, frame, server_entity);
     }
@@ -1002,7 +1047,6 @@ bool ReplicationClient::apply_destroy(ecs::Registry& registry, SyncFrame frame, 
         return false;
     }
     erase_entity_state(registry, ecs::Registry::entity_index(server_entity), true);
-    queue_ack(server_entity, frame, true);
     return true;
 }
 
@@ -1017,7 +1061,7 @@ bool ReplicationClient::apply_buffered_upsert(
         return false;
     }
 
-    EntityState* ensured_state = ensure_entity_state(registry, server_entity);
+    EntityState* ensured_state = find_entity_state(server_entity);
     if (ensured_state == nullptr) {
         return false;
     }
@@ -1038,14 +1082,13 @@ bool ReplicationClient::apply_buffered_upsert(
     state.frame = frame;
     state.entity_present = true;
     remember_baseline(state);
-    queue_ack(server_entity, frame, false);
     sync_entity_memberships(state);
     (void)registry;
     return true;
 }
 
 bool ReplicationClient::apply_buffered_destroy(ecs::Registry& registry, SyncFrame frame, ecs::Entity server_entity) {
-    EntityState* state_ptr = ensure_entity_state(registry, server_entity);
+    EntityState* state_ptr = find_entity_state(server_entity);
     if (state_ptr == nullptr) {
         return false;
     }
@@ -1075,7 +1118,6 @@ bool ReplicationClient::apply_buffered_destroy(ecs::Registry& registry, SyncFram
             return false;
         }
     }
-    queue_ack(server_entity, frame, true);
     sync_entity_memberships(state);
     return true;
 }
@@ -1718,27 +1760,8 @@ void ReplicationClient::remember_baseline(EntityState& state) {
     state.history_next = (state.history_next + 1U) % max_baseline_history_per_entity;
 }
 
-void ReplicationClient::queue_ack(ecs::Entity entity, SyncFrame frame, bool destroy) {
-    const std::uint32_t entity_index = ecs::Registry::entity_index(entity);
-    if (entity_index >= pending_ack_index_.size()) {
-        pending_ack_index_.resize(static_cast<std::size_t>(entity_index) + 1U);
-    }
-    AckIndexEntry& entry = pending_ack_index_[entity_index];
-    std::size_t& existing = destroy ? entry.destroy : entry.update;
-    if (entry.entity == entity.value && existing != invalid_ack_index && existing < pending_acks_.size()) {
-        AckRecord& old = pending_acks_[existing];
-        if (old.active && old.entity == entity && old.destroy == destroy) {
-            old.active = false;
-            --pending_ack_live_count_;
-        }
-    } else {
-        entry.entity = entity.value;
-        entry.update = invalid_ack_index;
-        entry.destroy = invalid_ack_index;
-    }
-    existing = pending_acks_.size();
-    pending_acks_.push_back(AckRecord{entity, frame, destroy, true});
-    ++pending_ack_live_count_;
+void ReplicationClient::queue_ack(std::uint32_t packet_id) {
+    pending_acks_.push_back(packet_id);
 }
 
 void ReplicationClient::record_timing_sample(

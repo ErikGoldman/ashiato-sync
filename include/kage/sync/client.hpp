@@ -139,6 +139,7 @@ public:
 private:
     using ComponentBaseline = ReplicatedComponentUpdate;
     static constexpr std::size_t invalid_ack_index = std::numeric_limits<std::size_t>::max();
+    static constexpr std::uint32_t invalid_entity_index = std::numeric_limits<std::uint32_t>::max();
 
     struct EntityState {
         struct FrameBaseline {
@@ -173,27 +174,17 @@ private:
         std::uint64_t applied_present_mask = 0;
         std::vector<ComponentError> snap_errors;
         std::uint64_t server_entity = 0;
+        std::uint32_t network_id = 0;
         std::size_t active_index = invalid_ack_index;
         std::size_t buffered_index = invalid_ack_index;
         std::size_t snap_error_index = invalid_ack_index;
     };
 
-    struct AckRecord {
-        ecs::Entity entity;
-        SyncFrame frame = 0;
-        bool destroy = false;
-        bool active = true;
-    };
-
-    struct AckIndexEntry {
-        std::uint64_t entity = 0;
-        std::size_t update = invalid_ack_index;
-        std::size_t destroy = invalid_ack_index;
-    };
-
     EntityState* find_entity_state(ecs::Entity server_entity) noexcept;
     const EntityState* find_entity_state(ecs::Entity server_entity) const noexcept;
-    EntityState* ensure_entity_state(ecs::Registry& registry, ecs::Entity server_entity);
+    EntityState* find_entity_state(std::uint32_t network_id) noexcept;
+    const EntityState* find_entity_state(std::uint32_t network_id) const noexcept;
+    EntityState* ensure_entity_state(ecs::Registry& registry, ecs::Entity server_entity, std::uint32_t network_id);
     void erase_entity_state(ecs::Registry& registry, std::uint32_t entity_index, bool destroy_local);
     void set_buffered_membership(std::uint32_t entity_index, bool active);
     void set_snap_error_membership(std::uint32_t entity_index, bool active);
@@ -202,15 +193,16 @@ private:
     bool apply_update(
         ecs::Registry& registry,
         BitBuffer& packet,
+        std::uint32_t packet_id,
         SyncFrame frame,
         std::uint16_t record_count);
     bool apply_upsert(
         ecs::Registry& registry,
         const SyncSettings& settings,
         SyncFrame frame,
-        ecs::Entity server_entity,
+        std::uint32_t network_id,
         BitBuffer& packet);
-    bool apply_destroy(ecs::Registry& registry, SyncFrame frame, ecs::Entity server_entity);
+    bool apply_destroy(ecs::Registry& registry, SyncFrame frame, std::uint32_t network_id);
     bool apply_buffered_upsert(
         ecs::Registry& registry,
         const SyncSettings& settings,
@@ -266,7 +258,7 @@ private:
         SyncArchetypeId archetype,
         ecs::Entity component) const;
     void remember_baseline(EntityState& state);
-    void queue_ack(ecs::Entity entity, SyncFrame frame, bool destroy);
+    void queue_ack(std::uint32_t packet_id);
     void record_timing_sample(SyncFrame server_frame, SyncFrame receive_frame, SyncFrame playback_frame) noexcept;
 
     ReplicationClientOptions options_;
@@ -275,9 +267,8 @@ private:
     std::vector<std::uint32_t> active_entities_;
     std::vector<std::uint32_t> buffered_entities_;
     std::vector<std::uint32_t> snap_error_entities_;
-    std::vector<AckRecord> pending_acks_;
-    std::vector<AckIndexEntry> pending_ack_index_;
-    std::size_t pending_ack_live_count_ = 0;
+    std::vector<std::uint32_t> network_entity_indices_;
+    std::vector<std::uint32_t> pending_acks_;
     DisplaySampleBuffer display_frame_;
     DisplaySampleBuffer display_scratch_;
     double receive_accumulator_seconds_ = 0.0;

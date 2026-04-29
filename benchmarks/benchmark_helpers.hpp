@@ -363,37 +363,13 @@ inline void ack_packets(
     for (const auto& sent : packets) {
         BitBuffer packet = sent.second;
         benchmark::DoNotOptimize(packet.read_bits(8U));
-        const auto frame = static_cast<SyncFrame>(packet.read_bits(32U));
-        const auto entity_count = static_cast<std::uint16_t>(packet.read_bits(16U));
-        for (std::uint16_t entity_index = 0; entity_index < entity_count; ++entity_index) {
-            benchmark::DoNotOptimize(packet.read_bool());
-            const ecs::Entity entity{packet.read_unsigned_bits(64U)};
-            const bool full = packet.read_bool();
-            if (full) {
-                benchmark::DoNotOptimize(packet.read_bits(32U));
-                const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
-                for (std::uint16_t component = 0; component < component_count; ++component) {
-                    benchmark::DoNotOptimize(packet.read_bits(16U));
-                    const std::size_t payload_bits = sizeof(DeltaPosition) * 8U;
-                    for (std::size_t bit = 0; bit < payload_bits; ++bit) {
-                        benchmark::DoNotOptimize(packet.read_bool());
-                    }
-                }
-            } else {
-                std::uint32_t baseline_frame = 0;
-                benchmark::DoNotOptimize(protocol::read_baseline_frame(packet, frame, baseline_frame));
-                benchmark::DoNotOptimize(baseline_frame);
-                const bool tag_changed = packet.read_bool();
-                benchmark::DoNotOptimize(static_cast<int>(tag_changed));
-                const bool position_changed = packet.read_bool();
-                if (position_changed) {
-                    for (std::size_t bit = 0; bit < 16U; ++bit) {
-                        benchmark::DoNotOptimize(packet.read_bool());
-                    }
-                }
-            }
-            benchmark::DoNotOptimize(server.acknowledge_entity(sent.first, entity, frame));
-        }
+        benchmark::DoNotOptimize(packet.read_bits(32U));
+        const auto packet_id = static_cast<std::uint32_t>(packet.read_bits(protocol::server_packet_id_bits));
+        BitBuffer ack;
+        ack.push_bits(protocol::client_ack_message, 8U);
+        ack.push_bits(1, 16U);
+        ack.push_bits(packet_id, protocol::server_packet_id_bits);
+        benchmark::DoNotOptimize(server.process_packet(sent.first, ack));
     }
 }
 

@@ -23,15 +23,14 @@ bool start_sync(ecs::Registry& registry, ecs::Entity entity, kage::sync::SyncArc
 }
 
 struct AckRecord {
-    bool destroy = false;
-    kage::sync::SyncFrame frame = 0;
-    ecs::Entity entity;
+    std::uint32_t packet_id = 0;
 };
 
 struct UpdateRecord {
     bool destroy = false;
     bool full = false;
     kage::sync::SyncFrame baseline_frame = 0;
+    std::uint32_t network_id = 0;
     ecs::Entity entity;
 };
 
@@ -47,9 +46,7 @@ std::vector<AckRecord> read_acks(kage::sync::BitBuffer packet) {
     records.reserve(count);
     for (std::uint16_t index = 0; index < count; ++index) {
         AckRecord record;
-        record.destroy = packet.read_bool();
-        record.frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
-        record.entity = ecs::Entity{packet.read_unsigned_bits(64U)};
+        record.packet_id = static_cast<std::uint32_t>(packet.read_bits(kage::sync::protocol::server_packet_id_bits));
         records.push_back(record);
     }
     return records;
@@ -59,19 +56,22 @@ UpdatePacket read_update(kage::sync::BitBuffer packet) {
     REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::server_update_message);
     UpdatePacket update;
     update.frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
+    packet.read_bits(kage::sync::protocol::server_packet_id_bits);
     const auto count = static_cast<std::uint16_t>(packet.read_bits(16U));
     update.records.reserve(count);
     for (std::uint16_t index = 0; index < count; ++index) {
         UpdateRecord record;
         record.destroy = packet.read_bool();
-        record.entity = ecs::Entity{packet.read_unsigned_bits(64U)};
+        record.network_id = static_cast<std::uint32_t>(packet.read_bits(kage::sync::protocol::network_entity_id_bits));
         if (!record.destroy) {
             record.full = packet.read_bool();
             if (record.full) {
+                record.entity = ecs::Entity{packet.read_unsigned_bits(64U)};
                 packet.read_bits(32U);
                 const auto component_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+                const std::size_t sync_slot_bits = kage::sync::protocol::bits_for_range(2U);
                 for (std::uint16_t component = 0; component < component_count; ++component) {
-                    const auto component_index = static_cast<std::uint16_t>(packet.read_bits(16U));
+                    const auto component_index = static_cast<std::uint16_t>(packet.read_bits(sync_slot_bits));
                     const std::size_t payload_bits = component_index == 1 ? 17U : sizeof(Health) * 8U;
                     for (std::size_t bit = 0; bit < payload_bits; ++bit) {
                         packet.read_bool();
@@ -104,20 +104,27 @@ const kage::sync::BitBuffer& packet_for(
     return found->second;
 }
 
+std::uint32_t test_network_id(ecs::Entity entity) {
+    return ecs::Registry::entity_index(entity) + 1U;
+}
+
 kage::sync::BitBuffer make_position_packet(
     kage::sync::SyncFrame frame,
-    const std::vector<std::pair<ecs::Entity, Position>>& records) {
+    const std::vector<std::pair<ecs::Entity, Position>>& records,
+    std::size_t sync_slot_count = 2U) {
     kage::sync::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
+    packet.push_bits(frame, kage::sync::protocol::server_packet_id_bits);
     packet.push_bits(static_cast<std::uint16_t>(records.size()), 16U);
     for (const auto& record : records) {
         packet.push_bool(false);
-        packet.push_unsigned_bits(record.first.value, 64U);
+        packet.push_bits(test_network_id(record.first), kage::sync::protocol::network_entity_id_bits);
         packet.push_bool(true);
+        packet.push_unsigned_bits(record.first.value, 64U);
         packet.push_bits(0, 32U);
         packet.push_bits(1, 16U);
-        packet.push_bits(1, 16U);
+        packet.push_bits(1, kage::sync::protocol::bits_for_range(sync_slot_count));
 
         packet.push_bytes(reinterpret_cast<const char*>(&record.second), sizeof(Position));
     }
@@ -128,9 +135,10 @@ kage::sync::BitBuffer make_destroy_packet(kage::sync::SyncFrame frame, ecs::Enti
     kage::sync::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
+    packet.push_bits(frame, kage::sync::protocol::server_packet_id_bits);
     packet.push_bits(1, 16U);
     packet.push_bool(true);
-    packet.push_unsigned_bits(server_entity.value, 64U);
+    packet.push_bits(test_network_id(server_entity), kage::sync::protocol::network_entity_id_bits);
     return packet;
 }
 
@@ -172,8 +180,7 @@ TEST_CASE("replication client applies full updates and queues ACKs") {
     REQUIRE(ack_packets.size() == 1);
     std::vector<AckRecord> acks = read_acks(ack_packets[0]);
     REQUIRE(acks.size() == 1);
-    REQUIRE_FALSE(acks[0].destroy);
-    REQUIRE(acks[0].entity == server_entity);
+    REQUIRE(acks[0].packet_id != 0);
     REQUIRE(server.process_packet(1, ack_packets[0]));
 }
 
@@ -316,6 +323,17 @@ TEST_CASE("replication client decodes mixed-baseline deltas in one packet") {
     REQUIRE(packets.size() == 1);
     const UpdatePacket full_update = read_update(packets.back());
     REQUIRE(full_update.records.size() == 2);
+    std::uint32_t first_network_id = 0;
+    std::uint32_t second_network_id = 0;
+    for (const UpdateRecord& record : full_update.records) {
+        if (record.entity == first) {
+            first_network_id = record.network_id;
+        } else if (record.entity == second) {
+            second_network_id = record.network_id;
+        }
+    }
+    REQUIRE(first_network_id != 0);
+    REQUIRE(second_network_id != 0);
     REQUIRE(client.receive(client_registry, packets.back()));
     for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
         REQUIRE(server.process_packet(1, ack));
@@ -346,9 +364,9 @@ TEST_CASE("replication client decodes mixed-baseline deltas in one packet") {
     for (const UpdateRecord& record : frame84.records) {
         REQUIRE_FALSE(record.destroy);
         REQUIRE_FALSE(record.full);
-        if (record.entity == first) {
+        if (record.network_id == first_network_id) {
             saw_first_from_83 = record.baseline_frame == frame83.frame;
-        } else if (record.entity == second) {
+        } else if (record.network_id == second_network_id) {
             saw_second_from_full = record.baseline_frame == full_update.frame;
         }
     }
@@ -378,12 +396,13 @@ TEST_CASE("replication client rejects invalid deltas without ACKing") {
     kage::sync::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
     packet.push_bits(1, 32U);
+    packet.push_bits(1, kage::sync::protocol::server_packet_id_bits);
     packet.push_bits(1, 16U);
     packet.push_bool(false);
-    packet.push_unsigned_bits(ecs::Entity{42}.value, 64U);
+    packet.push_bits(1, kage::sync::protocol::network_entity_id_bits);
     packet.push_bool(false);
     packet.push_bits(1, 16U);
-    packet.push_bits(0, 16U);
+    packet.push_bits(0, kage::sync::protocol::bits_for_range(2U));
     packet.push_bits(17, 32U);
     packet.push_bool(true);
     packet.push_bits(10, 8U);
@@ -417,10 +436,12 @@ TEST_CASE("replication client rejects malformed update packets without ACKing") 
     kage::sync::BitBuffer invalid_archetype;
     invalid_archetype.push_bits(kage::sync::protocol::server_update_message, 8U);
     invalid_archetype.push_bits(1, 32U);
+    invalid_archetype.push_bits(1, kage::sync::protocol::server_packet_id_bits);
     invalid_archetype.push_bits(1, 16U);
     invalid_archetype.push_bool(false);
-    invalid_archetype.push_unsigned_bits(ecs::Entity{42}.value, 64U);
+    invalid_archetype.push_bits(1, kage::sync::protocol::network_entity_id_bits);
     invalid_archetype.push_bool(true);
+    invalid_archetype.push_unsigned_bits(ecs::Entity{42}.value, 64U);
     invalid_archetype.push_bits(99, 32U);
     REQUIRE_FALSE(client.receive(registry, invalid_archetype));
 
@@ -466,8 +487,7 @@ TEST_CASE("replication client applies destroy records and ACKs tombstones") {
     REQUIRE(destroy_acks.size() == 1);
     std::vector<AckRecord> acks = read_acks(destroy_acks[0]);
     REQUIRE(acks.size() == 1);
-    REQUIRE(acks[0].destroy);
-    REQUIRE(acks[0].entity == server_entity);
+    REQUIRE(acks[0].packet_id != 0);
 
     server.tick(server_registry);
     REQUIRE(server.process_packet(1, destroy_acks[0]));
@@ -491,6 +511,7 @@ TEST_CASE("replication client packs ACKs within the configured MTU") {
 
     std::vector<kage::sync::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
+    server_options.mtu_bytes = 40;
     server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
         packets.push_back(packet);
     };
@@ -508,15 +529,15 @@ TEST_CASE("replication client packs ACKs within the configured MTU") {
     }
 
     std::vector<kage::sync::BitBuffer> acks = client.drain_ack_packets();
-    REQUIRE(acks.size() == 3);
+    REQUIRE(acks.size() == 1);
     for (const kage::sync::BitBuffer& ack : acks) {
         REQUIRE(ack.byte_size() <= 16);
-        REQUIRE(read_acks(ack).size() == 1);
+        REQUIRE(read_acks(ack).size() == 3);
     }
 }
 
 TEST_CASE("replication client retains ACKs that cannot fit the configured MTU") {
-    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{15});
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{6});
     ecs::Registry server_registry;
     const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
     const ecs::Entity server_entity = server_registry.create();
@@ -721,8 +742,8 @@ TEST_CASE("replication clients ACK destroy records independently") {
     std::vector<kage::sync::BitBuffer> client_two_acks = client_two.drain_ack_packets();
     REQUIRE(client_one_acks.size() == 1);
     REQUIRE(client_two_acks.size() == 1);
-    REQUIRE(read_acks(client_one_acks[0])[0].destroy);
-    REQUIRE(read_acks(client_two_acks[0])[0].destroy);
+    REQUIRE(read_acks(client_one_acks[0]).size() == 1);
+    REQUIRE(read_acks(client_two_acks[0]).size() == 1);
     REQUIRE(server.process_packet(1, client_one_acks[0]));
 
     packets.clear();
@@ -1721,8 +1742,8 @@ TEST_CASE("client-owned display frame exposes snap and buffered entities in one 
     };
     kage::sync::ReplicationClient client(options);
 
-    REQUIRE(client.receive(client_registry, make_position_packet(1, {{ecs::Entity{42}, Position{10.0f, 0.0f}}})));
-    REQUIRE(client.receive(client_registry, make_position_packet(1, {{ecs::Entity{43}, Position{20.0f, 0.0f}}})));
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{ecs::Entity{42}, Position{10.0f, 0.0f}}}, 3U)));
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{ecs::Entity{43}, Position{20.0f, 0.0f}}}, 3U)));
     REQUIRE(client.tick(client_registry, 2.0));
 
     const kage::sync::DisplaySampleBuffer& display = client.display_frame(client_registry);
@@ -2718,9 +2739,7 @@ TEST_CASE("buffered interpolation applies late destroys for already sampled targ
     REQUIRE(acks.size() == 1);
     const std::vector<AckRecord> records = read_acks(acks[0]);
     REQUIRE(records.size() == 1);
-    REQUIRE(records[0].entity == server_entity);
-    REQUIRE(records[0].frame == 2);
-    REQUIRE(records[0].destroy);
+    REQUIRE(records[0].packet_id == 2);
 }
 
 TEST_CASE("replication client ignores stale server entity generations on reused indices") {
@@ -2777,6 +2796,5 @@ TEST_CASE("replication client replaces older server entity generations on reused
     REQUIRE(acks.size() == 1);
     const std::vector<AckRecord> records = read_acks(acks[0]);
     REQUIRE(records.size() == 1);
-    REQUIRE(records[0].entity == newer);
-    REQUIRE_FALSE(records[0].destroy);
+    REQUIRE(records[0].packet_id == 2);
 }

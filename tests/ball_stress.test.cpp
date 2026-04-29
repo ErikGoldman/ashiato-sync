@@ -3,7 +3,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <random>
+#include <sstream>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace stress = kage::sync::stress;
@@ -280,18 +282,20 @@ TEST_CASE("ball stress packet classifier counts update record kinds") {
     kage::sync::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
     packet.push_bits(7, 32U);
+    packet.push_bits(99, kage::sync::protocol::server_packet_id_bits);
     packet.push_bits(3, 16U);
 
     packet.push_bool(false);
-    packet.push_unsigned_bits(100, 64U);
+    packet.push_bits(100, kage::sync::protocol::network_entity_id_bits);
     packet.push_bool(true);
+    packet.push_unsigned_bits(100, 64U);
     packet.push_bits(1, 32U);
     packet.push_bits(1, 16U);
-    packet.push_bits(0, 16U);
+    packet.push_bits(0, kage::sync::protocol::bits_for_range(stress::WireFormatStats::slot_count));
     packet.push_unsigned_bits(3U, 2U);
 
     packet.push_bool(false);
-    packet.push_unsigned_bits(101, 64U);
+    packet.push_bits(101, kage::sync::protocol::network_entity_id_bits);
     packet.push_bool(false);
     kage::sync::protocol::write_baseline_frame(packet, 7, 6);
     packet.push_bool(true);
@@ -302,7 +306,7 @@ TEST_CASE("ball stress packet classifier counts update record kinds") {
     packet.push_unsigned_bits(1U, 2U);
 
     packet.push_bool(true);
-    packet.push_unsigned_bits(102, 64U);
+    packet.push_bits(102, kage::sync::protocol::network_entity_id_bits);
 
     const stress::PacketBreakdown breakdown = stress::classify_packet(packet);
 
@@ -310,6 +314,47 @@ TEST_CASE("ball stress packet classifier counts update record kinds") {
     REQUIRE(breakdown.full_upserts == 1);
     REQUIRE(breakdown.delta_upserts == 1);
     REQUIRE(breakdown.destroys == 1);
+
+    stress::WireFormatStats wire;
+    const stress::PacketBreakdown diagnostic_breakdown = stress::classify_packet(packet, &wire);
+
+    REQUIRE(diagnostic_breakdown.type == stress::PacketType::ServerUpdate);
+    REQUIRE(wire.packet_bits == 319);
+    REQUIRE(wire.padding_bits == 1);
+    REQUIRE(wire.server_update_header_bits == kage::sync::protocol::server_update_header_bits);
+    REQUIRE(wire.server_update_entities == 3);
+    REQUIRE(wire.max_server_update_entities_per_packet == 3);
+    REQUIRE(wire.full_upsert_bits == 151);
+    REQUIRE(wire.full_upsert_payload_bits == 2);
+    REQUIRE(wire.delta_upsert_bits == 47);
+    REQUIRE(wire.delta_upsert_payload_bits == 2);
+    REQUIRE(wire.delta_baseline_bits == 1 + kage::sync::protocol::baseline_frame_delta_bits);
+    REQUIRE(wire.delta_baseline_relative == 1);
+    REQUIRE(wire.delta_baseline_absolute == 0);
+    REQUIRE(wire.delta_change_mask_bits == stress::WireFormatStats::slot_count);
+    REQUIRE(wire.destroy_record_bits == 33);
+    REQUIRE(wire.slots[0].records == 2);
+    REQUIRE(wire.slots[0].index_bits == 3);
+    REQUIRE(wire.slots[0].payload_bits == 4);
+}
+
+TEST_CASE("ball stress packet classifier records ACK wire diagnostics") {
+    kage::sync::BitBuffer packet;
+    packet.push_bits(kage::sync::protocol::client_ack_message, 8U);
+    packet.push_bits(2, 16U);
+    packet.push_bits(7, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(8, kage::sync::protocol::server_packet_id_bits);
+
+    stress::WireFormatStats wire;
+    const stress::PacketBreakdown breakdown = stress::classify_packet(packet, &wire);
+
+    REQUIRE(breakdown.type == stress::PacketType::ClientAck);
+    REQUIRE(wire.packet_bits == kage::sync::protocol::client_ack_header_bits +
+            2U * kage::sync::protocol::client_ack_record_bits);
+    REQUIRE(wire.padding_bits == 0);
+    REQUIRE(wire.ack_header_bits == kage::sync::protocol::client_ack_header_bits);
+    REQUIRE(wire.ack_records == 2);
+    REQUIRE(wire.ack_record_bits == 2U * kage::sync::protocol::client_ack_record_bits);
 }
 
 TEST_CASE("ball stress shared latency and loss defaults apply to both directions") {
@@ -379,6 +424,39 @@ TEST_CASE("ball stress runs multiple clients through replication and ACKs") {
     REQUIRE(report.clients_to_server.client_ack_packets >= report.config.clients);
     REQUIRE(report.memory.client_pending_acks == 0);
     REQUIRE(report.memory.client_local_entities >= report.config.clients);
+}
+
+TEST_CASE("ball stress wire diagnostics are opt-in report fields") {
+    stress::StressConfig config = test_config();
+    config.clients = 2;
+    config.duration_seconds = 0.5;
+    config.tick_rate = 10.0;
+    config.spawn_interval_ms = 1.0;
+    config.max_balls = 4;
+    config.wire_diagnostics = true;
+
+    const stress::StressReport report = stress::run_stress(config);
+
+    REQUIRE(report.config.wire_diagnostics);
+    REQUIRE(report.server_to_clients.wire.packet_bits > 0);
+    REQUIRE(report.server_to_clients.wire.server_update_header_bits > 0);
+    REQUIRE(report.server_to_clients.wire.full_upsert_bits > 0);
+    REQUIRE(report.clients_to_server.wire.ack_records > 0);
+    REQUIRE(report.clients_to_server.wire.ack_record_bits > 0);
+
+    std::ostringstream json;
+    stress::write_report_json(json, report);
+    REQUIRE(json.str().find("\"wire_format\"") != std::string::npos);
+
+    std::ostringstream text;
+    stress::write_report_text(text, report);
+    REQUIRE(text.str().find("wire_format server_to_clients") != std::string::npos);
+
+    config.wire_diagnostics = false;
+    const stress::StressReport default_report = stress::run_stress(config);
+    std::ostringstream default_json;
+    stress::write_report_json(default_json, default_report);
+    REQUIRE(default_json.str().find("\"wire_format\"") == std::string::npos);
 }
 
 TEST_CASE("ball stress runs with buffered interpolation clients") {
