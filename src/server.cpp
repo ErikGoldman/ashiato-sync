@@ -18,7 +18,7 @@ namespace kage::sync {
 namespace {
 
 constexpr std::size_t destroy_record_bits = 1U + 64U;
-constexpr std::size_t max_pending_snapshots_per_entity = 64;
+constexpr std::size_t max_pending_quantized_frames_per_entity = 64;
 
 struct OutboundPacket {
     ClientId client = invalid_client_id;
@@ -233,27 +233,27 @@ bool ReplicationServer::acknowledge_entity(ClientId client, ecs::Entity entity, 
     const auto found_pending = std::find_if(
         entity_state.pending.begin(),
         entity_state.pending.end(),
-        [frame](const ClientEntityState::PendingSnapshot& pending) {
+        [frame](const ClientEntityState::PendingQuantizedFrame& pending) {
             return pending.frame == frame;
         });
     if (found_pending == entity_state.pending.end()) {
         return false;
     }
 
-    const std::uint32_t acked_snapshot = found_pending->snapshot;
-    if (acked_snapshot == invalid_snapshot_id || acked_snapshot >= snapshots_.size() || !snapshots_[acked_snapshot].active) {
+    const std::uint32_t acked_quantized_frame = found_pending->quantized_frame;
+    if (acked_quantized_frame == invalid_quantized_frame_id || acked_quantized_frame >= quantized_frames_.size() || !quantized_frames_[acked_quantized_frame].active) {
         return false;
     }
 
-    if (entity_state.baseline != acked_snapshot) {
-        release_snapshot(entity_state.baseline);
-        entity_state.baseline = acked_snapshot;
-        retain_snapshot(entity_state.baseline);
+    if (entity_state.baseline != acked_quantized_frame) {
+        release_quantized_frame(entity_state.baseline);
+        entity_state.baseline = acked_quantized_frame;
+        retain_quantized_frame(entity_state.baseline);
     }
 
     for (auto pending = entity_state.pending.begin(); pending != entity_state.pending.end();) {
         if (pending->frame <= frame) {
-            release_snapshot(pending->snapshot);
+            release_quantized_frame(pending->quantized_frame);
             pending = entity_state.pending.erase(pending);
         } else {
             ++pending;
@@ -295,23 +295,23 @@ bool ReplicationServer::process_packet(ClientId client, BitBuffer packet) {
     }
 }
 
-std::size_t ReplicationServer::retained_snapshot_count() const noexcept {
+std::size_t ReplicationServer::retained_quantized_frame_count() const noexcept {
     std::size_t count = 0;
-    for (const QuantizedSnapshot& snapshot : snapshots_) {
-        if (snapshot.active && snapshot.ref_count != 0) {
+    for (const QuantizedFrame& quantized_frame : quantized_frames_) {
+        if (quantized_frame.active && quantized_frame.ref_count != 0) {
             ++count;
         }
     }
     return count;
 }
 
-std::size_t ReplicationServer::retained_snapshot_bytes() const noexcept {
+std::size_t ReplicationServer::retained_quantized_frame_bytes() const noexcept {
     std::size_t bytes = 0;
-    for (const QuantizedSnapshot& snapshot : snapshots_) {
-        if (!snapshot.active || snapshot.ref_count == 0) {
+    for (const QuantizedFrame& quantized_frame : quantized_frames_) {
+        if (!quantized_frame.active || quantized_frame.ref_count == 0) {
             continue;
         }
-        bytes += snapshot.data.bytes.size();
+        bytes += quantized_frame.data.bytes.size();
     }
     return bytes;
 }
@@ -385,8 +385,8 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
     std::vector<std::uint32_t> unsent;
     BitBuffer records;
     SerializedEntity serialized;
-    QuantizedFrameData snapshot_scratch;
-    std::vector<std::uint64_t> snapshot_dirty_scratch;
+    QuantizedFrameData quantized_frame_scratch;
+    std::vector<std::uint64_t> quantized_frame_dirty_scratch;
 
     candidates.reserve(active_replicated_count_);
     update_candidates.reserve(active_replicated_count_);
@@ -510,15 +510,15 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
             }
 
             serialized.payload.clear();
-            serialized.snapshot = invalid_snapshot_id;
+            serialized.quantized_frame = invalid_quantized_frame_id;
             if (!serialize_entity(
                     registry,
                     settings,
                     client,
                     slot,
                     frame_,
-                    snapshot_scratch,
-                    snapshot_dirty_scratch,
+                    quantized_frame_scratch,
+                    quantized_frame_dirty_scratch,
                     serialized)) {
                 unsent.push_back(slot);
                 continue;
@@ -530,7 +530,7 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
                 const std::size_t packet_bytes =
                     protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
                 if (packet_bytes > remaining) {
-                    release_snapshot(serialized.snapshot);
+                    release_quantized_frame(serialized.quantized_frame);
                     unsent.push_back(slot);
                     continue;
                 }
@@ -544,7 +544,7 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
                 protocol::server_update_header_bits + records.bit_size() + 1U + serialized.payload.bit_size();
             const std::size_t packet_bytes = protocol::bytes_for_bits(single_packet_bits);
             if (packet_bytes > options_.mtu_bytes || packet_bytes > remaining) {
-                release_snapshot(serialized.snapshot);
+                release_quantized_frame(serialized.quantized_frame);
                 unsent.push_back(slot);
                 continue;
             }
@@ -554,10 +554,10 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
             ++packet_entities;
             client.reset_epochs[slot] = client.epoch;
             ClientEntityState& entity_state = client.entity_states[slot];
-            entity_state.pending.push_back(ClientEntityState::PendingSnapshot{serialized.snapshot, frame_});
-            retain_snapshot(serialized.snapshot);
-            while (entity_state.pending.size() > max_pending_snapshots_per_entity) {
-                release_snapshot(entity_state.pending.front().snapshot);
+            entity_state.pending.push_back(ClientEntityState::PendingQuantizedFrame{serialized.quantized_frame, frame_});
+            retain_quantized_frame(serialized.quantized_frame);
+            while (entity_state.pending.size() > max_pending_quantized_frames_per_entity) {
+                release_quantized_frame(entity_state.pending.front().quantized_frame);
                 entity_state.pending.erase(entity_state.pending.begin());
             }
             sent.push_back(slot);
@@ -593,7 +593,7 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
         std::min<std::size_t>(options_.serialized_worker_threads, clients_.size());
     struct PreparedCandidate {
         SerializedCandidate candidate;
-        std::uint32_t snapshot = invalid_snapshot_id;
+        std::uint32_t quantized_frame = invalid_quantized_frame_id;
     };
     struct PreparedClient {
         std::vector<PreparedCandidate> candidates;
@@ -604,8 +604,8 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
     std::vector<std::vector<std::uint32_t>> releases_by_client(clients_.size());
     std::vector<SerializedCandidate> update_candidates;
     std::vector<std::size_t> destroy_order;
-    QuantizedFrameData snapshot_scratch;
-    std::vector<std::uint64_t> snapshot_dirty_scratch;
+    QuantizedFrameData quantized_frame_scratch;
+    std::vector<std::uint64_t> quantized_frame_dirty_scratch;
 
     for (std::size_t client_index = 0; client_index < clients_.size(); ++client_index) {
         ClientState& client = clients_[client_index];
@@ -630,19 +630,19 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
         }
 
         auto append_prepared_update = [&](const SerializedCandidate& candidate) {
-            std::uint32_t snapshot = invalid_snapshot_id;
+            std::uint32_t quantized_frame = invalid_quantized_frame_id;
             if (candidate.slot < client.entity_states.size()) {
-                snapshot = find_or_create_snapshot(
+                quantized_frame = find_or_create_quantized_frame(
                     registry,
                     settings,
                     client,
                     candidate.slot,
                     frame_,
-                    snapshot_scratch,
-                    snapshot_dirty_scratch);
-                retain_snapshot(snapshot);
+                    quantized_frame_scratch,
+                    quantized_frame_dirty_scratch);
+                retain_quantized_frame(quantized_frame);
             }
-            prepared_client.candidates.push_back(PreparedCandidate{candidate, snapshot});
+            prepared_client.candidates.push_back(PreparedCandidate{candidate, quantized_frame});
         };
 
         auto append_prepared_destroy = [&](std::size_t destroy_index) {
@@ -653,7 +653,7 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
                     0,
                     destroy_index,
                     client.epoch - destroy.reset_epoch},
-                invalid_snapshot_id});
+                invalid_quantized_frame_id});
         };
 
         if (client.pending_destroys.empty()) {
@@ -725,8 +725,8 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
             packet_entities = 0;
         };
 
-        auto release_prepared_snapshot = [&](std::uint32_t snapshot) {
-            releases_by_client[client_index].push_back(snapshot);
+        auto release_prepared_quantized_frame = [&](std::uint32_t quantized_frame) {
+            releases_by_client[client_index].push_back(quantized_frame);
         };
 
         for (const PreparedCandidate& prepared_candidate : prepared_client.candidates) {
@@ -763,18 +763,18 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
             }
 
             const std::uint32_t slot = candidate.slot;
-            if (prepared_candidate.snapshot == invalid_snapshot_id ||
-                prepared_candidate.snapshot >= snapshots_.size() ||
-                !snapshots_[prepared_candidate.snapshot].active) {
+            if (prepared_candidate.quantized_frame == invalid_quantized_frame_id ||
+                prepared_candidate.quantized_frame >= quantized_frames_.size() ||
+                !quantized_frames_[prepared_candidate.quantized_frame].active) {
                 unsent.push_back(slot);
                 continue;
             }
 
             serialized.payload.clear();
-            serialized.snapshot = prepared_candidate.snapshot;
-            write_entity_record(registry, settings, client, slot, snapshots_[serialized.snapshot], serialized.payload);
+            serialized.quantized_frame = prepared_candidate.quantized_frame;
+            write_entity_record(registry, settings, client, slot, quantized_frames_[serialized.quantized_frame], serialized.payload);
             if (serialized.payload.empty()) {
-                release_prepared_snapshot(serialized.snapshot);
+                release_prepared_quantized_frame(serialized.quantized_frame);
                 unsent.push_back(slot);
                 continue;
             }
@@ -785,7 +785,7 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
                 const std::size_t packet_bytes =
                     protocol::bytes_for_bits(protocol::server_update_header_bits + records.bit_size());
                 if (packet_bytes > remaining) {
-                    release_prepared_snapshot(serialized.snapshot);
+                    release_prepared_quantized_frame(serialized.quantized_frame);
                     unsent.push_back(slot);
                     continue;
                 }
@@ -797,7 +797,7 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
                 protocol::server_update_header_bits + records.bit_size() + 1U + serialized.payload.bit_size();
             const std::size_t packet_bytes = protocol::bytes_for_bits(single_packet_bits);
             if (packet_bytes > options_.mtu_bytes || packet_bytes > remaining) {
-                release_prepared_snapshot(serialized.snapshot);
+                release_prepared_quantized_frame(serialized.quantized_frame);
                 unsent.push_back(slot);
                 continue;
             }
@@ -807,10 +807,10 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
             ++packet_entities;
             client.reset_epochs[slot] = client.epoch;
             ClientEntityState& entity_state = client.entity_states[slot];
-            entity_state.pending.push_back(ClientEntityState::PendingSnapshot{serialized.snapshot, frame_});
-            while (entity_state.pending.size() > max_pending_snapshots_per_entity) {
-                const std::uint32_t snapshot = entity_state.pending.front().snapshot;
-                release_prepared_snapshot(snapshot);
+            entity_state.pending.push_back(ClientEntityState::PendingQuantizedFrame{serialized.quantized_frame, frame_});
+            while (entity_state.pending.size() > max_pending_quantized_frames_per_entity) {
+                const std::uint32_t quantized_frame = entity_state.pending.front().quantized_frame;
+                release_prepared_quantized_frame(quantized_frame);
                 entity_state.pending.erase(entity_state.pending.begin());
             }
             sent.push_back(slot);
@@ -857,8 +857,8 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
     }
 
     for (const std::vector<std::uint32_t>& releases : releases_by_client) {
-        for (const std::uint32_t snapshot : releases) {
-            release_snapshot(snapshot);
+        for (const std::uint32_t quantized_frame : releases) {
+            release_quantized_frame(quantized_frame);
         }
     }
 
@@ -977,7 +977,7 @@ bool ReplicationServer::serialize_entity(
         return false;
     }
 
-    const std::uint32_t snapshot = find_or_create_snapshot(
+    const std::uint32_t quantized_frame = find_or_create_quantized_frame(
         registry,
         settings,
         client,
@@ -985,16 +985,16 @@ bool ReplicationServer::serialize_entity(
         frame,
         scratch,
         scratch_dirty_generations);
-    if (snapshot == invalid_snapshot_id) {
+    if (quantized_frame == invalid_quantized_frame_id) {
         return false;
     }
 
-    out.snapshot = snapshot;
-    write_entity_record(registry, settings, client, slot, snapshots_[snapshot], out.payload);
+    out.quantized_frame = quantized_frame;
+    write_entity_record(registry, settings, client, slot, quantized_frames_[quantized_frame], out.payload);
     return !out.payload.empty();
 }
 
-std::uint32_t ReplicationServer::find_or_create_snapshot(
+std::uint32_t ReplicationServer::find_or_create_quantized_frame(
     const ecs::Registry& registry,
     const SyncSettings& settings,
     const ClientState& client,
@@ -1003,36 +1003,36 @@ std::uint32_t ReplicationServer::find_or_create_snapshot(
     QuantizedFrameData& scratch,
     std::vector<std::uint64_t>& scratch_dirty_generations) {
     if (slot >= replicated_.size()) {
-        return invalid_snapshot_id;
+        return invalid_quantized_frame_id;
     }
 
     const ReplicatedSlot& replicated = replicated_[slot];
     const SyncArchetype& archetype = settings.archetypes[replicated.archetype.value];
     if (replicated.same_frame_cacheable &&
-        replicated.same_frame_snapshot_frame == frame &&
-        replicated.same_frame_snapshot != invalid_snapshot_id &&
-        replicated.same_frame_snapshot < snapshots_.size()) {
-        const QuantizedSnapshot& cached = snapshots_[replicated.same_frame_snapshot];
+        replicated.same_frame_quantized_frame_frame == frame &&
+        replicated.same_frame_quantized_frame != invalid_quantized_frame_id &&
+        replicated.same_frame_quantized_frame < quantized_frames_.size()) {
+        const QuantizedFrame& cached = quantized_frames_[replicated.same_frame_quantized_frame];
         if (cached.active && cached.slot == slot && cached.frame == frame &&
             cached.archetype == replicated.archetype) {
-            return replicated.same_frame_snapshot;
+            return replicated.same_frame_quantized_frame;
         }
     }
 
     const NetworkOwner* owner = registry.try_get<NetworkOwner>(replicated.entity);
     const ClientEntityState* entity_state =
         slot < client.entity_states.size() ? &client.entity_states[slot] : nullptr;
-    const QuantizedSnapshot* baseline_snapshot = nullptr;
+    const QuantizedFrame* baseline_quantized_frame = nullptr;
     if (entity_state != nullptr &&
-        entity_state->baseline != invalid_snapshot_id &&
-        entity_state->baseline < snapshots_.size() &&
-        snapshots_[entity_state->baseline].active &&
-        snapshots_[entity_state->baseline].archetype == replicated.archetype) {
-        baseline_snapshot = &snapshots_[entity_state->baseline];
+        entity_state->baseline != invalid_quantized_frame_id &&
+        entity_state->baseline < quantized_frames_.size() &&
+        quantized_frames_[entity_state->baseline].active &&
+        quantized_frames_[entity_state->baseline].archetype == replicated.archetype) {
+        baseline_quantized_frame = &quantized_frames_[entity_state->baseline];
     }
 
     if (!init_frame_data(archetype, scratch)) {
-        return invalid_snapshot_id;
+        return invalid_quantized_frame_id;
     }
     scratch_dirty_generations.assign(archetype.components.size(), 0U);
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
@@ -1059,24 +1059,24 @@ std::uint32_t ReplicationServer::find_or_create_snapshot(
 
         std::uint8_t* destination = mutable_frame_component_data(archetype, scratch, component_index);
         if (destination == nullptr) {
-            return invalid_snapshot_id;
+            return invalid_quantized_frame_id;
         }
-        if (baseline_snapshot != nullptr &&
-            component_index < baseline_snapshot->dirty_generations.size() &&
-            baseline_snapshot->dirty_generations[component_index] == dirty_generation &&
-            frame_has_component(baseline_snapshot->data, component_index)) {
+        if (baseline_quantized_frame != nullptr &&
+            component_index < baseline_quantized_frame->dirty_generations.size() &&
+            baseline_quantized_frame->dirty_generations[component_index] == dirty_generation &&
+            frame_has_component(baseline_quantized_frame->data, component_index)) {
             const std::size_t offset = archetype.component_offsets[component_index];
             const std::size_t size = archetype.component_ops[component_index].quantized_size;
-            if (offset + size > baseline_snapshot->data.bytes.size()) {
-                return invalid_snapshot_id;
+            if (offset + size > baseline_quantized_frame->data.bytes.size()) {
+                return invalid_quantized_frame_id;
             }
-            std::memcpy(destination, baseline_snapshot->data.bytes.data() + offset, size);
+            std::memcpy(destination, baseline_quantized_frame->data.bytes.data() + offset, size);
         } else {
             if (ops.quantize_bytes == nullptr) {
                 SyncComponentOps::QuantizedBytes quantized;
                 ops.quantize(component_value, quantized);
                 if (!set_frame_component_bytes(archetype, scratch, component_index, quantized)) {
-                    return invalid_snapshot_id;
+                    return invalid_quantized_frame_id;
                 }
             } else {
                 ops.quantize_bytes(component_value, destination);
@@ -1085,96 +1085,100 @@ std::uint32_t ReplicationServer::find_or_create_snapshot(
     }
 
     if (scratch.present_mask == 0U) {
-        return invalid_snapshot_id;
+        return invalid_quantized_frame_id;
     }
 
-    for (const std::uint32_t index : replicated_[slot].snapshots) {
-        if (index >= snapshots_.size()) {
+    for (const std::uint32_t index : replicated_[slot].quantized_frames) {
+        if (index >= quantized_frames_.size()) {
             continue;
         }
-        const QuantizedSnapshot& snapshot = snapshots_[index];
-        if (snapshot.active && snapshot.slot == slot && snapshot.frame == frame &&
-            snapshot.archetype == replicated.archetype &&
-            same_snapshot_components(snapshot, scratch, scratch_dirty_generations)) {
+        const QuantizedFrame& quantized_frame = quantized_frames_[index];
+        if (quantized_frame.active && quantized_frame.slot == slot && quantized_frame.frame == frame &&
+            quantized_frame.archetype == replicated.archetype &&
+            same_quantized_frame_components(quantized_frame, scratch, scratch_dirty_generations)) {
             return index;
         }
     }
 
-    std::uint32_t index = invalid_snapshot_id;
-    if (!free_snapshots_.empty()) {
-        index = free_snapshots_.back();
-        free_snapshots_.pop_back();
+    std::uint32_t index = invalid_quantized_frame_id;
+    if (!free_quantized_frames_.empty()) {
+        index = free_quantized_frames_.back();
+        free_quantized_frames_.pop_back();
     } else {
-        if (snapshots_.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
-            throw std::length_error("kage sync quantized snapshot space exhausted");
+        if (quantized_frames_.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+            throw std::length_error("kage sync quantized frame space exhausted");
         }
-        index = static_cast<std::uint32_t>(snapshots_.size());
-        snapshots_.push_back(QuantizedSnapshot{});
+        index = static_cast<std::uint32_t>(quantized_frames_.size());
+        quantized_frames_.push_back(QuantizedFrame{});
     }
 
-    QuantizedSnapshot& snapshot = snapshots_[index];
-    snapshot.slot = slot;
-    snapshot.frame = frame;
-    snapshot.archetype = replicated.archetype;
-    snapshot.ref_count = 0;
-    snapshot.active = true;
-    snapshot.data = std::move(scratch);
-    snapshot.dirty_generations = std::move(scratch_dirty_generations);
-    replicated_[slot].snapshots.push_back(index);
+    QuantizedFrame& quantized_frame = quantized_frames_[index];
+    quantized_frame.slot = slot;
+    quantized_frame.frame = frame;
+    quantized_frame.archetype = replicated.archetype;
+    quantized_frame.ref_count = 0;
+    quantized_frame.active = true;
+    quantized_frame.data = std::move(scratch);
+    quantized_frame.dirty_generations = std::move(scratch_dirty_generations);
+    replicated_[slot].quantized_frames.push_back(index);
     if (replicated_[slot].same_frame_cacheable) {
-        replicated_[slot].same_frame_snapshot = index;
-        replicated_[slot].same_frame_snapshot_frame = frame;
+        replicated_[slot].same_frame_quantized_frame = index;
+        replicated_[slot].same_frame_quantized_frame_frame = frame;
     }
     return index;
 }
 
-void ReplicationServer::retain_snapshot(std::uint32_t snapshot) {
-    if (snapshot != invalid_snapshot_id && snapshot < snapshots_.size() && snapshots_[snapshot].active) {
-        ++snapshots_[snapshot].ref_count;
+void ReplicationServer::retain_quantized_frame(std::uint32_t quantized_frame) {
+    if (quantized_frame != invalid_quantized_frame_id &&
+        quantized_frame < quantized_frames_.size() &&
+        quantized_frames_[quantized_frame].active) {
+        ++quantized_frames_[quantized_frame].ref_count;
     }
 }
 
-void ReplicationServer::release_snapshot(std::uint32_t snapshot) {
-    if (snapshot == invalid_snapshot_id || snapshot >= snapshots_.size() || !snapshots_[snapshot].active) {
+void ReplicationServer::release_quantized_frame(std::uint32_t quantized_frame) {
+    if (quantized_frame == invalid_quantized_frame_id ||
+        quantized_frame >= quantized_frames_.size() ||
+        !quantized_frames_[quantized_frame].active) {
         return;
     }
 
-    QuantizedSnapshot& current = snapshots_[snapshot];
+    QuantizedFrame& current = quantized_frames_[quantized_frame];
     if (current.ref_count == 0) {
         if (current.slot < replicated_.size()) {
-            std::vector<std::uint32_t>& slot_snapshots = replicated_[current.slot].snapshots;
-            slot_snapshots.erase(
-                std::remove(slot_snapshots.begin(), slot_snapshots.end(), snapshot),
-                slot_snapshots.end());
+            std::vector<std::uint32_t>& slot_quantized_frames = replicated_[current.slot].quantized_frames;
+            slot_quantized_frames.erase(
+                std::remove(slot_quantized_frames.begin(), slot_quantized_frames.end(), quantized_frame),
+                slot_quantized_frames.end());
         }
         current.active = false;
         current.data.clear();
         current.dirty_generations.clear();
-        free_snapshots_.push_back(snapshot);
+        free_quantized_frames_.push_back(quantized_frame);
         return;
     }
 
     --current.ref_count;
     if (current.ref_count == 0) {
         if (current.slot < replicated_.size()) {
-            std::vector<std::uint32_t>& slot_snapshots = replicated_[current.slot].snapshots;
-            slot_snapshots.erase(
-                std::remove(slot_snapshots.begin(), slot_snapshots.end(), snapshot),
-                slot_snapshots.end());
+            std::vector<std::uint32_t>& slot_quantized_frames = replicated_[current.slot].quantized_frames;
+            slot_quantized_frames.erase(
+                std::remove(slot_quantized_frames.begin(), slot_quantized_frames.end(), quantized_frame),
+                slot_quantized_frames.end());
         }
         current.active = false;
         current.data.clear();
         current.dirty_generations.clear();
-        free_snapshots_.push_back(snapshot);
+        free_quantized_frames_.push_back(quantized_frame);
     }
 }
 
 void ReplicationServer::clear_client_entity_state(ClientEntityState& state) {
-    release_snapshot(state.baseline);
-    for (const ClientEntityState::PendingSnapshot& pending : state.pending) {
-        release_snapshot(pending.snapshot);
+    release_quantized_frame(state.baseline);
+    for (const ClientEntityState::PendingQuantizedFrame& pending : state.pending) {
+        release_quantized_frame(pending.quantized_frame);
     }
-    state.baseline = invalid_snapshot_id;
+    state.baseline = invalid_quantized_frame_id;
     state.pending.clear();
 }
 
@@ -1193,17 +1197,17 @@ bool ReplicationServer::acknowledge_destroy(ClientState& client, ecs::Entity ent
     return true;
 }
 
-bool ReplicationServer::same_snapshot_components(
-    const QuantizedSnapshot& snapshot,
+bool ReplicationServer::same_quantized_frame_components(
+    const QuantizedFrame& quantized_frame,
     const QuantizedFrameData& data,
     const std::vector<std::uint64_t>& dirty_generations) const {
-    if (snapshot.data.present_mask != data.present_mask ||
-        snapshot.data.bytes != data.bytes ||
-        snapshot.dirty_generations.size() != dirty_generations.size()) {
+    if (quantized_frame.data.present_mask != data.present_mask ||
+        quantized_frame.data.bytes != data.bytes ||
+        quantized_frame.dirty_generations.size() != dirty_generations.size()) {
         return false;
     }
     for (std::size_t index = 0; index < dirty_generations.size(); ++index) {
-        if (snapshot.dirty_generations[index] != dirty_generations[index]) {
+        if (quantized_frame.dirty_generations[index] != dirty_generations[index]) {
             return false;
         }
     }
@@ -1215,46 +1219,46 @@ void ReplicationServer::write_entity_record(
     const SyncSettings& settings,
     const ClientState& client,
     std::uint32_t slot,
-    const QuantizedSnapshot& snapshot,
+    const QuantizedFrame& quantized_frame,
     BitBuffer& out) const {
     const ReplicatedSlot& replicated = replicated_[slot];
     const ClientEntityState& entity_state = client.entity_states[slot];
-    bool delta = entity_state.baseline != invalid_snapshot_id &&
-        entity_state.baseline < snapshots_.size() &&
-        snapshots_[entity_state.baseline].active &&
-        snapshots_[entity_state.baseline].archetype == snapshot.archetype;
+    bool delta = entity_state.baseline != invalid_quantized_frame_id &&
+        entity_state.baseline < quantized_frames_.size() &&
+        quantized_frames_[entity_state.baseline].active &&
+        quantized_frames_[entity_state.baseline].archetype == quantized_frame.archetype;
     if (delta) {
-        const QuantizedSnapshot& baseline = snapshots_[entity_state.baseline];
-        delta = baseline.data.present_mask == snapshot.data.present_mask;
+        const QuantizedFrame& baseline = quantized_frames_[entity_state.baseline];
+        delta = baseline.data.present_mask == quantized_frame.data.present_mask;
     }
 
     out.push_unsigned_bits(replicated.entity.value, 64U);
     out.push_bool(!delta);
     if (!delta) {
-        out.push_bits(snapshot.archetype.value, 32U);
+        out.push_bits(quantized_frame.archetype.value, 32U);
     } else {
-        protocol::write_baseline_frame(out, snapshot.frame, snapshots_[entity_state.baseline].frame);
+        protocol::write_baseline_frame(out, quantized_frame.frame, quantized_frames_[entity_state.baseline].frame);
     }
 
-    const SyncArchetype& archetype = settings.archetypes[snapshot.archetype.value];
+    const SyncArchetype& archetype = settings.archetypes[quantized_frame.archetype.value];
     if (delta) {
-        const QuantizedSnapshot& baseline_snapshot = snapshots_[entity_state.baseline];
+        const QuantizedFrame& baseline_quantized_frame = quantized_frames_[entity_state.baseline];
         std::uint64_t changed_mask = 0;
         for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
-            if (!frame_has_component(snapshot.data, component_index)) {
+            if (!frame_has_component(quantized_frame.data, component_index)) {
                 out.push_bool(false);
                 continue;
             }
             const std::size_t offset = archetype.component_offsets[component_index];
             const std::size_t size = archetype.component_ops[component_index].quantized_size;
-            if (offset + size > snapshot.data.bytes.size() ||
-                offset + size > baseline_snapshot.data.bytes.size()) {
-                throw std::logic_error("replicated snapshot component bytes are out of range");
+            if (offset + size > quantized_frame.data.bytes.size() ||
+                offset + size > baseline_quantized_frame.data.bytes.size()) {
+                throw std::logic_error("replicated quantized frame component bytes are out of range");
             }
             const bool component_changed =
                 std::memcmp(
-                    snapshot.data.bytes.data() + offset,
-                    baseline_snapshot.data.bytes.data() + offset,
+                    quantized_frame.data.bytes.data() + offset,
+                    baseline_quantized_frame.data.bytes.data() + offset,
                     size) != 0;
             out.push_bool(component_changed);
             if (component_changed) {
@@ -1269,10 +1273,10 @@ void ReplicationServer::write_entity_record(
                 throw std::logic_error("sync component traits are not registered for replicated component");
             }
             const SyncComponentOps& ops = archetype.component_ops[component_index];
-            const std::uint8_t* previous = frame_component_data(archetype, baseline_snapshot.data, component_index);
-            const std::uint8_t* current = frame_component_data(archetype, snapshot.data, component_index);
+            const std::uint8_t* previous = frame_component_data(archetype, baseline_quantized_frame.data, component_index);
+            const std::uint8_t* current = frame_component_data(archetype, quantized_frame.data, component_index);
             if (previous == nullptr || current == nullptr) {
-                throw std::logic_error("replicated snapshot component bytes are missing");
+                throw std::logic_error("replicated quantized frame component bytes are missing");
             }
             if (ops.serialize_bytes != nullptr) {
                 ops.serialize_bytes(previous, current, out);
@@ -1290,22 +1294,22 @@ void ReplicationServer::write_entity_record(
 
     std::uint16_t component_count = 0;
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
-        if (frame_has_component(snapshot.data, component_index)) {
+        if (frame_has_component(quantized_frame.data, component_index)) {
             ++component_count;
         }
     }
     out.push_bits(static_cast<std::int64_t>(component_count), 16U);
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
-        if (!frame_has_component(snapshot.data, component_index)) {
+        if (!frame_has_component(quantized_frame.data, component_index)) {
             continue;
         }
         if (component_index >= archetype.component_ops.size()) {
             throw std::logic_error("sync component traits are not registered for replicated component");
         }
         const SyncComponentOps& ops = archetype.component_ops[component_index];
-        const std::uint8_t* current = frame_component_data(archetype, snapshot.data, component_index);
+        const std::uint8_t* current = frame_component_data(archetype, quantized_frame.data, component_index);
         if (current == nullptr) {
-            throw std::logic_error("replicated snapshot component bytes are missing");
+            throw std::logic_error("replicated quantized frame component bytes are missing");
         }
 
         out.push_bits(static_cast<std::int64_t>(component_index), 16U);
@@ -1354,8 +1358,8 @@ bool ReplicationServer::upsert_replicated(ecs::Registry& registry, ecs::Entity e
     const auto found = entity_to_slot_.find(key);
     if (found != entity_to_slot_.end()) {
         replicated_[found->second].archetype = archetype;
-        replicated_[found->second].same_frame_snapshot = invalid_snapshot_id;
-        replicated_[found->second].same_frame_snapshot_frame = 0;
+        replicated_[found->second].same_frame_quantized_frame = invalid_quantized_frame_id;
+        replicated_[found->second].same_frame_quantized_frame_frame = 0;
         const SyncSettings& settings = registry.get<SyncSettings>();
         if (archetype.value < settings.archetypes.size()) {
             replicated_[found->second].same_frame_cacheable =
@@ -1403,7 +1407,7 @@ std::uint32_t ReplicationServer::allocate_slot(ecs::Entity entity, SyncArchetype
     if (!free_replicated_slots_.empty()) {
         const std::uint32_t slot = free_replicated_slots_.back();
         free_replicated_slots_.pop_back();
-        replicated_[slot] = ReplicatedSlot{entity, archetype, {}, {}, invalid_snapshot_id, 0, false, true};
+        replicated_[slot] = ReplicatedSlot{entity, archetype, {}, {}, invalid_quantized_frame_id, 0, false, true};
         return slot;
     }
 
@@ -1412,7 +1416,7 @@ std::uint32_t ReplicationServer::allocate_slot(ecs::Entity entity, SyncArchetype
     }
 
     const std::uint32_t slot = static_cast<std::uint32_t>(replicated_.size());
-    replicated_.push_back(ReplicatedSlot{entity, archetype, {}, {}, invalid_snapshot_id, 0, false, true});
+    replicated_.push_back(ReplicatedSlot{entity, archetype, {}, {}, invalid_quantized_frame_id, 0, false, true});
     return slot;
 }
 
@@ -1425,9 +1429,9 @@ void ReplicationServer::deactivate_slot(std::uint32_t slot) {
     entity_to_slot_.erase(entity.value);
     entity_index_to_slot_.erase(ecs::Registry::entity_index(entity));
     replicated_[slot].active = false;
-    replicated_[slot].snapshots.clear();
-    replicated_[slot].same_frame_snapshot = invalid_snapshot_id;
-    replicated_[slot].same_frame_snapshot_frame = 0;
+    replicated_[slot].quantized_frames.clear();
+    replicated_[slot].same_frame_quantized_frame = invalid_quantized_frame_id;
+    replicated_[slot].same_frame_quantized_frame_frame = 0;
     replicated_[slot].same_frame_cacheable = false;
     free_replicated_slots_.push_back(slot);
     --active_replicated_count_;

@@ -28,12 +28,12 @@ Measured before the experiments in this file:
 - `client_receive=17.123224`
 - `ack_processing=2.246250`
 
-## Experiment 1: Store Snapshot Component Index
+## Experiment 1: Store Quantized Frame Component Index
 
 Rationale: `ReplicationServer::write_entity_record` was doing a linear search
 through the archetype components for every component in every serialized entity
-record. The component index is already known while quantizing a snapshot, so the
-snapshot can retain it and write the same wire format without repeating that
+record. The component index is already known while quantizing a frame, so the
+quantized frame can retain it and write the same wire format without repeating that
 search.
 
 Result:
@@ -48,13 +48,13 @@ Conclusion: accepted. The change improved end-to-end wall time by about 2.8%
 and reduced the measured server replication phase without changing packet
 counts or bytes.
 
-## Experiment 2: Lazy Same-Frame Snapshot Cache
+## Experiment 2: Lazy Same-Frame Quantized Frame Cache
 
 Rationale: bandwidth-limited ticks should not quantize every entity up front,
 but once an entity reaches serialization for one client, other clients in the
-same frame should be able to reuse that quantized snapshot. This experiment adds
+same frame should be able to reuse that quantized frame. This experiment adds
 a direct per-slot cache for all-audience archetypes keyed by the current frame,
-avoiding the retained-snapshot scan that made the earlier snapshot-reuse attempt
+avoiding the retained quantized-frame scan that made the earlier quantized-frame reuse attempt
 unattractive.
 
 Result:
@@ -65,9 +65,9 @@ Result:
   `client_receive=17.014164`, `ack_processing=2.331807`
 
 Conclusion: rejected. Even with a direct per-slot cache instead of a retained
-snapshot scan, the result was worse than the accepted component-index change and
+quantized frame scan, the result was worse than the accepted component-index change and
 roughly back at the original baseline. The likely issue is that the current
-snapshot path was already reusing retained snapshots after paying quantization,
+quantized frame path was already reusing retained quantized frames after paying quantization,
 while the added slot metadata and cache checks did not remove enough work in the
 actual bandwidth-limited candidate pattern. A future version should only revisit
 this with profiler counters that prove repeated same-slot, same-frame
@@ -114,7 +114,7 @@ Result:
 Conclusion: rejected. Although the server phase improved, the end-to-end wall
 time regressed and packet/update counts changed slightly. Keeping an older ACK
 record in place changes ACK packet ordering compared with erase-and-append,
-which is enough to alter loss/ACK timing and retained snapshots in this
+which is enough to alter loss/ACK timing and retained quantized frames in this
 deterministic stress setup. A future ACK redesign should preserve the existing
 wire ordering semantics or explicitly benchmark a new ACK ordering policy.
 
@@ -162,7 +162,7 @@ Result:
 - `ack_processing=2.227892`
 
 Conclusion: rejected. Packet counts, bytes, update counts, and retained
-snapshot counts matched the accepted baseline, so marking stale records did
+quantized frame counts matched the accepted baseline, so marking stale records did
 preserve effective ACK ordering. However, wall time regressed versus Experiment
 5. The server phase improved slightly, but client receive and ACK processing got
 worse. The likely cost is that `drain_ack_packets` now scans stale entries and
@@ -239,7 +239,7 @@ cmake --build build-bench --target run_kage_sync_ball_stress
 
 Artifact: `build-bench/kage_sync_ball_stress`
 
-Conclusion: rejected. Packet counts, bytes, retained snapshots, and update
+Conclusion: rejected. Packet counts, bytes, retained quantized frames, and update
 counts matched the accepted direct-deserialize baseline, so this did not change
 the effective scheduling output. It did regress wall time and the server
 replication phase. The likely issue is that the workload usually consumes a
@@ -287,17 +287,17 @@ server observes but does not clear gameplay dirty bits; the stress harness
 clears the replicated component dirty bits after server replication to model
 application-owned dirty-bit lifecycle.
 
-## Experiment 10: Same-Frame Quantized Snapshot Cache After Dirty Bitvectors
+## Experiment 10: Same-Frame Quantized Frame Cache After Dirty Bitvectors
 
 Rationale: Experiment 9 made ACKed baseline reuse much cheaper, but the server
-still rebuilt same-frame quantized snapshots when multiple clients serialized
+still rebuilt same-frame quantized frames when multiple clients serialized
 the same all-audience slot in one server frame. This revisits the rejected
 Experiment 2 idea on top of the newer dirty-component protocol. Two variants
 were tried:
 
-- direct per-slot same-frame snapshot id cache with archetype audience checked
+- direct per-slot same-frame quantized-frame id cache with archetype audience checked
   on every serialization;
-- the same snapshot id cache with the all-audience eligibility precomputed on
+- the same quantized-frame id cache with the all-audience eligibility precomputed on
   the replicated slot when its archetype is assigned.
 
 Result:
@@ -333,7 +333,7 @@ cacheability bit keeps the hot-path check small enough to pay off: compared
 with Experiment 9's accepted runs, server replication improved from
 `11.106562-11.400723` seconds to `10.074138-10.351669` seconds, while wall time
 improved from `31.427831-32.017058` seconds to `30.170488-31.055385` seconds.
-Packet counts, update counts, retained snapshot counts, and
+Packet counts, update counts, retained quantized-frame counts, and
 server-to-client bytes stayed unchanged, so the gain is CPU-side only.
 
 ## Experiment 11: Client Decode Allocation Variants
@@ -412,7 +412,7 @@ tested:
 
 - store client baselines with component indexes and use fixed 64-entry stack
   lookup tables during delta merge instead of repeated linear searches;
-- during server snapshot construction, copy clean components from the ACKed
+- during server quantized-frame construction, copy clean components from the ACKed
   baseline before doing `registry.get`, and separately try a per-slot component
   cache filled during dirty component iteration.
 
@@ -519,7 +519,7 @@ build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 
 Artifact: `build-bench/kage_sync_ball_stress`
 
 Conclusion: accepted. Inline/lazy quantized storage is the dominant win: the
-stress components all fit in 16 bytes, so retained snapshots, client baseline
+stress components all fit in 16 bytes, so retained quantized frames, client baseline
 history, buffered frames, and display samples avoid millions of tiny vector
 allocations and reduce RSS by about 263 MB versus the previous accepted state.
 Archetype-order client merge gives a small additional CPU win without storing
@@ -542,7 +542,7 @@ Implementation notes:
   `total_quantized_bytes`, validated at archetype definition time.
 - Client `EntityState` baselines, baseline history, buffered frames, and
   applied component tracking use `QuantizedFrameData`.
-- Server `QuantizedSnapshot` uses `QuantizedFrameData` plus a parallel
+- Server `QuantizedFrame` uses `QuantizedFrameData` plus a parallel
   component dirty-generation vector.
 - Component-facing callbacks/display paths still materialize temporary
   `ReplicatedComponentUpdate` values where needed.
@@ -553,15 +553,15 @@ Results:
 - Client-only fixed frame run: `wall=22.157833`,
   `server_replication=9.970254`, `client_receive=10.048042`,
   `ack_processing=1.755859`, `rss_peak_bytes=352415744`,
-  `server_retained_snapshot_bytes=101944`
+  `server_retained_quantized_frame_bytes=101944`
 - Full client/server fixed frame run 1: `wall=22.409071`,
   `server_replication=9.958881`, `client_receive=10.288488`,
   `ack_processing=1.775840`, `rss_peak_bytes=350326784`,
-  `server_retained_snapshot_bytes=107456`
+  `server_retained_quantized_frame_bytes=107456`
 - Full client/server fixed frame run 2: `wall=21.216457`,
   `server_replication=9.412056`, `client_receive=9.773369`,
   `ack_processing=1.678802`, `rss_peak_bytes=350318592`,
-  `server_retained_snapshot_bytes=107456`
+  `server_retained_quantized_frame_bytes=107456`
 
 Focused benchmark:
 
@@ -580,8 +580,8 @@ Artifact: `build-bench/kage_sync_ball_stress`
 Conclusion: accepted. Compared with Experiment 13's lazy-overflow retained
 component records, fixed archetype frame storage cuts RSS by roughly another
 354 MB and reduces client receive from about `11.4-11.8` seconds to
-`9.8-10.3` seconds. Server retained snapshot bytes rise slightly because the
-fixed blob stores the full archetype byte span for each snapshot, but the
+`9.8-10.3` seconds. Server retained quantized-frame bytes rise slightly because the
+fixed blob stores the full archetype byte span for each quantized frame, but the
 combined process RSS and wall time improve substantially. Packet/update counts
 stayed identical.
 
@@ -685,7 +685,7 @@ Rationale: This experiment only parallelizes server-side replication fanout acro
 client states.
 
 The first attempt ran each server client on a worker thread and guarded
-snapshot creation/retention/release with one shared mutex. It preserved packet
+quantized frame creation/retention/release with one shared mutex. It preserved packet
 counts, but lock contention around `serialize_entity` dominated:
 
 - 1 worker: `wall=14.882651`, `server_replication=7.468835`,
@@ -698,9 +698,9 @@ counts, but lock contention around `serialize_entity` dominated:
   `client_receive=6.571749`, `ack_processing=1.300797`
 
 The accepted version uses two phases. It prepares candidate order and
-quantized snapshots serially, retaining each prepared snapshot. Workers then
+quantized frames serially, retaining each prepared quantized frame. Workers then
 write entity records, pack packets, and mutate only their own server-side
-client state. Snapshot releases and transport callbacks are committed serially
+client state. Quantized-frame releases and transport callbacks are committed serially
 after workers join.
 
 Stress results:
@@ -754,7 +754,7 @@ Profiled 4-worker stress result: `wall=15.492355`,
 `ack_processing=1.425256`. The flat profile still shows the parallel server
 packing worker as the largest bucket, followed by client `apply_upsert`,
 component serialization, client `apply_frame`, ACK processing, and serial
-snapshot preparation.
+quantized frame preparation.
 
 Conclusion: keep the two-phase server-side parallel serialization path as an
 opt-in `ReplicationServerOptions::serialized_worker_threads`. The useful limit

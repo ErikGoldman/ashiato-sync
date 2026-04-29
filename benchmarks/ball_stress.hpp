@@ -175,8 +175,8 @@ struct MemoryStats {
     std::size_t rss_start_bytes = 0;
     std::size_t rss_peak_bytes = 0;
     std::size_t rss_end_bytes = 0;
-    std::size_t server_retained_snapshot_count = 0;
-    std::size_t server_retained_snapshot_bytes = 0;
+    std::size_t server_retained_quantized_frame_count = 0;
+    std::size_t server_retained_quantized_frame_bytes = 0;
     std::size_t server_replicated_count = 0;
     std::size_t client_local_entities = 0;
     std::size_t client_pending_acks = 0;
@@ -859,8 +859,8 @@ inline StressReport run_stress(const StressConfig& input_config) {
     report.timing.wall_seconds = std::chrono::duration<double>(wall_end - wall_begin).count();
     report.memory.rss_end_bytes = current_rss_bytes();
     report.memory.rss_peak_bytes = std::max(report.memory.rss_peak_bytes, report.memory.rss_end_bytes);
-    report.memory.server_retained_snapshot_count = server.retained_snapshot_count();
-    report.memory.server_retained_snapshot_bytes = server.retained_snapshot_bytes();
+    report.memory.server_retained_quantized_frame_count = server.retained_quantized_frame_count();
+    report.memory.server_retained_quantized_frame_bytes = server.retained_quantized_frame_bytes();
     report.memory.server_replicated_count = server.replicated_count();
     for (std::size_t index = 0; index < clients.size(); ++index) {
         report.memory.client_local_entities += count_client_entities(client_registries[index]);
@@ -949,8 +949,8 @@ inline void write_report_text(std::ostream& out, const StressReport& report) {
     out << "memory rss_start_bytes=" << report.memory.rss_start_bytes
         << " rss_peak_bytes=" << report.memory.rss_peak_bytes
         << " rss_end_bytes=" << report.memory.rss_end_bytes
-        << " server_retained_snapshot_count=" << report.memory.server_retained_snapshot_count
-        << " server_retained_snapshot_bytes=" << report.memory.server_retained_snapshot_bytes
+        << " server_retained_quantized_frame_count=" << report.memory.server_retained_quantized_frame_count
+        << " server_retained_quantized_frame_bytes=" << report.memory.server_retained_quantized_frame_bytes
         << " server_replicated_count=" << report.memory.server_replicated_count
         << " client_local_entities=" << report.memory.client_local_entities
         << " client_pending_acks=" << report.memory.client_pending_acks << '\n';
@@ -1020,8 +1020,8 @@ inline void write_report_json(std::ostream& out, const StressReport& report) {
     out << "\"memory\":{\"rss_start_bytes\":" << report.memory.rss_start_bytes
         << ",\"rss_peak_bytes\":" << report.memory.rss_peak_bytes
         << ",\"rss_end_bytes\":" << report.memory.rss_end_bytes
-        << ",\"server_retained_snapshot_count\":" << report.memory.server_retained_snapshot_count
-        << ",\"server_retained_snapshot_bytes\":" << report.memory.server_retained_snapshot_bytes
+        << ",\"server_retained_quantized_frame_count\":" << report.memory.server_retained_quantized_frame_count
+        << ",\"server_retained_quantized_frame_bytes\":" << report.memory.server_retained_quantized_frame_bytes
         << ",\"server_replicated_count\":" << report.memory.server_replicated_count
         << ",\"client_local_entities\":" << report.memory.client_local_entities
         << ",\"client_pending_acks\":" << report.memory.client_pending_acks

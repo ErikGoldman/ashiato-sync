@@ -19,7 +19,7 @@ The current implementation provides the v0 replication foundation:
   to a configured MTU
 
 Prediction, rollback, and production transport integration are planned surface
-area rather than complete behavior in this snapshot.
+area rather than complete behavior in this revision.
 
 ## Requirements
 

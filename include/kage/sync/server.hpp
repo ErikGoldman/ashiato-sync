@@ -35,27 +35,27 @@ public:
     std::uint64_t priority(ClientId client, ecs::Entity entity) const;
     bool acknowledge_entity(ClientId client, ecs::Entity entity, SyncFrame frame);
     bool process_packet(ClientId client, BitBuffer packet);
-    std::size_t retained_snapshot_count() const noexcept;
-    std::size_t retained_snapshot_bytes() const noexcept;
+    std::size_t retained_quantized_frame_count() const noexcept;
+    std::size_t retained_quantized_frame_bytes() const noexcept;
 
     void tick(ecs::Registry& registry);
     void tick(ecs::Registry& registry, const ReplicateFn& replicate);
 
 private:
-    static constexpr std::uint32_t invalid_snapshot_id = std::numeric_limits<std::uint32_t>::max();
+    static constexpr std::uint32_t invalid_quantized_frame_id = std::numeric_limits<std::uint32_t>::max();
 
     struct ReplicatedSlot {
         ecs::Entity entity;
         SyncArchetypeId archetype;
-        std::vector<std::uint32_t> snapshots;
+        std::vector<std::uint32_t> quantized_frames;
         std::vector<std::uint64_t> component_dirty_generations;
-        std::uint32_t same_frame_snapshot = invalid_snapshot_id;
-        SyncFrame same_frame_snapshot_frame = 0;
+        std::uint32_t same_frame_quantized_frame = invalid_quantized_frame_id;
+        SyncFrame same_frame_quantized_frame_frame = 0;
         bool same_frame_cacheable = false;
         bool active = false;
     };
 
-    struct QuantizedSnapshot {
+    struct QuantizedFrame {
         std::uint32_t slot = 0;
         SyncFrame frame = 0;
         SyncArchetypeId archetype;
@@ -66,13 +66,13 @@ private:
     };
 
     struct ClientEntityState {
-        struct PendingSnapshot {
-            std::uint32_t snapshot = invalid_snapshot_id;
+        struct PendingQuantizedFrame {
+            std::uint32_t quantized_frame = invalid_quantized_frame_id;
             SyncFrame frame = 0;
         };
 
-        std::uint32_t baseline = invalid_snapshot_id;
-        std::vector<PendingSnapshot> pending;
+        std::uint32_t baseline = invalid_quantized_frame_id;
+        std::vector<PendingQuantizedFrame> pending;
     };
 
     struct ClientDestroyState {
@@ -93,7 +93,7 @@ private:
     using EntityKey = std::uint64_t;
 
     struct SerializedEntity {
-        std::uint32_t snapshot = invalid_snapshot_id;
+        std::uint32_t quantized_frame = invalid_quantized_frame_id;
         BitBuffer payload;
     };
 
@@ -131,7 +131,7 @@ private:
         QuantizedFrameData& scratch,
         std::vector<std::uint64_t>& scratch_dirty_generations,
         SerializedEntity& out);
-    std::uint32_t find_or_create_snapshot(
+    std::uint32_t find_or_create_quantized_frame(
         const ecs::Registry& registry,
         const SyncSettings& settings,
         const ClientState& client,
@@ -139,12 +139,12 @@ private:
         SyncFrame frame,
         QuantizedFrameData& scratch,
         std::vector<std::uint64_t>& scratch_dirty_generations);
-    void retain_snapshot(std::uint32_t snapshot);
-    void release_snapshot(std::uint32_t snapshot);
+    void retain_quantized_frame(std::uint32_t quantized_frame);
+    void release_quantized_frame(std::uint32_t quantized_frame);
     void clear_client_entity_state(ClientEntityState& state);
     bool acknowledge_destroy(ClientState& client, ecs::Entity entity, SyncFrame frame);
-    bool same_snapshot_components(
-        const QuantizedSnapshot& snapshot,
+    bool same_quantized_frame_components(
+        const QuantizedFrame& quantized_frame,
         const QuantizedFrameData& data,
         const std::vector<std::uint64_t>& dirty_generations) const;
     void write_entity_record(
@@ -152,15 +152,15 @@ private:
         const SyncSettings& settings,
         const ClientState& client,
         std::uint32_t slot,
-        const QuantizedSnapshot& snapshot,
+        const QuantizedFrame& quantized_frame,
         BitBuffer& out) const;
     void send_packet(ClientId client, SyncFrame frame, std::uint16_t entity_count, const BitBuffer& records) const;
 
     ReplicationServerOptions options_;
     std::vector<ReplicatedSlot> replicated_;
     std::vector<std::uint32_t> free_replicated_slots_;
-    std::vector<QuantizedSnapshot> snapshots_;
-    std::vector<std::uint32_t> free_snapshots_;
+    std::vector<QuantizedFrame> quantized_frames_;
+    std::vector<std::uint32_t> free_quantized_frames_;
     std::unordered_map<EntityKey, std::uint32_t> entity_to_slot_;
     std::unordered_map<std::uint32_t, std::uint32_t> entity_index_to_slot_;
     std::vector<ClientState> clients_;

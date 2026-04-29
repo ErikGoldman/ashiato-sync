@@ -639,7 +639,7 @@ TEST_CASE("replication server resends pending destroys until ACKed") {
     REQUIRE(payloads.empty());
 }
 
-TEST_CASE("replication server accepts delayed entity ACKs for retained snapshots") {
+TEST_CASE("replication server accepts delayed entity ACKs for retained quantized frames") {
     ecs::Registry registry;
     const ecs::Entity position_component =
         kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
@@ -678,7 +678,7 @@ TEST_CASE("replication server accepts delayed entity ACKs for retained snapshots
     REQUIRE(read_first_networked_payload(payloads.back()).delta);
 }
 
-TEST_CASE("replication server shares ACKed quantized snapshots across clients and frees them") {
+TEST_CASE("replication server shares ACKed quantized frames across clients and frees them") {
     ecs::Registry registry;
     const ecs::Entity position_component =
         kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
@@ -703,19 +703,19 @@ TEST_CASE("replication server shares ACKed quantized snapshots across clients an
 
     server.tick(registry);
     REQUIRE(payloads.size() == 2);
-    REQUIRE(server.retained_snapshot_count() == 1);
-    REQUIRE(server.retained_snapshot_bytes() == sizeof(kage_sync_tests::QuantizedNetworkedPosition));
+    REQUIRE(server.retained_quantized_frame_count() == 1);
+    REQUIRE(server.retained_quantized_frame_bytes() == sizeof(kage_sync_tests::QuantizedNetworkedPosition));
 
     REQUIRE(server.acknowledge_entity(1, entity, read_server_update(payloads[0].second).frame));
     REQUIRE(server.acknowledge_entity(2, entity, read_server_update(payloads[1].second).frame));
-    REQUIRE(server.retained_snapshot_count() == 1);
-    REQUIRE(server.retained_snapshot_bytes() == sizeof(kage_sync_tests::QuantizedNetworkedPosition));
+    REQUIRE(server.retained_quantized_frame_count() == 1);
+    REQUIRE(server.retained_quantized_frame_bytes() == sizeof(kage_sync_tests::QuantizedNetworkedPosition));
 
     REQUIRE(server.remove_client(1));
-    REQUIRE(server.retained_snapshot_count() == 1);
+    REQUIRE(server.retained_quantized_frame_count() == 1);
     REQUIRE(server.remove_client(2));
-    REQUIRE(server.retained_snapshot_count() == 0);
-    REQUIRE(server.retained_snapshot_bytes() == 0);
+    REQUIRE(server.retained_quantized_frame_count() == 0);
+    REQUIRE(server.retained_quantized_frame_bytes() == 0);
 }
 
 TEST_CASE("replication server keeps swapped clients addressable after removal") {
