@@ -105,6 +105,7 @@ private:
         std::uint32_t next_packet_id = 1;
         bool ready_for_updates = true;
         double connect_resend_accumulator_seconds = 0.0;
+        double idle_seconds = 0.0;
         std::vector<std::uint32_t> order;
         std::vector<std::uint64_t> reset_epochs;
         std::vector<ClientEntityState> entity_states;
@@ -157,6 +158,7 @@ private:
     static bool archetype_is_same_frame_cacheable(const SyncArchetype& archetype);
     void tick_serialized(ecs::Registry& registry);
     void tick_serialized_parallel(ecs::Registry& registry);
+    void disconnect_idle_clients();
     bool serialize_entity(
         const ecs::Registry& registry,
         const SyncSettings& settings,

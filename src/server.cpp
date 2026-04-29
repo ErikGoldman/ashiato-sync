@@ -174,6 +174,10 @@ ReplicationServer::ReplicationServer(ReplicationServerOptions options)
         !std::isfinite(options_.connect_resend_interval_seconds)) {
         throw std::invalid_argument("connect resend interval seconds must be finite and positive");
     }
+    if (options_.idle_client_timeout_seconds < 0.0 ||
+        !std::isfinite(options_.idle_client_timeout_seconds)) {
+        throw std::invalid_argument("idle client timeout seconds must be finite and non-negative");
+    }
 }
 
 void ReplicationServer::set_transport(TransportFn transport) {
@@ -354,6 +358,7 @@ bool ReplicationServer::process_packet(ClientId client, BitBuffer packet) {
             }
             const auto peer_found = peer_to_index_.find(client);
             if (peer_found != peer_to_index_.end()) {
+                clients_[peer_found->second].idle_seconds = 0.0;
                 send_connect_response(clients_[peer_found->second]);
                 return true;
             }
@@ -393,6 +398,7 @@ bool ReplicationServer::process_packet(ClientId client, BitBuffer packet) {
         }
 
         ClientState& state = clients_[peer_found->second];
+        state.idle_seconds = 0.0;
         if (message == protocol::client_connect_ack_message) {
             if (packet.remaining_bits() < 64U) {
                 return false;
@@ -467,6 +473,7 @@ void ReplicationServer::tick(ecs::Registry& registry) {
 }
 
 void ReplicationServer::tick(ecs::Registry& registry, const ReplicateFn& replicate) {
+    disconnect_idle_clients();
     refresh_replicated(registry);
 
     std::vector<std::uint32_t> sent;
@@ -518,7 +525,23 @@ void ReplicationServer::tick(ecs::Registry& registry, const ReplicateFn& replica
     }
 }
 
+void ReplicationServer::disconnect_idle_clients() {
+    if (options_.idle_client_timeout_seconds == 0.0) {
+        return;
+    }
+    for (std::size_t index = 0; index < clients_.size();) {
+        ClientState& client = clients_[index];
+        client.idle_seconds += options_.fixed_dt_seconds;
+        if (client.idle_seconds >= options_.idle_client_timeout_seconds) {
+            remove_client(client.id);
+            continue;
+        }
+        ++index;
+    }
+}
+
 void ReplicationServer::tick_serialized(ecs::Registry& registry) {
+    disconnect_idle_clients();
     if (options_.serialized_worker_threads > 1U && clients_.size() > 1U) {
         tick_serialized_parallel(registry);
         return;

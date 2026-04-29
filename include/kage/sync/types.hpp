@@ -288,6 +288,7 @@ struct ReplicationServerOptions {
     std::size_t max_pending_packet_acks_per_client = protocol::default_max_pending_packet_acks_per_client;
     double fixed_dt_seconds = 1.0 / 60.0;
     double connect_resend_interval_seconds = 0.25;
+    double idle_client_timeout_seconds = 0.0;
     std::size_t network_entity_id_tier0_bits = protocol::default_network_entity_id_tier0_bits;
     ConnectHandlerFn connect_handler;
     TransportFn transport;

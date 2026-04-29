@@ -188,6 +188,46 @@ TEST_CASE("replication server tracks clients and replicated component changes") 
     REQUIRE_FALSE(server.has_client(7));
 }
 
+TEST_CASE("replication server disconnects clients after configured idle timeout") {
+    ecs::Registry registry;
+    kage::sync::configure_server(registry);
+
+    kage::sync::ReplicationServerOptions options;
+    options.fixed_dt_seconds = 1.0;
+    options.idle_client_timeout_seconds = 2.0;
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+
+    server.tick(registry);
+    REQUIRE(server.has_client(1));
+    server.tick(registry);
+    REQUIRE_FALSE(server.has_client(1));
+}
+
+TEST_CASE("replication server resets idle timeout when a client sends packets") {
+    ecs::Registry registry;
+    kage::sync::configure_server(registry);
+
+    kage::sync::ReplicationServerOptions options;
+    options.fixed_dt_seconds = 1.0;
+    options.idle_client_timeout_seconds = 2.0;
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+
+    server.tick(registry);
+    REQUIRE(server.has_client(1));
+
+    kage::sync::BitBuffer ack;
+    ack.push_bits(kage::sync::protocol::client_ack_message, 8U);
+    ack.push_bits(0, 16U);
+    REQUIRE(server.process_packet(1, ack));
+
+    server.tick(registry);
+    REQUIRE(server.has_client(1));
+    server.tick(registry);
+    REQUIRE_FALSE(server.has_client(1));
+}
+
 TEST_CASE("server connect response resends until client id is ACKed") {
     ecs::Registry registry;
     define_position_archetype(registry);
