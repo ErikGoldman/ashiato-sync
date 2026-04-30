@@ -38,6 +38,8 @@ void register_components(ecs::Registry& registry) {
     registry.register_component<Replicated>("kage.sync.Replicated");
     registry.register_component<NetworkOwner>("kage.sync.NetworkOwner");
     registry.register_component<DisplayInterpolated>("kage.sync.DisplayInterpolated");
+    registry.register_component<NoResim>("kage.sync.NoResim");
+    registry.register_component<NoSimulate>("kage.sync.NoSimulate");
 }
 
 const SyncComponentOps* find_component_ops(const ecs::Registry& registry, ecs::Entity component) {

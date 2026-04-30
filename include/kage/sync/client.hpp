@@ -180,6 +180,99 @@ private:
 };
 #endif
 
+namespace detail {
+
+template <typename JobBuilder, bool AddNoResimTag>
+class ClientJobBuilder {
+public:
+    ClientJobBuilder(ecs::Registry& registry, JobBuilder builder, std::vector<ecs::Entity>& jobs)
+        : registry_(&registry), builder_(std::move(builder)), jobs_(&jobs) {}
+
+    ClientJobBuilder& max_threads(std::size_t count) {
+        builder_.max_threads(count);
+        return *this;
+    }
+
+    ClientJobBuilder& single_thread() {
+        builder_.single_thread();
+        return *this;
+    }
+
+    ClientJobBuilder& min_entities_per_thread(std::size_t count) {
+        builder_.min_entities_per_thread(count);
+        return *this;
+    }
+
+    template <typename Fn>
+    ecs::Entity each(Fn&& fn) {
+        const ecs::Entity job = builder_.each(std::forward<Fn>(fn));
+        if constexpr (AddNoResimTag) {
+            registry_->template add<NoResim>(job);
+        }
+        jobs_->push_back(job);
+        return job;
+    }
+
+    template <typename... AccessComponents>
+    auto access() const {
+        return ClientJobBuilder<decltype(builder_.template access<AccessComponents...>()), AddNoResimTag>(
+            *registry_,
+            builder_.template access<AccessComponents...>(),
+            *jobs_);
+    }
+
+    template <typename... StructuralComponents>
+    auto structural() const {
+        return ClientJobBuilder<decltype(builder_.template structural<StructuralComponents...>()), AddNoResimTag>(
+            *registry_,
+            builder_.template structural<StructuralComponents...>(),
+            *jobs_);
+    }
+
+    template <typename... Tags>
+    auto with_tags() const {
+        return ClientJobBuilder<decltype(builder_.template with_tags<Tags...>()), AddNoResimTag>(
+            *registry_,
+            builder_.template with_tags<Tags...>(),
+            *jobs_);
+    }
+
+    template <typename... Tags>
+    auto without_tags() const {
+        return ClientJobBuilder<decltype(builder_.template without_tags<Tags...>()), AddNoResimTag>(
+            *registry_,
+            builder_.template without_tags<Tags...>(),
+            *jobs_);
+    }
+
+    template <typename T>
+    decltype(auto) get(ecs::Entity entity) const {
+        return builder_.template get<T>(entity);
+    }
+
+    template <typename T>
+    decltype(auto) get() const {
+        return builder_.template get<T>();
+    }
+
+    template <typename T>
+    decltype(auto) write(ecs::Entity entity) {
+        return builder_.template write<T>(entity);
+    }
+
+    template <typename T>
+    decltype(auto) write() {
+        return builder_.template write<T>();
+    }
+
+private:
+    ecs::Registry* registry_;
+    JobBuilder builder_;
+    std::vector<ecs::Entity>* jobs_;
+};
+
+}  // namespace detail
+
 class ReplicationClient {
 public:
     explicit ReplicationClient(ReplicationClientOptions options = {});
@@ -202,6 +295,18 @@ public:
         SyncFrame playback_frame);
     bool tick(ecs::Registry& registry, double dt_seconds, ecs::RunJobsOptions prediction_options);
     bool predict_tick(ecs::Registry& registry, SyncFrame frame, ecs::RunJobsOptions options = {});
+    template <typename... Components>
+    auto cosmetic_job(ecs::Registry& registry, int order) {
+        register_components(registry);
+        auto builder = registry.template job<Components...>(order);
+        return detail::ClientJobBuilder<decltype(builder), true>(registry, std::move(builder), cosmetic_jobs_);
+    }
+    template <typename... Components>
+    auto simulation_job(ecs::Registry& registry, int order) {
+        register_components(registry);
+        auto builder = registry.template job<Components...>(order).template without_tags<const NoSimulate>();
+        return detail::ClientJobBuilder<decltype(builder), false>(registry, std::move(builder), simulation_jobs_);
+    }
     bool apply_frame(ecs::Registry& registry, SyncFrame client_frame);
     bool sample_display_target_frame(
         const ecs::Registry& registry,
@@ -397,6 +502,7 @@ private:
     bool apply_pending_prediction_rollback(ecs::Registry& registry, ecs::RunJobsOptions options);
     bool resimulate_all_predicted(ecs::Registry& registry, SyncFrame begin_frame, SyncFrame current_frame, ecs::RunJobsOptions options);
     bool resimulate_affected_predicted(ecs::Registry& registry, SyncFrame begin_frame, SyncFrame current_frame, ecs::RunJobsOptions options);
+    const ecs::JobGraph& resim_job_graph(ecs::Registry& registry);
     void collect_resimulated_prediction_entities(std::vector<std::uint32_t>& out) const;
     void capture_original_current_predictions(
         SyncFrame current_frame,
@@ -455,6 +561,10 @@ private:
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     ReplicationClientInterpolationDiagnostics interpolation_diagnostics_;
 #endif
+    std::vector<ecs::Entity> simulation_jobs_;
+    std::vector<ecs::Entity> cosmetic_jobs_;
+    ecs::JobGraph resim_job_graph_;
+    bool resim_job_graph_valid_ = false;
     std::vector<EntityState> entities_;
     std::vector<std::uint32_t> active_entities_;
     std::vector<std::uint32_t> buffered_entities_;

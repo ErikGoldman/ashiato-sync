@@ -274,15 +274,28 @@ Schema define_schema(ecs::Registry& registry) {
             })};
 }
 
+template <typename JobBuilder>
+void register_prediction_job(JobBuilder&& job) {
+    job.each([](
+        ecs::Entity,
+        PredPosition& position,
+        PredVelocity& velocity,
+        const PredAcceleration& acceleration,
+        PredEnergy& energy) {
+        velocity.x += acceleration.x;
+        velocity.y += acceleration.y;
+        position.x += velocity.x;
+        position.y += velocity.y;
+        energy.value = std::max(0, energy.value - 1);
+    });
+}
+
 void register_prediction_jobs(ecs::Registry& registry) {
-    registry.job<PredPosition, PredVelocity, const PredAcceleration, PredEnergy>(0).each(
-        [](ecs::Entity, PredPosition& position, PredVelocity& velocity, const PredAcceleration& acceleration, PredEnergy& energy) {
-            velocity.x += acceleration.x;
-            velocity.y += acceleration.y;
-            position.x += velocity.x;
-            position.y += velocity.y;
-            energy.value = std::max(0, energy.value - 1);
-        });
+    register_prediction_job(registry.job<PredPosition, PredVelocity, const PredAcceleration, PredEnergy>(0));
+}
+
+void register_prediction_jobs(ecs::Registry& registry, ReplicationClient& client) {
+    register_prediction_job(client.simulation_job<PredPosition, PredVelocity, const PredAcceleration, PredEnergy>(registry, 0));
 }
 
 std::vector<ecs::Entity> create_entities(ecs::Registry& registry, const Schema& schema, std::uint32_t count) {
@@ -444,7 +457,6 @@ Report run(const Config& config) {
     ecs::Registry client_registry;
     configure_client(client_registry, 1);
     (void)define_schema(client_registry);
-    register_prediction_jobs(client_registry);
 
     std::vector<std::vector<BitBuffer>> downstream(static_cast<std::size_t>(config.latency_frames) + 1U);
     std::uint32_t current_tick = 0;
@@ -468,6 +480,7 @@ Report run(const Config& config) {
     client_options.fixed_dt_seconds = 1.0 / 60.0;
     client_options.prediction_buffer_capacity_frames = 256;
     ReplicationClient client(client_options);
+    register_prediction_jobs(client_registry, client);
 
     std::mt19937 rng(config.seed);
     const auto wall_begin = std::chrono::steady_clock::now();

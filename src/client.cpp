@@ -2307,7 +2307,7 @@ bool ReplicationClient::resimulate_all_predicted(
         if (!apply_frame(registry, frame)) {
             return false;
         }
-        registry.run_jobs(options);
+        resim_job_graph(registry).tick(registry, options);
         for (std::uint32_t entity_index : active_entities_) {
             if (entity_index >= entities_.size()) {
                 continue;
@@ -2371,7 +2371,7 @@ bool ReplicationClient::resimulate_affected_predicted(
     }
 
     for (SyncFrame frame = begin_frame + 1U; frame <= current_frame; ++frame) {
-        registry.run_jobs_for_entities(rollback_affected_entities_scratch_, options);
+        resim_job_graph(registry).tick_for_entities(registry, rollback_affected_entities_scratch_, options);
         for (std::uint32_t entity_index : active_entities_) {
             if (entity_index >= entities_.size()) {
                 continue;
@@ -2387,6 +2387,14 @@ bool ReplicationClient::resimulate_affected_predicted(
         }
     }
     return true;
+}
+
+const ecs::JobGraph& ReplicationClient::resim_job_graph(ecs::Registry& registry) {
+    if (!resim_job_graph_valid_) {
+        resim_job_graph_ = registry.compile_job_graph(simulation_jobs_);
+        resim_job_graph_valid_ = true;
+    }
+    return resim_job_graph_;
 }
 
 void ReplicationClient::blend_snap_errors(const SyncSettings& settings, float dt_seconds) {

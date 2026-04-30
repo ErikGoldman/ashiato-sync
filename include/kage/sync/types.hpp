@@ -292,6 +292,8 @@ struct NetworkOwner {
 };
 
 struct DisplayInterpolated {};
+struct NoResim {};
+struct NoSimulate {};
 
 struct ReplicationServerOptions {
     std::size_t bandwidth_limit_bytes_per_tick = 1024;

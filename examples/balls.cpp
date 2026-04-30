@@ -403,8 +403,8 @@ SyncSchema define_schema(ecs::Registry& registry, bool interpolate_position = fa
         bounced};
 }
 
-void register_client_prediction_jobs(ecs::Registry& registry) {
-    registry.job<BallPosition, const BallVelocity>(0).each(
+void register_client_prediction_jobs(ecs::Registry& registry, kage::sync::ReplicationClient& client) {
+    client.simulation_job<BallPosition, const BallVelocity>(registry, 0).each(
         [](ecs::Entity, BallPosition& position, const BallVelocity& velocity) {
             constexpr float fixed_dt = 1.0f / 30.0f;
             position.x += velocity.x * fixed_dt;
@@ -864,7 +864,6 @@ int main(int argc, char** argv) {
     ecs::Registry client_registry;
     kage::sync::configure_client(client_registry, client_id);
     const SyncSchema client_schema = define_schema(client_registry, true);
-    register_client_prediction_jobs(client_registry);
 
     SocketHandle server_socket = make_udp_socket(server_port);
     SocketHandle client_socket = make_udp_socket(0);
@@ -902,6 +901,7 @@ int main(int argc, char** argv) {
         time_dilation_gain,
         {},
         1.0 / 30.0});
+    register_client_prediction_jobs(client_registry, client);
 
     InitWindow(1280, 720, "kage-sync localhost balls");
     Camera3D camera{};
