@@ -1035,3 +1035,274 @@ win, and the `only-affected` runs were slower than the best Experiment 21 run.
 The likely reason is that replacing `all_zero` with a typed zero object plus
 `memcmp` does not reduce enough work for these small error payloads, while it
 adds another branch and function pointer on the hot path.
+
+## Experiment 23: Prediction Stress Reprofile After Accepted Optimizations
+
+Rationale: reprofile prediction stress after keeping raw-byte prediction hooks,
+O(1) baseline history, and resim-error blending over the resimulated entity
+set. The goal is to confirm which hot spots remain and separate `all` rollback
+behavior from `only-affected` behavior.
+
+Profile build:
+
+```sh
+cmake --build build-bench-gprof --target kage_sync_prediction_stress -j2
+```
+
+Profile commands:
+
+```sh
+./kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+./kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
+```
+
+Profile artifacts:
+
+- `/tmp/kage_sync_prediction_stress_all_after_opt_gprof.txt`
+- `/tmp/kage_sync_prediction_stress_only_affected_after_opt_gprof.txt`
+
+Profiled `all` result:
+
+- `wall=8.611981`
+- `server_simulation=0.082899`
+- `server_replication=4.341508`
+- `client_receive=1.419152`
+- `client_tick=2.555149`
+- `ack_processing=0.212865`
+
+Profiled `only-affected` result:
+
+- `wall=6.901837`
+- `server_simulation=0.081641`
+- `server_replication=4.334525`
+- `client_receive=1.478702`
+- `client_tick=0.801887`
+- `ack_processing=0.204685`
+
+Top `all` buckets:
+
+- `ReplicationServer::tick_serialized`: 49.37%, 1800 calls
+- `ReplicationServer::find_or_create_quantized_frame`: 5.27%, 3,686,400 calls
+- `PredPosition::serialize_bytes`: 4.01%, 3,686,400 calls
+- `frame_component_data`: 3.16%, 71,395,637 calls
+- `PredVelocity::serialize_bytes`: 2.74%, 3,661,815 calls
+- `ReplicationClient::blend_resim_errors`: 2.32%, 1799 calls
+- `all_zero`: 2.11%, 92,164,106 calls
+- `ReplicationClient::quantize_predicted_entity`: 2.11%, 7,372,800 calls
+- `init_frame_data`: 1.69%, 14,745,600 calls
+- `ReplicationClient::compare_predicted_frame`: 1.05%, 3,684,352 calls
+
+Top `only-affected` buckets:
+
+- `ReplicationServer::tick_serialized`: 53.12%, 1800 calls
+- `ReplicationServer::find_or_create_quantized_frame`: 5.47%, 3,686,400 calls
+- `PredVelocity::serialize_bytes`: 5.47%, 3,661,815 calls
+- `init_frame_data`: 3.65%, 11,245,389 calls
+- `PredPosition::serialize_bytes`: 3.39%, 3,686,400 calls
+- `all_zero`: 2.60%, 43,161,152 calls
+- `frame_component_data`: 2.34%, 46,893,816 calls
+- Prediction job callback: 1.56%, 3601 calls
+- `ReplicationClient::quantize_predicted_entity`: 1.04%, 3,872,589 calls
+- `ReplicationClient::compare_predicted_frame`: 0.52%, 3,684,352 calls
+- `ReplicationClient::collect_resimulated_prediction_entities`: 0.78%, 1799 calls
+
+Diagnosis:
+
+- Server update volume is still the dominant benchmark cost. The workload
+  mutates position for every predicted entity each tick, so the server serializes
+  3.68 million entity records and about 86 MB of update data. The profile is
+  measuring replication throughput as much as prediction behavior.
+- The O(1) history change worked: `remember_baseline` is still called millions
+  of times but no longer receives sampled self time in either profile.
+- The raw-byte hooks worked: `frame_component_bytes` is no longer a top bucket,
+  but `frame_component_data` is now hot because the code still performs many
+  checked component-pointer lookups per component per update.
+- `all` rollback remains structurally expensive. It requantizes all predicted
+  entities across rollback replay frames, so `quantize_predicted_entity`,
+  `blend_resim_errors`, and `all_zero` stay hot.
+- In `only-affected`, the remaining client-side rollback cost is dominated by
+  repeatedly scanning all active entities to collect affected indices and to
+  quantize affected entities, plus small scratch allocations for affected
+  vectors and original-frame capture.
+
+Proposed next fixes:
+
+- Add a dense `prediction_rollback_entities_` list maintained when
+  `queue_prediction_rollback` first marks an entity. This would remove the
+  active-entity scan in `collect_resimulated_prediction_entities` and provide a
+  direct list for affected quantization.
+- Store rollback scratch vectors on `ReplicationClient` and reuse their capacity
+  across ticks: resimulated entity indices, affected local entities, and
+  original current prediction frames. This avoids repeated allocation and large
+  `resize(entities_.size())` work during rollback.
+- Change `capture_original_current_predictions` and `blend_resim_errors` to use
+  a compact vector of `{entity_index, frame}` pairs instead of a sparse
+  `std::vector<QuantizedFrameData>` sized to all known entities.
+- Add direct unchecked frame-byte accessors for internal hot loops after the
+  archetype, present mask, component index, and frame size have already been
+  validated. This would reduce the residual `frame_component_data` cost.
+- For `all`, consider a bulk quantize path that walks active predicted entities
+  once per frame and writes component bytes directly using cached archetype
+  metadata, instead of redoing per-entity/per-component validation.
+- For the benchmark itself, add a client-only replay mode or a server update
+  throttling mode so prediction rollback changes can be profiled without
+  server serialization dominating every run.
+
+## Experiment 24: Dense Prediction Rollback Entity List
+
+Rationale: `only-affected` rollback was scanning every active entity to collect
+the entities with pending prediction rollback. This experiment adds a dense
+`prediction_rollback_entities_` membership list maintained when rollback is
+queued, plus a per-entity rollback-list index for O(1) removal.
+
+Baseline command:
+
+```sh
+build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
+```
+
+Baseline result:
+
+- `all`: `wall=4.964283`, `server_replication=3.390532`,
+  `client_receive=0.571172`, `client_tick=0.865345`,
+  `ack_processing=0.098943`
+- `only-affected`: `wall=4.401937`, `server_replication=3.392693`,
+  `client_receive=0.605479`, `client_tick=0.273683`,
+  `ack_processing=0.091934`
+
+Result:
+
+- `all`: `wall=5.315669`, `server_replication=3.615960`,
+  `client_receive=0.624974`, `client_tick=0.928239`,
+  `ack_processing=0.106379`
+- `only-affected`: `wall=4.263536`, `server_replication=3.299090`,
+  `client_receive=0.591484`, `client_tick=0.244827`,
+  `ack_processing=0.091385`
+
+Conclusion: accepted. The dense list targets `only-affected`, where client tick
+time improved by about 10.5%. The `all` run does not use the affected list and
+regressed in this single run with server replication noise.
+
+## Experiment 25: Reusable Prediction Rollback Scratch Vectors
+
+Rationale: rollback allocated local vectors each time for resimulated entity
+indices, affected ECS entities, and original current-frame captures. This
+experiment moves those vectors onto `ReplicationClient` so their capacity is
+reused between rollbacks.
+
+Commands:
+
+```sh
+build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
+```
+
+Results:
+
+- `all`: `wall=5.499666`, `server_replication=3.734376`,
+  `client_receive=0.722906`, `client_tick=0.884199`,
+  `ack_processing=0.115320`
+- `only-affected`: `wall=4.437698`, `server_replication=3.439518`,
+  `client_receive=0.615323`, `client_tick=0.252838`,
+  `ack_processing=0.092916`
+
+Conclusion: mixed and kept as a foundation for compact capture storage. This
+single run regressed `only-affected` client tick versus Experiment 24
+(`0.244827` to `0.252838`), but it removes per-rollback allocation churn and
+sets up replacing sparse original-frame capture with compact records.
+
+## Experiment 26: Compact Original Prediction Capture Records
+
+Rationale: rollback error blending captured original current-frame predictions
+into a sparse vector sized to all client entities. This experiment changes that
+storage to compact `{entity_index, baseline}` records for entities that
+actually had a current prediction sample.
+
+Commands:
+
+```sh
+build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
+```
+
+Results:
+
+- `all`: `wall=5.017056`, `server_replication=3.508756`,
+  `client_receive=0.581076`, `client_tick=0.792078`,
+  `ack_processing=0.097757`
+- `only-affected`: `wall=4.786550`, `server_replication=3.715519`,
+  `client_receive=0.666470`, `client_tick=0.264098`,
+  `ack_processing=0.101491`
+
+Conclusion: mixed and kept. The `all` client tick path improved by about 10.4%
+versus Experiment 25, likely from avoiding repeated sparse vector resize and
+skipping empty capture slots during blending. The `only-affected` run regressed,
+with server replication also substantially higher in this sample.
+
+## Experiment 27: Unchecked Internal Frame Byte Accessors
+
+Rationale: after adding raw-byte trait hooks, `frame_component_data` became a
+visible hot bucket because prediction compare, prediction error blending, and
+predicted quantization were still repeating bounds checks after the archetype
+and frame had already been validated. This experiment adds internal unchecked
+component-byte accessors and uses them in those hot prediction loops.
+
+Commands:
+
+```sh
+build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
+```
+
+Results:
+
+- `all`: `wall=4.988037`, `server_replication=3.563926`,
+  `client_receive=0.531187`, `client_tick=0.756939`,
+  `ack_processing=0.097669`
+- `only-affected`: `wall=4.434586`, `server_replication=3.509141`,
+  `client_receive=0.560742`, `client_tick=0.235678`,
+  `ack_processing=0.092158`
+
+Conclusion: accepted. Client tick improved for both policies versus Experiment
+26, and client receive also dropped. This confirms the residual
+`frame_component_data` profile cost was mostly repeated validation in already
+validated prediction loops.
+
+## Experiment 28: Bulk Predicted Quantize Helper
+
+Rationale: `all` rollback requantized predicted entities by repeatedly calling
+the single-entity quantization path. This experiment added a bulk helper that
+walks a supplied dense entity-index list, caches the current archetype pointer,
+uses unchecked frame reset/access, and lets `only-affected` quantization walk
+the dense rollback entity list instead of active entities.
+
+Commands:
+
+```sh
+build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
+```
+
+Results:
+
+- `all`: `wall=5.231192`, `server_replication=3.667134`,
+  `client_receive=0.604054`, `client_tick=0.813438`,
+  `ack_processing=0.106750`
+- `only-affected`: `wall=4.671549`, `server_replication=3.605876`,
+  `client_receive=0.668188`, `client_tick=0.256813`,
+  `ack_processing=0.101442`
+
+Conclusion: rejected and reverted. The generalized helper regressed both
+policies versus Experiment 27. The likely cause is that the extra helper code
+shape and per-entity generic checks outweighed the small amount of validation it
+removed after Experiment 27's unchecked frame accessors.
+
+Final accepted-state confirmation after reverting Experiment 28:
+
+- `all`: `wall=5.429979`, `server_replication=3.865692`,
+  `client_receive=0.600053`, `client_tick=0.817149`,
+  `ack_processing=0.105340`
+- `only-affected`: `wall=4.483648`, `server_replication=3.524287`,
+  `client_receive=0.566983`, `client_tick=0.264205`,
+  `ack_processing=0.091444`

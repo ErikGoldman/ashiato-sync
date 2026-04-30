@@ -103,26 +103,6 @@ std::uint8_t* mutable_frame_component_data(
     return frame.bytes.data() + offset;
 }
 
-bool set_frame_component_bytes(
-    const SyncArchetype& archetype,
-    QuantizedFrameData& frame,
-    std::size_t component_index,
-    const SyncComponentOps::QuantizedBytes& bytes) {
-    if (component_index >= 64U ||
-        component_index >= archetype.component_offsets.size() ||
-        component_index >= archetype.component_ops.size() ||
-        bytes.size() != archetype.component_ops[component_index].quantized_size) {
-        return false;
-    }
-    const std::size_t offset = archetype.component_offsets[component_index];
-    if (offset + bytes.size() > frame.bytes.size()) {
-        return false;
-    }
-    std::memcpy(frame.bytes.data() + offset, bytes.data(), bytes.size());
-    frame.present_mask |= (std::uint64_t{1} << component_index);
-    return true;
-}
-
 std::uint64_t visible_tag_mask(
     const ecs::Registry& registry,
     const SyncArchetype& archetype,
@@ -1477,15 +1457,10 @@ std::uint32_t ReplicationServer::find_or_create_quantized_frame(
             }
             std::memcpy(destination, baseline_quantized_frame->data.bytes.data() + offset, size);
         } else {
-            if (ops.quantize_bytes == nullptr) {
-                SyncComponentOps::QuantizedBytes quantized;
-                ops.quantize(component_value, quantized);
-                if (!set_frame_component_bytes(archetype, scratch, component_index, quantized)) {
-                    return invalid_quantized_frame_id;
-                }
-            } else {
-                ops.quantize_bytes(component_value, destination);
+            if (ops.quantize == nullptr) {
+                return invalid_quantized_frame_id;
             }
+            ops.quantize(component_value, destination);
         }
     }
 
@@ -1806,15 +1781,7 @@ void ReplicationServer::write_entity_record(
             if (previous == nullptr || current == nullptr) {
                 throw std::logic_error("replicated quantized frame component bytes are missing");
             }
-            if (ops.serialize_bytes != nullptr) {
-                ops.serialize_bytes(previous, current, out);
-            } else {
-                SyncComponentOps::QuantizedBytes previous_bytes;
-                SyncComponentOps::QuantizedBytes current_bytes;
-                previous_bytes.assign(previous, ops.quantized_size);
-                current_bytes.assign(current, ops.quantized_size);
-                ops.serialize(&previous_bytes, current_bytes, out);
-            }
+            ops.serialize(previous, current, out);
         }
         (void)registry;
         return;
@@ -1868,13 +1835,7 @@ void ReplicationServer::write_entity_record(
         if (!use_presence_mask) {
             out.push_bits(static_cast<std::int64_t>(component_index + 1U), sync_slot_bits);
         }
-        if (ops.serialize_bytes != nullptr) {
-            ops.serialize_bytes(nullptr, current, out);
-        } else {
-            SyncComponentOps::QuantizedBytes current_bytes;
-            current_bytes.assign(current, ops.quantized_size);
-            ops.serialize(nullptr, current_bytes, out);
-        }
+        ops.serialize(nullptr, current, out);
     }
 
     (void)registry;

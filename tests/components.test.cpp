@@ -2,6 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <stdexcept>
 
 using kage_sync_tests::Health;
@@ -174,27 +175,27 @@ TEST_CASE("sync component traits provide type-erased quantization and serializat
     REQUIRE(ops != nullptr);
 
     const NetworkedPosition position{1.0f, 2.0f};
-    kage::sync::SyncComponentOps::QuantizedBytes quantized;
-    ops->quantize(&position, quantized);
+    std::array<std::uint8_t, sizeof(kage_sync_tests::QuantizedNetworkedPosition)> quantized{};
+    ops->quantize(&position, quantized.data());
 
     kage::sync::BitBuffer payload;
-    ops->serialize(nullptr, quantized, payload);
+    ops->serialize(nullptr, quantized.data(), payload);
     const NetworkedPayload fields = read_networked_payload(payload);
     REQUIRE_FALSE(fields.delta);
     REQUIRE(fields.x == 10);
     REQUIRE(fields.y == 20);
 
     payload.reset_read();
-    kage::sync::SyncComponentOps::QuantizedBytes decoded;
-    REQUIRE(ops->deserialize(payload, nullptr, decoded));
+    std::array<std::uint8_t, sizeof(kage_sync_tests::QuantizedNetworkedPosition)> decoded{};
+    REQUIRE(ops->deserialize(payload, nullptr, decoded.data()));
 
     NetworkedPosition dequantized;
-    ops->dequantize(decoded, &dequantized);
+    ops->dequantize(decoded.data(), &dequantized);
     REQUIRE(dequantized.x == 1.0f);
     REQUIRE(dequantized.y == 2.0f);
 
     const ecs::Entity entity = registry.create();
-    REQUIRE(ops->apply(registry, entity, decoded));
+    REQUIRE(ops->apply(registry, entity, decoded.data()));
     REQUIRE(registry.contains<NetworkedPosition>(entity));
     REQUIRE(registry.remove(entity, position_component));
     REQUIRE_FALSE(registry.contains<NetworkedPosition>(entity));

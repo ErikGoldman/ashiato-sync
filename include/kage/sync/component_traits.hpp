@@ -73,27 +73,6 @@ struct has_interpolate<
 
 template <typename Traits, typename Quantized>
 typename std::enable_if<has_interpolate<Traits, Quantized>::value, bool>::type interpolate_quantized(
-    const SyncComponentOps::QuantizedBytes& from_bytes,
-    const SyncComponentOps::QuantizedBytes& to_bytes,
-    float alpha,
-    SyncComponentOps::QuantizedBytes& out) {
-    if (from_bytes.size() != sizeof(Quantized) || to_bytes.size() != sizeof(Quantized)) {
-        return false;
-    }
-
-    Quantized from{};
-    Quantized to{};
-    std::memcpy(&from, from_bytes.data(), sizeof(Quantized));
-    std::memcpy(&to, to_bytes.data(), sizeof(Quantized));
-    const Quantized interpolated = Traits::interpolate(from, to, alpha);
-
-    out.resize(sizeof(Quantized));
-    std::memcpy(out.data(), &interpolated, sizeof(Quantized));
-    return true;
-}
-
-template <typename Traits, typename Quantized>
-typename std::enable_if<has_interpolate<Traits, Quantized>::value, bool>::type interpolate_quantized_bytes(
     const std::uint8_t* from_bytes,
     const std::uint8_t* to_bytes,
     float alpha,
@@ -109,15 +88,6 @@ typename std::enable_if<has_interpolate<Traits, Quantized>::value, bool>::type i
 
 template <typename Traits, typename Quantized>
 typename std::enable_if<!has_interpolate<Traits, Quantized>::value, bool>::type interpolate_quantized(
-    const SyncComponentOps::QuantizedBytes&,
-    const SyncComponentOps::QuantizedBytes&,
-    float,
-    SyncComponentOps::QuantizedBytes&) {
-    return false;
-}
-
-template <typename Traits, typename Quantized>
-typename std::enable_if<!has_interpolate<Traits, Quantized>::value, bool>::type interpolate_quantized_bytes(
     const std::uint8_t*,
     const std::uint8_t*,
     float,
@@ -144,30 +114,6 @@ struct has_error_blending<
 
 template <typename Traits, typename Quantized>
 typename std::enable_if<has_error_blending<Traits, Quantized>::value, bool>::type compute_error_quantized(
-    const SyncComponentOps::QuantizedBytes& current_bytes,
-    const SyncComponentOps::QuantizedBytes& previous_bytes,
-    SyncComponentOps::QuantizedBytes& out) {
-    using Error = typename Traits::Error;
-    static_assert(
-        std::is_trivially_copyable<Error>::value,
-        "SyncComponentTraits<T>::Error must be trivially copyable");
-    if (current_bytes.size() != sizeof(Quantized) || previous_bytes.size() != sizeof(Quantized)) {
-        return false;
-    }
-
-    Quantized current{};
-    Quantized previous{};
-    std::memcpy(&current, current_bytes.data(), sizeof(Quantized));
-    std::memcpy(&previous, previous_bytes.data(), sizeof(Quantized));
-    const Error error = Traits::compute_error(current, previous);
-
-    out.resize(sizeof(Error));
-    std::memcpy(out.data(), &error, sizeof(Error));
-    return true;
-}
-
-template <typename Traits, typename Quantized>
-typename std::enable_if<has_error_blending<Traits, Quantized>::value, bool>::type compute_error_quantized_bytes(
     const std::uint8_t* current_bytes,
     const std::uint8_t* previous_bytes,
     SyncComponentOps::QuantizedBytes& out) {
@@ -189,14 +135,6 @@ typename std::enable_if<has_error_blending<Traits, Quantized>::value, bool>::typ
 
 template <typename Traits, typename Quantized>
 typename std::enable_if<!has_error_blending<Traits, Quantized>::value, bool>::type compute_error_quantized(
-    const SyncComponentOps::QuantizedBytes&,
-    const SyncComponentOps::QuantizedBytes&,
-    SyncComponentOps::QuantizedBytes&) {
-    return false;
-}
-
-template <typename Traits, typename Quantized>
-typename std::enable_if<!has_error_blending<Traits, Quantized>::value, bool>::type compute_error_quantized_bytes(
     const std::uint8_t*,
     const std::uint8_t*,
     SyncComponentOps::QuantizedBytes&) {
@@ -205,17 +143,17 @@ typename std::enable_if<!has_error_blending<Traits, Quantized>::value, bool>::ty
 
 template <typename Traits, typename Quantized>
 typename std::enable_if<has_error_blending<Traits, Quantized>::value, bool>::type apply_error_quantized(
-    const SyncComponentOps::QuantizedBytes& current_bytes,
+    const std::uint8_t* current_bytes,
     const SyncComponentOps::QuantizedBytes& error_bytes,
     SyncComponentOps::QuantizedBytes& out) {
     using Error = typename Traits::Error;
-    if (current_bytes.size() != sizeof(Quantized) || error_bytes.size() != sizeof(Error)) {
+    if (error_bytes.size() != sizeof(Error)) {
         return false;
     }
 
     Quantized current{};
     Error error{};
-    std::memcpy(&current, current_bytes.data(), sizeof(Quantized));
+    std::memcpy(&current, current_bytes, sizeof(Quantized));
     std::memcpy(&error, error_bytes.data(), sizeof(Error));
     const Quantized display = Traits::apply_error(current, error);
 
@@ -226,7 +164,7 @@ typename std::enable_if<has_error_blending<Traits, Quantized>::value, bool>::typ
 
 template <typename Traits, typename Quantized>
 typename std::enable_if<!has_error_blending<Traits, Quantized>::value, bool>::type apply_error_quantized(
-    const SyncComponentOps::QuantizedBytes&,
+    const std::uint8_t*,
     const SyncComponentOps::QuantizedBytes&,
     SyncComponentOps::QuantizedBytes&) {
     return false;
@@ -272,21 +210,6 @@ struct has_should_roll_back<
 
 template <typename Traits, typename Quantized>
 typename std::enable_if<has_should_roll_back<Traits, Quantized>::value, bool>::type should_roll_back_quantized(
-    const SyncComponentOps::QuantizedBytes& predicted_bytes,
-    const SyncComponentOps::QuantizedBytes& authoritative_bytes) {
-    if (predicted_bytes.size() != sizeof(Quantized) || authoritative_bytes.size() != sizeof(Quantized)) {
-        return true;
-    }
-
-    Quantized predicted{};
-    Quantized authoritative{};
-    std::memcpy(&predicted, predicted_bytes.data(), sizeof(Quantized));
-    std::memcpy(&authoritative, authoritative_bytes.data(), sizeof(Quantized));
-    return Traits::should_roll_back(predicted, authoritative);
-}
-
-template <typename Traits, typename Quantized>
-typename std::enable_if<has_should_roll_back<Traits, Quantized>::value, bool>::type should_roll_back_quantized_bytes(
     const std::uint8_t* predicted_bytes,
     const std::uint8_t* authoritative_bytes) {
     Quantized predicted{};
@@ -298,13 +221,6 @@ typename std::enable_if<has_should_roll_back<Traits, Quantized>::value, bool>::t
 
 template <typename Traits, typename Quantized>
 typename std::enable_if<!has_should_roll_back<Traits, Quantized>::value, bool>::type should_roll_back_quantized(
-    const SyncComponentOps::QuantizedBytes&,
-    const SyncComponentOps::QuantizedBytes&) {
-    return false;
-}
-
-template <typename Traits, typename Quantized>
-typename std::enable_if<!has_should_roll_back<Traits, Quantized>::value, bool>::type should_roll_back_quantized_bytes(
     const std::uint8_t*,
     const std::uint8_t*) {
     return false;
@@ -337,52 +253,21 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
 
     SyncComponentOps ops;
     ops.quantized_size = sizeof(Quantized);
-    ops.quantize = [](const void* value, SyncComponentOps::QuantizedBytes& out) {
-        const Quantized quantized = Traits::quantize(*static_cast<const T*>(value));
-        out.resize(sizeof(Quantized));
-        std::memcpy(out.data(), &quantized, sizeof(Quantized));
-    };
-    ops.quantize_bytes = [](const void* value, std::uint8_t* out) {
+    ops.quantize = [](const void* value, std::uint8_t* out) {
         const Quantized quantized = Traits::quantize(*static_cast<const T*>(value));
         std::memcpy(out, &quantized, sizeof(Quantized));
     };
-    ops.dequantize = [](const SyncComponentOps::QuantizedBytes& quantized_bytes, void* out) {
-        if (quantized_bytes.size() != sizeof(Quantized)) {
-            return;
-        }
+    ops.dequantize = [](const std::uint8_t* quantized_bytes, void* out) {
         Quantized quantized{};
-        std::memcpy(&quantized, quantized_bytes.data(), sizeof(Quantized));
+        std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
         *static_cast<T*>(out) = Traits::dequantize(quantized);
     };
-    ops.apply = [](ecs::Registry& registry, ecs::Entity entity, const SyncComponentOps::QuantizedBytes& quantized_bytes) {
-        if (quantized_bytes.size() != sizeof(Quantized)) {
-            return false;
-        }
-        Quantized quantized{};
-        std::memcpy(&quantized, quantized_bytes.data(), sizeof(Quantized));
-        return registry.add<T>(entity, Traits::dequantize(quantized)) != nullptr;
-    };
-    ops.apply_bytes = [](ecs::Registry& registry, ecs::Entity entity, const std::uint8_t* quantized_bytes) {
+    ops.apply = [](ecs::Registry& registry, ecs::Entity entity, const std::uint8_t* quantized_bytes) {
         Quantized quantized{};
         std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
         return registry.add<T>(entity, Traits::dequantize(quantized)) != nullptr;
     };
-    ops.serialize = [](const SyncComponentOps::QuantizedBytes* previous_bytes,
-                       const SyncComponentOps::QuantizedBytes& current_bytes,
-                       BitBuffer& out) {
-        Quantized current{};
-        std::memcpy(&current, current_bytes.data(), sizeof(Quantized));
-
-        Quantized previous{};
-        const Quantized* previous_ptr = nullptr;
-        if (previous_bytes != nullptr && previous_bytes->size() == sizeof(Quantized)) {
-            std::memcpy(&previous, previous_bytes->data(), sizeof(Quantized));
-            previous_ptr = &previous;
-        }
-
-        Traits::serialize(previous_ptr, current, out);
-    };
-    ops.serialize_bytes = [](const std::uint8_t* previous_bytes, const std::uint8_t* current_bytes, BitBuffer& out) {
+    ops.serialize = [](const std::uint8_t* previous_bytes, const std::uint8_t* current_bytes, BitBuffer& out) {
         Quantized current{};
         std::memcpy(&current, current_bytes, sizeof(Quantized));
 
@@ -395,26 +280,7 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
 
         Traits::serialize(previous_ptr, current, out);
     };
-    ops.deserialize = [](BitBuffer& in,
-                         const SyncComponentOps::QuantizedBytes* previous_bytes,
-                         SyncComponentOps::QuantizedBytes& out) {
-        Quantized previous{};
-        const Quantized* previous_ptr = nullptr;
-        if (previous_bytes != nullptr && previous_bytes->size() == sizeof(Quantized)) {
-            std::memcpy(&previous, previous_bytes->data(), sizeof(Quantized));
-            previous_ptr = &previous;
-        }
-
-        Quantized quantized{};
-        if (!Traits::deserialize(in, previous_ptr, quantized)) {
-            return false;
-        }
-
-        out.resize(sizeof(Quantized));
-        std::memcpy(out.data(), &quantized, sizeof(Quantized));
-        return true;
-    };
-    ops.deserialize_bytes = [](BitBuffer& in, const std::uint8_t* previous_bytes, std::uint8_t* out) {
+    ops.deserialize = [](BitBuffer& in, const std::uint8_t* previous_bytes, std::uint8_t* out) {
         Quantized previous{};
         const Quantized* previous_ptr = nullptr;
         if (previous_bytes != nullptr) {
@@ -432,7 +298,6 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
     };
     if constexpr (detail::has_interpolate<Traits, Quantized>::value) {
         ops.interpolate = &detail::interpolate_quantized<Traits, Quantized>;
-        ops.interpolate_bytes = &detail::interpolate_quantized_bytes<Traits, Quantized>;
     }
     if constexpr (detail::has_error_blending<Traits, Quantized>::value) {
         using Error = typename Traits::Error;
@@ -441,13 +306,11 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
             "SyncComponentTraits<T>::Error must be trivially copyable");
         ops.error_size = sizeof(Error);
         ops.compute_error = &detail::compute_error_quantized<Traits, Quantized>;
-        ops.compute_error_bytes = &detail::compute_error_quantized_bytes<Traits, Quantized>;
         ops.apply_error = &detail::apply_error_quantized<Traits, Quantized>;
         ops.blend_out_error = &detail::blend_out_error_quantized<Traits, Quantized>;
     }
     if constexpr (detail::has_should_roll_back<Traits, Quantized>::value) {
         ops.should_roll_back = &detail::should_roll_back_quantized<Traits, Quantized>;
-        ops.should_roll_back_bytes = &detail::should_roll_back_quantized_bytes<Traits, Quantized>;
     }
 
     registry.write<SyncSettings>().component_ops[component.value] = ops;

@@ -230,23 +230,16 @@ private:
 
 struct SyncComponentOps {
     using QuantizedBytes = kage::sync::QuantizedBytes;
-    using QuantizeFn = void (*)(const void*, QuantizedBytes&);
-    using DequantizeFn = void (*)(const QuantizedBytes&, void*);
-    using ApplyFn = bool (*)(ecs::Registry&, ecs::Entity, const QuantizedBytes&);
-    using SerializeFn = void (*)(const QuantizedBytes*, const QuantizedBytes&, BitBuffer&);
-    using DeserializeFn = bool (*)(BitBuffer&, const QuantizedBytes*, QuantizedBytes&);
-    using QuantizeBytesFn = void (*)(const void*, std::uint8_t*);
-    using ApplyBytesFn = bool (*)(ecs::Registry&, ecs::Entity, const std::uint8_t*);
-    using SerializeBytesFn = void (*)(const std::uint8_t*, const std::uint8_t*, BitBuffer&);
-    using DeserializeBytesFn = bool (*)(BitBuffer&, const std::uint8_t*, std::uint8_t*);
-    using InterpolateBytesFn = bool (*)(const std::uint8_t*, const std::uint8_t*, float, std::uint8_t*);
-    using InterpolateFn = bool (*)(const QuantizedBytes&, const QuantizedBytes&, float, QuantizedBytes&);
-    using ComputeErrorFn = bool (*)(const QuantizedBytes&, const QuantizedBytes&, QuantizedBytes&);
-    using ComputeErrorBytesFn = bool (*)(const std::uint8_t*, const std::uint8_t*, QuantizedBytes&);
-    using ApplyErrorFn = bool (*)(const QuantizedBytes&, const QuantizedBytes&, QuantizedBytes&);
+    using QuantizeFn = void (*)(const void*, std::uint8_t*);
+    using DequantizeFn = void (*)(const std::uint8_t*, void*);
+    using ApplyFn = bool (*)(ecs::Registry&, ecs::Entity, const std::uint8_t*);
+    using SerializeFn = void (*)(const std::uint8_t*, const std::uint8_t*, BitBuffer&);
+    using DeserializeFn = bool (*)(BitBuffer&, const std::uint8_t*, std::uint8_t*);
+    using InterpolateFn = bool (*)(const std::uint8_t*, const std::uint8_t*, float, std::uint8_t*);
+    using ComputeErrorFn = bool (*)(const std::uint8_t*, const std::uint8_t*, QuantizedBytes&);
+    using ApplyErrorFn = bool (*)(const std::uint8_t*, const QuantizedBytes&, QuantizedBytes&);
     using BlendOutErrorFn = bool (*)(const QuantizedBytes&, float, QuantizedBytes&);
-    using ShouldRollBackFn = bool (*)(const QuantizedBytes&, const QuantizedBytes&);
-    using ShouldRollBackBytesFn = bool (*)(const std::uint8_t*, const std::uint8_t*);
+    using ShouldRollBackFn = bool (*)(const std::uint8_t*, const std::uint8_t*);
 
     std::size_t quantized_size = 0;
     std::size_t error_size = 0;
@@ -255,18 +248,11 @@ struct SyncComponentOps {
     ApplyFn apply = nullptr;
     SerializeFn serialize = nullptr;
     DeserializeFn deserialize = nullptr;
-    QuantizeBytesFn quantize_bytes = nullptr;
-    ApplyBytesFn apply_bytes = nullptr;
-    SerializeBytesFn serialize_bytes = nullptr;
-    DeserializeBytesFn deserialize_bytes = nullptr;
-    InterpolateBytesFn interpolate_bytes = nullptr;
     InterpolateFn interpolate = nullptr;
     ComputeErrorFn compute_error = nullptr;
-    ComputeErrorBytesFn compute_error_bytes = nullptr;
     ApplyErrorFn apply_error = nullptr;
     BlendOutErrorFn blend_out_error = nullptr;
     ShouldRollBackFn should_roll_back = nullptr;
-    ShouldRollBackBytesFn should_roll_back_bytes = nullptr;
 };
 
 struct SyncArchetype {

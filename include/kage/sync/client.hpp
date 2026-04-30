@@ -289,8 +289,14 @@ private:
         std::size_t active_index = invalid_ack_index;
         std::size_t buffered_index = invalid_ack_index;
         std::size_t snap_error_index = invalid_ack_index;
+        std::size_t prediction_rollback_index = invalid_ack_index;
         bool prediction_rollback_pending = false;
         SyncFrame prediction_rollback_frame = 0;
+    };
+
+    struct OriginalPredictionCapture {
+        std::uint32_t entity_index = invalid_entity_index;
+        QuantizedFrameData baseline;
     };
 
     EntityState* find_entity_state(ecs::Entity server_entity) noexcept;
@@ -306,6 +312,7 @@ private:
     void erase_entity_state(ecs::Registry& registry, std::uint32_t entity_index, bool destroy_local);
     void set_buffered_membership(std::uint32_t entity_index, bool active);
     void set_snap_error_membership(std::uint32_t entity_index, bool active);
+    void set_prediction_rollback_membership(std::uint32_t entity_index, bool active);
     void sync_entity_memberships(EntityState& state);
     bool destroy_tombstone_blocks(std::uint32_t wire_network_id, SyncFrame frame) const;
     void record_destroy_tombstone(std::uint32_t wire_network_id, SyncFrame frame);
@@ -394,13 +401,12 @@ private:
     void capture_original_current_predictions(
         SyncFrame current_frame,
         const std::vector<std::uint32_t>& entity_indices,
-        std::vector<QuantizedFrameData>& out) const;
+        std::vector<OriginalPredictionCapture>& out) const;
     bool blend_resim_errors(
         const ecs::Registry& registry,
         const SyncSettings& settings,
         SyncFrame current_frame,
-        const std::vector<std::uint32_t>& entity_indices,
-        const std::vector<QuantizedFrameData>& original);
+        const std::vector<OriginalPredictionCapture>& original);
     bool apply_latest_snap(ecs::Registry& registry, const SyncSettings& settings, EntityState& state);
     bool switch_entity_mode(
         ecs::Registry& registry,
@@ -453,6 +459,10 @@ private:
     std::vector<std::uint32_t> active_entities_;
     std::vector<std::uint32_t> buffered_entities_;
     std::vector<std::uint32_t> snap_error_entities_;
+    std::vector<std::uint32_t> prediction_rollback_entities_;
+    std::vector<std::uint32_t> rollback_entity_indices_scratch_;
+    std::vector<ecs::Entity> rollback_affected_entities_scratch_;
+    std::vector<OriginalPredictionCapture> rollback_original_current_scratch_;
     std::vector<WireNetworkIdState> wire_network_ids_;
     std::unordered_map<ClientEntityNetworkId, std::uint32_t> network_entity_indices_;
     std::vector<std::uint32_t> pending_acks_;
