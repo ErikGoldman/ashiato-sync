@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <utility>
 
@@ -799,6 +800,7 @@ bool ReplicationClient::run_prediction_frame(ecs::Registry& registry, SyncFrame 
     registry.run_jobs(options);
 
     const SyncSettings& settings = registry.get<SyncSettings>();
+    drain_emitted_prediction_cues(registry, settings, frame, true);
     bool all_valid = true;
     for (std::uint32_t entity_index : active_entities_) {
         if (entity_index >= entities_.size()) {
@@ -873,6 +875,17 @@ bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame client_fr
 #endif
         if (!apply_buffered_sample(registry, settings, state, sample)) {
             all_valid = false;
+            continue;
+        }
+        for (const EntityState::Cue& cue : sample.cues) {
+            const SyncFrame late_frames = target_frame > cue.frame ? target_frame - cue.frame : 0U;
+            (void)play_cue(
+                registry,
+                settings,
+                state,
+                cue,
+                static_cast<float>(static_cast<double>(late_frames) * options_.fixed_dt_seconds),
+                true);
         }
     }
 
@@ -1325,6 +1338,11 @@ bool ReplicationClient::apply_upsert(
         }
     }
 
+    std::vector<EntityState::Cue> received_cues;
+    if (!read_cues(packet, received_cues)) {
+        return false;
+    }
+
     if (previous_state != nullptr && frame <= previous_state->frame) {
         return false;
     }
@@ -1357,6 +1375,24 @@ bool ReplicationClient::apply_upsert(
         if (applied && full) {
             destroy_tombstones_.erase(network_id);
         }
+        if (applied) {
+            store_buffered_cues(state, frame, received_cues);
+            if (has_applied_buffered_frame_) {
+                for (const EntityState::Cue& cue : received_cues) {
+                    if (cue.frame > last_applied_buffered_frame_) {
+                        continue;
+                    }
+                    const SyncFrame late_frames = last_applied_buffered_frame_ - cue.frame;
+                    (void)play_cue(
+                        registry,
+                        settings,
+                        state,
+                        cue,
+                        static_cast<float>(static_cast<double>(late_frames) * options_.fixed_dt_seconds),
+                        true);
+                }
+            }
+        }
         return applied;
     }
 
@@ -1365,6 +1401,9 @@ bool ReplicationClient::apply_upsert(
             apply_predicted_upsert(registry, settings, frame, client_entity_network_id, archetype, merged, full);
         if (applied && full) {
             destroy_tombstones_.erase(network_id);
+        }
+        if (applied) {
+            reconcile_authoritative_predicted_cues(registry, settings, state, received_cues, frame);
         }
         return applied;
     }
@@ -1378,6 +1417,7 @@ bool ReplicationClient::apply_upsert(
     if (!apply_snap_sample(registry, settings, state, decoded, full)) {
         return false;
     }
+    play_snap_cues(registry, settings, state, received_cues);
     if (!full) {
         state.baseline = std::move(merged);
         state.applied_present_mask = state.baseline.present_mask;
@@ -1390,6 +1430,243 @@ bool ReplicationClient::apply_upsert(
     }
     remember_baseline(state);
     return true;
+}
+
+bool ReplicationClient::read_cues(BitBuffer& packet, std::vector<EntityState::Cue>& out) {
+    out.clear();
+    const bool has_cues = packet.read_bool();
+    if (!has_cues) {
+        return true;
+    }
+    const auto cue_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+    out.reserve(cue_count);
+    for (std::uint16_t index = 0; index < cue_count; ++index) {
+        EntityState::Cue cue;
+        cue.frame = static_cast<SyncFrame>(packet.read_bits(32U));
+        cue.type = static_cast<SyncCueTypeId>(packet.read_bits(16U));
+        packet.read_bytes(reinterpret_cast<char*>(&cue.relevance_seconds), sizeof(cue.relevance_seconds));
+        const auto payload_bits = static_cast<std::uint16_t>(packet.read_bits(16U));
+        packet.read_buffer_bits(cue.payload, payload_bits);
+        out.push_back(std::move(cue));
+    }
+    return true;
+}
+
+bool ReplicationClient::play_cue(
+    ecs::Registry& registry,
+    const SyncSettings& settings,
+    EntityState& state,
+    const EntityState::Cue& cue,
+    float late_seconds,
+    bool confirmed) {
+    if (cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].play == nullptr) {
+        return false;
+    }
+    auto existing = std::find_if(
+        state.played_cues.begin(),
+        state.played_cues.end(),
+        [&](const EntityState::PlayedCue& played) {
+            if (played.frame != cue.frame || played.type != cue.type ||
+                settings.cue_ops[cue.type].equals == nullptr) {
+                return false;
+            }
+            return settings.cue_ops[cue.type].equals(played.payload, cue.payload);
+        });
+    if (existing != state.played_cues.end()) {
+        existing->confirmed = existing->confirmed || confirmed;
+        existing->seen_in_resim = true;
+        return true;
+    }
+    if (!state.local || !registry.alive(state.local)) {
+        return false;
+    }
+    if (!settings.cue_ops[cue.type].play(registry, state.local, cue.payload, late_seconds)) {
+        return false;
+    }
+    state.played_cues.push_back(EntityState::PlayedCue{
+        cue.frame,
+        cue.type,
+        cue.payload,
+        confirmed,
+        true});
+    return true;
+}
+
+bool ReplicationClient::rollback_played_cue(
+    ecs::Registry& registry,
+    const SyncSettings& settings,
+    EntityState& state,
+    const EntityState::PlayedCue& cue) {
+    if (cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].rollback == nullptr) {
+        return false;
+    }
+    if (!state.local || !registry.alive(state.local)) {
+        return true;
+    }
+    return settings.cue_ops[cue.type].rollback(registry, state.local, cue.payload);
+}
+
+void ReplicationClient::play_snap_cues(
+    ecs::Registry& registry,
+    const SyncSettings& settings,
+    EntityState& state,
+    const std::vector<EntityState::Cue>& cues) {
+    for (const EntityState::Cue& cue : cues) {
+        const SyncFrame late_frames = receive_frame_ > cue.frame ? receive_frame_ - cue.frame : 0U;
+        (void)play_cue(
+            registry,
+            settings,
+            state,
+            cue,
+            static_cast<float>(static_cast<double>(late_frames) * options_.fixed_dt_seconds),
+            true);
+    }
+}
+
+void ReplicationClient::store_buffered_cues(
+    EntityState& state,
+    SyncFrame frame,
+    const std::vector<EntityState::Cue>& cues) {
+    if (state.buffered_frames.empty() || cues.empty()) {
+        return;
+    }
+    EntityState::BufferedFrame& sample = state.buffered_frames[frame & (state.buffered_frames.size() - 1U)];
+    if (!sample.valid || sample.frame != frame) {
+        return;
+    }
+    sample.cues.insert(sample.cues.end(), cues.begin(), cues.end());
+}
+
+void ReplicationClient::reconcile_authoritative_predicted_cues(
+    ecs::Registry& registry,
+    const SyncSettings& settings,
+    EntityState& state,
+    const std::vector<EntityState::Cue>& cues,
+    SyncFrame frame) {
+    for (const EntityState::Cue& cue : cues) {
+        auto found = std::find_if(
+            state.played_cues.begin(),
+            state.played_cues.end(),
+            [&](const EntityState::PlayedCue& played) {
+                if (played.frame != cue.frame || played.type != cue.type ||
+                    cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].equals == nullptr) {
+                    return false;
+                }
+                return settings.cue_ops[cue.type].equals(played.payload, cue.payload);
+            });
+        if (found != state.played_cues.end()) {
+            found->confirmed = true;
+            continue;
+        }
+        const SyncFrame late_frames = receive_frame_ > cue.frame ? receive_frame_ - cue.frame : 0U;
+        (void)play_cue(
+            registry,
+            settings,
+            state,
+            cue,
+            static_cast<float>(static_cast<double>(late_frames) * options_.fixed_dt_seconds),
+            true);
+    }
+
+    for (auto played = state.played_cues.begin(); played != state.played_cues.end();) {
+        if (played->confirmed || played->frame != frame) {
+            ++played;
+            continue;
+        }
+        const bool authoritative_match = std::any_of(
+            cues.begin(),
+            cues.end(),
+            [&](const EntityState::Cue& cue) {
+                if (cue.frame != played->frame || cue.type != played->type ||
+                    cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].equals == nullptr) {
+                    return false;
+                }
+                return settings.cue_ops[cue.type].equals(played->payload, cue.payload);
+            });
+        if (authoritative_match) {
+            played->confirmed = true;
+            ++played;
+            continue;
+        }
+        (void)rollback_played_cue(registry, settings, state, *played);
+        played = state.played_cues.erase(played);
+    }
+}
+
+void ReplicationClient::drain_emitted_prediction_cues(
+    ecs::Registry& registry,
+    const SyncSettings& settings,
+    SyncFrame frame,
+    bool play) {
+    if (!settings.cue_queue) {
+        return;
+    }
+    std::vector<QueuedSyncCue> cues;
+    {
+        std::lock_guard<std::mutex> lock(settings.cue_queue->mutex);
+        cues.swap(settings.cue_queue->cues);
+    }
+
+    for (const QueuedSyncCue& emitted : cues) {
+        EntityState* state = find_entity_state(emitted.entity);
+        if (state == nullptr || state->mode != ReplicationClientMode::Predict) {
+            continue;
+        }
+        EntityState::Cue cue;
+        cue.frame = emitted.frame != 0 ? emitted.frame : frame;
+        cue.type = emitted.type;
+        cue.relevance_seconds = emitted.relevance_seconds;
+        cue.payload = emitted.payload;
+
+        auto found = std::find_if(
+            state->played_cues.begin(),
+            state->played_cues.end(),
+            [&](const EntityState::PlayedCue& played) {
+                if (played.frame != cue.frame || played.type != cue.type ||
+                    cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].equals == nullptr) {
+                    return false;
+                }
+                return settings.cue_ops[cue.type].equals(played.payload, cue.payload);
+            });
+        if (found != state->played_cues.end()) {
+            found->seen_in_resim = true;
+            continue;
+        }
+        if (!play) {
+            continue;
+        }
+        const SyncFrame late_frames = last_predicted_frame_ > cue.frame ? last_predicted_frame_ - cue.frame : 0U;
+        (void)play_cue(
+            registry,
+            settings,
+            *state,
+            cue,
+            static_cast<float>(static_cast<double>(late_frames) * options_.fixed_dt_seconds),
+            false);
+    }
+}
+
+void ReplicationClient::begin_cue_resimulation() {
+    for (EntityState& state : entities_) {
+        for (EntityState::PlayedCue& cue : state.played_cues) {
+            cue.seen_in_resim = false;
+        }
+    }
+}
+
+bool ReplicationClient::finish_cue_resimulation(ecs::Registry& registry, const SyncSettings& settings) {
+    bool all_valid = true;
+    for (EntityState& state : entities_) {
+        for (auto cue = state.played_cues.begin(); cue != state.played_cues.end();) {
+            if (cue->confirmed || cue->seen_in_resim) {
+                ++cue;
+                continue;
+            }
+            all_valid = rollback_played_cue(registry, settings, state, *cue) && all_valid;
+            cue = state.played_cues.erase(cue);
+        }
+    }
+    return all_valid;
 }
 
 bool ReplicationClient::apply_destroy(ecs::Registry& registry, SyncFrame frame, std::uint32_t network_id) {
@@ -1611,14 +1888,8 @@ bool ReplicationClient::apply_predicted_destroy(
     if (frame <= state.frame) {
         return false;
     }
-    state.mode = ReplicationClientMode::Predict;
-    state.mode_selected = true;
-    state.entity_present = false;
-    state.baseline.clear();
-    state.frame = frame;
-    remember_baseline(state);
-    queue_prediction_rollback(state, frame);
-    (void)registry;
+    const std::uint32_t entity_index = static_cast<std::uint32_t>(state_ptr - entities_.data());
+    erase_entity_state(registry, entity_index, true);
     return true;
 }
 
@@ -1673,6 +1944,7 @@ bool ReplicationClient::write_buffered_frame(
     sample.valid = true;
     sample.entity_present = entity_present;
     sample.archetype = state.archetype;
+    sample.cues.clear();
     const SyncArchetype& archetype = settings.archetypes[state.archetype.value];
     if (!init_frame_data(archetype, sample.baseline)) {
         return false;
@@ -2187,6 +2459,9 @@ bool ReplicationClient::switch_entity_mode(
             state.predicted_frames.resize(options_.prediction_buffer_capacity_frames);
         }
         if (state.frame != 0) {
+            if (!apply_frame_data(registry, settings, state, state.frame, state.entity_present, state.baseline)) {
+                return false;
+            }
             EntityState::BufferedFrame& sample =
                 state.predicted_frames[state.frame & (state.predicted_frames.size() - 1U)];
             sample.frame = state.frame;
@@ -2194,6 +2469,11 @@ bool ReplicationClient::switch_entity_mode(
             sample.entity_present = state.entity_present;
             sample.archetype = state.archetype;
             sample.baseline = state.baseline;
+            if (state.entity_present && (!has_predicted_frame_ || state.frame > last_predicted_frame_)) {
+                last_predicted_frame_ = state.frame;
+                has_predicted_frame_ = true;
+                prediction_accumulator_seconds_ = 0.0;
+            }
         }
         state.buffered_frames.clear();
         sync_entity_memberships(state);
@@ -2236,6 +2516,7 @@ bool ReplicationClient::apply_pending_prediction_rollback(ecs::Registry& registr
         current_frame,
         rollback_entity_indices_scratch_,
         rollback_original_current_scratch_);
+    begin_cue_resimulation();
 
     const bool resimmed = options_.rollback_policy == ReplicationRollbackPolicy::OnlyAffected
         ? resimulate_affected_predicted(registry, begin_frame, current_frame, options)
@@ -2245,6 +2526,9 @@ bool ReplicationClient::apply_pending_prediction_rollback(ecs::Registry& registr
     }
 
     const SyncSettings& settings = registry.get<SyncSettings>();
+    if (!finish_cue_resimulation(registry, settings)) {
+        return false;
+    }
     if (!blend_resim_errors(
             registry,
             settings,
@@ -2308,6 +2592,7 @@ bool ReplicationClient::resimulate_all_predicted(
             return false;
         }
         resim_job_graph(registry).tick(registry, options);
+        drain_emitted_prediction_cues(registry, settings, frame, true);
         for (std::uint32_t entity_index : active_entities_) {
             if (entity_index >= entities_.size()) {
                 continue;
@@ -2372,6 +2657,7 @@ bool ReplicationClient::resimulate_affected_predicted(
 
     for (SyncFrame frame = begin_frame + 1U; frame <= current_frame; ++frame) {
         resim_job_graph(registry).tick_for_entities(registry, rollback_affected_entities_scratch_, options);
+        drain_emitted_prediction_cues(registry, settings, frame, true);
         for (std::uint32_t entity_index : active_entities_) {
             if (entity_index >= entities_.size()) {
                 continue;

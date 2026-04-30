@@ -356,6 +356,21 @@ private:
     static constexpr std::uint32_t invalid_entity_index = std::numeric_limits<std::uint32_t>::max();
 
     struct EntityState {
+        struct Cue {
+            SyncFrame frame = 0;
+            SyncCueTypeId type = 0;
+            float relevance_seconds = 0.0f;
+            BitBuffer payload;
+        };
+
+        struct PlayedCue {
+            SyncFrame frame = 0;
+            SyncCueTypeId type = 0;
+            BitBuffer payload;
+            bool confirmed = false;
+            bool seen_in_resim = false;
+        };
+
         struct FrameBaseline {
             SyncFrame frame = 0;
             bool valid = false;
@@ -383,10 +398,14 @@ private:
             bool entity_present = false;
             SyncArchetypeId archetype;
             QuantizedFrameData baseline;
+            std::vector<Cue> cues;
         };
 
         std::vector<BufferedFrame> buffered_frames;
         std::vector<BufferedFrame> predicted_frames;
+        std::vector<PlayedCue> played_cues;
+        std::vector<Cue> received_cues;
+        std::vector<Cue> pending_predicted_cues;
         std::uint64_t applied_present_mask = 0;
         std::vector<ComponentError> snap_errors;
         ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
@@ -434,6 +453,38 @@ private:
         SyncFrame frame,
         std::uint32_t network_id,
         BitBuffer& packet);
+    bool read_cues(BitBuffer& packet, std::vector<EntityState::Cue>& out);
+    bool play_cue(
+        ecs::Registry& registry,
+        const SyncSettings& settings,
+        EntityState& state,
+        const EntityState::Cue& cue,
+        float late_seconds,
+        bool confirmed);
+    bool rollback_played_cue(
+        ecs::Registry& registry,
+        const SyncSettings& settings,
+        EntityState& state,
+        const EntityState::PlayedCue& cue);
+    void play_snap_cues(
+        ecs::Registry& registry,
+        const SyncSettings& settings,
+        EntityState& state,
+        const std::vector<EntityState::Cue>& cues);
+    void store_buffered_cues(EntityState& state, SyncFrame frame, const std::vector<EntityState::Cue>& cues);
+    void reconcile_authoritative_predicted_cues(
+        ecs::Registry& registry,
+        const SyncSettings& settings,
+        EntityState& state,
+        const std::vector<EntityState::Cue>& cues,
+        SyncFrame frame);
+    void drain_emitted_prediction_cues(
+        ecs::Registry& registry,
+        const SyncSettings& settings,
+        SyncFrame frame,
+        bool play);
+    void begin_cue_resimulation();
+    bool finish_cue_resimulation(ecs::Registry& registry, const SyncSettings& settings);
     bool apply_destroy(ecs::Registry& registry, SyncFrame frame, std::uint32_t network_id);
     bool apply_buffered_upsert(
         ecs::Registry& registry,

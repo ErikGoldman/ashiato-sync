@@ -13,8 +13,10 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <typeindex>
 #include <unordered_map>
 #include <vector>
 
@@ -22,6 +24,7 @@ namespace kage::sync {
 
 using ClientId = std::uint64_t;
 using SyncFrame = std::uint32_t;
+using SyncCueTypeId = std::uint16_t;
 using ClientEntityNetworkId = std::uint64_t;
 using TransportFn = std::function<void(ClientId, const BitBuffer&)>;
 using ConnectHandlerFn = std::function<bool(const std::string&, ClientId&, std::string&)>;
@@ -255,6 +258,31 @@ struct SyncComponentOps {
     ShouldRollBackFn should_roll_back = nullptr;
 };
 
+struct SyncCueOps {
+    using SerializeFn = void (*)(const void*, BitBuffer&);
+    using PlayFn = bool (*)(ecs::Registry&, ecs::Entity, const BitBuffer&, float);
+    using RollbackFn = bool (*)(ecs::Registry&, ecs::Entity, const BitBuffer&);
+    using EqualsFn = bool (*)(const BitBuffer&, const BitBuffer&);
+
+    SerializeFn serialize = nullptr;
+    PlayFn play = nullptr;
+    RollbackFn rollback = nullptr;
+    EqualsFn equals = nullptr;
+};
+
+struct QueuedSyncCue {
+    ecs::Entity entity;
+    SyncFrame frame = 0;
+    SyncCueTypeId type = 0;
+    float relevance_seconds = 0.0f;
+    BitBuffer payload;
+};
+
+struct SyncCueQueue {
+    mutable std::mutex mutex;
+    std::vector<QueuedSyncCue> cues;
+};
+
 struct SyncArchetype {
     std::string name;
     std::vector<SyncTagReplication> tags;
@@ -281,6 +309,9 @@ struct SyncSettings {
     ClientId local_client = invalid_client_id;
     std::vector<SyncArchetype> archetypes;
     std::unordered_map<std::uint64_t, SyncComponentOps> component_ops;
+    std::vector<SyncCueOps> cue_ops;
+    std::unordered_map<std::type_index, SyncCueTypeId> cue_type_ids;
+    std::shared_ptr<SyncCueQueue> cue_queue = std::make_shared<SyncCueQueue>();
 };
 
 struct Replicated {

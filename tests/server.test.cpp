@@ -107,15 +107,15 @@ ServerUpdatePacket read_server_update(
                 } else {
                     record.component_index = static_cast<std::uint16_t>(packet.read_bits(sync_slot_bits));
                 }
-                std::size_t payload_bits = packet.remaining_bits();
-                if (entity_index + 1U < entity_count || component + 1U < component_count) {
-                    payload_bits = record.component_index == 1 ? component_one_payload_bits : sizeof(Health) * 8U;
-                }
+                const std::size_t payload_bits =
+                    record.component_index == 1 ? component_one_payload_bits : sizeof(Health) * 8U;
                 for (std::size_t bit = 0; bit < payload_bits; ++bit) {
                     record.payload.push_bool(packet.read_bool());
                 }
                 entity.components.push_back(std::move(record));
             }
+            const bool has_cues = packet.read_bool();
+            REQUIRE_FALSE(has_cues);
         } else {
             REQUIRE(kage::sync::protocol::read_baseline_frame(packet, update.frame, entity.baseline_frame));
             const bool tag_changed = packet.read_bool();
@@ -129,16 +129,15 @@ ServerUpdatePacket read_server_update(
             for (std::size_t changed_index = 0; changed_index < changed_components.size(); ++changed_index) {
                 ComponentRecord record;
                 record.component_index = changed_components[changed_index];
-                std::size_t payload_bits =
+                const std::size_t payload_bits =
                     record.component_index == 1 ? component_one_payload_bits : sizeof(Health) * 8U;
-                if (entity_index + 1U == entity_count && changed_index + 1U == changed_components.size()) {
-                    payload_bits = packet.remaining_bits();
-                }
                 for (std::size_t bit = 0; bit < payload_bits; ++bit) {
                     record.payload.push_bool(packet.read_bool());
                 }
                 entity.components.push_back(std::move(record));
             }
+            const bool has_cues = packet.read_bool();
+            REQUIRE_FALSE(has_cues);
         }
         update.entities.push_back(std::move(entity));
     }
@@ -779,6 +778,7 @@ TEST_CASE("replication server serializes compact synced tag masks per client") {
         REQUIRE_FALSE(fields.delta);
         REQUIRE(fields.x == 10);
         REQUIRE(fields.y == 20);
+        REQUIRE_FALSE(packet.read_bool());
         REQUIRE(server.acknowledge_entity(sent.first, entity, frame));
     }
 
@@ -802,6 +802,7 @@ TEST_CASE("replication server serializes compact synced tag masks per client") {
         REQUIRE(packet.read_bool());
         REQUIRE_FALSE(packet.read_bool());
         REQUIRE(packet.read_unsigned_bits(2U) == (sent.first == 1 ? 2U : 0U));
+        REQUIRE_FALSE(packet.read_bool());
     }
 }
 

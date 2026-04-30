@@ -15,6 +15,8 @@ using kage_sync_tests::Position;
 using kage_sync_tests::PredictedPosition;
 using kage_sync_tests::Secret;
 using kage_sync_tests::SmoothPosition;
+using kage_sync_tests::CuePlayback;
+using kage_sync_tests::TestCue;
 using kage_sync_tests::Visible;
 
 namespace {
@@ -125,6 +127,8 @@ UpdatePacket read_update(kage::sync::BitBuffer packet, std::size_t sync_slot_cou
                         packet.read_bool();
                     }
                 }
+                const bool has_cues = packet.read_bool();
+                REQUIRE_FALSE(has_cues);
             } else {
                 REQUIRE(kage::sync::protocol::read_baseline_frame(packet, update.frame, record.baseline_frame));
                 const bool tag_changed = packet.read_bool();
@@ -135,6 +139,8 @@ UpdatePacket read_update(kage::sync::BitBuffer packet, std::size_t sync_slot_cou
                         packet.read_bool();
                     }
                 }
+                const bool has_cues = packet.read_bool();
+                REQUIRE_FALSE(has_cues);
             }
         }
         update.records.push_back(record);
@@ -183,6 +189,7 @@ kage::sync::BitBuffer make_position_packet(
         packet.push_bits(1, kage::sync::protocol::bits_for_range(sync_slot_count));
 
         packet.push_bytes(reinterpret_cast<const char*>(&record.second), sizeof(Position));
+        packet.push_bool(false);
     }
     return packet;
 }
@@ -206,6 +213,7 @@ kage::sync::BitBuffer make_predicted_position_packet(
     packet.push_bits(1, kage::sync::protocol::bits_for_range(2U));
     packet.push_bits(static_cast<std::int32_t>(position.x * 10.0f), 16U);
     packet.push_bits(static_cast<std::int32_t>(position.y * 10.0f), 16U);
+    packet.push_bool(false);
     return packet;
 }
 
@@ -260,6 +268,59 @@ TEST_CASE("replication client applies full updates and queues ACKs") {
     REQUIRE(acks.size() == 1);
     REQUIRE(acks[0].packet_id != 0);
     REQUIRE(server.process_packet(1, ack_packets[0]));
+}
+
+TEST_CASE("replicated snap cues play once with late time and ACK-driven resend") {
+    ecs::Registry server_registry;
+    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
+    kage::sync::register_sync_cue<TestCue>(server_registry);
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
+
+    std::vector<kage::sync::BitBuffer> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+    REQUIRE(kage::sync::emit_cue(server_registry, server_entity, 1, TestCue{7}, 1.0f));
+    server.tick(server_registry);
+    REQUIRE(packets.size() == 1);
+
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype == server_archetype);
+    client_registry.register_component<CuePlayback>("CuePlayback");
+    kage::sync::register_sync_cue<TestCue>(client_registry);
+    kage::sync::configure_client(client_registry, 1);
+    kage::sync::ReplicationClient client;
+
+    REQUIRE(client.receive(client_registry, packets[0], 10));
+    const ecs::Entity local = client.local_entity(server_entity);
+    REQUIRE(client_registry.contains<CuePlayback>(local));
+    REQUIRE(client_registry.get<CuePlayback>(local).plays == 1);
+    REQUIRE(client_registry.get<CuePlayback>(local).last_id == 7);
+    REQUIRE(client_registry.get<CuePlayback>(local).last_late_seconds ==
+            Catch::Approx(9.0 / 60.0f));
+
+    packets.clear();
+    server.tick(server_registry);
+    REQUIRE_FALSE(packets.empty());
+    REQUIRE(client.receive(client_registry, packets.back(), 11));
+    REQUIRE(client_registry.get<CuePlayback>(local).plays == 1);
+
+    std::vector<kage::sync::BitBuffer> acks = client.drain_ack_packets();
+    REQUIRE_FALSE(acks.empty());
+    for (const kage::sync::BitBuffer& ack : acks) {
+        REQUIRE(server.process_packet(1, ack));
+    }
+    packets.clear();
+    server.tick(server_registry);
+    REQUIRE_FALSE(packets.empty());
+    REQUIRE(client.receive(client_registry, packets.back(), 12));
+    REQUIRE(client_registry.get<CuePlayback>(local).plays == 1);
 }
 
 TEST_CASE("predicted client mode requires ShouldRollBack traits") {
@@ -508,6 +569,32 @@ TEST_CASE("client simulation jobs skip NoSimulate entities") {
 
     REQUIRE(registry.get<PredictedPosition>(simulated).x == 1.0f);
     REQUIRE(registry.get<PredictedPosition>(skipped).x == 0.0f);
+}
+
+TEST_CASE("predicted client applies authoritative destroys immediately") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    kage::sync::configure_client(registry, 1);
+
+    const ecs::Entity server_entity = registry.create();
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+    kage::sync::ReplicationClient client(options);
+
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+    const ecs::Entity local = client.local_entity(server_entity);
+    REQUIRE(local);
+    REQUIRE(registry.alive(local));
+
+    REQUIRE(client.receive(registry, make_destroy_packet(2, server_entity)));
+    REQUIRE_FALSE(registry.alive(local));
+    REQUIRE_FALSE(client.local_entity(server_entity));
 }
 
 TEST_CASE("replication client decodes ACKed delta updates") {
@@ -1430,6 +1517,42 @@ TEST_CASE("set entity mode switches buffered entities to snap immediately") {
     REQUIRE(client_registry.get<Position>(local).x == 1.0f);
     REQUIRE(client.set_entity_mode(client_registry, server_entity, kage::sync::ReplicationClientMode::Snap));
     REQUIRE(client_registry.get<Position>(local).x == 7.0f);
+}
+
+TEST_CASE("set entity mode switches buffered entities to predict and seeds prediction") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    kage::sync::configure_client(registry, 1);
+    registry.job<PredictedPosition>(0).each([](ecs::Entity, PredictedPosition& position) {
+        position.x += 1.0f;
+    });
+
+    const ecs::Entity server_entity = registry.create();
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    options.interpolation_buffer_frames = 1;
+    options.interpolation_buffer_capacity_frames = 8;
+    kage::sync::ReplicationClient client(options);
+
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+    REQUIRE(client.apply_frame(registry, 2));
+    const ecs::Entity local = client.local_entity(server_entity);
+    REQUIRE(local);
+    REQUIRE(registry.get<PredictedPosition>(local).x == 0.0f);
+
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{1.0f, 0.0f})));
+    REQUIRE(registry.get<PredictedPosition>(local).x == 0.0f);
+    REQUIRE(client.set_entity_mode(registry, server_entity, kage::sync::ReplicationClientMode::Predict));
+    REQUIRE(registry.get<PredictedPosition>(local).x == 1.0f);
+
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(registry.get<PredictedPosition>(local).x == 2.0f);
 }
 
 TEST_CASE("set entity mode switches buffered delayed destroys to snap immediately") {

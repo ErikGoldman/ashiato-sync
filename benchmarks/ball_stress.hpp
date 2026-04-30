@@ -82,8 +82,50 @@ struct BallPoison {
     float tick_accumulator = 0.0f;
 };
 
+struct BallBounceCue {
+    std::uint32_t sequence = 0;
+    std::uint8_t energy = 0;
+    std::uint8_t padding[7] = {};
+};
+
 struct BallSpawnTagged {};
 struct BallBounced {};
+
+}  // namespace kage::sync::stress
+
+namespace kage::sync {
+
+template <>
+struct SyncCueTraits<stress::BallBounceCue> {
+    static void serialize(const stress::BallBounceCue& cue, BitBuffer& out) {
+        out.push_bits(cue.sequence, 32U);
+        out.push_bits(cue.energy, 8U);
+        out.push_bytes(reinterpret_cast<const char*>(cue.padding), sizeof(cue.padding));
+    }
+
+    static bool deserialize(BitBuffer& in, stress::BallBounceCue& out) {
+        out.sequence = static_cast<std::uint32_t>(in.read_bits(32U));
+        out.energy = static_cast<std::uint8_t>(in.read_bits(8U));
+        in.read_bytes(reinterpret_cast<char*>(out.padding), sizeof(out.padding));
+        return true;
+    }
+
+    static bool play(ecs::Registry&, ecs::Entity, const stress::BallBounceCue&, float) {
+        return true;
+    }
+
+    static bool rollback(ecs::Registry&, ecs::Entity, const stress::BallBounceCue&) {
+        return true;
+    }
+
+    static bool equals_cue(const stress::BallBounceCue& lhs, const stress::BallBounceCue& rhs) {
+        return lhs.sequence == rhs.sequence && lhs.energy == rhs.energy;
+    }
+};
+
+}  // namespace kage::sync
+
+namespace kage::sync::stress {
 
 struct SyncSchema {
     SyncArchetypeId ball;
@@ -182,6 +224,9 @@ struct WireFormatStats {
     std::uint64_t delta_baseline_relative = 0;
     std::uint64_t delta_baseline_absolute = 0;
     std::uint64_t delta_change_mask_bits = 0;
+    std::uint64_t cue_records = 0;
+    std::uint64_t cue_record_bits = 0;
+    std::uint64_t cue_payload_bits = 0;
     std::uint64_t ack_header_bits = 0;
     std::uint64_t ack_records = 0;
     std::uint64_t ack_record_bits = 0;
@@ -266,6 +311,7 @@ struct StressReport {
     std::uint64_t poison_ticks = 0;
     std::uint64_t spawn_tags_added = 0;
     std::uint64_t bounce_tags_added = 0;
+    std::uint64_t bounce_cues_emitted = 0;
     std::uint32_t live_balls = 0;
 };
 
@@ -590,6 +636,26 @@ inline PacketBreakdown classify_packet(
                         }
                     }
                 }
+                const std::uint64_t cue_tail_start = packet.read_offset_bits();
+                const bool has_cues = packet.read_bool();
+                if (has_cues) {
+                    const auto cue_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+                    if (wire != nullptr) {
+                        wire->cue_records += cue_count;
+                    }
+                    for (std::uint16_t cue = 0; cue < cue_count; ++cue) {
+                        packet.skip_bits(32U + 16U + 32U);
+                        const auto payload_bits = static_cast<std::uint16_t>(packet.read_bits(16U));
+                        packet.skip_bits(payload_bits);
+                        if (wire != nullptr) {
+                            wire->cue_payload_bits += payload_bits;
+                        }
+                    }
+                }
+                const std::uint64_t cue_tail_bits = packet.read_offset_bits() - cue_tail_start;
+                if (wire != nullptr) {
+                    wire->cue_record_bits += cue_tail_bits;
+                }
                 if (wire != nullptr) {
                     const std::uint64_t record_bits = packet.read_offset_bits() - record_start;
                     const std::uint64_t full_index_bits = uses_presence_mask
@@ -598,7 +664,8 @@ inline PacketBreakdown classify_packet(
                     wire->full_upsert_bits += record_bits;
                     wire->full_upsert_payload_bits +=
                         record_bits -
-                        (1U + network_id_bits + 1U + 32U + 1U + full_index_bits);
+                        (1U + network_id_bits + 1U + 32U + 1U + full_index_bits) -
+                        cue_tail_bits;
                 }
             } else {
                 ++result.delta_upserts;
@@ -655,13 +722,34 @@ inline PacketBreakdown classify_packet(
                         record_wire_slot(*wire, slot, false);
                     }
                 }
+                const std::uint64_t cue_tail_start = packet.read_offset_bits();
+                const bool has_cues = packet.read_bool();
+                if (has_cues) {
+                    const auto cue_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+                    if (wire != nullptr) {
+                        wire->cue_records += cue_count;
+                    }
+                    for (std::uint16_t cue = 0; cue < cue_count; ++cue) {
+                        packet.skip_bits(32U + 16U + 32U);
+                        const auto payload_bits = static_cast<std::uint16_t>(packet.read_bits(16U));
+                        packet.skip_bits(payload_bits);
+                        if (wire != nullptr) {
+                            wire->cue_payload_bits += payload_bits;
+                        }
+                    }
+                }
+                const std::uint64_t cue_tail_bits = packet.read_offset_bits() - cue_tail_start;
+                if (wire != nullptr) {
+                    wire->cue_record_bits += cue_tail_bits;
+                }
                 if (wire != nullptr) {
                     const std::uint64_t record_bits = packet.read_offset_bits() - record_start;
                     wire->delta_upsert_bits += record_bits;
                     wire->delta_upsert_payload_bits +=
                         record_bits - (1U + network_id_bits + 1U) -
                         (uses_delta_baseline ? 1U + protocol::baseline_frame_delta_bits : 33U) -
-                        WireFormatStats::slot_count;
+                        WireFormatStats::slot_count -
+                        cue_tail_bits;
                 }
             }
         }
@@ -702,6 +790,7 @@ inline SyncSchema define_schema(ecs::Registry& registry, bool interpolate_positi
     const ecs::Entity visual = register_sync_component<BallVisual>(registry, "BallVisual");
     const ecs::Entity health = register_sync_component<BallHealth>(registry, "BallHealth");
     const ecs::Entity poison = register_sync_component<BallPoison>(registry, "BallPoison");
+    register_sync_cue<BallBounceCue>(registry);
     const ecs::Entity spawn_tagged = registry.register_component<BallSpawnTagged>("BallSpawnTagged");
     const ecs::Entity bounced = registry.register_component<BallBounced>("BallBounced");
     return SyncSchema{
@@ -946,6 +1035,15 @@ inline void update_server_world(
                 registry.add_tag(ball.entity, schema.bounced);
                 ++report.bounce_tags_added;
             }
+            BallBounceCue cue;
+            cue.sequence = static_cast<std::uint32_t>(++report.bounce_cues_emitted);
+            cue.energy = 255U;
+            (void)emit_cue(
+                registry,
+                ball.entity,
+                static_cast<SyncFrame>(report.ticks + 1U),
+                cue,
+                0.25f);
             add_poison(registry, ball.entity, config, rng, report);
         }
 
@@ -1289,6 +1387,9 @@ inline void write_wire_text(
         << " delta_baseline_relative=" << wire.delta_baseline_relative
         << " delta_baseline_absolute=" << wire.delta_baseline_absolute
         << " delta_change_mask_bits=" << wire.delta_change_mask_bits
+        << " cue_records=" << wire.cue_records
+        << " cue_record_bits=" << wire.cue_record_bits
+        << " cue_payload_bits=" << wire.cue_payload_bits
         << " ack_header_bits=" << wire.ack_header_bits
         << " ack_records=" << wire.ack_records
         << " ack_record_bits=" << wire.ack_record_bits << '\n';
@@ -1337,6 +1438,7 @@ inline void write_report_text(std::ostream& out, const StressReport& report) {
         << " ticks=" << report.poison_ticks << '\n';
     out << "tags spawn_added=" << report.spawn_tags_added
         << " bounce_added=" << report.bounce_tags_added << '\n';
+    out << "cues bounce_emitted=" << report.bounce_cues_emitted << '\n';
     out << std::fixed << std::setprecision(6);
     out << "timing wall=" << report.timing.wall_seconds
         << " server_sim=" << report.timing.server_simulation_seconds
@@ -1411,6 +1513,9 @@ inline void write_wire_json(std::ostream& out, const DirectionStats& stats, std:
         << "\"delta_baseline_relative\":" << wire.delta_baseline_relative << ","
         << "\"delta_baseline_absolute\":" << wire.delta_baseline_absolute << ","
         << "\"delta_change_mask_bits\":" << wire.delta_change_mask_bits << ","
+        << "\"cue_records\":" << wire.cue_records << ","
+        << "\"cue_record_bits\":" << wire.cue_record_bits << ","
+        << "\"cue_payload_bits\":" << wire.cue_payload_bits << ","
         << "\"ack_header_bits\":" << wire.ack_header_bits << ","
         << "\"ack_records\":" << wire.ack_records << ","
         << "\"ack_record_bits\":" << wire.ack_record_bits << ","
@@ -1473,6 +1578,7 @@ inline void write_report_json(std::ostream& out, const StressReport& report) {
         << ",\"ticks\":" << report.poison_ticks << "},";
     out << "\"tags\":{\"spawn_added\":" << report.spawn_tags_added
         << ",\"bounce_added\":" << report.bounce_tags_added << "},";
+    out << "\"cues\":{\"bounce_emitted\":" << report.bounce_cues_emitted << "},";
     out << "\"timing\":{\"wall_seconds\":" << report.timing.wall_seconds
         << ",\"server_simulation_seconds\":" << report.timing.server_simulation_seconds
         << ",\"server_replication_seconds\":" << report.timing.server_replication_seconds

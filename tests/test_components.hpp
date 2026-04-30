@@ -52,6 +52,16 @@ struct BandwidthProbe {
 
 struct Visible {};
 struct Secret {};
+struct TestCue {
+    std::int32_t id = 0;
+};
+
+struct CuePlayback {
+    std::int32_t plays = 0;
+    std::int32_t rollbacks = 0;
+    std::int32_t last_id = 0;
+    float last_late_seconds = 0.0f;
+};
 
 inline NetworkedPayload read_networked_payload(kage::sync::BitBuffer payload) {
     return NetworkedPayload{
@@ -73,6 +83,51 @@ inline kage::sync::SyncArchetypeId define_position_archetype(ecs::Registry& regi
 }  // namespace kage_sync_tests
 
 namespace kage::sync {
+
+template <>
+struct SyncCueTraits<kage_sync_tests::TestCue> {
+    static void serialize(const kage_sync_tests::TestCue& cue, BitBuffer& out) {
+        out.push_bits(cue.id, 16U);
+    }
+
+    static bool deserialize(BitBuffer& in, kage_sync_tests::TestCue& out) {
+        out.id = static_cast<std::int32_t>(in.read_bits(16U));
+        return true;
+    }
+
+    static bool play(
+        ecs::Registry& registry,
+        ecs::Entity owner,
+        const kage_sync_tests::TestCue& cue,
+        float late_seconds) {
+        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
+            registry.add<kage_sync_tests::CuePlayback>(owner);
+        }
+        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
+            return false;
+        }
+        kage_sync_tests::CuePlayback& playback = registry.write<kage_sync_tests::CuePlayback>(owner);
+        ++playback.plays;
+        playback.last_id = cue.id;
+        playback.last_late_seconds = late_seconds;
+        return true;
+    }
+
+    static bool rollback(ecs::Registry& registry, ecs::Entity owner, const kage_sync_tests::TestCue&) {
+        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
+            registry.add<kage_sync_tests::CuePlayback>(owner);
+        }
+        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
+            return false;
+        }
+        ++registry.write<kage_sync_tests::CuePlayback>(owner).rollbacks;
+        return true;
+    }
+
+    static bool equals_cue(const kage_sync_tests::TestCue& lhs, const kage_sync_tests::TestCue& rhs) {
+        return lhs.id == rhs.id;
+    }
+};
 
 template <>
 struct SyncComponentTraits<kage_sync_tests::PredictedPosition> {

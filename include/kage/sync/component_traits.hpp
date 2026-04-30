@@ -41,6 +41,9 @@ struct SyncComponentTraits {
     }
 };
 
+template <typename T>
+struct SyncCueTraits;
+
 void register_components(ecs::Registry& registry);
 
 const SyncComponentOps* find_component_ops(const ecs::Registry& registry, ecs::Entity component);
@@ -58,6 +61,40 @@ bool is_display_interpolated(const ecs::Registry& registry) {
 }
 
 namespace detail {
+
+template <typename T>
+bool read_cue_payload(const BitBuffer& payload, T& out) {
+    BitBuffer copy = payload;
+    return SyncCueTraits<T>::deserialize(copy, out);
+}
+
+template <typename T>
+bool play_cue_payload(ecs::Registry& registry, ecs::Entity owner, const BitBuffer& payload, float late_seconds) {
+    T value{};
+    if (!read_cue_payload(payload, value)) {
+        return false;
+    }
+    return SyncCueTraits<T>::play(registry, owner, value, late_seconds);
+}
+
+template <typename T>
+bool rollback_cue_payload(ecs::Registry& registry, ecs::Entity owner, const BitBuffer& payload) {
+    T value{};
+    if (!read_cue_payload(payload, value)) {
+        return false;
+    }
+    return SyncCueTraits<T>::rollback(registry, owner, value);
+}
+
+template <typename T>
+bool equal_cue_payloads(const BitBuffer& lhs_payload, const BitBuffer& rhs_payload) {
+    T lhs{};
+    T rhs{};
+    if (!read_cue_payload(lhs_payload, lhs) || !read_cue_payload(rhs_payload, rhs)) {
+        return false;
+    }
+    return SyncCueTraits<T>::equals_cue(lhs, rhs);
+}
 
 template <typename Traits, typename Quantized, typename = void>
 struct has_interpolate : std::false_type {};
@@ -315,6 +352,69 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
 
     registry.write<SyncSettings>().component_ops[component.value] = ops;
     return component;
+}
+
+template <typename T>
+SyncCueTypeId register_sync_cue(ecs::Registry& registry) {
+    register_components(registry);
+
+    SyncSettings& settings = registry.write<SyncSettings>();
+    const std::type_index type = std::type_index(typeid(T));
+    const auto found = settings.cue_type_ids.find(type);
+    if (found != settings.cue_type_ids.end()) {
+        return found->second;
+    }
+    if (settings.cue_ops.size() >= std::numeric_limits<SyncCueTypeId>::max()) {
+        throw std::length_error("sync cue type id space exhausted");
+    }
+
+    const SyncCueTypeId id = static_cast<SyncCueTypeId>(settings.cue_ops.size());
+    SyncCueOps ops;
+    ops.serialize = [](const void* value, BitBuffer& out) {
+        SyncCueTraits<T>::serialize(*static_cast<const T*>(value), out);
+    };
+    ops.play = &detail::play_cue_payload<T>;
+    ops.rollback = &detail::rollback_cue_payload<T>;
+    ops.equals = &detail::equal_cue_payloads<T>;
+    settings.cue_ops.push_back(ops);
+    settings.cue_type_ids[type] = id;
+    return id;
+}
+
+template <typename T>
+bool emit_cue(
+    ecs::Registry& registry,
+    ecs::Entity entity,
+    SyncFrame frame,
+    const T& cue,
+    float relevance_seconds) {
+    register_components(registry);
+    if (!registry.alive(entity) || relevance_seconds < 0.0f) {
+        return false;
+    }
+
+    SyncSettings& settings = registry.write<SyncSettings>();
+    const auto found_type = settings.cue_type_ids.find(std::type_index(typeid(T)));
+    if (found_type == settings.cue_type_ids.end()) {
+        return false;
+    }
+    const SyncCueTypeId type = found_type->second;
+    if (type >= settings.cue_ops.size() || settings.cue_ops[type].serialize == nullptr) {
+        return false;
+    }
+    if (!settings.cue_queue) {
+        settings.cue_queue = std::make_shared<SyncCueQueue>();
+    }
+
+    QueuedSyncCue queued;
+    queued.entity = entity;
+    queued.frame = frame;
+    queued.type = type;
+    queued.relevance_seconds = relevance_seconds;
+    settings.cue_ops[type].serialize(&cue, queued.payload);
+    std::lock_guard<std::mutex> lock(settings.cue_queue->mutex);
+    settings.cue_queue->cues.push_back(std::move(queued));
+    return true;
 }
 
 void configure_server(ecs::Registry& registry);

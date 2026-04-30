@@ -19,6 +19,7 @@ namespace kage::sync {
 namespace {
 
 constexpr std::size_t max_pending_quantized_frames_per_entity = 64;
+constexpr std::size_t max_cues_per_entity_record = 255;
 
 std::size_t configured_packet_id_bits(const ReplicationServerOptions& options) noexcept {
     return protocol::packet_id_bits_for_max_pending(options.max_pending_packet_acks_per_client);
@@ -321,6 +322,7 @@ bool ReplicationServer::acknowledge_entity(ClientId client, ecs::Entity entity, 
             ++pending;
         }
     }
+    acknowledge_cues(entity_state, frame);
     return true;
 }
 
@@ -583,6 +585,7 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
 
     const SyncSettings& settings = registry.get<SyncSettings>();
     capture_dirty_components(registry, settings);
+    capture_queued_cues(settings);
     std::vector<SerializedCandidate> candidates;
     std::vector<SerializedCandidate> update_candidates;
     std::vector<std::size_t> destroy_order;
@@ -612,6 +615,7 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
         }
 
         ++client.epoch;
+        expire_pending_cues(client, frame_);
 
         std::size_t remaining = options_.bandwidth_limit_bytes_per_tick;
         std::uint16_t packet_entities = 0;
@@ -826,6 +830,7 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
 
     const SyncSettings& settings = registry.get<SyncSettings>();
     capture_dirty_components(registry, settings);
+    capture_queued_cues(settings);
     ++frame_;
 
     for (std::uint32_t slot = 0; slot < replicated_.size(); ++slot) {
@@ -863,6 +868,7 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
             continue;
         }
         ++client.epoch;
+        expire_pending_cues(client, frame_);
 
         PreparedClient& prepared_client = prepared[client_index];
         prepared_client.candidates.clear();
@@ -1218,6 +1224,63 @@ void ReplicationServer::capture_dirty_components(const ecs::Registry& registry, 
     });
 }
 
+void ReplicationServer::capture_queued_cues(const SyncSettings& settings) {
+    if (!settings.cue_queue) {
+        return;
+    }
+
+    std::vector<QueuedSyncCue> cues;
+    {
+        std::lock_guard<std::mutex> lock(settings.cue_queue->mutex);
+        cues.swap(settings.cue_queue->cues);
+    }
+
+    for (const QueuedSyncCue& cue : cues) {
+        const auto found = entity_to_slot_.find(cue.entity.value);
+        if (found == entity_to_slot_.end()) {
+            continue;
+        }
+        attach_cue_to_clients(found->second, cue);
+    }
+}
+
+void ReplicationServer::attach_cue_to_clients(std::uint32_t slot, const QueuedSyncCue& cue) {
+    if (slot >= replicated_.size() || !replicated_[slot].active) {
+        return;
+    }
+    const SyncFrame relevance_frames = static_cast<SyncFrame>(
+        std::ceil(static_cast<double>(cue.relevance_seconds) / options_.fixed_dt_seconds));
+    const SyncFrame expire_frame = cue.frame + relevance_frames;
+    for (ClientState& client : clients_) {
+        if (slot >= client.entity_states.size()) {
+            continue;
+        }
+        ClientEntityState& state = client.entity_states[slot];
+        if (!state.priority_replicate) {
+            continue;
+        }
+        state.pending_cues.push_back(ClientEntityState::PendingCue{
+            cue.frame,
+            expire_frame,
+            cue.type,
+            cue.relevance_seconds,
+            cue.payload});
+    }
+}
+
+void ReplicationServer::expire_pending_cues(ClientState& client, SyncFrame frame) {
+    for (ClientEntityState& state : client.entity_states) {
+        state.pending_cues.erase(
+            std::remove_if(
+                state.pending_cues.begin(),
+                state.pending_cues.end(),
+                [frame](const ClientEntityState::PendingCue& cue) {
+                    return frame > cue.expire_frame;
+                }),
+            state.pending_cues.end());
+    }
+}
+
 void ReplicationServer::mark_dirty_component(
     const SyncSettings& settings,
     std::uint32_t slot,
@@ -1567,6 +1630,18 @@ void ReplicationServer::clear_client_entity_state(ClientEntityState& state) {
     state.priority_frame = 0;
     state.priority_replicate = true;
     state.has_network_id = false;
+    state.pending_cues.clear();
+}
+
+void ReplicationServer::acknowledge_cues(ClientEntityState& state, SyncFrame frame) {
+    state.pending_cues.erase(
+        std::remove_if(
+            state.pending_cues.begin(),
+            state.pending_cues.end(),
+            [frame](const ClientEntityState::PendingCue& cue) {
+                return cue.frame <= frame;
+            }),
+        state.pending_cues.end());
 }
 
 bool ReplicationServer::acknowledge_destroy(ClientState& client, ecs::Entity entity, SyncFrame frame) {
@@ -1783,6 +1858,19 @@ void ReplicationServer::write_entity_record(
             }
             ops.serialize(previous, current, out);
         }
+        const std::size_t cue_count = std::min(entity_state.pending_cues.size(), max_cues_per_entity_record);
+        out.push_bool(cue_count != 0U);
+        if (cue_count != 0U) {
+            out.push_bits(static_cast<std::int64_t>(cue_count), 16U);
+            for (std::size_t cue_index = 0; cue_index < cue_count; ++cue_index) {
+                const ClientEntityState::PendingCue& cue = entity_state.pending_cues[cue_index];
+                out.push_bits(cue.frame, 32U);
+                out.push_bits(cue.type, 16U);
+                out.push_bytes(reinterpret_cast<const char*>(&cue.relevance_seconds), sizeof(cue.relevance_seconds));
+                out.push_bits(static_cast<std::int64_t>(cue.payload.bit_size()), 16U);
+                out.push_buffer_bits(cue.payload);
+            }
+        }
         (void)registry;
         return;
     }
@@ -1836,6 +1924,20 @@ void ReplicationServer::write_entity_record(
             out.push_bits(static_cast<std::int64_t>(component_index + 1U), sync_slot_bits);
         }
         ops.serialize(nullptr, current, out);
+    }
+
+    const std::size_t cue_count = std::min(entity_state.pending_cues.size(), max_cues_per_entity_record);
+    out.push_bool(cue_count != 0U);
+    if (cue_count != 0U) {
+        out.push_bits(static_cast<std::int64_t>(cue_count), 16U);
+        for (std::size_t cue_index = 0; cue_index < cue_count; ++cue_index) {
+            const ClientEntityState::PendingCue& cue = entity_state.pending_cues[cue_index];
+            out.push_bits(cue.frame, 32U);
+            out.push_bits(cue.type, 16U);
+            out.push_bytes(reinterpret_cast<const char*>(&cue.relevance_seconds), sizeof(cue.relevance_seconds));
+            out.push_bits(static_cast<std::int64_t>(cue.payload.bit_size()), 16U);
+            out.push_buffer_bits(cue.payload);
+        }
     }
 
     (void)registry;

@@ -72,6 +72,14 @@ private:
             SyncFrame frame = 0;
         };
 
+        struct PendingCue {
+            SyncFrame frame = 0;
+            SyncFrame expire_frame = 0;
+            SyncCueTypeId type = 0;
+            float relevance_seconds = 0.0f;
+            BitBuffer payload;
+        };
+
         std::uint32_t baseline = invalid_quantized_frame_id;
         std::uint32_t network_id = 0;
         std::uint32_t network_version = 0;
@@ -81,6 +89,7 @@ private:
         bool priority_replicate = true;
         bool has_network_id = false;
         std::vector<PendingQuantizedFrame> pending;
+        std::vector<PendingCue> pending_cues;
     };
 
     struct ClientDestroyState {
@@ -157,6 +166,9 @@ private:
     std::uint32_t network_id_for_slot(ClientState& client, std::uint32_t slot);
     bool slot_is_replicable(const ecs::Registry& registry, std::uint32_t slot) const;
     void capture_dirty_components(const ecs::Registry& registry, const SyncSettings& settings);
+    void capture_queued_cues(const SyncSettings& settings);
+    void attach_cue_to_clients(std::uint32_t slot, const QueuedSyncCue& cue);
+    void expire_pending_cues(ClientState& client, SyncFrame frame);
     void mark_dirty_component(const SyncSettings& settings, std::uint32_t slot, ecs::Entity component);
     void mark_dirty_tag(const SyncSettings& settings, std::uint32_t slot, ecs::Entity tag);
     void mark_dirty_tags(const SyncSettings& settings, std::uint32_t slot);
@@ -193,6 +205,7 @@ private:
     std::uint32_t allocate_packet_id(ClientState& client);
     void enforce_pending_packet_ack_limit(ClientState& client);
     bool acknowledge_destroy(ClientState& client, ecs::Entity entity, SyncFrame frame);
+    void acknowledge_cues(ClientEntityState& state, SyncFrame frame);
     bool same_quantized_frame_components(
         const QuantizedFrame& quantized_frame,
         const QuantizedFrameData& data,

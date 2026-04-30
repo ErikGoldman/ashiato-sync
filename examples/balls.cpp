@@ -164,9 +164,48 @@ struct BallVisual {
     std::uint8_t a = 255;
 };
 
+struct BallBounceCue {
+    std::uint32_t sequence = 0;
+    float strength = 1.0f;
+};
+
+struct BallCueFlash {
+    float seconds = 0.0f;
+    float strength = 0.0f;
+};
+
 }  // namespace
 
 namespace kage::sync {
+
+template <>
+struct SyncCueTraits<BallBounceCue> {
+    static void serialize(const BallBounceCue& cue, BitBuffer& out) {
+        out.push_bits(cue.sequence, 32U);
+        out.push_bytes(reinterpret_cast<const char*>(&cue.strength), sizeof(cue.strength));
+    }
+
+    static bool deserialize(BitBuffer& in, BallBounceCue& out) {
+        out.sequence = static_cast<std::uint32_t>(in.read_bits(32U));
+        in.read_bytes(reinterpret_cast<char*>(&out.strength), sizeof(out.strength));
+        return true;
+    }
+
+    static bool play(ecs::Registry& registry, ecs::Entity owner, const BallBounceCue& cue, float late_seconds) {
+        const float duration = std::max(0.05f, 0.22f - late_seconds);
+        registry.add<BallCueFlash>(owner, BallCueFlash{duration, cue.strength});
+        return true;
+    }
+
+    static bool rollback(ecs::Registry& registry, ecs::Entity owner, const BallBounceCue&) {
+        registry.remove<BallCueFlash>(owner);
+        return true;
+    }
+
+    static bool equals_cue(const BallBounceCue& lhs, const BallBounceCue& rhs) {
+        return lhs.sequence == rhs.sequence;
+    }
+};
 
 template <>
 struct SyncComponentTraits<BallVisual> {
@@ -379,6 +418,8 @@ SyncSchema define_schema(ecs::Registry& registry, bool interpolate_position = fa
     const ecs::Entity visual = kage::sync::register_sync_component<BallVisual>(registry, "BallVisual");
     const ecs::Entity spawn_tagged = registry.register_component<BallSpawnTagged>("BallSpawnTagged");
     const ecs::Entity bounced = registry.register_component<BallBounced>("BallBounced");
+    registry.register_component<BallCueFlash>("BallCueFlash");
+    kage::sync::register_sync_cue<BallBounceCue>(registry);
     if (interpolate_position) {
         kage::sync::set_display_interpolated(registry, position);
     }
@@ -443,6 +484,7 @@ void update_server_world(
     ecs::Registry& registry,
     std::vector<ServerBall>& balls,
     SyncSchema schema,
+    kage::sync::SyncFrame frame,
     float dt,
     int& spawn_index,
     int target_ball_count) {
@@ -485,6 +527,13 @@ void update_server_world(
             if (!registry.has(ball.entity, schema.bounced)) {
                 registry.add_tag(ball.entity, schema.bounced);
             }
+            static std::uint32_t bounce_sequence = 1;
+            (void)kage::sync::emit_cue(
+                registry,
+                ball.entity,
+                frame,
+                BallBounceCue{bounce_sequence++, 1.0f},
+                0.35f);
         }
     }
 
@@ -914,6 +963,7 @@ int main(int argc, char** argv) {
     std::vector<ServerBall> balls;
     int spawn_index = 0;
     float server_accumulator = 0.0f;
+    kage::sync::SyncFrame server_frame = 0;
     send_hello(client_socket, server_address);
 
     while (!WindowShouldClose()) {
@@ -947,10 +997,12 @@ int main(int argc, char** argv) {
 
         while (server_accumulator >= 1.0f / 30.0f) {
             server_accumulator -= 1.0f / 30.0f;
+            ++server_frame;
             update_server_world(
                 server_registry,
                 balls,
                 server_schema,
+                server_frame,
                 1.0f / 30.0f,
                 spawn_index,
                 target_ball_count);
@@ -968,6 +1020,16 @@ int main(int argc, char** argv) {
             interpolation_buffer_frames = client.options().interpolation_buffer_frames;
         }
         client.tick(client_registry, dt);
+        std::vector<ecs::Entity> expired_flashes;
+        client_registry.view<BallCueFlash>().each([&](ecs::Entity entity, BallCueFlash& flash) {
+            flash.seconds -= dt;
+            if (flash.seconds <= 0.0f) {
+                expired_flashes.push_back(entity);
+            }
+        });
+        for (ecs::Entity entity : expired_flashes) {
+            client_registry.remove<BallCueFlash>(entity);
+        }
         for (const kage::sync::BitBuffer& packet : client.drain_packets()) {
             ++stats.client_packets;
             queue_packet(upstream_link, client_socket, server_address, packet, stats, false);
@@ -1011,6 +1073,15 @@ int main(int argc, char** argv) {
                 pulse_toward(Color{70, 220, 255, visual.a}, 2.1f);
             }
             DrawSphere(Vector3{position.x, position.y, position.z}, visual.radius, color);
+            if (const BallCueFlash* flash = client_registry.try_get<BallCueFlash>(entity.local_entity)) {
+                const float alpha = std::clamp(flash->seconds / 0.22f, 0.0f, 1.0f);
+                DrawSphereWires(
+                    Vector3{position.x, position.y, position.z},
+                    visual.radius + 0.08f + 0.14f * (1.0f - alpha),
+                    12,
+                    8,
+                    Color{255, 245, 150, static_cast<unsigned char>(alpha * 220.0f)});
+            }
         }
         EndMode3D();
         draw_stats_overlay(
