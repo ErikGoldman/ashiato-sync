@@ -218,8 +218,8 @@ TEST_CASE("ball stress spawn cap is respected") {
 TEST_CASE("ball stress simulated transport applies latency and loss") {
     stress::SimulatedLink link;
     stress::DirectionStats stats;
-    link.latency_ms = 100.0;
-    link.loss_percent = 0.0;
+    link.settings.latency_ms = 100.0;
+    link.settings.loss_percent = 0.0;
 
     kage::sync::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::client_ack_message, 8U);
@@ -243,39 +243,60 @@ TEST_CASE("ball stress simulated transport applies latency and loss") {
     REQUIRE(stats.delivered_packets == 1);
 
     stress::SimulatedLink lossy;
-    lossy.loss_percent = 100.0;
+    lossy.settings.loss_percent = 100.0;
     stress::DirectionStats loss_stats;
     stress::enqueue_packet(lossy, loss_stats, 1, packet, 0.0);
     REQUIRE(loss_stats.dropped_packets == 1);
-    REQUIRE(lossy.queued.empty());
+    REQUIRE(lossy.empty());
 }
 
 TEST_CASE("ball stress simulated transport applies bounded uniform jitter") {
     stress::SimulatedLink link;
     stress::DirectionStats stats;
-    link.latency_ms = 100.0;
-    link.jitter_ms = 25.0;
-    link.loss_percent = 0.0;
-    link.rng.seed(123);
+    link.settings.latency_ms = 100.0;
+    link.settings.jitter_ms = 25.0;
+    link.settings.loss_percent = 0.0;
+    link.random_engine().seed(123);
 
     kage::sync::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::client_ack_message, 8U);
     packet.push_bits(0, 16U);
 
     stress::enqueue_packet(link, stats, 1, packet, 1.0);
-    REQUIRE(link.queued.size() == 1);
-    REQUIRE(link.queued.front().deliver_at >= 1.075);
-    REQUIRE(link.queued.front().deliver_at <= 1.125);
+    REQUIRE(link.size() == 1);
+    REQUIRE(link.queued_packets().front().deliver_at >= 1.075);
+    REQUIRE(link.queued_packets().front().deliver_at <= 1.125);
 
     stress::SimulatedLink clamped;
-    clamped.latency_ms = 5.0;
-    clamped.jitter_ms = 25.0;
-    clamped.rng.seed(456);
+    clamped.settings.latency_ms = 5.0;
+    clamped.settings.jitter_ms = 25.0;
+    clamped.random_engine().seed(456);
     stress::DirectionStats clamped_stats;
     stress::enqueue_packet(clamped, clamped_stats, 1, packet, 2.0);
-    REQUIRE(clamped.queued.size() == 1);
-    REQUIRE(clamped.queued.front().deliver_at >= 2.0);
-    REQUIRE(clamped.queued.front().deliver_at <= 2.03);
+    REQUIRE(clamped.size() == 1);
+    REQUIRE(clamped.queued_packets().front().deliver_at >= 2.0);
+    REQUIRE(clamped.queued_packets().front().deliver_at <= 2.03);
+}
+
+TEST_CASE("ball stress simulated transport delivers by scheduled time under jitter") {
+    stress::SimulatedLink link;
+    stress::DirectionStats stats;
+    link.settings.latency_ms = 50.0;
+    link.settings.jitter_ms = 50.0;
+    link.random_engine().seed(2);
+
+    kage::sync::BitBuffer first;
+    first.push_bits(kage::sync::protocol::client_ack_message, 8U);
+    first.push_bits(1, 16U);
+    kage::sync::BitBuffer second;
+    second.push_bits(kage::sync::protocol::client_ack_message, 8U);
+    second.push_bits(2, 16U);
+
+    stress::enqueue_packet(link, stats, 1, first, 1.0);
+    stress::enqueue_packet(link, stats, 2, second, 1.0);
+
+    REQUIRE(link.size() == 2);
+    REQUIRE(link.queued_packets()[0].deliver_at <= link.queued_packets()[1].deliver_at);
 }
 
 TEST_CASE("ball stress packet classifier counts update record kinds") {

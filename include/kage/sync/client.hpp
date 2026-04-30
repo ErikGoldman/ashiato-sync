@@ -2,6 +2,7 @@
 
 #include "kage/sync/component_traits.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -115,6 +116,68 @@ struct ReplicationClientTimingStats {
     float server_update_packet_loss = 0.0f;
 };
 
+#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+inline constexpr std::size_t interpolation_diagnostics_window_frames = 120;
+
+struct ReplicationClientInterpolationDiagnostics {
+    struct FrameBucket {
+        std::uint64_t checks = 0;
+        std::uint64_t starvations = 0;
+    };
+
+    std::uint64_t total_interpolated_entity_frame_checks = 0;
+    std::uint64_t total_interpolated_entity_frame_starvations = 0;
+    std::uint64_t window_interpolated_entity_frame_checks = 0;
+    std::uint64_t window_interpolated_entity_frame_starvations = 0;
+    std::uint64_t sampled_interpolation_frames = 0;
+
+    float interpolated_entity_starvation_rate() const noexcept {
+        return window_interpolated_entity_frame_checks == 0
+            ? 0.0f
+            : static_cast<float>(window_interpolated_entity_frame_starvations) /
+                static_cast<float>(window_interpolated_entity_frame_checks);
+    }
+
+    float interpolated_entity_starvation_percent() const noexcept {
+        return interpolated_entity_starvation_rate() * 100.0f;
+    }
+
+    float lifetime_interpolated_entity_starvation_rate() const noexcept {
+        return total_interpolated_entity_frame_checks == 0
+            ? 0.0f
+            : static_cast<float>(total_interpolated_entity_frame_starvations) /
+                static_cast<float>(total_interpolated_entity_frame_checks);
+    }
+
+    float lifetime_interpolated_entity_starvation_percent() const noexcept {
+        return lifetime_interpolated_entity_starvation_rate() * 100.0f;
+    }
+
+    void record_frame(std::uint64_t checks, std::uint64_t starvations) noexcept {
+        if (checks == 0) {
+            return;
+        }
+
+        total_interpolated_entity_frame_checks += checks;
+        total_interpolated_entity_frame_starvations += starvations;
+        ++sampled_interpolation_frames;
+
+        FrameBucket& bucket = window_[window_next_];
+        window_interpolated_entity_frame_checks -= bucket.checks;
+        window_interpolated_entity_frame_starvations -= bucket.starvations;
+        bucket.checks = checks;
+        bucket.starvations = starvations;
+        window_interpolated_entity_frame_checks += checks;
+        window_interpolated_entity_frame_starvations += starvations;
+        window_next_ = (window_next_ + 1U) % window_.size();
+    }
+
+private:
+    std::array<FrameBucket, interpolation_diagnostics_window_frames> window_{};
+    std::size_t window_next_ = 0;
+};
+#endif
+
 class ReplicationClient {
 public:
     explicit ReplicationClient(ReplicationClientOptions options = {});
@@ -169,6 +232,14 @@ public:
     const ReplicationClientTimingStats& timing_stats() const noexcept {
         return timing_stats_;
     }
+#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+    const ReplicationClientInterpolationDiagnostics& interpolation_diagnostics() const noexcept {
+        return interpolation_diagnostics_;
+    }
+    void reset_interpolation_diagnostics() noexcept {
+        interpolation_diagnostics_ = {};
+    }
+#endif
 
 private:
     using ComponentBaseline = ReplicatedComponentUpdate;
@@ -287,6 +358,9 @@ private:
         ReplicationClientMode mode);
     bool has_buffered_entities() const noexcept;
     void blend_snap_errors(const SyncSettings& settings, float dt_seconds);
+#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+    void record_interpolation_frame(std::uint64_t checks, std::uint64_t starvations) noexcept;
+#endif
     bool write_display_samples(
         const ecs::Registry& registry,
         double target_frame,
@@ -320,6 +394,9 @@ private:
 
     ReplicationClientOptions options_;
     ReplicationClientTimingStats timing_stats_;
+#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+    ReplicationClientInterpolationDiagnostics interpolation_diagnostics_;
+#endif
     std::vector<EntityState> entities_;
     std::vector<std::uint32_t> active_entities_;
     std::vector<std::uint32_t> buffered_entities_;

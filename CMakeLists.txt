@@ -11,6 +11,7 @@ include(CTest)
 option(KAGE_SYNC_BUILD_BENCHMARKS "Build kage-sync Google Benchmark suites" OFF)
 option(KAGE_SYNC_BUILD_EXAMPLES "Build kage-sync examples" OFF)
 option(KAGE_SYNC_ENABLE_GPROF "Build kage-sync benchmark tools with gprof instrumentation" OFF)
+option(KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS "Build kage-sync with buffered interpolation starvation diagnostics" OFF)
 set(KAGE_SYNC_BASELINE_FRAME_DELTA_BITS "5" CACHE STRING "Compile-time bit count for relative delta baseline frame numbers")
 set(KAGE_SYNC_BALL_STRESS_RUN_MODE "none" CACHE STRING "How run_kage_sync_ball_stress invokes the stress tool: none, gprof, memcheck, or massif")
 set_property(CACHE KAGE_SYNC_BALL_STRESS_RUN_MODE PROPERTY STRINGS none gprof memcheck massif)
@@ -50,6 +51,7 @@ target_link_libraries(kage_sync
 target_compile_definitions(kage_sync
     PUBLIC
         KAGE_SYNC_BASELINE_FRAME_DELTA_BITS=${KAGE_SYNC_BASELINE_FRAME_DELTA_BITS}
+        $<$<BOOL:${KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS}>:KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS=1>
 )
 
 if(MSVC)

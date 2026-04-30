@@ -2302,6 +2302,55 @@ TEST_CASE("buffered interpolation applies valid entities when another target sam
     REQUIRE(client_registry.get<Position>(client.local_entity(first)).x == 3.0f);
 }
 
+#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+TEST_CASE("buffered interpolation diagnostics count missing target samples") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        1,
+        8});
+
+    const ecs::Entity first{101};
+    const ecs::Entity second{102};
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{first, Position{1.0f, 0.0f}}, {second, Position{2.0f, 0.0f}}})));
+    REQUIRE(client.receive(client_registry, make_position_packet(2, {{first, Position{3.0f, 0.0f}}})));
+
+    REQUIRE_FALSE(client.apply_frame(client_registry, 3));
+    const kage::sync::ReplicationClientInterpolationDiagnostics& diagnostics = client.interpolation_diagnostics();
+    REQUIRE(diagnostics.total_interpolated_entity_frame_checks == 2);
+    REQUIRE(diagnostics.total_interpolated_entity_frame_starvations == 1);
+    REQUIRE(diagnostics.window_interpolated_entity_frame_checks == 2);
+    REQUIRE(diagnostics.window_interpolated_entity_frame_starvations == 1);
+    REQUIRE(diagnostics.interpolated_entity_starvation_rate() == Catch::Approx(0.5f));
+    REQUIRE(diagnostics.interpolated_entity_starvation_percent() == Catch::Approx(50.0f));
+    REQUIRE(diagnostics.lifetime_interpolated_entity_starvation_rate() == Catch::Approx(0.5f));
+
+    for (std::size_t offset = 0; offset < kage::sync::interpolation_diagnostics_window_frames; ++offset) {
+        const kage::sync::SyncFrame frame = static_cast<kage::sync::SyncFrame>(3U + offset);
+        REQUIRE(client.receive(client_registry, make_position_packet(
+            frame,
+            {{first, Position{static_cast<float>(frame), 0.0f}}, {second, Position{static_cast<float>(frame), 0.0f}}})));
+        REQUIRE(client.apply_frame(client_registry, static_cast<kage::sync::SyncFrame>(frame + 1U)));
+    }
+
+    REQUIRE(diagnostics.total_interpolated_entity_frame_starvations == 1);
+    REQUIRE(diagnostics.window_interpolated_entity_frame_checks == kage::sync::interpolation_diagnostics_window_frames * 2U);
+    REQUIRE(diagnostics.window_interpolated_entity_frame_starvations == 0);
+    REQUIRE(diagnostics.interpolated_entity_starvation_percent() == Catch::Approx(0.0f));
+    REQUIRE(diagnostics.lifetime_interpolated_entity_starvation_percent() > 0.0f);
+
+    client.reset_interpolation_diagnostics();
+    REQUIRE(client.interpolation_diagnostics().total_interpolated_entity_frame_checks == 0);
+    REQUIRE(client.interpolation_diagnostics().total_interpolated_entity_frame_starvations == 0);
+    REQUIRE(client.interpolation_diagnostics().window_interpolated_entity_frame_checks == 0);
+    REQUIRE(client.interpolation_diagnostics().window_interpolated_entity_frame_starvations == 0);
+}
+#endif
+
 TEST_CASE("buffered interpolation validates client buffer options") {
     REQUIRE_THROWS_AS(
         kage::sync::ReplicationClient(kage::sync::ReplicationClientOptions{
@@ -2649,6 +2698,41 @@ TEST_CASE("auto interpolation buffer moves one frame when dilation creates headr
     REQUIRE(client.receive(client_registry, make_position_packet(6, {{server_entity, Position{3.0f, 4.0f}}}), 6));
     REQUIRE(client.timing_stats().desired_interpolation_buffer_frames > 1);
     REQUIRE(client.timing_stats().measured_interpolation_buffer_frames >= 1.0f);
+    REQUIRE(client.options().interpolation_buffer_frames == 2);
+}
+
+TEST_CASE("auto interpolation target uses downstream update lag as a floor") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        2,
+        8,
+        true,
+        1,
+        2.0f,
+        1.0f,
+        0.90f,
+        1.10f,
+        0.10f});
+    const ecs::Entity server_entity{42};
+
+    REQUIRE(record_ping_sample(client, client_registry, 4));
+    REQUIRE(client.timing_stats().desired_interpolation_buffer_frames == 2);
+    REQUIRE(client.timing_stats().target_interpolation_buffer_frames == 2);
+
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}),
+        4));
+
+    REQUIRE(client.timing_stats().desired_interpolation_buffer_frames == 2);
+    REQUIRE(client.timing_stats().target_interpolation_buffer_frames == 3);
+    REQUIRE(client.timing_stats().time_dilation == Catch::Approx(0.90f));
     REQUIRE(client.options().interpolation_buffer_frames == 2);
 }
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "kage/sync/simulated_link.hpp"
 #include "kage/sync/sync.hpp"
 
 #include <algorithm>
@@ -8,7 +9,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <deque>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -269,19 +269,7 @@ struct StressReport {
     std::uint32_t live_balls = 0;
 };
 
-struct QueuedPacket {
-    ClientId client = invalid_client_id;
-    BitBuffer packet;
-    double deliver_at = 0.0;
-};
-
-struct SimulatedLink {
-    double latency_ms = 0.0;
-    double jitter_ms = 0.0;
-    double loss_percent = 0.0;
-    std::deque<QueuedPacket> queued;
-    std::mt19937 rng{0};
-};
+using SimulatedLink = ::kage::sync::SimulatedLink<BitBuffer, ClientId>;
 
 class ScopedTimer {
 public:
@@ -681,23 +669,6 @@ inline PacketBreakdown classify_packet(
     return result;
 }
 
-inline bool drops_packet(SimulatedLink& link) {
-    if (link.loss_percent <= 0.0) {
-        return false;
-    }
-    std::uniform_real_distribution<double> distribution(0.0, 100.0);
-    return distribution(link.rng) < link.loss_percent;
-}
-
-inline double latency_seconds(SimulatedLink& link) {
-    double latency_ms = std::max(0.0, link.latency_ms);
-    if (link.jitter_ms > 0.0) {
-        std::uniform_real_distribution<double> distribution(-link.jitter_ms, link.jitter_ms);
-        latency_ms = std::max(0.0, latency_ms + distribution(link.rng));
-    }
-    return latency_ms / 1000.0;
-}
-
 inline void enqueue_packet(
     SimulatedLink& link,
     DirectionStats& stats,
@@ -708,28 +679,20 @@ inline void enqueue_packet(
     const PacketBreakdown breakdown = classify_packet(packet, wire_diagnostics ? &stats.wire : nullptr);
     add_packet_stats(stats, packet, breakdown);
 
-    if (drops_packet(link)) {
+    if (!link.enqueue(client, packet, now_seconds)) {
         ++stats.dropped_packets;
         stats.dropped_bytes += packet.byte_size();
         return;
     }
-
-    link.queued.push_back(QueuedPacket{client, packet, now_seconds + latency_seconds(link)});
 }
 
 template <typename Fn>
 void deliver_ready(SimulatedLink& link, DirectionStats& stats, double now_seconds, Fn&& fn) {
-    auto packet = link.queued.begin();
-    while (packet != link.queued.end()) {
-        if (packet->deliver_at > now_seconds) {
-            ++packet;
-            continue;
-        }
+    link.deliver_ready(now_seconds, [&](ClientId client, const BitBuffer& packet) {
         ++stats.delivered_packets;
-        stats.delivered_bytes += packet->packet.byte_size();
-        fn(packet->client, packet->packet);
-        packet = link.queued.erase(packet);
-    }
+        stats.delivered_bytes += packet.byte_size();
+        fn(client, packet);
+    });
 }
 
 inline SyncSchema define_schema(ecs::Registry& registry, bool interpolate_position = false) {
@@ -1068,16 +1031,16 @@ inline StressReport run_stress(const StressConfig& input_config) {
     }
 
     SimulatedLink server_to_clients;
-    server_to_clients.latency_ms = config.server_to_client_latency_ms;
-    server_to_clients.jitter_ms = config.server_to_client_jitter_ms;
-    server_to_clients.loss_percent = config.server_to_client_loss_percent;
-    server_to_clients.rng.seed(config.seed ^ 0x5EED1234U);
+    server_to_clients.settings.latency_ms = config.server_to_client_latency_ms;
+    server_to_clients.settings.jitter_ms = config.server_to_client_jitter_ms;
+    server_to_clients.settings.loss_percent = config.server_to_client_loss_percent;
+    server_to_clients.random_engine().seed(config.seed ^ 0x5EED1234U);
 
     SimulatedLink clients_to_server;
-    clients_to_server.latency_ms = config.client_to_server_latency_ms;
-    clients_to_server.jitter_ms = config.client_to_server_jitter_ms;
-    clients_to_server.loss_percent = config.client_to_server_loss_percent;
-    clients_to_server.rng.seed(config.seed ^ 0xA11CE55U);
+    clients_to_server.settings.latency_ms = config.client_to_server_latency_ms;
+    clients_to_server.settings.jitter_ms = config.client_to_server_jitter_ms;
+    clients_to_server.settings.loss_percent = config.client_to_server_loss_percent;
+    clients_to_server.random_engine().seed(config.seed ^ 0xA11CE55U);
 
     ReplicationServerOptions server_options;
     server_options.bandwidth_limit_bytes_per_tick = config.bandwidth_limit;

@@ -25,6 +25,14 @@ bool is_power_of_two(std::size_t value) {
     return value != 0U && (value & (value - 1U)) == 0U;
 }
 
+SyncFrame clamp_auto_interpolation_target(
+    const ReplicationClientOptions& options,
+    SyncFrame target) noexcept {
+    target = std::max(target, options.auto_interpolation_min_frames);
+    const SyncFrame max_frames = static_cast<SyncFrame>(options.interpolation_buffer_capacity_frames - 1U);
+    return std::min(target, max_frames);
+}
+
 std::uint32_t count_bits(std::uint64_t value) noexcept {
     std::uint32_t count = 0;
     while (value != 0U) {
@@ -749,12 +757,20 @@ bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame client_fr
     has_applied_buffered_frame_ = true;
     const SyncSettings& settings = registry.get<SyncSettings>();
     bool all_valid = true;
+#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+    std::uint64_t interpolation_checks = 0;
+    std::uint64_t interpolation_starvations = 0;
+#endif
     for (const std::uint32_t entity_index : buffered_entities_) {
         if (entity_index >= entities_.size()) {
             continue;
         }
         EntityState& state = entities_[entity_index];
         if (state.buffered_frames.empty()) {
+#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+            ++interpolation_checks;
+            ++interpolation_starvations;
+#endif
             continue;
         }
 
@@ -771,16 +787,32 @@ bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame client_fr
             if (!state.local && (reused_future_entity || destroyed_past_entity)) {
                 continue;
             }
+#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+            ++interpolation_checks;
+            ++interpolation_starvations;
+#endif
             all_valid = false;
             continue;
         }
+#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+        ++interpolation_checks;
+#endif
         if (!apply_buffered_sample(registry, settings, state, sample)) {
             all_valid = false;
         }
     }
 
+#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+    record_interpolation_frame(interpolation_checks, interpolation_starvations);
+#endif
     return all_valid;
 }
+
+#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+void ReplicationClient::record_interpolation_frame(std::uint64_t checks, std::uint64_t starvations) noexcept {
+    interpolation_diagnostics_.record_frame(checks, starvations);
+}
+#endif
 
 bool ReplicationClient::sample_display_target_frame(
     const ecs::Registry& registry,
@@ -2250,10 +2282,9 @@ void ReplicationClient::record_ping_sample(float sample) noexcept {
 
     const float wanted = timing_stats_.latency_frames +
         options_.auto_interpolation_jitter_multiplier * timing_stats_.jitter_frames;
-    SyncFrame target = static_cast<SyncFrame>(std::ceil(std::max(0.0f, wanted)));
-    target = std::max(target, options_.auto_interpolation_min_frames);
-    const SyncFrame max_frames = static_cast<SyncFrame>(options_.interpolation_buffer_capacity_frames - 1U);
-    target = std::min(target, max_frames);
+    const SyncFrame target = clamp_auto_interpolation_target(
+        options_,
+        static_cast<SyncFrame>(std::ceil(std::max(0.0f, wanted))));
     timing_stats_.desired_interpolation_buffer_frames = target;
     timing_stats_.target_interpolation_buffer_frames = target;
 }
@@ -2262,6 +2293,13 @@ void ReplicationClient::record_update_timing(
     SyncFrame server_frame,
     SyncFrame receive_frame,
     SyncFrame playback_frame) noexcept {
+    if (options_.auto_interpolation_buffer_frames && receive_frame > server_frame) {
+        const SyncFrame observed_target = clamp_auto_interpolation_target(
+            options_,
+            receive_frame - server_frame);
+        timing_stats_.target_interpolation_buffer_frames =
+            std::max(timing_stats_.target_interpolation_buffer_frames, observed_target);
+    }
     const SyncFrame target = timing_stats_.target_interpolation_buffer_frames;
 
     const SyncFrame current = options_.interpolation_buffer_frames;

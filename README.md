@@ -58,10 +58,11 @@ and renders replicated moving balls with raylib. Use `--client-mode snap` or
 Buffered interpolation auto-sizes its buffer from measured receive latency and
 jitter by default; pass
 `--auto-interpolation-buffer off` to keep the configured buffer fixed. Use
-`--jitter-ms N` to start the local link simulator with uniform `+/-N ms` jitter,
-and `--entities N` to set the initial ball target. In the example, Up/Down
-adjust the target by 8, Shift+Up/Down by 1, PageUp/PageDown by 32, and Home/End
-jump to the maximum/minimum target.
+`--latency-ms N`, `--jitter-ms N` to start the local link simulator with fixed
+latency and uniform `+/-N ms` jitter, and `--loss-percent N` to start with packet
+loss. Use `--entities N` to set the initial ball target. In the example,
+Up/Down adjust the target by 8, Shift+Up/Down by 1, PageUp/PageDown by 32, and
+Home/End jump to the maximum/minimum target.
 Use `--time-dilation-min`, `--time-dilation-max`, and
 `--time-dilation-gain` to control how quickly the client playback accumulator
 converges when the desired buffer changes.

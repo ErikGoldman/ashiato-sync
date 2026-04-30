@@ -1,4 +1,5 @@
 #include "kage/sync/sync.hpp"
+#include "kage/sync/simulated_link.hpp"
 
 #include <raylib.h>
 
@@ -8,9 +9,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <deque>
 #include <limits>
-#include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -139,40 +138,8 @@ struct SyncSchema {
     ecs::Entity bounced;
 };
 
-struct LinkSettings {
-    float latency_ms = 0.0f;
-    float jitter_ms = 0.0f;
-    float loss_percent = 0.0f;
-};
-
-struct QueuedPacket {
-    kage::sync::BitBuffer packet;
-    sockaddr_in target{};
-    double deliver_time = 0.0;
-};
-
-struct LinkSimulator {
-    LinkSettings settings;
-    std::deque<QueuedPacket> queued;
-    std::mt19937 rng{0xC0FFEE};
-
-    bool drops_packet() {
-        if (settings.loss_percent <= 0.0f) {
-            return false;
-        }
-        std::uniform_real_distribution<float> distribution(0.0f, 100.0f);
-        return distribution(rng) < settings.loss_percent;
-    }
-
-    double delay_seconds() {
-        float latency = std::max(0.0f, settings.latency_ms);
-        if (settings.jitter_ms > 0.0f) {
-            std::uniform_real_distribution<float> distribution(-settings.jitter_ms, settings.jitter_ms);
-            latency = std::max(0.0f, latency + distribution(rng));
-        }
-        return static_cast<double>(latency) / 1000.0;
-    }
-};
+using LinkSettings = kage::sync::SimulatedLinkSettings;
+using LinkSimulator = kage::sync::SimulatedLink<kage::sync::BitBuffer, sockaddr_in>;
 
 struct SampleHistory {
     static constexpr std::size_t capacity = 180;
@@ -276,7 +243,8 @@ void queue_packet(
     const kage::sync::BitBuffer& packet,
     RuntimeStats& stats,
     bool downstream) {
-    if (link.drops_packet()) {
+    const double now = GetTime();
+    if (!link.enqueue(target, packet, now)) {
         ++stats.dropped_packets;
         return;
     }
@@ -287,24 +255,16 @@ void queue_packet(
         stats.up_bytes_window += static_cast<float>(packet.byte_size());
     }
 
-    const double delay = link.delay_seconds();
-    if (delay <= 0.0) {
-        send_packet(socket, target, packet);
-        return;
-    }
-
-    link.queued.push_back(QueuedPacket{
-        packet,
-        target,
-        GetTime() + delay});
+    link.deliver_ready(now, [&](const sockaddr_in& packet_target, const kage::sync::BitBuffer& queued_packet) {
+        send_packet(socket, packet_target, queued_packet);
+    });
 }
 
 void flush_link(LinkSimulator& link, SocketHandle socket) {
     const double now = GetTime();
-    while (!link.queued.empty() && link.queued.front().deliver_time <= now) {
-        send_packet(socket, link.queued.front().target, link.queued.front().packet);
-        link.queued.pop_front();
-    }
+    link.deliver_ready(now, [&](const sockaddr_in& target, const kage::sync::BitBuffer& packet) {
+        send_packet(socket, target, packet);
+    });
 }
 
 bool receive_packet(SocketHandle socket, kage::sync::BitBuffer& packet, sockaddr_in* sender = nullptr) {
@@ -453,22 +413,22 @@ void send_hello(SocketHandle client_socket, const sockaddr_in& server_address) {
 
 void update_hotkeys(LinkSettings& settings) {
     if (IsKeyPressed(KEY_RIGHT_BRACKET)) {
-        settings.latency_ms = std::min(settings.latency_ms + 25.0f, 500.0f);
+        settings.latency_ms = std::min(settings.latency_ms + 25.0, 500.0);
     }
     if (IsKeyPressed(KEY_LEFT_BRACKET)) {
-        settings.latency_ms = std::max(settings.latency_ms - 25.0f, 0.0f);
+        settings.latency_ms = std::max(settings.latency_ms - 25.0, 0.0);
     }
     if (IsKeyPressed(KEY_APOSTROPHE)) {
-        settings.jitter_ms = std::min(settings.jitter_ms + 10.0f, 500.0f);
+        settings.jitter_ms = std::min(settings.jitter_ms + 10.0, 500.0);
     }
     if (IsKeyPressed(KEY_SEMICOLON)) {
-        settings.jitter_ms = std::max(settings.jitter_ms - 10.0f, 0.0f);
+        settings.jitter_ms = std::max(settings.jitter_ms - 10.0, 0.0);
     }
     if (IsKeyPressed(KEY_EQUAL)) {
-        settings.loss_percent = std::min(settings.loss_percent + 2.5f, 50.0f);
+        settings.loss_percent = std::min(settings.loss_percent + 2.5, 50.0);
     }
     if (IsKeyPressed(KEY_MINUS)) {
-        settings.loss_percent = std::max(settings.loss_percent - 2.5f, 0.0f);
+        settings.loss_percent = std::max(settings.loss_percent - 2.5, 0.0);
     }
 }
 
@@ -611,8 +571,17 @@ void draw_stats_overlay(
     kage::sync::ReplicationClientMode client_mode,
     int target_ball_count,
     kage::sync::SyncFrame buffer_frames,
-    const kage::sync::ReplicationClientTimingStats& timing) {
+    const kage::sync::ReplicationClientTimingStats& timing
+#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+    ,
+    const kage::sync::ReplicationClientInterpolationDiagnostics& interpolation_diagnostics
+#endif
+) {
+#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+    const Rectangle panel{16.0f, 16.0f, 500.0f, 286.0f};
+#else
     const Rectangle panel{16.0f, 16.0f, 460.0f, 260.0f};
+#endif
     DrawRectangleRec(panel, Color{16, 18, 22, 220});
     DrawRectangleLinesEx(panel, 1.0f, Color{90, 96, 110, 255});
 
@@ -691,13 +660,32 @@ void draw_stats_overlay(
         16,
         Color{215, 220, 230, 255});
 
+#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+    DrawText(
+        TextFormat(
+            "recent interpolation starvation %.2f%%  %llu / %llu",
+            interpolation_diagnostics.interpolated_entity_starvation_percent(),
+            static_cast<unsigned long long>(
+                interpolation_diagnostics.window_interpolated_entity_frame_starvations),
+            static_cast<unsigned long long>(
+                interpolation_diagnostics.window_interpolated_entity_frame_checks)),
+        28,
+        224,
+        16,
+        Color{215, 220, 230, 255});
+#endif
+
     const float scale = std::max(stats.down_kbps.max_value(), stats.up_kbps.max_value());
+#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+    const Rectangle graph{28.0f, 246.0f, 404.0f, 34.0f};
+#else
     const Rectangle graph{28.0f, 226.0f, 404.0f, 34.0f};
+#endif
     draw_graph(graph, stats.down_kbps, Color{76, 190, 255, 255}, scale);
     draw_graph(graph, stats.up_kbps, Color{255, 190, 76, 255}, scale);
-    DrawText(TextFormat("scale %.1f kbps", scale), 310, 230, 14, Color{215, 220, 230, 255});
-    DrawText("down", 32, 262, 14, Color{76, 190, 255, 255});
-    DrawText("up", 82, 262, 14, Color{255, 190, 76, 255});
+    DrawText(TextFormat("scale %.1f kbps", scale), 310, static_cast<int>(graph.y + 4.0f), 14, Color{215, 220, 230, 255});
+    DrawText("down", 32, static_cast<int>(graph.y + graph.height + 2.0f), 14, Color{76, 190, 255, 255});
+    DrawText("up", 82, static_cast<int>(graph.y + graph.height + 2.0f), 14, Color{255, 190, 76, 255});
 }
 
 }  // namespace
@@ -709,7 +697,7 @@ int main(int argc, char** argv) {
     float time_dilation_min = 0.95f;
     float time_dilation_max = 1.05f;
     float time_dilation_gain = 0.05f;
-    float initial_jitter_ms = 0.0f;
+    LinkSettings link_settings;
     int target_ball_count = 96;
     for (int index = 1; index < argc; ++index) {
         const std::string arg = argv[index];
@@ -728,8 +716,12 @@ int main(int argc, char** argv) {
             } else {
                 throw std::runtime_error("--client-mode must be snap or buffered-interpolation");
             }
+        } else if (arg == "--latency-ms") {
+            link_settings.latency_ms = std::stof(require_value());
         } else if (arg == "--jitter-ms") {
-            initial_jitter_ms = std::stof(require_value());
+            link_settings.jitter_ms = std::stof(require_value());
+        } else if (arg == "--loss-percent") {
+            link_settings.loss_percent = std::stof(require_value());
         } else if (arg == "--entities") {
             target_ball_count = std::clamp(std::stoi(require_value()), min_ball_count, max_ball_count);
         } else if (arg == "--auto-interpolation-buffer") {
@@ -772,7 +764,8 @@ int main(int argc, char** argv) {
     bool client_connected = false;
     LinkSimulator downstream_link;
     LinkSimulator upstream_link;
-    downstream_link.settings.jitter_ms = initial_jitter_ms;
+    downstream_link.settings = link_settings;
+    upstream_link.settings = link_settings;
     RuntimeStats stats;
 
     kage::sync::ReplicationServerOptions server_options;
@@ -818,10 +811,11 @@ int main(int argc, char** argv) {
         const float dt = GetFrameTime();
         server_accumulator += dt;
         client.tick(client_registry, dt);
-        update_hotkeys(downstream_link.settings);
+        update_hotkeys(link_settings);
+        downstream_link.settings = link_settings;
+        upstream_link.settings = link_settings;
         update_entity_count_hotkeys(target_ball_count);
         update_client_mode_hotkeys(client, client_registry, balls, client_mode);
-        upstream_link.settings = downstream_link.settings;
         flush_link(downstream_link, server_socket);
         flush_link(upstream_link, client_socket);
         update_bandwidth_samples(stats, dt);
@@ -865,9 +859,9 @@ int main(int argc, char** argv) {
             client.receive(client_registry, received);
             interpolation_buffer_frames = client.options().interpolation_buffer_frames;
         }
-        for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
+        for (const kage::sync::BitBuffer& packet : client.drain_packets()) {
             ++stats.client_packets;
-            queue_packet(upstream_link, client_socket, server_address, ack, stats, false);
+            queue_packet(upstream_link, client_socket, server_address, packet, stats, false);
         }
         stats.receive_frame = client.receive_frame();
         stats.client_frame = client.playback_frame();
@@ -912,12 +906,21 @@ int main(int argc, char** argv) {
         EndMode3D();
         draw_stats_overlay(
             stats,
-            downstream_link.settings,
+            link_settings,
             client_mode,
             target_ball_count,
             interpolation_buffer_frames,
-            client.timing_stats());
+            client.timing_stats()
+#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+                ,
+            client.interpolation_diagnostics()
+#endif
+        );
+#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+        DrawFPS(28, 306);
+#else
         DrawFPS(28, 282);
+#endif
         EndDrawing();
     }
 
