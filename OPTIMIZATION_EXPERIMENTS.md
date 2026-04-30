@@ -841,3 +841,197 @@ substantially, especially full receive+tick. Large snap and mixed-mode receive
 are neutral to slightly slower, but the stress run improves wall time, client
 receive time, ACK processing, and RSS. The generation-reuse behavior is also
 stricter and avoids stale packets mutating the wrong entity slot.
+
+## Experiment 18: Prediction Stress Gprof Profile
+
+Rationale: profile the prediction-specific stress benchmark with configurable
+mispredictions and latency. This run uses the deliberately harsh `all` rollback
+policy so that frequent prediction failures exercise rollback, resimulation,
+current-frame requantization, and error blending.
+
+Profile build:
+
+```sh
+cmake -S . -B build-bench-gprof -DCMAKE_BUILD_TYPE=RelWithDebInfo -DKAGE_SYNC_BUILD_BENCHMARKS=ON -DKAGE_SYNC_ENABLE_GPROF=ON -DBUILD_TESTING=OFF
+cmake --build build-bench-gprof --target kage_sync_prediction_stress -j2
+```
+
+Profile command:
+
+```sh
+./kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+```
+
+Profile artifact: `/tmp/kage_sync_prediction_stress_gprof.txt`
+
+Profiled result:
+
+- `wall=9.326060`
+- `server_simulation=0.086520`
+- `server_replication=4.639693`
+- `client_receive=1.721267`
+- `client_tick=2.652223`
+- `ack_processing=0.225947`
+- `server_packets=73279`, `server_bytes=85935455`
+- `misprediction_events=184255`, `predicted_entities=2048`
+
+Normal `RelWithDebInfo` comparison, same parameters:
+
+- `all`: `wall=6.136722`, `client_tick=0.993263`
+- `only-affected`: `wall=5.576276`, `client_tick=0.605114`
+
+Top profile buckets:
+
+- `ReplicationServer::tick_serialized`: 46.97% self, 1800 calls
+- `PredPosition::serialize_bytes`: 4.36%, 3,686,400 calls
+- `ReplicationServer::find_or_create_quantized_frame`: 4.17%, 3,686,400 calls
+- `ReplicationClient::remember_baseline`: 3.60%, 3,686,400 calls
+- `PredVelocity::serialize_bytes`: 3.22%, 3,661,815 calls
+- `ReplicationClient::blend_resim_errors`: 2.46%, 1799 calls
+- `mutable_frame_component_data`: 2.27%, 57,414,566 calls
+- `frame_component_bytes`: 2.08%, 42,739,554 calls
+- `ReplicationClient::apply_upsert`: 2.08%, 3,686,400 calls
+- `all_zero`: 1.89%, 88,477,706 calls
+- `ReplicationClient::compare_predicted_frame`: 0.95%, 3,684,352 calls
+- `ReplicationClient::resimulate_all_predicted`: 0.95%, 1799 calls
+
+Conclusion: the dominant cost in this benchmark is still full server
+replication volume: every tick changes position for all 2048 predicted
+entities, so the server serializes millions of entity records and about 86 MB
+of update data. On the client, prediction-specific costs are mostly component
+payload copying and repeated whole-population work after rollbacks. The first
+follow-up optimizations should be direct raw-byte component comparison/error
+hooks for prediction, O(1) baseline-history replacement keyed by frame, and
+resim error blending over only the resimulated entity set instead of scanning
+all predicted entities every rollback.
+
+## Experiment 19: Raw-Byte Prediction Compare and Error Hooks
+
+Rationale: `compare_predicted_frame` and prediction resim error blending were
+calling `frame_component_bytes`, which copies fixed-size component payloads into
+`QuantizedBytes` temporaries before invoking trait functions. This experiment
+adds raw-byte `should_roll_back_bytes` and `compute_error_bytes` hooks to
+`SyncComponentOps` and uses `frame_component_data` in the prediction path.
+
+Baseline command:
+
+```sh
+build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+```
+
+Baseline result:
+
+- `wall=5.700782`
+- `server_replication=3.628783`
+- `client_receive=0.996992`
+- `client_tick=0.931530`
+- `ack_processing=0.105458`
+
+Result:
+
+- `wall=5.777797`
+- `server_replication=3.776654`
+- `client_receive=0.905312`
+- `client_tick=0.940827`
+- `ack_processing=0.115918`
+
+Conclusion: mixed but kept. The receive-side cost improved by about 9.2%, which
+matches the intended removal of component-byte copies during authoritative frame
+comparison. End-to-end wall time and client tick were slightly worse in this
+single run, with server replication noise still dominating the wall result. This
+also gives prediction and interpolation a consistent raw-byte component API.
+
+## Experiment 20: O(1) Baseline History Ring
+
+Rationale: `remember_baseline` scanned up to 64 historical frames for every
+received entity update before replacing or inserting a baseline. Prediction
+traffic calls this millions of times in the stress run. This experiment changes
+baseline history to a fixed 64-slot ring keyed directly by `frame & 63`, with a
+valid bit per slot.
+
+Command:
+
+```sh
+build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+```
+
+Result:
+
+- `wall=5.139806`
+- `server_replication=3.501682`
+- `client_receive=0.591888`
+- `client_tick=0.907018`
+- `ack_processing=0.101236`
+
+Conclusion: accepted. Compared with Experiment 19, wall time improved by about
+11.0% and client receive time improved by about 34.6%. This removes the
+per-update history scan that was visible in the profile.
+
+## Experiment 21: Blend Only Resimulated Prediction Entities
+
+Rationale: after rollback/resim, error blending scanned every predicted entity
+even when the rollback policy was `only-affected`. This experiment records the
+entity indices that will be resimulated, captures original current-frame
+predictions only for those indices, and blends only that set.
+
+Commands:
+
+```sh
+build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
+```
+
+Results:
+
+- `all`: `wall=5.306687`, `server_replication=3.628128`,
+  `client_receive=0.597561`, `client_tick=0.934218`,
+  `ack_processing=0.105500`
+- `only-affected`: `wall=4.264001`, `server_replication=3.302540`,
+  `client_receive=0.574346`, `client_tick=0.258931`,
+  `ack_processing=0.090566`
+
+Final confirmation after reverting Experiment 22:
+
+- `all`: `wall=5.174080`, `server_replication=3.553726`,
+  `client_receive=0.603236`, `client_tick=0.876106`,
+  `ack_processing=0.102139`
+- `only-affected`: `wall=4.757985`, `server_replication=3.656777`,
+  `client_receive=0.664567`, `client_tick=0.293342`,
+  `ack_processing=0.100373`
+
+Conclusion: accepted. The `all` policy legitimately resimulates the full
+predicted set, so this change is mostly neutral there. For `only-affected`, the
+client tick cost drops substantially versus the earlier `only-affected`
+comparison from Experiment 18 (`client_tick=0.605114`).
+
+## Experiment 22: Error Compute Returns Non-Zero State
+
+Rationale: `blend_resim_errors` computes an error payload and then calls
+`all_zero` to decide whether to store it. This experiment added a
+`compute_error_bytes_nonzero` hook that computes the error and reports whether
+the typed error equals zero in the same trait wrapper.
+
+Commands:
+
+```sh
+build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
+```
+
+Results:
+
+- `all`: `wall=5.395147`, `server_replication=3.738402`,
+  `client_receive=0.632616`, `client_tick=0.880470`,
+  `ack_processing=0.104710`
+- `only-affected`: `wall=4.734596`, `server_replication=3.661067`,
+  `client_receive=0.655116`, `client_tick=0.281926`,
+  `ack_processing=0.097310`
+- `only-affected` confirmation: `wall=4.817131`,
+  `server_replication=3.746629`, `client_receive=0.649715`,
+  `client_tick=0.279296`, `ack_processing=0.100948`
+
+Conclusion: rejected and reverted. The extra hook did not produce a stable
+win, and the `only-affected` runs were slower than the best Experiment 21 run.
+The likely reason is that replacing `all_zero` with a typed zero object plus
+`memcmp` does not reduce enough work for these small error payloads, while it
+adds another branch and function pointer on the hot path.

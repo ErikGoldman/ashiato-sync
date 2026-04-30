@@ -17,6 +17,7 @@ set(KAGE_SYNC_BALL_STRESS_RUN_MODE "none" CACHE STRING "How run_kage_sync_ball_s
 set_property(CACHE KAGE_SYNC_BALL_STRESS_RUN_MODE PROPERTY STRINGS none gprof memcheck massif)
 set(KAGE_SYNC_BALL_STRESS_RUN_ARGS "--duration-seconds 10 --report text" CACHE STRING "Command-line arguments passed by run_kage_sync_ball_stress")
 set(KAGE_SYNC_BALL_STRESS_GPROF_OUT "/tmp/kage_sync_ball_stress_gprof.txt" CACHE FILEPATH "gprof report path for run_kage_sync_ball_stress")
+set(KAGE_SYNC_PREDICTION_STRESS_RUN_ARGS "--ticks 1800 --latency-frames 10 --misprediction-percent 5 --report text" CACHE STRING "Command-line arguments passed by run_kage_sync_prediction_stress")
 
 set(KAGE_SYNC_BUILD_TESTING ${BUILD_TESTING})
 
@@ -140,6 +141,10 @@ if(KAGE_SYNC_BUILD_BENCHMARKS)
         benchmarks/ball_stress.cpp
     )
 
+    add_executable(kage_sync_prediction_stress
+        benchmarks/prediction_stress.cpp
+    )
+
     target_link_libraries(kage_sync_benchmark
         PRIVATE
             kage::sync
@@ -151,8 +156,14 @@ if(KAGE_SYNC_BUILD_BENCHMARKS)
             kage::sync
     )
 
+    target_link_libraries(kage_sync_prediction_stress
+        PRIVATE
+            kage::sync
+    )
+
     target_compile_features(kage_sync_benchmark PRIVATE cxx_std_17)
     target_compile_features(kage_sync_ball_stress PRIVATE cxx_std_17)
+    target_compile_features(kage_sync_prediction_stress PRIVATE cxx_std_17)
 
     if(KAGE_SYNC_ENABLE_GPROF)
         if(MSVC)
@@ -162,12 +173,22 @@ if(KAGE_SYNC_BUILD_BENCHMARKS)
             target_link_options(kage_sync PRIVATE -pg)
             target_compile_options(kage_sync_ball_stress PRIVATE -pg -g -fno-omit-frame-pointer)
             target_link_options(kage_sync_ball_stress PRIVATE -pg)
+            target_compile_options(kage_sync_prediction_stress PRIVATE -pg -g -fno-omit-frame-pointer)
+            target_link_options(kage_sync_prediction_stress PRIVATE -pg)
             target_compile_options(ecs PRIVATE -pg -g -fno-omit-frame-pointer)
             target_link_options(ecs PRIVATE -pg)
         endif()
     endif()
 
     separate_arguments(KAGE_SYNC_BALL_STRESS_RUN_ARGS_LIST NATIVE_COMMAND "${KAGE_SYNC_BALL_STRESS_RUN_ARGS}")
+    separate_arguments(KAGE_SYNC_PREDICTION_STRESS_RUN_ARGS_LIST NATIVE_COMMAND "${KAGE_SYNC_PREDICTION_STRESS_RUN_ARGS}")
+
+    add_custom_target(run_kage_sync_prediction_stress
+        COMMAND $<TARGET_FILE:kage_sync_prediction_stress> ${KAGE_SYNC_PREDICTION_STRESS_RUN_ARGS_LIST}
+        DEPENDS kage_sync_prediction_stress
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        USES_TERMINAL
+    )
 
     if(KAGE_SYNC_BALL_STRESS_RUN_MODE STREQUAL "none")
         add_custom_target(run_kage_sync_ball_stress

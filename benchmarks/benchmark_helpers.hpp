@@ -89,6 +89,10 @@ struct SyncComponentTraits<benchmarks::DeltaPosition> {
             from.y + static_cast<std::int32_t>(static_cast<float>(to.y - from.y) * alpha),
         };
     }
+
+    static bool should_roll_back(const Quantized& predicted, const Quantized& authoritative) {
+        return predicted.x != authoritative.x || predicted.y != authoritative.y;
+    }
 };
 
 template <>

@@ -12,6 +12,7 @@
 using kage_sync_tests::NetworkedPosition;
 using kage_sync_tests::Health;
 using kage_sync_tests::Position;
+using kage_sync_tests::PredictedPosition;
 using kage_sync_tests::Secret;
 using kage_sync_tests::SmoothPosition;
 using kage_sync_tests::Visible;
@@ -186,6 +187,28 @@ kage::sync::BitBuffer make_position_packet(
     return packet;
 }
 
+kage::sync::BitBuffer make_predicted_position_packet(
+    kage::sync::SyncFrame frame,
+    ecs::Entity server_entity,
+    PredictedPosition position,
+    std::uint32_t packet_id = 0U) {
+    kage::sync::BitBuffer packet;
+    packet.push_bits(kage::sync::protocol::server_update_message, 8U);
+    packet.push_bits(frame, 32U);
+    packet.push_bits(packet_id == 0U ? frame : packet_id, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(1, 16U);
+    packet.push_bool(false);
+    kage::sync::protocol::write_network_entity_id(packet, test_network_id(server_entity));
+    packet.push_bool(true);
+    packet.push_bits(0, 32U);
+    packet.push_bool(false);
+    packet.push_bits(1, 16U);
+    packet.push_bits(1, kage::sync::protocol::bits_for_range(2U));
+    packet.push_bits(static_cast<std::int32_t>(position.x * 10.0f), 16U);
+    packet.push_bits(static_cast<std::int32_t>(position.y * 10.0f), 16U);
+    return packet;
+}
+
 kage::sync::BitBuffer make_destroy_packet(kage::sync::SyncFrame frame, ecs::Entity server_entity) {
     kage::sync::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
@@ -237,6 +260,193 @@ TEST_CASE("replication client applies full updates and queues ACKs") {
     REQUIRE(acks.size() == 1);
     REQUIRE(acks[0].packet_id != 0);
     REQUIRE(server.process_packet(1, ack_packets[0]));
+}
+
+TEST_CASE("predicted client mode requires ShouldRollBack traits") {
+    ecs::Registry server_registry;
+    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
+    const ecs::Entity server_entity = server_registry.create();
+
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype == server_archetype);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+    kage::sync::ReplicationClient client(options);
+
+    REQUIRE_THROWS_AS(
+        client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})),
+        std::logic_error);
+}
+
+TEST_CASE("predicted client snaps first frame predicts locally and skips matching rollback") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    kage::sync::configure_client(registry, 1);
+    registry.job<PredictedPosition>(0).each([](ecs::Entity, PredictedPosition& position) {
+        position.x += 1.0f;
+    });
+
+    const ecs::Entity server_entity = registry.create();
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+    kage::sync::ReplicationClient client(options);
+
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+    const ecs::Entity local = client.local_entity(server_entity);
+    REQUIRE(local);
+    REQUIRE(registry.get<PredictedPosition>(local).x == 0.0f);
+
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(registry.get<PredictedPosition>(local).x == 1.0f);
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{1.0f, 0.0f})));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(registry.get<PredictedPosition>(local).x == 2.0f);
+}
+
+TEST_CASE("predicted client rolls back and resimulates mismatched frames") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    kage::sync::configure_client(registry, 1);
+    registry.job<PredictedPosition>(0).each([](ecs::Entity, PredictedPosition& position) {
+        position.x += 1.0f;
+    });
+
+    const ecs::Entity server_entity = registry.create();
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+    options.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
+    kage::sync::ReplicationClient client(options);
+
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+    const ecs::Entity local = client.local_entity(server_entity);
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(registry.get<PredictedPosition>(local).x == 1.0f);
+
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
+    REQUIRE(registry.get<PredictedPosition>(local).x == 1.0f);
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(registry.get<PredictedPosition>(local).x == 3.0f);
+}
+
+TEST_CASE("predicted client error blends display-interpolated resim corrections") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    kage::sync::configure_client(registry, 1);
+    REQUIRE(kage::sync::set_display_interpolated<PredictedPosition>(registry));
+    registry.job<PredictedPosition>(0).each([](ecs::Entity, PredictedPosition& position) {
+        position.x += 1.0f;
+    });
+
+    const ecs::Entity server_entity = registry.create();
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+    kage::sync::ReplicationClient client(options);
+
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+    const ecs::Entity local = client.local_entity(server_entity);
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(registry.get<PredictedPosition>(local).x == 1.0f);
+
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(registry.get<PredictedPosition>(local).x == 3.0f);
+
+    const kage::sync::DisplaySampleBuffer& display = client.display_frame(registry);
+    REQUIRE(display.entities.size() == 1);
+    PredictedPosition shown;
+    REQUIRE(display.entities[0].try_get(registry, shown));
+    REQUIRE(shown.x == Catch::Approx(2.1f));
+}
+
+TEST_CASE("predicted client display samples prediction history between fixed ticks") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    kage::sync::configure_client(registry, 1);
+    REQUIRE(kage::sync::set_display_interpolated<PredictedPosition>(registry));
+    registry.job<PredictedPosition>(0).each([](ecs::Entity, PredictedPosition& position) {
+        position.x += 1.0f;
+    });
+
+    const ecs::Entity server_entity = registry.create();
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+    kage::sync::ReplicationClient client(options);
+
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds * 0.5));
+
+    const kage::sync::DisplaySampleBuffer& display = client.display_frame(registry);
+    REQUIRE(display.entities.size() == 1);
+    PredictedPosition shown;
+    REQUIRE(display.entities[0].try_get(registry, shown));
+    REQUIRE(shown.x == Catch::Approx(2.5f));
+}
+
+TEST_CASE("predicted client ONLY_AFFECTED resim runs jobs for affected entities") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    kage::sync::configure_client(registry, 1);
+    int calls = 0;
+    registry.job<PredictedPosition>(0).each([&](ecs::Entity, PredictedPosition& position) {
+        ++calls;
+        position.x += 1.0f;
+    });
+
+    const ecs::Entity first_server = registry.create();
+    const ecs::Entity second_server = registry.create();
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+    options.rollback_policy = kage::sync::ReplicationRollbackPolicy::OnlyAffected;
+    kage::sync::ReplicationClient client(options);
+
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, first_server, PredictedPosition{0.0f, 0.0f}, 1)));
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, second_server, PredictedPosition{0.0f, 0.0f}, 2)));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(calls == 4);
+
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, first_server, PredictedPosition{2.0f, 0.0f}, 3)));
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, second_server, PredictedPosition{1.0f, 0.0f}, 4)));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+
+    REQUIRE(calls == 7);
+    REQUIRE(registry.get<PredictedPosition>(client.local_entity(first_server)).x == 4.0f);
+    REQUIRE(registry.get<PredictedPosition>(client.local_entity(second_server)).x == 3.0f);
 }
 
 TEST_CASE("replication client decodes ACKed delta updates") {

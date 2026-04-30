@@ -14,12 +14,12 @@ The current implementation provides the v0 replication foundation:
 - a bandwidth-limited `ReplicationServer` that rotates sends by per-client
   priority
 - serialized server update packets with full, delta, and destroy records
-- a `ReplicationClient` with snap mode and client-side buffered interpolation,
-  including delayed create/remove/destroy application and ACK packets packed up
-  to a configured MTU
+- a `ReplicationClient` with snap mode, client-side buffered interpolation, and
+  predicted mode with rollback/resimulation
+- client ACK packets packed up to a configured MTU
 
-Prediction, rollback, and production transport integration are planned surface
-area rather than complete behavior in this revision.
+Production transport integration is planned surface area rather than complete
+behavior in this revision.
 
 ## Requirements
 
@@ -53,8 +53,9 @@ cmake --build build-examples --target kage_sync_balls_example
 ```
 
 `kage_sync_balls_example` runs a UDP localhost server and client in one process
-and renders replicated moving balls with raylib. Use `--client-mode snap` or
-`--client-mode buffered-interpolation` to choose the client application mode.
+and renders replicated moving balls with raylib. Use `--client-mode snap`,
+`--client-mode buffered-interpolation`, or `--client-mode predict` to choose the
+client application mode.
 Buffered interpolation auto-sizes its buffer from measured receive latency and
 jitter by default; pass
 `--auto-interpolation-buffer off` to keep the configured buffer fixed. Use
@@ -134,9 +135,9 @@ client, so bandwidth-limited clients naturally receive older unsent state first.
 - Use `set_owner` or add `NetworkOwner` directly when assigning owner-only
   replicated state.
 - `ReplicationClientOptions::default_entity_mode` selects the fallback client
-  mode for newly received entities. Set `entity_mode_selector` to choose snap
-  or buffered interpolation on the first upsert for each entity from a decoded
-  `ReplicatedEntityUpdateView`. The view exposes `server_entity`,
+  mode for newly received entities. Set `entity_mode_selector` to choose snap,
+  buffered interpolation, or prediction on the first upsert for each entity from
+  a decoded `ReplicatedEntityUpdateView`. The view exposes `server_entity`,
   `local_entity`, `archetype`, `frame`, and typed `try_get<T>` accessors for
   the received component data.
 - Call `ReplicationClient::set_entity_mode(registry, server_entity, mode)` to
@@ -146,10 +147,16 @@ client, so bandwidth-limited clients naturally receive older unsent state first.
   `ReplicationClient::tick(registry, dt_seconds)` once per app frame, and pass
   server packets to the normal `receive(registry, packet)` overload. The client
   owns receive/playback frame counters, records continuous receive delay from
-  server update frames, applies fixed buffered frames, and adjusts playback with
-  `timing_stats().time_dilation`. Disable `auto_interpolation_buffer_frames` for
-  a fixed manual buffer. Explicit-frame `receive` and `apply_frame` overloads
-  remain available for tests and advanced integrations.
+  server update frames, applies fixed buffered frames, runs prediction
+  rollback/resimulation and ECS jobs for predicted entities, and adjusts
+  playback with `timing_stats().time_dilation`. Disable
+  `auto_interpolation_buffer_frames` for a fixed manual buffer. Explicit-frame
+  `receive`, `apply_frame`, and `predict_tick` overloads remain available for
+  tests and advanced integrations.
+- Predicted replicated components must define
+  `SyncComponentTraits<T>::should_roll_back(const Quantized&, const Quantized&)`.
+  The client throws if a predicted archetype includes a replicated component
+  without this hook.
 - Mark client-side `ComponentReplication::interpolation` as `Interpolate` for
   components that should be filled between received frames. The corresponding
   `SyncComponentTraits<T>` must provide `static Quantized interpolate(...)`;
@@ -234,6 +241,31 @@ and packets split by direction, packet type, update record kind, dropped
 traffic, client timing samples, and selected/auto-sized interpolation buffer
 settings.
 
+### Prediction Stress Harness
+
+`kage_sync_prediction_stress` is a deterministic headless prediction scenario
+with multiple replicated components, predicted client ECS jobs, configurable
+server-to-client frame latency, and configurable authoritative mispredictions.
+The default latency is 10 frames.
+
+```sh
+cmake --build build-bench --target kage_sync_prediction_stress
+./build-bench/kage_sync_prediction_stress \
+  --entities 2048 \
+  --ticks 1800 \
+  --latency-frames 10 \
+  --misprediction-percent 5 \
+  --rollback-policy all \
+  --report json
+```
+
+Use `--rollback-policy only-affected` to measure targeted resimulation. The
+report includes server/client packet counts and bytes, client receive and tick
+timings, server simulation and replication timings, delivered update packets,
+and the number of injected misprediction events. The
+`run_kage_sync_prediction_stress` target uses
+`KAGE_SYNC_PREDICTION_STRESS_RUN_ARGS`.
+
 You can also configure the `run_kage_sync_ball_stress` target to run the same
 scenario normally, through gprof, or through Valgrind memory tools:
 
@@ -305,6 +337,8 @@ benchmarks/server_benchmark.cpp
                              Google Benchmark server-side benchmarks
 benchmarks/client_benchmark.cpp
                              Google Benchmark client-side benchmarks
+benchmarks/prediction_stress.cpp
+                             Prediction rollback/resimulation stress harness
 benchmarks/benchmark_helpers.hpp
                              Shared benchmark fixtures and packet helpers
 CMakeLists.txt               Library, test, and benchmark targets

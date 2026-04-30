@@ -44,6 +44,12 @@ struct BallPosition {
     float z = 0.0f;
 };
 
+struct BallVelocity {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+};
+
 }  // namespace
 
 namespace kage::sync {
@@ -108,6 +114,42 @@ struct SyncComponentTraits<BallPosition> {
             error.z * scale,
         };
     }
+
+    static bool should_roll_back(const Quantized& predicted, const Quantized& authoritative) {
+        const float dx = predicted.x - authoritative.x;
+        const float dy = predicted.y - authoritative.y;
+        const float dz = predicted.z - authoritative.z;
+        return dx * dx + dy * dy + dz * dz > 0.000001f;
+    }
+};
+
+template <>
+struct SyncComponentTraits<BallVelocity> {
+    using Quantized = BallVelocity;
+
+    static Quantized quantize(const BallVelocity& value) {
+        return value;
+    }
+
+    static BallVelocity dequantize(const Quantized& value) {
+        return value;
+    }
+
+    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+        out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
+    }
+
+    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+        in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
+        return true;
+    }
+
+    static bool should_roll_back(const Quantized& predicted, const Quantized& authoritative) {
+        const float dx = predicted.x - authoritative.x;
+        const float dy = predicted.y - authoritative.y;
+        const float dz = predicted.z - authoritative.z;
+        return dx * dx + dy * dy + dz * dz > 0.000001f;
+    }
 };
 
 }  // namespace kage::sync
@@ -121,6 +163,44 @@ struct BallVisual {
     std::uint8_t b = 255;
     std::uint8_t a = 255;
 };
+
+}  // namespace
+
+namespace kage::sync {
+
+template <>
+struct SyncComponentTraits<BallVisual> {
+    using Quantized = BallVisual;
+
+    static Quantized quantize(const BallVisual& value) {
+        return value;
+    }
+
+    static BallVisual dequantize(const Quantized& value) {
+        return value;
+    }
+
+    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+        out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
+    }
+
+    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+        in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
+        return true;
+    }
+
+    static bool should_roll_back(const Quantized& predicted, const Quantized& authoritative) {
+        return predicted.radius != authoritative.radius ||
+            predicted.r != authoritative.r ||
+            predicted.g != authoritative.g ||
+            predicted.b != authoritative.b ||
+            predicted.a != authoritative.a;
+    }
+};
+
+}  // namespace kage::sync
+
+namespace {
 
 struct BallSpawnTagged {};
 struct BallBounced {};
@@ -295,6 +375,7 @@ bool receive_packet(SocketHandle socket, kage::sync::BitBuffer& packet, sockaddr
 
 SyncSchema define_schema(ecs::Registry& registry, bool interpolate_position = false) {
     const ecs::Entity position = kage::sync::register_sync_component<BallPosition>(registry, "BallPosition");
+    const ecs::Entity velocity = kage::sync::register_sync_component<BallVelocity>(registry, "BallVelocity");
     const ecs::Entity visual = kage::sync::register_sync_component<BallVisual>(registry, "BallVisual");
     const ecs::Entity spawn_tagged = registry.register_component<BallSpawnTagged>("BallSpawnTagged");
     const ecs::Entity bounced = registry.register_component<BallBounced>("BallBounced");
@@ -315,10 +396,21 @@ SyncSchema define_schema(ecs::Registry& registry, bool interpolate_position = fa
                      kage::sync::ReplicationAudience::All,
                      interpolate_position ? kage::sync::ComponentInterpolation::Interpolate
                                           : kage::sync::ComponentInterpolation::Step},
+                    {velocity, kage::sync::ReplicationAudience::All},
                     {visual, kage::sync::ReplicationAudience::All},
                 }}),
         spawn_tagged,
         bounced};
+}
+
+void register_client_prediction_jobs(ecs::Registry& registry) {
+    registry.job<BallPosition, const BallVelocity>(0).each(
+        [](ecs::Entity, BallPosition& position, const BallVelocity& velocity) {
+            constexpr float fixed_dt = 1.0f / 30.0f;
+            position.x += velocity.x * fixed_dt;
+            position.y += velocity.y * fixed_dt;
+            position.z += velocity.z * fixed_dt;
+        });
 }
 
 void spawn_ball(ecs::Registry& registry, std::vector<ServerBall>& balls, SyncSchema schema, int index) {
@@ -326,6 +418,8 @@ void spawn_ball(ecs::Registry& registry, std::vector<ServerBall>& balls, SyncSch
     const float lane = static_cast<float>((index % 9) - 4);
     const float phase = static_cast<float>(index) * 0.73f;
     registry.add<BallPosition>(entity, BallPosition{lane * 0.75f, std::sin(phase) * 1.5f, std::cos(phase) * 1.5f});
+    const Vector3 velocity{std::cos(phase) * 1.2f, std::sin(phase * 1.7f) * 0.8f, std::sin(phase) * 1.2f};
+    registry.add<BallVelocity>(entity, BallVelocity{velocity.x, velocity.y, velocity.z});
     registry.add<BallVisual>(
         entity,
         BallVisual{
@@ -340,7 +434,7 @@ void spawn_ball(ecs::Registry& registry, std::vector<ServerBall>& balls, SyncSch
     registry.add<kage::sync::Replicated>(entity, kage::sync::Replicated{schema.ball});
     balls.push_back(ServerBall{
         entity,
-        Vector3{std::cos(phase) * 1.2f, std::sin(phase * 1.7f) * 0.8f, std::sin(phase) * 1.2f},
+        velocity,
         0.0f,
         3.5f + static_cast<float>(index % 6) * 0.45f});
 }
@@ -385,8 +479,12 @@ void update_server_world(
             ball.velocity.z = -ball.velocity.z;
             bounced = true;
         }
-        if (bounced && !registry.has(ball.entity, schema.bounced)) {
-            registry.add_tag(ball.entity, schema.bounced);
+        if (bounced) {
+            registry.write<BallVelocity>(ball.entity) =
+                BallVelocity{ball.velocity.x, ball.velocity.y, ball.velocity.z};
+            if (!registry.has(ball.entity, schema.bounced)) {
+                registry.add_tag(ball.entity, schema.bounced);
+            }
         }
     }
 
@@ -446,16 +544,22 @@ void update_client_mode_hotkeys(
     };
 
     if (IsKeyPressed(KEY_M)) {
-        set_mode(
-            client_mode == kage::sync::ReplicationClientMode::Snap
-                ? kage::sync::ReplicationClientMode::BufferedInterpolation
-                : kage::sync::ReplicationClientMode::Snap);
+        if (client_mode == kage::sync::ReplicationClientMode::Snap) {
+            set_mode(kage::sync::ReplicationClientMode::BufferedInterpolation);
+        } else if (client_mode == kage::sync::ReplicationClientMode::BufferedInterpolation) {
+            set_mode(kage::sync::ReplicationClientMode::Predict);
+        } else {
+            set_mode(kage::sync::ReplicationClientMode::Snap);
+        }
     }
     if (IsKeyPressed(KEY_ONE)) {
         set_mode(kage::sync::ReplicationClientMode::Snap);
     }
     if (IsKeyPressed(KEY_TWO)) {
         set_mode(kage::sync::ReplicationClientMode::BufferedInterpolation);
+    }
+    if (IsKeyPressed(KEY_THREE)) {
+        set_mode(kage::sync::ReplicationClientMode::Predict);
     }
 }
 
@@ -561,6 +665,8 @@ const char* client_mode_name(kage::sync::ReplicationClientMode mode) {
         return "snap";
     case kage::sync::ReplicationClientMode::BufferedInterpolation:
         return "buffered";
+    case kage::sync::ReplicationClientMode::Predict:
+        return "predict";
     }
     return "snap";
 }
@@ -713,8 +819,10 @@ int main(int argc, char** argv) {
                 client_mode = kage::sync::ReplicationClientMode::Snap;
             } else if (value == "buffered-interpolation") {
                 client_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+            } else if (value == "predict") {
+                client_mode = kage::sync::ReplicationClientMode::Predict;
             } else {
-                throw std::runtime_error("--client-mode must be snap or buffered-interpolation");
+                throw std::runtime_error("--client-mode must be snap, buffered-interpolation, or predict");
             }
         } else if (arg == "--latency-ms") {
             link_settings.latency_ms = std::stof(require_value());
@@ -756,6 +864,7 @@ int main(int argc, char** argv) {
     ecs::Registry client_registry;
     kage::sync::configure_client(client_registry, client_id);
     const SyncSchema client_schema = define_schema(client_registry, true);
+    register_client_prediction_jobs(client_registry);
 
     SocketHandle server_socket = make_udp_socket(server_port);
     SocketHandle client_socket = make_udp_socket(0);
@@ -810,7 +919,6 @@ int main(int argc, char** argv) {
     while (!WindowShouldClose()) {
         const float dt = GetFrameTime();
         server_accumulator += dt;
-        client.tick(client_registry, dt);
         update_hotkeys(link_settings);
         downstream_link.settings = link_settings;
         upstream_link.settings = link_settings;
@@ -859,6 +967,7 @@ int main(int argc, char** argv) {
             client.receive(client_registry, received);
             interpolation_buffer_frames = client.options().interpolation_buffer_frames;
         }
+        client.tick(client_registry, dt);
         for (const kage::sync::BitBuffer& packet : client.drain_packets()) {
             ++stats.client_packets;
             queue_packet(upstream_link, client_socket, server_address, packet, stats, false);

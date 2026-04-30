@@ -99,6 +99,8 @@ struct ReplicationClientOptions {
     double connect_resend_interval_seconds = 0.25;
     double ping_interval_seconds = 3.0;
     std::size_t network_entity_id_tier0_bits = protocol::default_network_entity_id_tier0_bits;
+    ReplicationRollbackPolicy rollback_policy = ReplicationRollbackPolicy::All;
+    std::size_t prediction_buffer_capacity_frames = 64;
 };
 
 struct ReplicationClientTimingStats {
@@ -198,6 +200,8 @@ public:
         BitBuffer packet,
         SyncFrame receive_frame,
         SyncFrame playback_frame);
+    bool tick(ecs::Registry& registry, double dt_seconds, ecs::RunJobsOptions prediction_options);
+    bool predict_tick(ecs::Registry& registry, SyncFrame frame, ecs::RunJobsOptions options = {});
     bool apply_frame(ecs::Registry& registry, SyncFrame client_frame);
     bool sample_display_target_frame(
         const ecs::Registry& registry,
@@ -249,6 +253,7 @@ private:
     struct EntityState {
         struct FrameBaseline {
             SyncFrame frame = 0;
+            bool valid = false;
             QuantizedFrameData baseline;
         };
 
@@ -276,6 +281,7 @@ private:
         };
 
         std::vector<BufferedFrame> buffered_frames;
+        std::vector<BufferedFrame> predicted_frames;
         std::uint64_t applied_present_mask = 0;
         std::vector<ComponentError> snap_errors;
         ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
@@ -283,6 +289,8 @@ private:
         std::size_t active_index = invalid_ack_index;
         std::size_t buffered_index = invalid_ack_index;
         std::size_t snap_error_index = invalid_ack_index;
+        bool prediction_rollback_pending = false;
+        SyncFrame prediction_rollback_frame = 0;
     };
 
     EntityState* find_entity_state(ecs::Entity server_entity) noexcept;
@@ -344,12 +352,55 @@ private:
         const SyncSettings& settings,
         EntityState& state,
         const EntityState::BufferedFrame& sample);
+    bool apply_frame_data(
+        ecs::Registry& registry,
+        const SyncSettings& settings,
+        EntityState& state,
+        SyncFrame frame,
+        bool entity_present,
+        const QuantizedFrameData& baseline);
     bool apply_snap_sample(
         ecs::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
         const QuantizedFrameData& decoded,
         bool full);
+    bool validate_predicted_archetype(const SyncSettings& settings, SyncArchetypeId archetype) const;
+    bool apply_predicted_upsert(
+        ecs::Registry& registry,
+        const SyncSettings& settings,
+        SyncFrame frame,
+        ClientEntityNetworkId network_id,
+        SyncArchetypeId archetype,
+        QuantizedFrameData& authoritative,
+        bool full);
+    bool apply_predicted_destroy(ecs::Registry& registry, SyncFrame frame, ClientEntityNetworkId network_id);
+    bool quantize_predicted_entity(
+        const ecs::Registry& registry,
+        const SyncSettings& settings,
+        EntityState& state,
+        SyncFrame frame);
+    bool run_prediction_frame(ecs::Registry& registry, SyncFrame frame, ecs::RunJobsOptions options);
+    bool compare_predicted_frame(
+        const SyncSettings& settings,
+        EntityState& state,
+        SyncFrame frame,
+        const QuantizedFrameData& authoritative) const;
+    void queue_prediction_rollback(EntityState& state, SyncFrame frame);
+    bool apply_pending_prediction_rollback(ecs::Registry& registry, ecs::RunJobsOptions options);
+    bool resimulate_all_predicted(ecs::Registry& registry, SyncFrame begin_frame, SyncFrame current_frame, ecs::RunJobsOptions options);
+    bool resimulate_affected_predicted(ecs::Registry& registry, SyncFrame begin_frame, SyncFrame current_frame, ecs::RunJobsOptions options);
+    void collect_resimulated_prediction_entities(std::vector<std::uint32_t>& out) const;
+    void capture_original_current_predictions(
+        SyncFrame current_frame,
+        const std::vector<std::uint32_t>& entity_indices,
+        std::vector<QuantizedFrameData>& out) const;
+    bool blend_resim_errors(
+        const ecs::Registry& registry,
+        const SyncSettings& settings,
+        SyncFrame current_frame,
+        const std::vector<std::uint32_t>& entity_indices,
+        const std::vector<QuantizedFrameData>& original);
     bool apply_latest_snap(ecs::Registry& registry, const SyncSettings& settings, EntityState& state);
     bool switch_entity_mode(
         ecs::Registry& registry,
@@ -357,6 +408,7 @@ private:
         EntityState& state,
         ReplicationClientMode mode);
     bool has_buffered_entities() const noexcept;
+    bool has_predicted_entities() const noexcept;
     void blend_snap_errors(const SyncSettings& settings, float dt_seconds);
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     void record_interpolation_frame(std::uint64_t checks, std::uint64_t starvations) noexcept;
@@ -418,12 +470,17 @@ private:
     bool sent_initial_ping_ = false;
     double receive_accumulator_seconds_ = 0.0;
     double playback_accumulator_seconds_ = 0.0;
+    double prediction_accumulator_seconds_ = 0.0;
     double display_accumulator_seconds_ = 0.0;
     double display_target_frame_ = 0.0;
     SyncFrame receive_frame_ = 0;
     SyncFrame playback_frame_ = 0;
     SyncFrame last_applied_buffered_frame_ = 0;
     bool has_applied_buffered_frame_ = false;
+    SyncFrame last_predicted_frame_ = 0;
+    bool has_predicted_frame_ = false;
+    SyncFrame pending_prediction_rollback_frame_ = 0;
+    bool has_pending_prediction_rollback_ = false;
     bool has_display_target_frame_ = false;
     std::uint32_t highest_server_update_packet_id_ = 0;
     std::uint64_t server_update_packet_window_mask_ = 0;

@@ -314,6 +314,8 @@ inline const char* client_mode_name(ReplicationClientMode mode) {
         return "snap";
     case ReplicationClientMode::BufferedInterpolation:
         return "buffered-interpolation";
+    case ReplicationClientMode::Predict:
+        return "predict";
     }
     return "snap";
 }

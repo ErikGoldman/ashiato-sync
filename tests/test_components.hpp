@@ -36,6 +36,16 @@ struct SmoothPosition {
     float y = 0.0f;
 };
 
+struct PredictedPosition {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+struct QuantizedPredictedPosition {
+    std::int32_t x = 0;
+    std::int32_t y = 0;
+};
+
 struct BandwidthProbe {
     std::int32_t value = 0;
 };
@@ -63,6 +73,70 @@ inline kage::sync::SyncArchetypeId define_position_archetype(ecs::Registry& regi
 }  // namespace kage_sync_tests
 
 namespace kage::sync {
+
+template <>
+struct SyncComponentTraits<kage_sync_tests::PredictedPosition> {
+    using Quantized = kage_sync_tests::QuantizedPredictedPosition;
+    using Error = kage_sync_tests::QuantizedPredictedPosition;
+
+    static Quantized quantize(const kage_sync_tests::PredictedPosition& value) {
+        return Quantized{
+            static_cast<std::int32_t>(value.x * 10.0f),
+            static_cast<std::int32_t>(value.y * 10.0f),
+        };
+    }
+
+    static kage_sync_tests::PredictedPosition dequantize(const Quantized& value) {
+        return kage_sync_tests::PredictedPosition{
+            static_cast<float>(value.x) / 10.0f,
+            static_cast<float>(value.y) / 10.0f,
+        };
+    }
+
+    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+        out.push_bits(current.x, 16U);
+        out.push_bits(current.y, 16U);
+    }
+
+    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+        out.x = static_cast<std::int32_t>(in.read_bits(16U));
+        out.y = static_cast<std::int32_t>(in.read_bits(16U));
+        return true;
+    }
+
+    static bool should_roll_back(const Quantized& predicted, const Quantized& authoritative) {
+        return predicted.x != authoritative.x || predicted.y != authoritative.y;
+    }
+
+    static Quantized interpolate(const Quantized& from, const Quantized& to, float alpha) {
+        return Quantized{
+            static_cast<std::int32_t>(static_cast<float>(from.x) + static_cast<float>(to.x - from.x) * alpha),
+            static_cast<std::int32_t>(static_cast<float>(from.y) + static_cast<float>(to.y - from.y) * alpha),
+        };
+    }
+
+    static Error compute_error(const Quantized& current, const Quantized& previous) {
+        return Error{previous.x - current.x, previous.y - current.y};
+    }
+
+    static Quantized apply_error(const Quantized& current, const Error& error) {
+        return Quantized{current.x + error.x, current.y + error.y};
+    }
+
+    static Error blend_out_error(const Error& error, float dt_seconds) {
+        if (dt_seconds <= 0.0f) {
+            return error;
+        }
+        if (dt_seconds >= 1.0f) {
+            return Error{};
+        }
+        const float scale = 1.0f - dt_seconds;
+        return Error{
+            static_cast<std::int32_t>(static_cast<float>(error.x) * scale),
+            static_cast<std::int32_t>(static_cast<float>(error.y) * scale),
+        };
+    }
+};
 
 template <>
 struct SyncComponentTraits<kage_sync_tests::NetworkedPosition> {

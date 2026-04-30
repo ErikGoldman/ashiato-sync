@@ -98,7 +98,13 @@ enum class ComponentInterpolation {
 
 enum class ReplicationClientMode {
     Snap,
-    BufferedInterpolation
+    BufferedInterpolation,
+    Predict
+};
+
+enum class ReplicationRollbackPolicy {
+    All,
+    OnlyAffected
 };
 
 struct ComponentReplication {
@@ -236,8 +242,11 @@ struct SyncComponentOps {
     using InterpolateBytesFn = bool (*)(const std::uint8_t*, const std::uint8_t*, float, std::uint8_t*);
     using InterpolateFn = bool (*)(const QuantizedBytes&, const QuantizedBytes&, float, QuantizedBytes&);
     using ComputeErrorFn = bool (*)(const QuantizedBytes&, const QuantizedBytes&, QuantizedBytes&);
+    using ComputeErrorBytesFn = bool (*)(const std::uint8_t*, const std::uint8_t*, QuantizedBytes&);
     using ApplyErrorFn = bool (*)(const QuantizedBytes&, const QuantizedBytes&, QuantizedBytes&);
     using BlendOutErrorFn = bool (*)(const QuantizedBytes&, float, QuantizedBytes&);
+    using ShouldRollBackFn = bool (*)(const QuantizedBytes&, const QuantizedBytes&);
+    using ShouldRollBackBytesFn = bool (*)(const std::uint8_t*, const std::uint8_t*);
 
     std::size_t quantized_size = 0;
     std::size_t error_size = 0;
@@ -253,8 +262,11 @@ struct SyncComponentOps {
     InterpolateBytesFn interpolate_bytes = nullptr;
     InterpolateFn interpolate = nullptr;
     ComputeErrorFn compute_error = nullptr;
+    ComputeErrorBytesFn compute_error_bytes = nullptr;
     ApplyErrorFn apply_error = nullptr;
     BlendOutErrorFn blend_out_error = nullptr;
+    ShouldRollBackFn should_roll_back = nullptr;
+    ShouldRollBackBytesFn should_roll_back_bytes = nullptr;
 };
 
 struct SyncArchetype {
