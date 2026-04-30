@@ -703,6 +703,14 @@ bool ReplicationClient::set_entity_mode(
     ecs::Entity server_entity,
     ReplicationClientMode mode) {
     EntityState* state = find_entity_state(server_entity);
+    return state != nullptr && set_entity_mode(registry, state->client_entity_network_id, mode);
+}
+
+bool ReplicationClient::set_entity_mode(
+    ecs::Registry& registry,
+    ClientEntityNetworkId network_id,
+    ReplicationClientMode mode) {
+    EntityState* state = find_entity_state(network_id);
     if (state == nullptr) {
         return false;
     }
@@ -714,10 +722,21 @@ bool ReplicationClient::set_entity_mode(
         return true;
     }
 
+    if (mode == ReplicationClientMode::Predict && !has_predicted_entities()) {
+        has_predicted_frame_ = false;
+        last_predicted_frame_ = 0;
+        prediction_accumulator_seconds_ = 0.0;
+    }
+
     const SyncSettings& settings = registry.get<SyncSettings>();
     const bool switched = switch_entity_mode(registry, settings, *state, mode);
     if (switched) {
         sync_entity_memberships(*state);
+    }
+    if (switched && mode != ReplicationClientMode::Predict && !has_predicted_entities()) {
+        has_predicted_frame_ = false;
+        last_predicted_frame_ = 0;
+        prediction_accumulator_seconds_ = 0.0;
     }
     return switched;
 }
@@ -1040,6 +1059,49 @@ bool ReplicationClient::is_alive_network_id(ClientEntityNetworkId network_id) co
     return state != nullptr && state->local;
 }
 
+EntityReferenceStatus ReplicationClient::resolve_entity_reference(EntityReference& reference) const noexcept {
+    const ClientEntityNetworkId network_id = reference.client_entity_network_id;
+    if (network_id == invalid_client_entity_network_id) {
+        reference = EntityReference{};
+        return EntityReferenceStatus::Invalid;
+    }
+
+    const std::uint32_t wire_network_id = client_entity_network_id_wire_id(network_id);
+    if (wire_network_id == 0U || wire_network_id > max_client_local_wire_network_id) {
+        reference = EntityReference{};
+        return EntityReferenceStatus::Invalid;
+    }
+
+    const EntityState* state = find_entity_state(network_id);
+    if (state != nullptr) {
+        if (state->local) {
+            reference.entity = state->local;
+            return EntityReferenceStatus::Alive;
+        }
+        reference.entity = ecs::Entity{};
+        return EntityReferenceStatus::Pending;
+    }
+
+    if (wire_network_id >= wire_network_ids_.size()) {
+        reference.entity = ecs::Entity{};
+        return EntityReferenceStatus::Pending;
+    }
+
+    const WireNetworkIdState& wire_state = wire_network_ids_[wire_network_id];
+    if (wire_state.version == 0U) {
+        reference.entity = ecs::Entity{};
+        return EntityReferenceStatus::Pending;
+    }
+
+    if (wire_state.version != client_entity_network_id_version(network_id)) {
+        reference = EntityReference{};
+        return EntityReferenceStatus::Destroyed;
+    }
+
+    reference.entity = ecs::Entity{};
+    return EntityReferenceStatus::Pending;
+}
+
 ClientEntityNetworkId ReplicationClient::client_entity_network_id_for_wire(std::uint32_t wire_network_id) {
     if (wire_network_id == 0U || wire_network_id > max_client_local_wire_network_id) {
         return invalid_client_entity_network_id;
@@ -1188,6 +1250,22 @@ bool ReplicationClient::apply_upsert(
         return false;
     }
     QuantizedFrameData& received = buffered_without_selector ? merged : decoded;
+    EntityReferenceContext reference_context;
+    bool reference_context_initialized = false;
+    auto references_for_component = [&]() -> EntityReferenceContext* {
+        if (!reference_context_initialized) {
+            reference_context.user = this;
+            reference_context.network_entity_id_tier0_bits = options_.network_entity_id_tier0_bits;
+            reference_context.client_entity_network_id_for_wire = [](void* user, std::uint32_t wire_network_id) {
+                return static_cast<ReplicationClient*>(user)->client_entity_network_id_for_wire(wire_network_id);
+            };
+            reference_context.client_local_entity = [](void* user, ClientEntityNetworkId network_id) {
+                return static_cast<ReplicationClient*>(user)->local_entity(network_id);
+            };
+            reference_context_initialized = true;
+        }
+        return &reference_context;
+    };
 
     EntityState* previous_state = found_state != nullptr && !previous_absent ? found_state : nullptr;
     const QuantizedFrameData* previous_baseline = nullptr;
@@ -1245,7 +1323,11 @@ bool ReplicationClient::apply_upsert(
             if (received_bytes == nullptr) {
                 return false;
             }
-            if (!ops.deserialize(packet, nullptr, received_bytes)) {
+            if (!ops.deserialize(
+                    packet,
+                    nullptr,
+                    received_bytes,
+                    ops.references_entities ? references_for_component() : nullptr)) {
                 return false;
             }
             if (collect_decoded_updates) {
@@ -1320,7 +1402,11 @@ bool ReplicationClient::apply_upsert(
                 (!buffered_without_selector && decoded_bytes == nullptr)) {
                 return false;
             }
-            if (!ops.deserialize(packet, previous_bytes, merged_bytes)) {
+            if (!ops.deserialize(
+                    packet,
+                    previous_bytes,
+                    merged_bytes,
+                    ops.references_entities ? references_for_component() : nullptr)) {
                 return false;
             }
             if (!buffered_without_selector) {
@@ -1867,7 +1953,7 @@ bool ReplicationClient::apply_predicted_upsert(
             return false;
         }
     }
-    if (!has_predicted_frame_ || frame > last_predicted_frame_) {
+    if (!has_predicted_frame_) {
         last_predicted_frame_ = frame;
         has_predicted_frame_ = true;
         prediction_accumulator_seconds_ = 0.0;
@@ -2469,7 +2555,7 @@ bool ReplicationClient::switch_entity_mode(
             sample.entity_present = state.entity_present;
             sample.archetype = state.archetype;
             sample.baseline = state.baseline;
-            if (state.entity_present && (!has_predicted_frame_ || state.frame > last_predicted_frame_)) {
+            if (state.entity_present && !has_predicted_frame_) {
                 last_predicted_frame_ = state.frame;
                 has_predicted_frame_ = true;
                 prediction_accumulator_seconds_ = 0.0;

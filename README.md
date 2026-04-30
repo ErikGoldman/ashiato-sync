@@ -140,6 +140,15 @@ client, so bandwidth-limited clients naturally receive older unsent state first.
   a decoded `ReplicatedEntityUpdateView`. The view exposes `server_entity`,
   `local_entity`, `archetype`, `frame`, and typed `try_get<T>` accessors for
   the received component data.
+- Components can serialize entity references by storing
+  `kage::sync::EntityReference` and defining context-aware
+  `SyncComponentTraits<T>::serialize(..., EntityReferenceContext&)` and
+  `deserialize(..., EntityReferenceContext&)` overloads. Use
+  `write_entity_reference` on the server and `read_entity_reference` on the
+  client; references are encoded as the receiving client's compact network id.
+  If a referenced entity arrives later, the decoded reference keeps
+  `client_entity_network_id` stable and `ReplicationClient::local_entity(id)`
+  can resolve it after the entity is created.
 - Call `ReplicationClient::set_entity_mode(registry, server_entity, mode)` to
   switch an already-known entity immediately. It returns `false` for unknown
   server entities and does not create future overrides.

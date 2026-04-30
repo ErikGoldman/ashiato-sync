@@ -16,6 +16,7 @@ using kage_sync_tests::BandwidthProbe;
 using kage_sync_tests::NetworkedPayload;
 using kage_sync_tests::NetworkedPosition;
 using kage_sync_tests::Secret;
+using kage_sync_tests::TargetReference;
 using kage_sync_tests::Visible;
 using kage_sync_tests::define_position_archetype;
 using kage_sync_tests::read_networked_payload;
@@ -1010,6 +1011,158 @@ TEST_CASE("replication prioritizer priority affects serialized send order") {
     REQUIRE_FALSE(first.delta);
     REQUIRE(first.x == 30);
     REQUIRE(first.y == 30);
+}
+
+TEST_CASE("entity references boost visible low priority targets on the next tick") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const ecs::Entity reference_component =
+        kage::sync::register_sync_component<TargetReference>(registry, "TargetReference");
+    const kage::sync::SyncArchetypeId position_archetype = kage::sync::define_archetype(
+        registry,
+        "ReferencedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    const kage::sync::SyncArchetypeId reference_archetype = kage::sync::define_archetype(
+        registry,
+        "ReferenceActor",
+        {{reference_component, kage::sync::ReplicationAudience::All}});
+
+    const ecs::Entity source = registry.create();
+    const ecs::Entity target = registry.create();
+    const ecs::Entity medium = registry.create();
+    REQUIRE(registry.add<TargetReference>(
+                source,
+                TargetReference{kage::sync::EntityReference{target}}) != nullptr);
+    REQUIRE(registry.add<NetworkedPosition>(target, NetworkedPosition{2.0f, 2.0f}) != nullptr);
+    REQUIRE(registry.add<NetworkedPosition>(medium, NetworkedPosition{3.0f, 3.0f}) != nullptr);
+    REQUIRE(start_sync(registry, source, reference_archetype));
+    REQUIRE(start_sync(registry, target, position_archetype));
+    REQUIRE(start_sync(registry, medium, position_archetype));
+
+    std::vector<kage::sync::BitBuffer> payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 17;
+    options.mtu_bytes = 17;
+    options.prioritizer_interval_frames = 1;
+    options.prioritizer = [&](kage::sync::ClientId,
+                              const std::vector<kage::sync::ReplicationPriorityObject>& objects,
+                              std::vector<kage::sync::ReplicationPriorityDecision>& decisions) {
+        for (std::size_t index = 0; index < objects.size(); ++index) {
+            if (objects[index].entity == source) {
+                decisions[index].priority = 100U;
+            } else if (objects[index].entity == medium) {
+                decisions[index].priority = 50U;
+            }
+        }
+    };
+    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+        payloads.push_back(payload);
+    };
+
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+    server.tick(registry);
+
+    REQUIRE(payloads.size() == 1);
+    ServerUpdatePacket update = read_server_update(
+        payloads.back(),
+        2U,
+        1U + kage::sync::protocol::network_entity_id_encoded_bits(2U));
+    REQUIRE(update.entities.size() == 1);
+    REQUIRE(update.entities[0].archetype == reference_archetype);
+    REQUIRE(update.entities[0].components.size() == 1);
+    REQUIRE(update.entities[0].components[0].payload.read_bool());
+    std::uint32_t referenced_network_id = 0;
+    REQUIRE(kage::sync::protocol::read_network_entity_id(
+        update.entities[0].components[0].payload,
+        referenced_network_id));
+    REQUIRE(referenced_network_id != 0U);
+
+    payloads.clear();
+    server.tick(registry);
+
+    REQUIRE(payloads.size() == 1);
+    update = read_server_update(payloads.back(), 2U);
+    REQUIRE(update.entities.size() == 1);
+    REQUIRE(update.entities[0].archetype == position_archetype);
+    REQUIRE(update.entities[0].network_id == referenced_network_id);
+}
+
+TEST_CASE("entity reference priority boost respects prioritizer visibility filtering") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const ecs::Entity reference_component =
+        kage::sync::register_sync_component<TargetReference>(registry, "TargetReference");
+    const kage::sync::SyncArchetypeId position_archetype = kage::sync::define_archetype(
+        registry,
+        "HiddenReferencedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    const kage::sync::SyncArchetypeId reference_archetype = kage::sync::define_archetype(
+        registry,
+        "HiddenReferenceActor",
+        {{reference_component, kage::sync::ReplicationAudience::All}});
+
+    const ecs::Entity source = registry.create();
+    const ecs::Entity target = registry.create();
+    const ecs::Entity medium = registry.create();
+    REQUIRE(registry.add<TargetReference>(
+                source,
+                TargetReference{kage::sync::EntityReference{target}}) != nullptr);
+    REQUIRE(registry.add<NetworkedPosition>(target, NetworkedPosition{2.0f, 2.0f}) != nullptr);
+    REQUIRE(registry.add<NetworkedPosition>(medium, NetworkedPosition{3.0f, 3.0f}) != nullptr);
+    REQUIRE(start_sync(registry, source, reference_archetype));
+    REQUIRE(start_sync(registry, target, position_archetype));
+    REQUIRE(start_sync(registry, medium, position_archetype));
+
+    std::vector<kage::sync::BitBuffer> payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 17;
+    options.mtu_bytes = 17;
+    options.prioritizer_interval_frames = 1;
+    std::uint64_t source_priority = 100U;
+    options.prioritizer = [&](kage::sync::ClientId,
+                              const std::vector<kage::sync::ReplicationPriorityObject>& objects,
+                              std::vector<kage::sync::ReplicationPriorityDecision>& decisions) {
+        for (std::size_t index = 0; index < objects.size(); ++index) {
+            if (objects[index].entity == source) {
+                decisions[index].priority = source_priority;
+            } else if (objects[index].entity == target) {
+                decisions[index].replicate = false;
+            } else if (objects[index].entity == medium) {
+                decisions[index].priority = 50U;
+            }
+        }
+    };
+    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+        payloads.push_back(payload);
+    };
+
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+    server.tick(registry);
+
+    REQUIRE(payloads.size() == 1);
+    ServerUpdatePacket update = read_server_update(payloads.back(), 2U, 1U);
+    REQUIRE(update.entities.size() == 1);
+    REQUIRE(update.entities[0].archetype == reference_archetype);
+    REQUIRE(update.entities[0].components.size() == 1);
+    REQUIRE_FALSE(update.entities[0].components[0].payload.read_bool());
+
+    source_priority = 0U;
+    payloads.clear();
+    server.tick(registry);
+
+    REQUIRE(payloads.size() == 1);
+    update = read_server_update(payloads.back(), 2U);
+    REQUIRE(update.entities.size() == 1);
+    REQUIRE(update.entities[0].archetype == position_archetype);
+    REQUIRE(update.entities[0].network_id != 0U);
+    REQUIRE(update.entities[0].components.size() == 1);
+    const NetworkedPayload payload = read_networked_payload(update.entities[0].components[0].payload);
+    REQUIRE(payload.x == 30);
+    REQUIRE(payload.y == 30);
 }
 
 TEST_CASE("replication prioritizer component masks apply to delta updates") {

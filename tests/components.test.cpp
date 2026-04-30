@@ -179,7 +179,7 @@ TEST_CASE("sync component traits provide type-erased quantization and serializat
     ops->quantize(&position, quantized.data());
 
     kage::sync::BitBuffer payload;
-    ops->serialize(nullptr, quantized.data(), payload);
+    ops->serialize(nullptr, quantized.data(), payload, nullptr);
     const NetworkedPayload fields = read_networked_payload(payload);
     REQUIRE_FALSE(fields.delta);
     REQUIRE(fields.x == 10);
@@ -187,7 +187,7 @@ TEST_CASE("sync component traits provide type-erased quantization and serializat
 
     payload.reset_read();
     std::array<std::uint8_t, sizeof(kage_sync_tests::QuantizedNetworkedPosition)> decoded{};
-    REQUIRE(ops->deserialize(payload, nullptr, decoded.data()));
+    REQUIRE(ops->deserialize(payload, nullptr, decoded.data(), nullptr));
 
     NetworkedPosition dequantized;
     ops->dequantize(decoded.data(), &dequantized);

@@ -231,13 +231,99 @@ private:
     std::unique_ptr<Overflow> overflow_;
 };
 
+struct EntityReference {
+    ecs::Entity entity;
+    ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
+};
+
+struct EntityReferenceContext {
+    using ServerNetworkIdForEntityFn = std::uint32_t (*)(void*, ecs::Entity);
+    using ClientEntityNetworkIdForWireFn = ClientEntityNetworkId (*)(void*, std::uint32_t);
+    using ClientLocalEntityFn = ecs::Entity (*)(void*, ClientEntityNetworkId);
+
+    void* user = nullptr;
+    std::size_t network_entity_id_tier0_bits = protocol::default_network_entity_id_tier0_bits;
+    ServerNetworkIdForEntityFn server_network_id_for_entity = nullptr;
+    ClientEntityNetworkIdForWireFn client_entity_network_id_for_wire = nullptr;
+    ClientLocalEntityFn client_local_entity = nullptr;
+
+    std::uint32_t network_id_for_entity(ecs::Entity entity) const {
+        if (!entity || server_network_id_for_entity == nullptr) {
+            return 0U;
+        }
+        return server_network_id_for_entity(user, entity);
+    }
+
+    ClientEntityNetworkId network_id_for_wire(std::uint32_t wire_network_id) const {
+        if (wire_network_id == 0U || client_entity_network_id_for_wire == nullptr) {
+            return invalid_client_entity_network_id;
+        }
+        return client_entity_network_id_for_wire(user, wire_network_id);
+    }
+
+    ecs::Entity local_entity(ClientEntityNetworkId network_id) const {
+        if (network_id == invalid_client_entity_network_id || client_local_entity == nullptr) {
+            return ecs::Entity{};
+        }
+        return client_local_entity(user, network_id);
+    }
+};
+
+inline bool write_entity_reference(
+    BitBuffer& out,
+    ecs::Entity entity,
+    const EntityReferenceContext& context) {
+    const std::uint32_t network_id = context.network_id_for_entity(entity);
+    out.push_bool(network_id != 0U);
+    if (network_id == 0U) {
+        return false;
+    }
+    protocol::write_network_entity_id(out, network_id, context.network_entity_id_tier0_bits);
+    return true;
+}
+
+inline bool write_entity_reference(
+    BitBuffer& out,
+    const EntityReference& reference,
+    const EntityReferenceContext& context) {
+    return write_entity_reference(out, reference.entity, context);
+}
+
+inline bool read_entity_reference(
+    BitBuffer& in,
+    EntityReferenceContext& context,
+    EntityReference& out) {
+    if (in.remaining_bits() < 1U) {
+        return false;
+    }
+    const bool has_reference = in.read_bool();
+    if (!has_reference) {
+        out = EntityReference{};
+        return true;
+    }
+
+    std::uint32_t wire_network_id = 0;
+    if (!protocol::read_network_entity_id(in, wire_network_id, context.network_entity_id_tier0_bits) ||
+        wire_network_id == 0U) {
+        return false;
+    }
+
+    const ClientEntityNetworkId client_network_id = context.network_id_for_wire(wire_network_id);
+    if (client_network_id == invalid_client_entity_network_id) {
+        return false;
+    }
+    out.client_entity_network_id = client_network_id;
+    out.entity = context.local_entity(client_network_id);
+    return true;
+}
+
 struct SyncComponentOps {
     using QuantizedBytes = kage::sync::QuantizedBytes;
     using QuantizeFn = void (*)(const void*, std::uint8_t*);
     using DequantizeFn = void (*)(const std::uint8_t*, void*);
     using ApplyFn = bool (*)(ecs::Registry&, ecs::Entity, const std::uint8_t*);
-    using SerializeFn = void (*)(const std::uint8_t*, const std::uint8_t*, BitBuffer&);
-    using DeserializeFn = bool (*)(BitBuffer&, const std::uint8_t*, std::uint8_t*);
+    using SerializeFn = void (*)(const std::uint8_t*, const std::uint8_t*, BitBuffer&, EntityReferenceContext*);
+    using DeserializeFn = bool (*)(BitBuffer&, const std::uint8_t*, std::uint8_t*, EntityReferenceContext*);
     using InterpolateFn = bool (*)(const std::uint8_t*, const std::uint8_t*, float, std::uint8_t*);
     using ComputeErrorFn = bool (*)(const std::uint8_t*, const std::uint8_t*, QuantizedBytes&);
     using ApplyErrorFn = bool (*)(const std::uint8_t*, const QuantizedBytes&, QuantizedBytes&);
@@ -251,6 +337,7 @@ struct SyncComponentOps {
     ApplyFn apply = nullptr;
     SerializeFn serialize = nullptr;
     DeserializeFn deserialize = nullptr;
+    bool references_entities = false;
     InterpolateFn interpolate = nullptr;
     ComputeErrorFn compute_error = nullptr;
     ApplyErrorFn apply_error = nullptr;

@@ -50,6 +50,10 @@ struct BandwidthProbe {
     std::int32_t value = 0;
 };
 
+struct TargetReference {
+    kage::sync::EntityReference target;
+};
+
 struct Visible {};
 struct Secret {};
 struct TestCue {
@@ -290,6 +294,35 @@ struct SyncComponentTraits<kage_sync_tests::SmoothPosition> {
             error.x * scale,
             error.y * scale,
         };
+    }
+};
+
+template <>
+struct SyncComponentTraits<kage_sync_tests::TargetReference> {
+    using Quantized = kage_sync_tests::TargetReference;
+
+    static Quantized quantize(const kage_sync_tests::TargetReference& value) {
+        return value;
+    }
+
+    static kage_sync_tests::TargetReference dequantize(const Quantized& value) {
+        return value;
+    }
+
+    static void serialize(
+        const Quantized*,
+        const Quantized& current,
+        BitBuffer& out,
+        EntityReferenceContext& references) {
+        (void)write_entity_reference(out, current.target, references);
+    }
+
+    static bool deserialize(
+        BitBuffer& in,
+        const Quantized*,
+        Quantized& out,
+        EntityReferenceContext& references) {
+        return read_entity_reference(in, references, out.target);
     }
 };
 

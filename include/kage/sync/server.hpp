@@ -87,6 +87,7 @@ private:
         std::uint64_t component_mask = std::numeric_limits<std::uint64_t>::max();
         SyncFrame priority_frame = 0;
         bool priority_replicate = true;
+        bool reference_priority_boost_pending = false;
         bool has_network_id = false;
         std::vector<PendingQuantizedFrame> pending;
         std::vector<PendingCue> pending_cues;

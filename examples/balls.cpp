@@ -37,6 +37,11 @@ constexpr std::uint16_t server_port = 37042;
 constexpr std::uint8_t example_client_hello_message = 250;
 constexpr int min_ball_count = 0;
 constexpr int max_ball_count = 512;
+constexpr float ball_contact_skin = 0.18f;
+constexpr float ball_contact_line_radius = 0.025f;
+constexpr float ball_bounds_x = 4.0f;
+constexpr float ball_bounds_y = 2.5f;
+constexpr float ball_bounds_z = 2.5f;
 
 struct BallPosition {
     float x = 0.0f;
@@ -174,6 +179,10 @@ struct BallCueFlash {
     float strength = 0.0f;
 };
 
+struct BallContact {
+    kage::sync::EntityReference target{};
+};
+
 }  // namespace
 
 namespace kage::sync {
@@ -237,6 +246,41 @@ struct SyncComponentTraits<BallVisual> {
     }
 };
 
+template <>
+struct SyncComponentTraits<BallContact> {
+    using Quantized = BallContact;
+
+    static Quantized quantize(const BallContact& value) {
+        return value;
+    }
+
+    static BallContact dequantize(const Quantized& value) {
+        return value;
+    }
+
+    static void serialize(
+        const Quantized*,
+        const Quantized& current,
+        BitBuffer& out,
+        EntityReferenceContext& references) {
+        (void)write_entity_reference(out, current.target, references);
+    }
+
+    static bool deserialize(
+        BitBuffer& in,
+        const Quantized*,
+        Quantized& out,
+        EntityReferenceContext& references) {
+        return read_entity_reference(in, references, out.target);
+    }
+
+    static bool should_roll_back(const Quantized& predicted, const Quantized& authoritative) {
+        (void)predicted;
+        (void)authoritative;
+        return false;
+    }
+};
+
 }  // namespace kage::sync
 
 namespace {
@@ -247,6 +291,7 @@ struct BallBounced {};
 struct ServerBall {
     ecs::Entity entity;
     Vector3 velocity{};
+    float radius = 0.25f;
     float age = 0.0f;
     float lifetime = 5.0f;
 };
@@ -302,6 +347,16 @@ struct RuntimeStats {
     kage::sync::SyncFrame frame = 0;
     kage::sync::SyncFrame receive_frame = 0;
     kage::sync::SyncFrame client_frame = 0;
+};
+
+struct RenderedBall {
+    kage::sync::ClientEntityNetworkId network_id = kage::sync::invalid_client_entity_network_id;
+    ecs::Entity local_entity;
+    Vector3 position{};
+    BallVisual visual{};
+    BallContact contact{};
+    bool spawn_tagged = false;
+    bool bounced = false;
 };
 
 void close_socket(SocketHandle socket) {
@@ -416,6 +471,7 @@ SyncSchema define_schema(ecs::Registry& registry, bool interpolate_position = fa
     const ecs::Entity position = kage::sync::register_sync_component<BallPosition>(registry, "BallPosition");
     const ecs::Entity velocity = kage::sync::register_sync_component<BallVelocity>(registry, "BallVelocity");
     const ecs::Entity visual = kage::sync::register_sync_component<BallVisual>(registry, "BallVisual");
+    const ecs::Entity contact = kage::sync::register_sync_component<BallContact>(registry, "BallContact");
     const ecs::Entity spawn_tagged = registry.register_component<BallSpawnTagged>("BallSpawnTagged");
     const ecs::Entity bounced = registry.register_component<BallBounced>("BallBounced");
     registry.register_component<BallCueFlash>("BallCueFlash");
@@ -439,18 +495,29 @@ SyncSchema define_schema(ecs::Registry& registry, bool interpolate_position = fa
                                           : kage::sync::ComponentInterpolation::Step},
                     {velocity, kage::sync::ReplicationAudience::All},
                     {visual, kage::sync::ReplicationAudience::All},
+                    {contact, kage::sync::ReplicationAudience::All},
                 }}),
         spawn_tagged,
         bounced};
 }
 
 void register_client_prediction_jobs(ecs::Registry& registry, kage::sync::ReplicationClient& client) {
-    client.simulation_job<BallPosition, const BallVelocity>(registry, 0).each(
-        [](ecs::Entity, BallPosition& position, const BallVelocity& velocity) {
+    client.simulation_job<BallPosition, BallVelocity>(registry, 0).each(
+        [](ecs::Entity, BallPosition& position, BallVelocity& velocity) {
             constexpr float fixed_dt = 1.0f / 30.0f;
             position.x += velocity.x * fixed_dt;
             position.y += velocity.y * fixed_dt;
             position.z += velocity.z * fixed_dt;
+
+            if (std::fabs(position.x) > ball_bounds_x) {
+                velocity.x = -velocity.x;
+            }
+            if (std::fabs(position.y) > ball_bounds_y) {
+                velocity.y = -velocity.y;
+            }
+            if (std::fabs(position.z) > ball_bounds_z) {
+                velocity.z = -velocity.z;
+            }
         });
 }
 
@@ -461,14 +528,16 @@ void spawn_ball(ecs::Registry& registry, std::vector<ServerBall>& balls, SyncSch
     registry.add<BallPosition>(entity, BallPosition{lane * 0.75f, std::sin(phase) * 1.5f, std::cos(phase) * 1.5f});
     const Vector3 velocity{std::cos(phase) * 1.2f, std::sin(phase * 1.7f) * 0.8f, std::sin(phase) * 1.2f};
     registry.add<BallVelocity>(entity, BallVelocity{velocity.x, velocity.y, velocity.z});
+    const float radius = 0.18f + 0.06f * static_cast<float>(index % 4);
     registry.add<BallVisual>(
         entity,
         BallVisual{
-            0.18f + 0.06f * static_cast<float>(index % 4),
+            radius,
             static_cast<std::uint8_t>(80 + (index * 47) % 170),
             static_cast<std::uint8_t>(100 + (index * 83) % 140),
             static_cast<std::uint8_t>(120 + (index * 31) % 120),
             255});
+    registry.add<BallContact>(entity, BallContact{});
     if (((index * 1103515245U + 12345U) & 3U) == 0U) {
         registry.add_tag(entity, schema.spawn_tagged);
     }
@@ -476,8 +545,98 @@ void spawn_ball(ecs::Registry& registry, std::vector<ServerBall>& balls, SyncSch
     balls.push_back(ServerBall{
         entity,
         velocity,
+        radius,
         0.0f,
         3.5f + static_cast<float>(index % 6) * 0.45f});
+}
+
+void update_ball_contacts(ecs::Registry& registry, std::vector<ServerBall>& balls) {
+    constexpr float grid_min_x = -4.5f;
+    constexpr float grid_min_y = -3.0f;
+    constexpr float grid_min_z = -3.0f;
+    constexpr float inverse_cell_size = 1.0f / 0.75f;
+    constexpr int grid_x = 12;
+    constexpr int grid_y = 8;
+    constexpr int grid_z = 8;
+    constexpr int cell_count = grid_x * grid_y * grid_z;
+
+    std::array<int, cell_count> heads{};
+    std::array<int, max_ball_count> next{};
+    std::array<std::uint8_t, max_ball_count> assigned{};
+    std::array<BallPosition, max_ball_count> positions{};
+    heads.fill(-1);
+
+    auto cell_axis = [](float value, float min_value, int cells) {
+        const int cell = static_cast<int>((value - min_value) * inverse_cell_size);
+        return std::clamp(cell, 0, cells - 1);
+    };
+    auto cell_index = [&](const BallPosition& position) {
+        const int x = cell_axis(position.x, grid_min_x, grid_x);
+        const int y = cell_axis(position.y, grid_min_y, grid_y);
+        const int z = cell_axis(position.z, grid_min_z, grid_z);
+        return x + y * grid_x + z * grid_x * grid_y;
+    };
+    auto cell_index_from_axes = [](int x, int y, int z) {
+        return x + y * grid_x + z * grid_x * grid_y;
+    };
+
+    const std::size_t count = std::min(balls.size(), static_cast<std::size_t>(max_ball_count));
+    for (std::size_t index = 0; index < count; ++index) {
+        positions[index] = registry.get<BallPosition>(balls[index].entity);
+        registry.write<BallContact>(balls[index].entity) = BallContact{};
+
+        const int cell = cell_index(positions[index]);
+        next[index] = heads[cell];
+        heads[cell] = static_cast<int>(index);
+    }
+
+    for (std::size_t index = 0; index < count; ++index) {
+        if (assigned[index] != 0U) {
+            continue;
+        }
+
+        const BallPosition& position = positions[index];
+        const int center_x = cell_axis(position.x, grid_min_x, grid_x);
+        const int center_y = cell_axis(position.y, grid_min_y, grid_y);
+        const int center_z = cell_axis(position.z, grid_min_z, grid_z);
+
+        const int min_z = std::max(center_z - 1, 0);
+        const int max_z = std::min(center_z + 1, grid_z - 1);
+        const int min_y = std::max(center_y - 1, 0);
+        const int max_y = std::min(center_y + 1, grid_y - 1);
+        const int min_x = std::max(center_x - 1, 0);
+        const int max_x = std::min(center_x + 1, grid_x - 1);
+
+        for (int z = min_z; z <= max_z && assigned[index] == 0U; ++z) {
+            for (int y = min_y; y <= max_y && assigned[index] == 0U; ++y) {
+                for (int x = min_x; x <= max_x && assigned[index] == 0U; ++x) {
+                    for (int other = heads[cell_index_from_axes(x, y, z)]; other >= 0; other = next[other]) {
+                        const std::size_t other_index = static_cast<std::size_t>(other);
+                        if (other_index <= index || assigned[other_index] != 0U) {
+                            continue;
+                        }
+
+                        const BallPosition& other_position = positions[other_index];
+                        const float dx = position.x - other_position.x;
+                        const float dy = position.y - other_position.y;
+                        const float dz = position.z - other_position.z;
+                        const float radius = balls[index].radius + balls[other_index].radius + ball_contact_skin;
+                        if (dx * dx + dy * dy + dz * dz > radius * radius) {
+                            continue;
+                        }
+
+                        registry.write<BallContact>(balls[index].entity) =
+                            BallContact{kage::sync::EntityReference{balls[other_index].entity}};
+                        registry.write<BallContact>(balls[other_index].entity) =
+                            BallContact{kage::sync::EntityReference{balls[index].entity}};
+                        assigned[index] = 1U;
+                        assigned[other_index] = 1U;
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
 
 void update_server_world(
@@ -509,15 +668,15 @@ void update_server_world(
         position.z += ball.velocity.z * dt;
 
         bool bounced = false;
-        if (std::fabs(position.x) > 4.0f) {
+        if (std::fabs(position.x) > ball_bounds_x) {
             ball.velocity.x = -ball.velocity.x;
             bounced = true;
         }
-        if (std::fabs(position.y) > 2.5f) {
+        if (std::fabs(position.y) > ball_bounds_y) {
             ball.velocity.y = -ball.velocity.y;
             bounced = true;
         }
-        if (std::fabs(position.z) > 2.5f) {
+        if (std::fabs(position.z) > ball_bounds_z) {
             ball.velocity.z = -ball.velocity.z;
             bounced = true;
         }
@@ -549,6 +708,8 @@ void update_server_world(
                 return true;
             }),
         balls.end());
+
+    update_ball_contacts(registry, balls);
 }
 
 void send_hello(SocketHandle client_socket, const sockaddr_in& server_address) {
@@ -582,13 +743,13 @@ void update_hotkeys(LinkSettings& settings) {
 void update_client_mode_hotkeys(
     kage::sync::ReplicationClient& client,
     ecs::Registry& client_registry,
-    const std::vector<ServerBall>& balls,
+    const std::vector<kage::sync::ClientEntityNetworkId>& known_entities,
     kage::sync::ReplicationClientMode& client_mode) {
     auto set_mode = [&](kage::sync::ReplicationClientMode mode) {
         client_mode = mode;
-        client.set_default_entity_mode(mode);
-        for (const ServerBall& ball : balls) {
-            client.set_entity_mode(client_registry, ball.entity, mode);
+        (void)client.set_default_entity_mode(mode);
+        for (const kage::sync::ClientEntityNetworkId network_id : known_entities) {
+            (void)client.set_entity_mode(client_registry, network_id, mode);
         }
     };
 
@@ -609,6 +770,17 @@ void update_client_mode_hotkeys(
     }
     if (IsKeyPressed(KEY_THREE)) {
         set_mode(kage::sync::ReplicationClientMode::Predict);
+    }
+}
+
+void remember_client_entity(
+    std::vector<kage::sync::ClientEntityNetworkId>& known_entities,
+    kage::sync::ClientEntityNetworkId network_id) {
+    if (network_id == kage::sync::invalid_client_entity_network_id) {
+        return;
+    }
+    if (std::find(known_entities.begin(), known_entities.end(), network_id) == known_entities.end()) {
+        known_entities.push_back(network_id);
     }
 }
 
@@ -706,6 +878,16 @@ void draw_graph(Rectangle bounds, const SampleHistory& history, Color color, flo
         }
         previous = point;
     }
+}
+
+void draw_contact_link(Vector3 from, Vector3 to) {
+    const float dx = from.x - to.x;
+    const float dy = from.y - to.y;
+    const float dz = from.z - to.z;
+    if (dx * dx + dy * dy + dz * dz < 0.0001f) {
+        return;
+    }
+    DrawCylinderEx(from, to, ball_contact_line_radius, ball_contact_line_radius, 8, Color{255, 245, 90, 230});
 }
 
 const char* client_mode_name(kage::sync::ReplicationClientMode mode) {
@@ -936,20 +1118,24 @@ int main(int argc, char** argv) {
         }
     };
     kage::sync::ReplicationServer server(server_options);
-    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-        1200,
-        client_mode,
-        interpolation_buffer_frames,
-        64,
-        auto_interpolation_buffer_frames,
-        1,
-        2.0f,
-        0.1f,
-        time_dilation_min,
-        time_dilation_max,
-        time_dilation_gain,
-        {},
-        1.0 / 30.0});
+    kage::sync::ReplicationClientOptions client_options;
+    client_options.mtu_bytes = 1200;
+    client_options.default_entity_mode = client_mode;
+    client_options.interpolation_buffer_frames = interpolation_buffer_frames;
+    client_options.interpolation_buffer_capacity_frames = 64;
+    client_options.auto_interpolation_buffer_frames = auto_interpolation_buffer_frames;
+    client_options.auto_interpolation_min_frames = 1;
+    client_options.auto_interpolation_jitter_multiplier = 2.0f;
+    client_options.auto_interpolation_smoothing = 0.1f;
+    client_options.auto_interpolation_time_dilation_min = time_dilation_min;
+    client_options.auto_interpolation_time_dilation_max = time_dilation_max;
+    client_options.auto_interpolation_time_dilation_gain = time_dilation_gain;
+    client_options.entity_mode_selector = [&](const kage::sync::ReplicatedEntityUpdateView&) {
+        return client_mode;
+    };
+    client_options.fixed_dt_seconds = 1.0 / 30.0;
+    client_options.rollback_policy = kage::sync::ReplicationRollbackPolicy::OnlyAffected;
+    kage::sync::ReplicationClient client(client_options);
     register_client_prediction_jobs(client_registry, client);
 
     InitWindow(1280, 720, "kage-sync localhost balls");
@@ -961,6 +1147,10 @@ int main(int argc, char** argv) {
     camera.projection = CAMERA_PERSPECTIVE;
 
     std::vector<ServerBall> balls;
+    std::vector<kage::sync::ClientEntityNetworkId> known_client_entities;
+    std::vector<RenderedBall> rendered_balls;
+    known_client_entities.reserve(max_ball_count);
+    rendered_balls.reserve(max_ball_count);
     int spawn_index = 0;
     float server_accumulator = 0.0f;
     kage::sync::SyncFrame server_frame = 0;
@@ -973,7 +1163,7 @@ int main(int argc, char** argv) {
         downstream_link.settings = link_settings;
         upstream_link.settings = link_settings;
         update_entity_count_hotkeys(target_ball_count);
-        update_client_mode_hotkeys(client, client_registry, balls, client_mode);
+        update_client_mode_hotkeys(client, client_registry, known_client_entities, client_mode);
         flush_link(downstream_link, server_socket);
         flush_link(upstream_link, client_socket);
         update_bandwidth_samples(stats, dt);
@@ -1049,12 +1239,60 @@ int main(int argc, char** argv) {
         BeginMode3D(camera);
         DrawGrid(12, 1.0f);
         const float pulse_time = static_cast<float>(GetTime());
+        rendered_balls.clear();
         for (const kage::sync::DisplayEntitySample& entity : client.display_frame(client_registry).entities) {
             BallPosition position;
             BallVisual visual;
             if (!entity.try_get(client_registry, position) || !entity.try_get(client_registry, visual)) {
                 continue;
             }
+            BallContact contact{};
+            (void)entity.try_get(client_registry, contact);
+            rendered_balls.push_back(RenderedBall{
+                entity.client_entity_network_id,
+                entity.local_entity,
+                Vector3{position.x, position.y, position.z},
+                visual,
+                contact,
+                entity.has_tag(client_registry, client_schema.spawn_tagged),
+                entity.has_tag(client_registry, client_schema.bounced),
+            });
+            remember_client_entity(known_client_entities, entity.client_entity_network_id);
+        }
+
+        auto find_rendered_position = [&](kage::sync::ClientEntityNetworkId network_id, Vector3& out) {
+            for (const RenderedBall& ball : rendered_balls) {
+                if (ball.network_id == network_id) {
+                    out = ball.position;
+                    return true;
+                }
+            }
+
+            const ecs::Entity local = client.local_entity(network_id);
+            if (!local || !client_registry.alive(local)) {
+                return false;
+            }
+            const BallPosition* position = client_registry.try_get<BallPosition>(local);
+            if (position == nullptr) {
+                return false;
+            }
+            out = Vector3{position->x, position->y, position->z};
+            return true;
+        };
+
+        for (const RenderedBall& ball : rendered_balls) {
+            const kage::sync::ClientEntityNetworkId target = ball.contact.target.client_entity_network_id;
+            if (target == kage::sync::invalid_client_entity_network_id) {
+                continue;
+            }
+            Vector3 target_position{};
+            if (find_rendered_position(target, target_position)) {
+                draw_contact_link(ball.position, target_position);
+            }
+        }
+
+        for (const RenderedBall& ball : rendered_balls) {
+            const BallVisual& visual = ball.visual;
             Color color{visual.r, visual.g, visual.b, visual.a};
             auto pulse_toward = [&](Color target, float phase) {
                 const float pulse = 0.35f + 0.25f * (0.5f + 0.5f * std::sin(pulse_time * 5.0f + phase));
@@ -1066,17 +1304,17 @@ int main(int argc, char** argv) {
                 color.g = blend(color.g, target.g);
                 color.b = blend(color.b, target.b);
             };
-            if (entity.has_tag(client_registry, client_schema.spawn_tagged)) {
+            if (ball.spawn_tagged) {
                 pulse_toward(Color{255, 210, 74, visual.a}, 0.0f);
             }
-            if (entity.has_tag(client_registry, client_schema.bounced)) {
+            if (ball.bounced) {
                 pulse_toward(Color{70, 220, 255, visual.a}, 2.1f);
             }
-            DrawSphere(Vector3{position.x, position.y, position.z}, visual.radius, color);
-            if (const BallCueFlash* flash = client_registry.try_get<BallCueFlash>(entity.local_entity)) {
+            DrawSphere(ball.position, visual.radius, color);
+            if (const BallCueFlash* flash = client_registry.try_get<BallCueFlash>(ball.local_entity)) {
                 const float alpha = std::clamp(flash->seconds / 0.22f, 0.0f, 1.0f);
                 DrawSphereWires(
-                    Vector3{position.x, position.y, position.z},
+                    ball.position,
                     visual.radius + 0.08f + 0.14f * (1.0f - alpha),
                     12,
                     8,

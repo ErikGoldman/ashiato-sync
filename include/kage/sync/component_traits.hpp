@@ -97,6 +97,62 @@ bool equal_cue_payloads(const BitBuffer& lhs_payload, const BitBuffer& rhs_paylo
 }
 
 template <typename Traits, typename Quantized, typename = void>
+struct has_context_serialize : std::false_type {};
+
+template <typename Traits, typename Quantized>
+struct has_context_serialize<
+    Traits,
+    Quantized,
+    std::void_t<decltype(Traits::serialize(
+        std::declval<const Quantized*>(),
+        std::declval<const Quantized&>(),
+        std::declval<BitBuffer&>(),
+        std::declval<EntityReferenceContext&>()))>> : std::true_type {};
+
+template <typename Traits, typename Quantized>
+void serialize_quantized(
+    const Quantized* previous,
+    const Quantized& current,
+    BitBuffer& out,
+    EntityReferenceContext* references) {
+    if constexpr (has_context_serialize<Traits, Quantized>::value) {
+        EntityReferenceContext empty_references;
+        Traits::serialize(previous, current, out, references != nullptr ? *references : empty_references);
+    } else {
+        (void)references;
+        Traits::serialize(previous, current, out);
+    }
+}
+
+template <typename Traits, typename Quantized, typename = void>
+struct has_context_deserialize : std::false_type {};
+
+template <typename Traits, typename Quantized>
+struct has_context_deserialize<
+    Traits,
+    Quantized,
+    std::void_t<decltype(Traits::deserialize(
+        std::declval<BitBuffer&>(),
+        std::declval<const Quantized*>(),
+        std::declval<Quantized&>(),
+        std::declval<EntityReferenceContext&>()))>> : std::true_type {};
+
+template <typename Traits, typename Quantized>
+bool deserialize_quantized(
+    BitBuffer& in,
+    const Quantized* previous,
+    Quantized& out,
+    EntityReferenceContext* references) {
+    if constexpr (has_context_deserialize<Traits, Quantized>::value) {
+        EntityReferenceContext empty_references;
+        return Traits::deserialize(in, previous, out, references != nullptr ? *references : empty_references);
+    } else {
+        (void)references;
+        return Traits::deserialize(in, previous, out);
+    }
+}
+
+template <typename Traits, typename Quantized, typename = void>
 struct has_interpolate : std::false_type {};
 
 template <typename Traits, typename Quantized>
@@ -304,7 +360,11 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
         std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
         return registry.add<T>(entity, Traits::dequantize(quantized)) != nullptr;
     };
-    ops.serialize = [](const std::uint8_t* previous_bytes, const std::uint8_t* current_bytes, BitBuffer& out) {
+    ops.serialize = [](
+        const std::uint8_t* previous_bytes,
+        const std::uint8_t* current_bytes,
+        BitBuffer& out,
+        EntityReferenceContext* references) {
         Quantized current{};
         std::memcpy(&current, current_bytes, sizeof(Quantized));
 
@@ -315,9 +375,13 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
             previous_ptr = &previous;
         }
 
-        Traits::serialize(previous_ptr, current, out);
+        detail::serialize_quantized<Traits, Quantized>(previous_ptr, current, out, references);
     };
-    ops.deserialize = [](BitBuffer& in, const std::uint8_t* previous_bytes, std::uint8_t* out) {
+    ops.deserialize = [](
+        BitBuffer& in,
+        const std::uint8_t* previous_bytes,
+        std::uint8_t* out,
+        EntityReferenceContext* references) {
         Quantized previous{};
         const Quantized* previous_ptr = nullptr;
         if (previous_bytes != nullptr) {
@@ -326,13 +390,16 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
         }
 
         Quantized quantized{};
-        if (!Traits::deserialize(in, previous_ptr, quantized)) {
+        if (!detail::deserialize_quantized<Traits, Quantized>(in, previous_ptr, quantized, references)) {
             return false;
         }
 
         std::memcpy(out, &quantized, sizeof(Quantized));
         return true;
     };
+    ops.references_entities =
+        detail::has_context_serialize<Traits, Quantized>::value ||
+        detail::has_context_deserialize<Traits, Quantized>::value;
     if constexpr (detail::has_interpolate<Traits, Quantized>::value) {
         ops.interpolate = &detail::interpolate_quantized<Traits, Quantized>;
     }

@@ -80,6 +80,13 @@ enum class ReplicationClientConnectionState {
     Rejected
 };
 
+enum class EntityReferenceStatus {
+    Invalid,
+    Pending,
+    Alive,
+    Destroyed
+};
+
 struct ReplicationClientOptions {
     std::size_t mtu_bytes = 1200;
     ReplicationClientMode default_entity_mode = ReplicationClientMode::Snap;
@@ -283,6 +290,7 @@ public:
 
     bool set_default_entity_mode(ReplicationClientMode mode) noexcept;
     bool set_entity_mode(ecs::Registry& registry, ecs::Entity server_entity, ReplicationClientMode mode);
+    bool set_entity_mode(ecs::Registry& registry, ClientEntityNetworkId network_id, ReplicationClientMode mode);
     ReplicationClientMode entity_mode(ecs::Entity server_entity) const noexcept;
     bool set_interpolation_buffer_frames(SyncFrame frames) noexcept;
     bool tick(ecs::Registry& registry, double dt_seconds);
@@ -322,6 +330,7 @@ public:
     std::size_t pending_ack_count() const noexcept;
     bool is_alive_network_id(ClientEntityNetworkId network_id) const noexcept;
     ecs::Entity local_entity(ClientEntityNetworkId network_id) const;
+    EntityReferenceStatus resolve_entity_reference(EntityReference& reference) const noexcept;
     ClientId client_id() const noexcept {
         return client_id_;
     }

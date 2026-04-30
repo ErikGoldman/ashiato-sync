@@ -20,6 +20,7 @@ namespace {
 
 constexpr std::size_t max_pending_quantized_frames_per_entity = 64;
 constexpr std::size_t max_cues_per_entity_record = 255;
+constexpr std::uint64_t reference_priority_boost = std::numeric_limits<std::uint64_t>::max() / 2U;
 
 std::size_t configured_packet_id_bits(const ReplicationServerOptions& options) noexcept {
     return protocol::packet_id_bits_for_max_pending(options.max_pending_packet_acks_per_client);
@@ -31,6 +32,26 @@ std::size_t server_update_header_bits(const ReplicationServerOptions& options) n
 
 std::size_t destroy_record_bits(std::uint32_t network_id, std::size_t tier0_bits) noexcept {
     return 1U + protocol::network_entity_id_encoded_bits(network_id, tier0_bits);
+}
+
+std::uint64_t boosted_candidate_priority(
+    std::uint64_t age,
+    std::uint64_t priority,
+    bool reference_boost_pending) noexcept {
+    const std::uint64_t max = std::numeric_limits<std::uint64_t>::max();
+    if (max - age < priority) {
+        age = max;
+    } else {
+        age += priority;
+    }
+    if (reference_boost_pending) {
+        if (max - age < reference_priority_boost) {
+            age = max;
+        } else {
+            age += reference_priority_boost;
+        }
+    }
+    return age;
 }
 
 constexpr std::uint32_t invalid_slot_or_free = std::numeric_limits<std::uint32_t>::max();
@@ -653,7 +674,10 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
                 SerializedCandidate::Kind::Update,
                 slot,
                 0,
-                age_priority + entity_state.priority,
+                boosted_candidate_priority(
+                    age_priority,
+                    entity_state.priority,
+                    entity_state.reference_priority_boost_pending),
                 entity_state.component_mask});
         }
         std::stable_sort(
@@ -803,6 +827,7 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
             ++packet_entities;
             client.reset_epochs[slot] = client.epoch;
             ClientEntityState& entity_state = client.entity_states[slot];
+            entity_state.reference_priority_boost_pending = false;
             entity_state.pending.push_back(ClientEntityState::PendingQuantizedFrame{serialized.quantized_frame, frame_});
             retain_quantized_frame(serialized.quantized_frame);
             while (entity_state.pending.size() > max_pending_quantized_frames_per_entity) {
@@ -894,7 +919,10 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
                 SerializedCandidate::Kind::Update,
                 slot,
                 0,
-                priority + entity_state.priority,
+                boosted_candidate_priority(
+                    priority,
+                    entity_state.priority,
+                    entity_state.reference_priority_boost_pending),
                 entity_state.component_mask});
         }
         std::stable_sort(
@@ -1112,6 +1140,7 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
             ++packet_entities;
             client.reset_epochs[slot] = client.epoch;
             ClientEntityState& entity_state = client.entity_states[slot];
+            entity_state.reference_priority_boost_pending = false;
             entity_state.pending.push_back(ClientEntityState::PendingQuantizedFrame{serialized.quantized_frame, frame_});
             while (entity_state.pending.size() > max_pending_quantized_frames_per_entity) {
                 const std::uint32_t quantized_frame = entity_state.pending.front().quantized_frame;
@@ -1629,6 +1658,7 @@ void ReplicationServer::clear_client_entity_state(ClientEntityState& state) {
     state.component_mask = std::numeric_limits<std::uint64_t>::max();
     state.priority_frame = 0;
     state.priority_replicate = true;
+    state.reference_priority_boost_pending = false;
     state.has_network_id = false;
     state.pending_cues.clear();
 }
@@ -1792,6 +1822,40 @@ void ReplicationServer::write_entity_record(
     if (network_id == 0U) {
         return;
     }
+    struct ReferenceContextData {
+        ReplicationServer* server = nullptr;
+        ClientState* client = nullptr;
+        std::uint32_t source_slot = 0;
+    } reference_context_data{this, &client, slot};
+    EntityReferenceContext reference_context;
+    bool reference_context_initialized = false;
+    auto references_for_component = [&]() -> EntityReferenceContext* {
+        if (!reference_context_initialized) {
+            reference_context.user = &reference_context_data;
+            reference_context.network_entity_id_tier0_bits = options_.network_entity_id_tier0_bits;
+            reference_context.server_network_id_for_entity = [](void* user, ecs::Entity entity) {
+                ReferenceContextData& data = *static_cast<ReferenceContextData*>(user);
+                const auto found = data.server->entity_to_slot_.find(entity.value);
+                if (found == data.server->entity_to_slot_.end()) {
+                    return 0U;
+                }
+                const std::uint32_t reference_slot = found->second;
+                if (reference_slot >= data.server->replicated_.size() ||
+                    reference_slot >= data.client->entity_states.size() ||
+                    !data.server->replicated_[reference_slot].active ||
+                    !data.client->entity_states[reference_slot].priority_replicate) {
+                    return 0U;
+                }
+                if (reference_slot != data.source_slot) {
+                    data.client->entity_states[reference_slot].reference_priority_boost_pending = true;
+                }
+                return data.server->network_id_for_slot(*data.client, reference_slot);
+            };
+            reference_context_initialized = true;
+        }
+        return &reference_context;
+    };
+
     protocol::write_network_entity_id(out, network_id, options_.network_entity_id_tier0_bits);
     out.push_bool(!delta);
     if (!delta) {
@@ -1856,7 +1920,7 @@ void ReplicationServer::write_entity_record(
             if (previous == nullptr || current == nullptr) {
                 throw std::logic_error("replicated quantized frame component bytes are missing");
             }
-            ops.serialize(previous, current, out);
+            ops.serialize(previous, current, out, ops.references_entities ? references_for_component() : nullptr);
         }
         const std::size_t cue_count = std::min(entity_state.pending_cues.size(), max_cues_per_entity_record);
         out.push_bool(cue_count != 0U);
@@ -1923,7 +1987,7 @@ void ReplicationServer::write_entity_record(
         if (!use_presence_mask) {
             out.push_bits(static_cast<std::int64_t>(component_index + 1U), sync_slot_bits);
         }
-        ops.serialize(nullptr, current, out);
+        ops.serialize(nullptr, current, out, ops.references_entities ? references_for_component() : nullptr);
     }
 
     const std::size_t cue_count = std::min(entity_state.pending_cues.size(), max_cues_per_entity_record);
