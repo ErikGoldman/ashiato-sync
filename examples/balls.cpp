@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -34,6 +35,7 @@ namespace {
 
 constexpr kage::sync::ClientId client_id = 1;
 constexpr std::uint16_t server_port = 37042;
+constexpr std::uint8_t example_client_hello_message = 250;
 constexpr int min_ball_count = 0;
 constexpr int max_ball_count = 512;
 
@@ -444,7 +446,7 @@ void update_server_world(
 
 void send_hello(SocketHandle client_socket, const sockaddr_in& server_address) {
     kage::sync::BitBuffer hello;
-    hello.push_bits(kage::sync::protocol::client_hello_message, 8U);
+    hello.push_bits(example_client_hello_message, 8U);
     hello.push_unsigned_bits(client_id, 64U);
     send_packet(client_socket, server_address, hello);
 }
@@ -518,6 +520,43 @@ void update_entity_count_hotkeys(int& target_ball_count) {
     if (IsKeyPressed(KEY_END)) {
         target_ball_count = min_ball_count;
     }
+}
+
+kage::sync::ReplicationPrioritizerFn make_sphere_prioritizer(ecs::Registry& registry) {
+    static constexpr float inner_filter_radius_sq = 0.75f * 0.75f;
+    static constexpr float priority_radius_sq = 12.0f * 12.0f;
+    static constexpr std::uint64_t priority_scale = 1000;
+
+    return [&registry](
+               kage::sync::ClientId,
+               const std::vector<kage::sync::ReplicationPriorityObject>& objects,
+               std::vector<kage::sync::ReplicationPriorityDecision>& decisions) {
+        decisions.resize(objects.size());
+        for (std::size_t index = 0; index < objects.size(); ++index) {
+            kage::sync::ReplicationPriorityDecision& decision = decisions[index];
+            decision.replicate = true;
+            decision.component_mask = std::numeric_limits<std::uint64_t>::max();
+
+            const BallPosition* position = registry.try_get<BallPosition>(objects[index].entity);
+            if (position == nullptr) {
+                decision.priority = 0;
+                continue;
+            }
+
+            const float distance_sq =
+                position->x * position->x + position->y * position->y + position->z * position->z;
+            if (distance_sq <= inner_filter_radius_sq) {
+                decision.replicate = false;
+                decision.priority = 0;
+                continue;
+            }
+
+            const float clamped_distance_sq = distance_sq < priority_radius_sq ? distance_sq : priority_radius_sq;
+            const float normalized = (priority_radius_sq - clamped_distance_sq) /
+                (priority_radius_sq - inner_filter_radius_sq);
+            decision.priority = 1U + static_cast<std::uint64_t>(normalized * static_cast<float>(priority_scale));
+        }
+    };
 }
 
 void update_bandwidth_samples(RuntimeStats& stats, float dt) {
@@ -739,6 +778,7 @@ int main(int argc, char** argv) {
     kage::sync::ReplicationServerOptions server_options;
     server_options.bandwidth_limit_bytes_per_tick = 32 * 1024;
     server_options.mtu_bytes = 1200;
+    server_options.prioritizer = make_sphere_prioritizer(server_registry);
     server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
         if (client_connected) {
             ++stats.server_packets;
@@ -791,7 +831,7 @@ int main(int argc, char** argv) {
         while (receive_packet(server_socket, received, &sender)) {
             kage::sync::BitBuffer read = received;
             const auto message = static_cast<std::uint8_t>(read.read_bits(8U));
-            if (message == kage::sync::protocol::client_hello_message) {
+            if (message == example_client_hello_message) {
                 const auto id = static_cast<kage::sync::ClientId>(read.read_unsigned_bits(64U));
                 if (id == client_id) {
                     client_address = sender;

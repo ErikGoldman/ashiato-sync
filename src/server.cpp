@@ -494,6 +494,7 @@ void ReplicationServer::tick(ecs::Registry& registry, const ReplicateFn& replica
         ++client.epoch;
 
         std::size_t remaining = options_.bandwidth_limit_bytes_per_tick;
+        refresh_client_priorities(registry, client);
         std::vector<std::uint32_t> order = std::move(client.order);
         sent.clear();
         next_order.clear();
@@ -504,6 +505,10 @@ void ReplicationServer::tick(ecs::Registry& registry, const ReplicateFn& replica
                 if (slot < replicated_.size() && replicated_[slot].active) {
                     deactivate_slot(slot);
                 }
+                continue;
+            }
+            if (slot >= client.entity_states.size() || !client.entity_states[slot].priority_replicate) {
+                next_order.push_back(slot);
                 continue;
             }
 
@@ -537,6 +542,53 @@ void ReplicationServer::disconnect_idle_clients() {
             continue;
         }
         ++index;
+    }
+}
+
+void ReplicationServer::refresh_client_priorities(const ecs::Registry& registry, ClientState& client) {
+    if (!options_.prioritizer || options_.prioritizer_interval_frames == 0U) {
+        return;
+    }
+    std::vector<ReplicationPriorityObject> objects;
+    std::vector<std::uint32_t> slots;
+    objects.reserve(client.order.size());
+    slots.reserve(client.order.size());
+
+    for (const std::uint32_t slot : client.order) {
+        if (slot >= replicated_.size() || slot >= client.entity_states.size() || !replicated_[slot].active) {
+            continue;
+        }
+        ClientEntityState& entity_state = client.entity_states[slot];
+        if (entity_state.priority_frame != 0U &&
+            frame_ - entity_state.priority_frame < options_.prioritizer_interval_frames) {
+            continue;
+        }
+        if (!slot_is_replicable(registry, slot)) {
+            continue;
+        }
+        objects.push_back(ReplicationPriorityObject{replicated_[slot].entity});
+        slots.push_back(slot);
+    }
+    if (objects.empty()) {
+        return;
+    }
+
+    std::vector<ReplicationPriorityDecision> decisions(objects.size());
+    options_.prioritizer(client.id, objects, decisions);
+    if (decisions.size() != objects.size()) {
+        throw std::invalid_argument("replication prioritizer must return one decision per object");
+    }
+
+    for (std::size_t index = 0; index < slots.size(); ++index) {
+        const std::uint32_t slot = slots[index];
+        if (!decisions[index].replicate) {
+            hide_slot_for_client(client, slot);
+        }
+        ClientEntityState& entity_state = client.entity_states[slot];
+        entity_state.priority_replicate = decisions[index].replicate;
+        entity_state.priority = decisions[index].priority;
+        entity_state.component_mask = decisions[index].component_mask;
+        entity_state.priority_frame = frame_;
     }
 }
 
@@ -597,6 +649,7 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
         packet_ack_records.clear();
         packet_ack_records.reserve(options_.mtu_bytes / 8U);
 
+        refresh_client_priorities(registry, client);
         for (const std::uint32_t slot : client.order) {
             if (!slot_is_replicable(registry, slot)) {
                 if (slot < replicated_.size() && replicated_[slot].active) {
@@ -604,11 +657,27 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
                 }
                 continue;
             }
-            const std::uint64_t priority = slot < client.reset_epochs.size()
+            if (slot >= client.entity_states.size() || !client.entity_states[slot].priority_replicate) {
+                unsent.push_back(slot);
+                continue;
+            }
+            const std::uint64_t age_priority = slot < client.reset_epochs.size()
                 ? client.epoch - client.reset_epochs[slot]
                 : 0;
-            update_candidates.push_back(SerializedCandidate{SerializedCandidate::Kind::Update, slot, 0, priority});
+            const ClientEntityState& entity_state = client.entity_states[slot];
+            update_candidates.push_back(SerializedCandidate{
+                SerializedCandidate::Kind::Update,
+                slot,
+                0,
+                age_priority + entity_state.priority,
+                entity_state.component_mask});
         }
+        std::stable_sort(
+            update_candidates.begin(),
+            update_candidates.end(),
+            [](const SerializedCandidate& lhs, const SerializedCandidate& rhs) {
+                return lhs.priority > rhs.priority;
+            });
 
         if (client.pending_destroys.empty()) {
             candidates.insert(candidates.end(), update_candidates.begin(), update_candidates.end());
@@ -712,6 +781,7 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
                     frame_,
                     quantized_frame_scratch,
                     quantized_frame_dirty_scratch,
+                    candidate.component_mask,
                     serialized)) {
                 unsent.push_back(slot);
                 continue;
@@ -822,6 +892,7 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
         destroy_order.clear();
         destroy_order.reserve(client.pending_destroys.size());
 
+        refresh_client_priorities(registry, client);
         for (const std::uint32_t slot : client.order) {
             if (!slot_is_replicable(registry, slot)) {
                 continue;
@@ -829,8 +900,23 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
             const std::uint64_t priority = slot < client.reset_epochs.size()
                 ? client.epoch - client.reset_epochs[slot]
                 : 0;
-            update_candidates.push_back(SerializedCandidate{SerializedCandidate::Kind::Update, slot, 0, priority});
+            if (slot >= client.entity_states.size() || !client.entity_states[slot].priority_replicate) {
+                continue;
+            }
+            const ClientEntityState& entity_state = client.entity_states[slot];
+            update_candidates.push_back(SerializedCandidate{
+                SerializedCandidate::Kind::Update,
+                slot,
+                0,
+                priority + entity_state.priority,
+                entity_state.component_mask});
         }
+        std::stable_sort(
+            update_candidates.begin(),
+            update_candidates.end(),
+            [](const SerializedCandidate& lhs, const SerializedCandidate& rhs) {
+                return lhs.priority > rhs.priority;
+            });
 
         auto append_prepared_update = [&](const SerializedCandidate& candidate) {
             std::uint32_t quantized_frame = invalid_quantized_frame_id;
@@ -997,7 +1083,14 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
 
             serialized.payload.clear();
             serialized.quantized_frame = prepared_candidate.quantized_frame;
-            write_entity_record(registry, settings, client, slot, quantized_frames_[serialized.quantized_frame], serialized.payload);
+            write_entity_record(
+                registry,
+                settings,
+                client,
+                slot,
+                quantized_frames_[serialized.quantized_frame],
+                candidate.component_mask,
+                serialized.payload);
             if (serialized.payload.empty()) {
                 release_prepared_quantized_frame(serialized.quantized_frame);
                 unsent.push_back(slot);
@@ -1264,6 +1357,7 @@ bool ReplicationServer::serialize_entity(
     SyncFrame frame,
     QuantizedFrameData& scratch,
     std::vector<std::uint64_t>& scratch_dirty_generations,
+    std::uint64_t component_mask,
     SerializedEntity& out) {
     if (slot >= replicated_.size() || slot >= client.entity_states.size()) {
         return false;
@@ -1287,7 +1381,14 @@ bool ReplicationServer::serialize_entity(
     }
 
     out.quantized_frame = quantized_frame;
-    write_entity_record(registry, settings, client, slot, quantized_frames_[quantized_frame], out.payload);
+    write_entity_record(
+        registry,
+        settings,
+        client,
+        slot,
+        quantized_frames_[quantized_frame],
+        component_mask,
+        out.payload);
     return !out.payload.empty();
 }
 
@@ -1486,6 +1587,10 @@ void ReplicationServer::clear_client_entity_state(ClientEntityState& state) {
     state.pending.clear();
     state.network_id = 0;
     state.network_version = 0;
+    state.priority = 0;
+    state.component_mask = std::numeric_limits<std::uint64_t>::max();
+    state.priority_frame = 0;
+    state.priority_replicate = true;
     state.has_network_id = false;
 }
 
@@ -1621,6 +1726,7 @@ void ReplicationServer::write_entity_record(
     ClientState& client,
     std::uint32_t slot,
     const QuantizedFrame& quantized_frame,
+    std::uint64_t component_mask,
     BitBuffer& out) {
     const ClientEntityState& entity_state = client.entity_states[slot];
     bool delta = entity_state.baseline != invalid_quantized_frame_id &&
@@ -1663,7 +1769,8 @@ void ReplicationServer::write_entity_record(
             out.push_bool(false);
         }
         for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
-            if (!frame_has_component(quantized_frame.data, component_index)) {
+            if (!frame_has_component(quantized_frame.data, component_index) ||
+                (component_mask & (std::uint64_t{1} << component_index)) == 0U) {
                 out.push_bool(false);
                 continue;
             }
@@ -1720,7 +1827,8 @@ void ReplicationServer::write_entity_record(
         present_sync_slots |= sync_slot_bit(0);
     }
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
-        if (frame_has_component(quantized_frame.data, component_index)) {
+        if (frame_has_component(quantized_frame.data, component_index) &&
+            (component_mask & (std::uint64_t{1} << component_index)) != 0U) {
             ++component_count;
             present_sync_slots |= sync_slot_bit(component_index + 1U);
         }
@@ -1744,7 +1852,8 @@ void ReplicationServer::write_entity_record(
         out.push_unsigned_bits(quantized_frame.data.tag_mask, archetype.tags.size());
     }
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
-        if (!frame_has_component(quantized_frame.data, component_index)) {
+        if (!frame_has_component(quantized_frame.data, component_index) ||
+            (component_mask & (std::uint64_t{1} << component_index)) == 0U) {
             continue;
         }
         if (component_index >= archetype.component_ops.size()) {
@@ -2013,6 +2122,37 @@ void ReplicationServer::deactivate_entity_index(std::uint32_t entity_index) {
     }
 
     deactivate_slot(found->second);
+}
+
+void ReplicationServer::hide_slot_for_client(ClientState& client, std::uint32_t slot) {
+    if (slot >= replicated_.size() || slot >= client.entity_states.size()) {
+        return;
+    }
+
+    ClientEntityState& state = client.entity_states[slot];
+    if (!state.has_network_id || state.network_id == 0U || state.network_id >= client.network_ids.size()) {
+        return;
+    }
+
+    const ecs::Entity entity = replicated_[slot].entity;
+    const std::uint32_t network_id = state.network_id;
+    const std::uint32_t network_version = state.network_version;
+    clear_client_entity_state(state);
+
+    ClientState::NetworkIdEntry& network = client.network_ids[network_id];
+    network.active = false;
+    network.pending_destroy = true;
+    network.slot_or_next_free = invalid_slot_or_free;
+
+    const auto found_destroy = std::find_if(
+        client.pending_destroys.begin(),
+        client.pending_destroys.end(),
+        [entity, network_id](const ClientDestroyState& pending) {
+            return pending.entity == entity && pending.network_id == network_id;
+        });
+    if (found_destroy == client.pending_destroys.end()) {
+        client.pending_destroys.push_back(ClientDestroyState{entity, frame_, 0, network_id, network_version});
+    }
 }
 
 void ReplicationServer::remove_slot_from_client_orders(std::uint32_t slot) {

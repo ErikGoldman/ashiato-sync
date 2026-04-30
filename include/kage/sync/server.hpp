@@ -75,6 +75,10 @@ private:
         std::uint32_t baseline = invalid_quantized_frame_id;
         std::uint32_t network_id = 0;
         std::uint32_t network_version = 0;
+        std::uint64_t priority = 0;
+        std::uint64_t component_mask = std::numeric_limits<std::uint64_t>::max();
+        SyncFrame priority_frame = 0;
+        bool priority_replicate = true;
         bool has_network_id = false;
         std::vector<PendingQuantizedFrame> pending;
     };
@@ -138,6 +142,7 @@ private:
         std::uint32_t slot = 0;
         std::size_t destroy_index = 0;
         std::uint64_t priority = 0;
+        std::uint64_t component_mask = std::numeric_limits<std::uint64_t>::max();
     };
 
     bool valid_archetype(const ecs::Registry& registry, SyncArchetypeId archetype) const;
@@ -145,6 +150,7 @@ private:
     std::uint32_t allocate_slot(ecs::Entity entity, SyncArchetypeId archetype);
     void deactivate_slot(std::uint32_t slot);
     void deactivate_entity_index(std::uint32_t entity_index);
+    void hide_slot_for_client(ClientState& client, std::uint32_t slot);
     void remove_slot_from_client_orders(std::uint32_t slot);
     std::uint32_t allocate_network_id(ClientState& client, std::uint32_t slot);
     void free_network_id(ClientState& client, std::uint32_t network_id);
@@ -156,6 +162,7 @@ private:
     void mark_dirty_tags(const SyncSettings& settings, std::uint32_t slot);
     void mark_owner_visibility_dirty(const SyncSettings& settings, std::uint32_t slot);
     static bool archetype_is_same_frame_cacheable(const SyncArchetype& archetype);
+    void refresh_client_priorities(const ecs::Registry& registry, ClientState& client);
     void tick_serialized(ecs::Registry& registry);
     void tick_serialized_parallel(ecs::Registry& registry);
     void disconnect_idle_clients();
@@ -167,6 +174,7 @@ private:
         SyncFrame frame,
         QuantizedFrameData& scratch,
         std::vector<std::uint64_t>& scratch_dirty_generations,
+        std::uint64_t component_mask,
         SerializedEntity& out);
     std::uint32_t find_or_create_quantized_frame(
         const ecs::Registry& registry,
@@ -195,6 +203,7 @@ private:
         ClientState& client,
         std::uint32_t slot,
         const QuantizedFrame& quantized_frame,
+        std::uint64_t component_mask,
         BitBuffer& out);
     void send_packet(
         ClientState& client,

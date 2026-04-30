@@ -817,6 +817,43 @@ inline void validate_config(const StressConfig& config) {
     }
 }
 
+inline ReplicationPrioritizerFn make_sphere_prioritizer(ecs::Registry& registry) {
+    static constexpr float inner_filter_radius_sq = 0.75f * 0.75f;
+    static constexpr float priority_radius_sq = 12.0f * 12.0f;
+    static constexpr std::uint64_t priority_scale = 1000;
+
+    return [&registry](
+               ClientId,
+               const std::vector<ReplicationPriorityObject>& objects,
+               std::vector<ReplicationPriorityDecision>& decisions) {
+        decisions.resize(objects.size());
+        for (std::size_t index = 0; index < objects.size(); ++index) {
+            ReplicationPriorityDecision& decision = decisions[index];
+            decision.replicate = true;
+            decision.component_mask = std::numeric_limits<std::uint64_t>::max();
+
+            const BallPosition* position = registry.try_get<BallPosition>(objects[index].entity);
+            if (position == nullptr) {
+                decision.priority = 0;
+                continue;
+            }
+
+            const float distance_sq =
+                position->x * position->x + position->y * position->y + position->z * position->z;
+            if (distance_sq <= inner_filter_radius_sq) {
+                decision.replicate = false;
+                decision.priority = 0;
+                continue;
+            }
+
+            const float clamped_distance_sq = distance_sq < priority_radius_sq ? distance_sq : priority_radius_sq;
+            const float normalized = (priority_radius_sq - clamped_distance_sq) /
+                (priority_radius_sq - inner_filter_radius_sq);
+            decision.priority = 1U + static_cast<std::uint64_t>(normalized * static_cast<float>(priority_scale));
+        }
+    };
+}
+
 inline void spawn_ball(
     ecs::Registry& registry,
     std::vector<ServerBall>& balls,
@@ -1047,6 +1084,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
     server_options.mtu_bytes = config.mtu;
     server_options.serialized_worker_threads = config.server_worker_threads;
     server_options.fixed_dt_seconds = 1.0 / config.tick_rate;
+    server_options.prioritizer = make_sphere_prioritizer(server_registry);
     server_options.transport = [&](ClientId client, const BitBuffer& packet) {
         enqueue_packet(
             server_to_clients,

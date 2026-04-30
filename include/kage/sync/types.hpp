@@ -26,6 +26,21 @@ using ClientEntityNetworkId = std::uint64_t;
 using TransportFn = std::function<void(ClientId, const BitBuffer&)>;
 using ConnectHandlerFn = std::function<bool(const std::string&, ClientId&, std::string&)>;
 
+struct ReplicationPriorityObject {
+    ecs::Entity entity;
+};
+
+struct ReplicationPriorityDecision {
+    bool replicate = true;
+    std::uint64_t priority = 0;
+    std::uint64_t component_mask = std::numeric_limits<std::uint64_t>::max();
+};
+
+using ReplicationPrioritizerFn = std::function<void(
+    ClientId,
+    const std::vector<ReplicationPriorityObject>&,
+    std::vector<ReplicationPriorityDecision>&)>;
+
 inline constexpr ClientId invalid_client_id = std::numeric_limits<ClientId>::max();
 inline constexpr ClientEntityNetworkId invalid_client_entity_network_id = 0;
 inline constexpr ClientId max_client_entity_network_id_client = 0xfffULL;
@@ -290,6 +305,8 @@ struct ReplicationServerOptions {
     double connect_resend_interval_seconds = 0.25;
     double idle_client_timeout_seconds = 0.0;
     std::size_t network_entity_id_tier0_bits = protocol::default_network_entity_id_tier0_bits;
+    SyncFrame prioritizer_interval_frames = 4;
+    ReplicationPrioritizerFn prioritizer;
     ConnectHandlerFn connect_handler;
     TransportFn transport;
 };
