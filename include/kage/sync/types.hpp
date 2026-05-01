@@ -110,6 +110,31 @@ enum class ReplicationRollbackPolicy {
     OnlyAffected
 };
 
+#ifdef KAGE_SYNC_ENABLE_TRACING
+struct SyncTraceStringBuilder {
+    std::string value;
+
+    void clear() noexcept {
+        value.clear();
+    }
+
+    void append(const char* text) {
+        if (text != nullptr) {
+            value += text;
+        }
+    }
+
+    void append(const std::string& text) {
+        value += text;
+    }
+
+    template <typename T>
+    void append_number(T number) {
+        value += std::to_string(number);
+    }
+};
+#endif
+
 struct ComponentReplication {
     ecs::Entity component;
     ReplicationAudience audience = ReplicationAudience::All;
@@ -329,7 +354,11 @@ struct SyncComponentOps {
     using ApplyErrorFn = bool (*)(const std::uint8_t*, const QuantizedBytes&, QuantizedBytes&);
     using BlendOutErrorFn = bool (*)(const QuantizedBytes&, float, QuantizedBytes&);
     using ShouldRollBackFn = bool (*)(const std::uint8_t*, const std::uint8_t*);
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+    using TraceFn = void (*)(const std::uint8_t*, SyncTraceStringBuilder&);
+#endif
 
+    std::string name;
     std::size_t quantized_size = 0;
     std::size_t error_size = 0;
     QuantizeFn quantize = nullptr;
@@ -343,6 +372,9 @@ struct SyncComponentOps {
     ApplyErrorFn apply_error = nullptr;
     BlendOutErrorFn blend_out_error = nullptr;
     ShouldRollBackFn should_roll_back = nullptr;
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+    TraceFn trace = nullptr;
+#endif
 };
 
 struct SyncCueOps {
@@ -350,11 +382,17 @@ struct SyncCueOps {
     using PlayFn = bool (*)(ecs::Registry&, ecs::Entity, const BitBuffer&, float);
     using RollbackFn = bool (*)(ecs::Registry&, ecs::Entity, const BitBuffer&);
     using EqualsFn = bool (*)(const BitBuffer&, const BitBuffer&);
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_CUE_DATA)
+    using TraceFn = bool (*)(const BitBuffer&, SyncTraceStringBuilder&);
+#endif
 
     SerializeFn serialize = nullptr;
     PlayFn play = nullptr;
     RollbackFn rollback = nullptr;
     EqualsFn equals = nullptr;
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_CUE_DATA)
+    TraceFn trace = nullptr;
+#endif
 };
 
 struct QueuedSyncCue {

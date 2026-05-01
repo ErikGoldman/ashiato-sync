@@ -1,6 +1,7 @@
 #include "kage/sync/server.hpp"
 
 #include "kage/sync/protocol.hpp"
+#include "kage/sync/tracing.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -89,6 +90,72 @@ std::uint64_t sync_slot_bit(std::size_t slot) noexcept {
 bool frame_has_component(const QuantizedFrameData& frame, std::size_t component_index) {
     return component_index < 64U && (frame.present_mask & (std::uint64_t{1} << component_index)) != 0U;
 }
+
+#ifdef KAGE_SYNC_ENABLE_TRACING
+SyncTraceEvent make_server_trace_event(SyncTraceEventType type, ClientId client, SyncFrame frame) {
+    SyncTraceEvent event;
+    event.type = type;
+    event.role = SyncTraceRole::Server;
+    event.client = client;
+    event.frame = frame;
+    return event;
+}
+
+void append_trace_component_data(
+    const SyncTracer* tracer,
+    const SyncArchetype& archetype,
+    std::size_t component_index,
+    const std::uint8_t* bytes,
+    SyncTraceEvent& event) {
+    if (component_index < archetype.component_ops.size()) {
+        event.component_name = archetype.component_ops[component_index].name;
+    }
+#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+    if (tracer == nullptr || !tracer->frame_data_enabled() || bytes == nullptr ||
+        component_index >= archetype.component_ops.size()) {
+        return;
+    }
+    const SyncComponentOps& ops = archetype.component_ops[component_index];
+    if (ops.trace == nullptr) {
+        return;
+    }
+    SyncTraceStringBuilder builder;
+    ops.trace(bytes, builder);
+    event.data = std::move(builder.value);
+#else
+    (void)tracer;
+    (void)archetype;
+    (void)component_index;
+    (void)bytes;
+    (void)event;
+#endif
+}
+
+void append_trace_cue_data(
+    const SyncTracer* tracer,
+    const SyncSettings& settings,
+    SyncCueTypeId cue_type,
+    const BitBuffer& payload,
+    SyncTraceEvent& event) {
+#ifdef KAGE_SYNC_TRACE_CUE_DATA
+    if (tracer == nullptr || !tracer->cue_data_enabled() ||
+        cue_type >= settings.cue_ops.size() || settings.cue_ops[cue_type].trace == nullptr) {
+        return;
+    }
+    SyncTraceStringBuilder builder;
+    if (settings.cue_ops[cue_type].trace(payload, builder)) {
+        event.data = std::move(builder.value);
+    }
+#else
+    (void)tracer;
+    (void)settings;
+    (void)cue_type;
+    (void)payload;
+    (void)event;
+#endif
+}
+
+#endif
 
 const std::uint8_t* frame_component_data(
     const SyncArchetype& archetype,
@@ -186,6 +253,12 @@ void ReplicationServer::set_transport(TransportFn transport) {
     options_.transport = std::move(transport);
 }
 
+#ifdef KAGE_SYNC_ENABLE_TRACING
+void ReplicationServer::set_tracer(SyncTracer* tracer) noexcept {
+    tracer_ = tracer;
+}
+#endif
+
 bool ReplicationServer::add_client(ClientId client) {
     return add_client_for_peer(client, client, true);
 }
@@ -218,8 +291,47 @@ bool ReplicationServer::add_client_for_peer(ClientId peer, ClientId client, bool
     client_to_index_[client] = index;
     peer_to_index_[peer] = index;
     next_connect_client_id_ = std::max(next_connect_client_id_, client + 1U);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    if (tracer_ != nullptr && tracer_->enabled()) {
+        SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::ClientConnected, client, frame_);
+        tracer_->trace(event);
+    }
+#endif
     return true;
 }
+
+#ifdef KAGE_SYNC_ENABLE_TRACING
+void ReplicationServer::trace_frame_components(const ecs::Registry& registry, const SyncSettings& settings) {
+    if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->frame_data_enabled()) {
+        return;
+    }
+    for (const ReplicatedSlot& slot : replicated_) {
+        if (!slot.active || slot.archetype.value >= settings.archetypes.size()) {
+            continue;
+        }
+        const SyncArchetype& archetype = settings.archetypes[slot.archetype.value];
+        for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
+            const ComponentReplication& replication = archetype.components[component_index];
+            const void* value = registry.get(slot.entity, replication.component);
+            if (value == nullptr || component_index >= archetype.component_ops.size()) {
+                continue;
+            }
+            const SyncComponentOps& ops = archetype.component_ops[component_index];
+            if (ops.quantize == nullptr) {
+                continue;
+            }
+            std::vector<std::uint8_t> bytes(ops.quantized_size);
+            ops.quantize(value, bytes.data());
+            SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::FrameComponent, invalid_client_id, frame_);
+            event.server_entity = slot.entity;
+            event.archetype = slot.archetype;
+            event.component = replication.component;
+            append_trace_component_data(tracer_, archetype, component_index, bytes.data(), event);
+            tracer_->trace(event);
+        }
+    }
+}
+#endif
 
 bool ReplicationServer::remove_client(ClientId client) {
     const auto found = client_to_index_.find(client);
@@ -229,6 +341,9 @@ bool ReplicationServer::remove_client(ClientId client) {
 
     const std::size_t index = found->second;
     const ClientId removed_peer = clients_[index].peer;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    const ClientId removed_client = clients_[index].id;
+#endif
     for (ClientEntityState& entity_state : clients_[index].entity_states) {
         clear_client_entity_state(entity_state);
     }
@@ -243,6 +358,12 @@ bool ReplicationServer::remove_client(ClientId client) {
     clients_.pop_back();
     client_to_index_.erase(found);
     peer_to_index_.erase(removed_peer);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    if (tracer_ != nullptr && tracer_->enabled()) {
+        SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::ClientDisconnected, removed_client, frame_);
+        tracer_->trace(event);
+    }
+#endif
     return true;
 }
 
@@ -623,6 +744,9 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
     sent.reserve(active_replicated_count_);
     unsent.reserve(active_replicated_count_);
     ++frame_;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    trace_frame_components(registry, settings);
+#endif
     const std::size_t update_header_bits = server_update_header_bits(options_);
 
     for (ClientState& client : clients_) {
@@ -769,6 +893,17 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
                     records,
                     destroy.network_id,
                     options_.network_entity_id_tier0_bits);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+                if (tracer_ != nullptr && tracer_->enabled()) {
+                    SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::EntityDestroyed, client.id, frame_);
+                    event.server_entity = destroy.entity;
+                    event.wire_network_id = destroy.network_id;
+                    event.network_version = destroy.network_version;
+                    event.client_network_id = make_client_entity_network_id(client.id, destroy.network_id, destroy.network_version);
+                    event.remove = true;
+                    tracer_->trace(event);
+                }
+#endif
                 packet_ack_records.push_back(PacketAckRecord{destroy.entity, frame_, true});
                 ++packet_entities;
                 continue;
@@ -857,6 +992,9 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
     capture_dirty_components(registry, settings);
     capture_queued_cues(settings);
     ++frame_;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    trace_frame_components(registry, settings);
+#endif
 
     for (std::uint32_t slot = 0; slot < replicated_.size(); ++slot) {
         if (replicated_[slot].active && !slot_is_replicable(registry, slot)) {
@@ -1082,6 +1220,17 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
                     records,
                     destroy.network_id,
                     options_.network_entity_id_tier0_bits);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+                if (tracer_ != nullptr && tracer_->enabled()) {
+                    SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::EntityDestroyed, client.id, frame_);
+                    event.server_entity = destroy.entity;
+                    event.wire_network_id = destroy.network_id;
+                    event.network_version = destroy.network_version;
+                    event.client_network_id = make_client_entity_network_id(client.id, destroy.network_id, destroy.network_version);
+                    event.remove = true;
+                    tracer_->trace(event);
+                }
+#endif
                 packet_ack_records.push_back(PacketAckRecord{destroy.entity, frame_, true});
                 ++packet_entities;
                 continue;
@@ -1906,6 +2055,21 @@ void ReplicationServer::write_entity_record(
         }
         if ((changed_mask & sync_slot_bit(0)) != 0U) {
             out.push_unsigned_bits(quantized_frame.data.tag_mask, archetype.tags.size());
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            if (tracer_ != nullptr && tracer_->enabled()) {
+                for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
+                    SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::TagSent, client.id, quantized_frame.frame);
+                    event.server_entity = replicated_[slot].entity;
+                    event.wire_network_id = network_id;
+                    event.network_version = entity_state.network_version;
+                    event.client_network_id = make_client_entity_network_id(client.id, network_id, entity_state.network_version);
+                    event.archetype = quantized_frame.archetype;
+                    event.tag = archetype.tags[tag_index].tag;
+                    event.remove = (quantized_frame.data.tag_mask & (std::uint64_t{1} << tag_index)) == 0U;
+                    tracer_->trace(event);
+                }
+            }
+#endif
         }
         for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
             if ((changed_mask & sync_slot_bit(component_index + 1U)) == 0U) {
@@ -1920,6 +2084,19 @@ void ReplicationServer::write_entity_record(
             if (previous == nullptr || current == nullptr) {
                 throw std::logic_error("replicated quantized frame component bytes are missing");
             }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            if (tracer_ != nullptr && tracer_->enabled()) {
+                SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::ComponentSent, client.id, quantized_frame.frame);
+                event.server_entity = replicated_[slot].entity;
+                event.wire_network_id = network_id;
+                event.network_version = entity_state.network_version;
+                event.client_network_id = make_client_entity_network_id(client.id, network_id, entity_state.network_version);
+                event.archetype = quantized_frame.archetype;
+                event.component = archetype.components[component_index].component;
+                append_trace_component_data(tracer_, archetype, component_index, current, event);
+                tracer_->trace(event);
+            }
+#endif
             ops.serialize(previous, current, out, ops.references_entities ? references_for_component() : nullptr);
         }
         const std::size_t cue_count = std::min(entity_state.pending_cues.size(), max_cues_per_entity_record);
@@ -1933,6 +2110,19 @@ void ReplicationServer::write_entity_record(
                 out.push_bytes(reinterpret_cast<const char*>(&cue.relevance_seconds), sizeof(cue.relevance_seconds));
                 out.push_bits(static_cast<std::int64_t>(cue.payload.bit_size()), 16U);
                 out.push_buffer_bits(cue.payload);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+                if (tracer_ != nullptr && tracer_->enabled()) {
+                    SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::CueInvoked, client.id, cue.frame);
+                    event.server_entity = replicated_[slot].entity;
+                    event.wire_network_id = network_id;
+                    event.network_version = entity_state.network_version;
+                    event.client_network_id = make_client_entity_network_id(client.id, network_id, entity_state.network_version);
+                    event.archetype = quantized_frame.archetype;
+                    event.cue_type = cue.type;
+                    append_trace_cue_data(tracer_, settings, cue.type, cue.payload, event);
+                    tracer_->trace(event);
+                }
+#endif
             }
         }
         (void)registry;
@@ -1969,6 +2159,21 @@ void ReplicationServer::write_entity_record(
             out.push_bits(0, sync_slot_bits);
         }
         out.push_unsigned_bits(quantized_frame.data.tag_mask, archetype.tags.size());
+#ifdef KAGE_SYNC_ENABLE_TRACING
+        if (tracer_ != nullptr && tracer_->enabled()) {
+            for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
+                SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::TagSent, client.id, quantized_frame.frame);
+                event.server_entity = replicated_[slot].entity;
+                event.wire_network_id = network_id;
+                event.network_version = entity_state.network_version;
+                event.client_network_id = make_client_entity_network_id(client.id, network_id, entity_state.network_version);
+                event.archetype = quantized_frame.archetype;
+                event.tag = archetype.tags[tag_index].tag;
+                event.remove = (quantized_frame.data.tag_mask & (std::uint64_t{1} << tag_index)) == 0U;
+                tracer_->trace(event);
+            }
+        }
+#endif
     }
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
         if (!frame_has_component(quantized_frame.data, component_index) ||
@@ -1987,6 +2192,19 @@ void ReplicationServer::write_entity_record(
         if (!use_presence_mask) {
             out.push_bits(static_cast<std::int64_t>(component_index + 1U), sync_slot_bits);
         }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+        if (tracer_ != nullptr && tracer_->enabled()) {
+            SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::ComponentSent, client.id, quantized_frame.frame);
+            event.server_entity = replicated_[slot].entity;
+            event.wire_network_id = network_id;
+            event.network_version = entity_state.network_version;
+            event.client_network_id = make_client_entity_network_id(client.id, network_id, entity_state.network_version);
+            event.archetype = quantized_frame.archetype;
+            event.component = archetype.components[component_index].component;
+            append_trace_component_data(tracer_, archetype, component_index, current, event);
+            tracer_->trace(event);
+        }
+#endif
         ops.serialize(nullptr, current, out, ops.references_entities ? references_for_component() : nullptr);
     }
 
@@ -2001,6 +2219,19 @@ void ReplicationServer::write_entity_record(
             out.push_bytes(reinterpret_cast<const char*>(&cue.relevance_seconds), sizeof(cue.relevance_seconds));
             out.push_bits(static_cast<std::int64_t>(cue.payload.bit_size()), 16U);
             out.push_buffer_bits(cue.payload);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            if (tracer_ != nullptr && tracer_->enabled()) {
+                SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::CueInvoked, client.id, cue.frame);
+                event.server_entity = replicated_[slot].entity;
+                event.wire_network_id = network_id;
+                event.network_version = entity_state.network_version;
+                event.client_network_id = make_client_entity_network_id(client.id, network_id, entity_state.network_version);
+                event.archetype = quantized_frame.archetype;
+                event.cue_type = cue.type;
+                append_trace_cue_data(tracer_, settings, cue.type, cue.payload, event);
+                tracer_->trace(event);
+            }
+#endif
         }
     }
 
@@ -2167,6 +2398,17 @@ std::uint32_t ReplicationServer::allocate_network_id(ClientState& client, std::u
     state.network_id = network_id;
     state.network_version = client.network_ids[network_id].version;
     state.has_network_id = true;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    if (tracer_ != nullptr && tracer_->enabled() && slot < replicated_.size()) {
+        SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::EntityStartedSyncing, client.id, frame_);
+        event.server_entity = replicated_[slot].entity;
+        event.wire_network_id = network_id;
+        event.network_version = state.network_version;
+        event.client_network_id = make_client_entity_network_id(client.id, network_id, state.network_version);
+        event.archetype = replicated_[slot].archetype;
+        tracer_->trace(event);
+    }
+#endif
     return network_id;
 }
 

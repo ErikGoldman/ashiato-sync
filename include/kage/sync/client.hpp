@@ -14,6 +14,8 @@
 
 namespace kage::sync {
 
+class SyncTracer;
+
 struct ReplicatedComponentUpdate {
     ecs::Entity component;
     SyncComponentOps::QuantizedBytes bytes;
@@ -287,6 +289,9 @@ public:
     const ReplicationClientOptions& options() const noexcept {
         return options_;
     }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    void set_tracer(SyncTracer* tracer) noexcept;
+#endif
 
     bool set_default_entity_mode(ReplicationClientMode mode) noexcept;
     bool set_entity_mode(ecs::Registry& registry, ecs::Entity server_entity, ReplicationClientMode mode);
@@ -609,6 +614,21 @@ private:
     void drain_ack_packets_into(std::vector<BitBuffer>& packets);
     ClientEntityNetworkId client_entity_network_id_for_wire(std::uint32_t wire_network_id);
     void advance_wire_network_id_version(std::uint32_t wire_network_id);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    enum class TraceFrameComponentScope {
+        All,
+        NonPredicted,
+        Predicted
+    };
+
+    void trace_frame_components(
+        const ecs::Registry& registry,
+        const SyncSettings& settings,
+        SyncFrame frame,
+        bool resimulated = false,
+        bool only_pending_rollback = false,
+        TraceFrameComponentScope scope = TraceFrameComponentScope::All);
+#endif
 
     struct WireNetworkIdState {
         std::uint32_t version = 0;
@@ -666,6 +686,9 @@ private:
     std::uint64_t server_update_packet_window_mask_ = 0;
     std::uint32_t server_update_packet_window_span_ = 0;
     bool has_server_update_packet_window_ = false;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    SyncTracer* tracer_ = nullptr;
+#endif
 };
 
 template <std::size_t NetworkEntityIdTier0Bits = protocol::default_network_entity_id_tier0_bits>

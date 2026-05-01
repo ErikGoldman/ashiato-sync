@@ -10,14 +10,22 @@ include(CTest)
 
 option(KAGE_SYNC_BUILD_BENCHMARKS "Build kage-sync Google Benchmark suites" OFF)
 option(KAGE_SYNC_BUILD_EXAMPLES "Build kage-sync examples" OFF)
+option(KAGE_SYNC_BUILD_TRACE_VIEWER "Build the Dear ImGui ktrace viewer" OFF)
 option(KAGE_SYNC_ENABLE_GPROF "Build kage-sync benchmark tools with gprof instrumentation" OFF)
 option(KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS "Build kage-sync with buffered interpolation starvation diagnostics" OFF)
+option(KAGE_SYNC_ENABLE_TRACING "Build kage-sync with client/server tracing hooks" OFF)
+option(KAGE_SYNC_TRACE_COMPONENT_DATA "Build kage-sync tracing support for component data serialization" OFF)
+option(KAGE_SYNC_TRACE_CUE_DATA "Build kage-sync tracing support for cue data serialization" OFF)
 set(KAGE_SYNC_BASELINE_FRAME_DELTA_BITS "5" CACHE STRING "Compile-time bit count for relative delta baseline frame numbers")
 set(KAGE_SYNC_BALL_STRESS_RUN_MODE "none" CACHE STRING "How run_kage_sync_ball_stress invokes the stress tool: none, gprof, memcheck, or massif")
 set_property(CACHE KAGE_SYNC_BALL_STRESS_RUN_MODE PROPERTY STRINGS none gprof memcheck massif)
 set(KAGE_SYNC_BALL_STRESS_RUN_ARGS "--duration-seconds 10 --report text" CACHE STRING "Command-line arguments passed by run_kage_sync_ball_stress")
 set(KAGE_SYNC_BALL_STRESS_GPROF_OUT "/tmp/kage_sync_ball_stress_gprof.txt" CACHE FILEPATH "gprof report path for run_kage_sync_ball_stress")
 set(KAGE_SYNC_PREDICTION_STRESS_RUN_ARGS "--ticks 1800 --latency-frames 10 --misprediction-percent 5 --report text" CACHE STRING "Command-line arguments passed by run_kage_sync_prediction_stress")
+set(KAGE_SYNC_TRACE_VIEWER_TRACE_DIR "/tmp/kage-balls-trace" CACHE PATH "Trace directory used by run_kage_sync_trace_viewer_gprof")
+set(KAGE_SYNC_TRACE_VIEWER_BENCHMARK_FRAMES "1200" CACHE STRING "Frame count used by trace viewer benchmark and gprof runs")
+set(KAGE_SYNC_TRACE_VIEWER_BENCHMARK_OUT "/tmp/kage_sync_trace_viewer_benchmark.json" CACHE FILEPATH "Trace viewer benchmark report path")
+set(KAGE_SYNC_TRACE_VIEWER_GPROF_OUT "/tmp/kage_sync_trace_viewer_gprof.txt" CACHE FILEPATH "Trace viewer gprof report path")
 
 set(KAGE_SYNC_BUILD_TESTING ${BUILD_TESTING})
 
@@ -32,6 +40,7 @@ add_library(kage_sync
     src/client.cpp
     src/components.cpp
     src/server.cpp
+    src/tracing.cpp
 )
 
 add_library(kage::sync ALIAS kage_sync)
@@ -53,6 +62,9 @@ target_compile_definitions(kage_sync
     PUBLIC
         KAGE_SYNC_BASELINE_FRAME_DELTA_BITS=${KAGE_SYNC_BASELINE_FRAME_DELTA_BITS}
         $<$<BOOL:${KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS}>:KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS=1>
+        $<$<BOOL:${KAGE_SYNC_ENABLE_TRACING}>:KAGE_SYNC_ENABLE_TRACING=1>
+        $<$<BOOL:${KAGE_SYNC_TRACE_COMPONENT_DATA}>:KAGE_SYNC_TRACE_COMPONENT_DATA=1>
+        $<$<BOOL:${KAGE_SYNC_TRACE_CUE_DATA}>:KAGE_SYNC_TRACE_CUE_DATA=1>
 )
 
 if(MSVC)
@@ -61,7 +73,7 @@ else()
     target_compile_options(kage_sync PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-if(KAGE_SYNC_BUILD_TESTING OR KAGE_SYNC_BUILD_BENCHMARKS OR KAGE_SYNC_BUILD_EXAMPLES)
+if(KAGE_SYNC_BUILD_TESTING OR KAGE_SYNC_BUILD_BENCHMARKS OR KAGE_SYNC_BUILD_EXAMPLES OR KAGE_SYNC_BUILD_TRACE_VIEWER)
     include(FetchContent)
 endif()
 
@@ -80,6 +92,7 @@ if(KAGE_SYNC_BUILD_TESTING)
         tests/client.test.cpp
         tests/components.test.cpp
         tests/server.test.cpp
+        tests/tracing.test.cpp
     )
 
     target_link_libraries(kage_sync_tests
@@ -116,6 +129,110 @@ if(KAGE_SYNC_BUILD_EXAMPLES)
 
     if(WIN32)
         target_link_libraries(kage_sync_balls_example PRIVATE ws2_32)
+    endif()
+endif()
+
+if(KAGE_SYNC_BUILD_TRACE_VIEWER)
+    if(NOT KAGE_SYNC_ENABLE_TRACING)
+        message(FATAL_ERROR "KAGE_SYNC_BUILD_TRACE_VIEWER requires KAGE_SYNC_ENABLE_TRACING=ON")
+    endif()
+
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
+
+    if(NOT TARGET glfw)
+        FetchContent_Declare(
+            glfw
+            GIT_REPOSITORY https://github.com/glfw/glfw.git
+            GIT_TAG 3.4
+        )
+        FetchContent_MakeAvailable(glfw)
+    endif()
+
+    FetchContent_Declare(
+        imgui
+        GIT_REPOSITORY https://github.com/ocornut/imgui.git
+        GIT_TAG v1.91.9b
+    )
+    FetchContent_MakeAvailable(imgui)
+
+    find_package(OpenGL REQUIRED)
+
+    add_library(kage_sync_imgui STATIC
+        ${imgui_SOURCE_DIR}/imgui.cpp
+        ${imgui_SOURCE_DIR}/imgui_demo.cpp
+        ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+    )
+
+    target_include_directories(kage_sync_imgui
+        PUBLIC
+            ${imgui_SOURCE_DIR}
+            ${imgui_SOURCE_DIR}/backends
+    )
+
+    target_link_libraries(kage_sync_imgui
+        PUBLIC
+            glfw
+            OpenGL::GL
+    )
+
+    target_compile_features(kage_sync_imgui PUBLIC cxx_std_17)
+
+    add_executable(kage_sync_trace_viewer
+        tools/trace_viewer/main.cpp
+    )
+
+    target_link_libraries(kage_sync_trace_viewer
+        PRIVATE
+            kage::sync
+            kage_sync_imgui
+    )
+
+    target_compile_features(kage_sync_trace_viewer PRIVATE cxx_std_17)
+
+    if(KAGE_SYNC_ENABLE_GPROF)
+        if(MSVC)
+            message(WARNING "KAGE_SYNC_ENABLE_GPROF is ignored for the trace viewer with MSVC")
+        else()
+            target_compile_options(kage_sync PRIVATE -pg -g -fno-omit-frame-pointer)
+            target_link_options(kage_sync PRIVATE -pg)
+            target_compile_options(kage_sync_imgui PRIVATE -pg -g -fno-omit-frame-pointer)
+            target_link_options(kage_sync_imgui PRIVATE -pg)
+            target_compile_options(kage_sync_trace_viewer PRIVATE -pg -g -fno-omit-frame-pointer)
+            target_link_options(kage_sync_trace_viewer PRIVATE -pg)
+            target_compile_options(ecs PRIVATE -pg -g -fno-omit-frame-pointer)
+            target_link_options(ecs PRIVATE -pg)
+        endif()
+
+        find_program(GPROF_EXECUTABLE gprof)
+        if(NOT GPROF_EXECUTABLE)
+            message(FATAL_ERROR "KAGE_SYNC_ENABLE_GPROF requires gprof on PATH for run_kage_sync_trace_viewer_gprof")
+        endif()
+
+        add_custom_target(run_kage_sync_trace_viewer_gprof
+            COMMAND ${CMAKE_COMMAND} -E remove -f gmon.out
+            COMMAND $<TARGET_FILE:kage_sync_trace_viewer>
+                --trace-dir ${KAGE_SYNC_TRACE_VIEWER_TRACE_DIR}
+                --benchmark
+                --benchmark-report ${KAGE_SYNC_TRACE_VIEWER_BENCHMARK_OUT}
+                --benchmark-frames ${KAGE_SYNC_TRACE_VIEWER_BENCHMARK_FRAMES}
+            COMMAND ${CMAKE_COMMAND}
+                -DGPROF_EXECUTABLE=${GPROF_EXECUTABLE}
+                -DSTRESS_EXECUTABLE=$<TARGET_FILE:kage_sync_trace_viewer>
+                -DGPROF_OUTPUT=${KAGE_SYNC_TRACE_VIEWER_GPROF_OUT}
+                -DPROFILE_DATA=${CMAKE_CURRENT_BINARY_DIR}/gmon.out
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunGprof.cmake
+            DEPENDS kage_sync_trace_viewer
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+            USES_TERMINAL
+        )
     endif()
 endif()
 

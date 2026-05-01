@@ -625,6 +625,56 @@ TEST_CASE("predicted client rolls back and resimulates mismatched frames") {
     REQUIRE(registry.get<PredictedPosition>(local).x == 3.0f);
 }
 
+#ifdef KAGE_SYNC_ENABLE_TRACING
+TEST_CASE("predicted client traces rollback reason separately from rollback conflict") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    kage::sync::configure_client(registry, 1);
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+    kage::sync::ReplicationClient client(options);
+    client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
+        position.x += 1.0f;
+    });
+
+    std::vector<kage::sync::SyncTraceEvent> events;
+    kage::sync::SyncTracer tracer;
+    tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
+        [&](const kage::sync::SyncTraceEvent& event) { events.push_back(event); }});
+    client.set_tracer(&tracer);
+
+    const ecs::Entity server_entity = registry.create();
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
+
+    const auto conflict = std::find_if(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
+        return event.type == kage::sync::SyncTraceEventType::PredictionRollbackConflict;
+    });
+    REQUIRE(conflict != events.end());
+    REQUIRE(conflict->component == position_component);
+    REQUIRE(conflict->component_name == "PredictedPosition");
+    REQUIRE(conflict->data.empty());
+
+    const auto reason = std::find_if(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
+        return event.type == kage::sync::SyncTraceEventType::RollbackReason;
+    });
+    REQUIRE(reason != events.end());
+    REQUIRE(std::count_if(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
+        return event.type == kage::sync::SyncTraceEventType::RollbackReason;
+    }) == 1);
+    REQUIRE(reason->component == position_component);
+    REQUIRE(reason->component_name == "PredictedPosition");
+    REQUIRE(reason->data == "PredictedPosition.x mismatch");
+}
+#endif
+
 TEST_CASE("predicted client error blends display-interpolated resim corrections") {
     ecs::Registry registry;
     const ecs::Entity position_component =

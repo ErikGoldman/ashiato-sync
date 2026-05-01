@@ -10,6 +10,25 @@
 
 namespace kage::sync {
 
+#ifdef KAGE_SYNC_ENABLE_TRACING
+void trace_rollback_reason(const char* reason);
+void trace_rollback_reason(const std::string& reason);
+#define TRACE_ROLLBACK_IF(condition, reason)    \
+    do {                                        \
+        if (condition) {                        \
+            ::kage::sync::trace_rollback_reason(reason); \
+            return true;                        \
+        }                                       \
+    } while (false)
+#else
+#define TRACE_ROLLBACK_IF(condition, reason) \
+    do {                                     \
+        if (condition) {                     \
+            return true;                     \
+        }                                    \
+    } while (false)
+#endif
+
 template <typename T>
 struct SyncComponentTraits {
     using Quantized = T;
@@ -319,6 +338,49 @@ typename std::enable_if<!has_should_roll_back<Traits, Quantized>::value, bool>::
     return false;
 }
 
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+template <typename Traits, typename Quantized, typename = void>
+struct has_trace_component : std::false_type {};
+
+template <typename Traits, typename Quantized>
+struct has_trace_component<
+    Traits,
+    Quantized,
+    std::void_t<decltype(Traits::trace(
+        std::declval<const Quantized&>(),
+        std::declval<SyncTraceStringBuilder&>()))>> : std::true_type {};
+
+template <typename Traits, typename Quantized>
+void trace_component_quantized(const std::uint8_t* quantized_bytes, SyncTraceStringBuilder& out) {
+    Quantized quantized{};
+    std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
+    Traits::trace(quantized, out);
+}
+#endif
+
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_CUE_DATA)
+template <typename Traits, typename Cue, typename = void>
+struct has_trace_cue : std::false_type {};
+
+template <typename Traits, typename Cue>
+struct has_trace_cue<
+    Traits,
+    Cue,
+    std::void_t<decltype(Traits::trace(
+        std::declval<const Cue&>(),
+        std::declval<SyncTraceStringBuilder&>()))>> : std::true_type {};
+
+template <typename T>
+bool trace_cue_payload(const BitBuffer& payload, SyncTraceStringBuilder& out) {
+    T value{};
+    if (!read_cue_payload(payload, value)) {
+        return false;
+    }
+    SyncCueTraits<T>::trace(value, out);
+    return true;
+}
+#endif
+
 }  // namespace detail
 
 }  // namespace kage::sync
@@ -342,9 +404,11 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
 
     register_components(registry);
 
+    std::string component_name = name;
     const ecs::Entity component = registry.register_component<T>(std::move(name));
 
     SyncComponentOps ops;
+    ops.name = std::move(component_name);
     ops.quantized_size = sizeof(Quantized);
     ops.quantize = [](const void* value, std::uint8_t* out) {
         const Quantized quantized = Traits::quantize(*static_cast<const T*>(value));
@@ -416,6 +480,11 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
     if constexpr (detail::has_should_roll_back<Traits, Quantized>::value) {
         ops.should_roll_back = &detail::should_roll_back_quantized<Traits, Quantized>;
     }
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+    if constexpr (detail::has_trace_component<Traits, Quantized>::value) {
+        ops.trace = &detail::trace_component_quantized<Traits, Quantized>;
+    }
+#endif
 
     registry.write<SyncSettings>().component_ops[component.value] = ops;
     return component;
@@ -443,6 +512,11 @@ SyncCueTypeId register_sync_cue(ecs::Registry& registry) {
     ops.play = &detail::play_cue_payload<T>;
     ops.rollback = &detail::rollback_cue_payload<T>;
     ops.equals = &detail::equal_cue_payloads<T>;
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_CUE_DATA)
+    if constexpr (detail::has_trace_cue<SyncCueTraits<T>, T>::value) {
+        ops.trace = &detail::trace_cue_payload<T>;
+    }
+#endif
     settings.cue_ops.push_back(ops);
     settings.cue_type_ids[type] = id;
     return id;

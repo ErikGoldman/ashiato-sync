@@ -131,6 +131,13 @@ struct SyncCueTraits<kage_sync_tests::TestCue> {
     static bool equals_cue(const kage_sync_tests::TestCue& lhs, const kage_sync_tests::TestCue& rhs) {
         return lhs.id == rhs.id;
     }
+
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_CUE_DATA)
+    static void trace(const kage_sync_tests::TestCue& cue, SyncTraceStringBuilder& out) {
+        out.append("id=");
+        out.append_number(cue.id);
+    }
+#endif
 };
 
 template <>
@@ -164,8 +171,19 @@ struct SyncComponentTraits<kage_sync_tests::PredictedPosition> {
     }
 
     static bool should_roll_back(const Quantized& predicted, const Quantized& authoritative) {
-        return predicted.x != authoritative.x || predicted.y != authoritative.y;
+        TRACE_ROLLBACK_IF(predicted.x != authoritative.x, "PredictedPosition.x mismatch");
+        TRACE_ROLLBACK_IF(predicted.y != authoritative.y, "PredictedPosition.y mismatch");
+        return false;
     }
+
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+    static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
+        out.append("x=");
+        out.append_number(value.x);
+        out.append(",y=");
+        out.append_number(value.y);
+    }
+#endif
 
     static Quantized interpolate(const Quantized& from, const Quantized& to, float alpha) {
         return Quantized{
@@ -237,6 +255,15 @@ struct SyncComponentTraits<kage_sync_tests::NetworkedPosition> {
         }
         return false;
     }
+
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+    static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
+        out.append("x=");
+        out.append_number(value.x);
+        out.append(",y=");
+        out.append_number(value.y);
+    }
+#endif
 };
 
 template <>

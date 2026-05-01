@@ -1,6 +1,7 @@
 #include "kage/sync/client.hpp"
 
 #include "kage/sync/protocol.hpp"
+#include "kage/sync/tracing.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -149,6 +150,144 @@ std::uint8_t* unchecked_mutable_frame_component_data(
 bool tag_bit_set(std::uint64_t tag_mask, std::size_t tag_index) noexcept {
     return tag_index < 64U && (tag_mask & (std::uint64_t{1} << tag_index)) != 0U;
 }
+
+#ifdef KAGE_SYNC_ENABLE_TRACING
+SyncTraceEvent make_client_trace_event(SyncTraceEventType type, ClientId client, SyncFrame frame) {
+    SyncTraceEvent event;
+    event.type = type;
+    event.role = SyncTraceRole::Client;
+    event.client = client;
+    event.frame = frame;
+    return event;
+}
+
+struct RollbackReasonTraceContext {
+    const SyncTracer* tracer = nullptr;
+    ClientId client = invalid_client_id;
+    SyncFrame frame = 0;
+    ecs::Entity server_entity{};
+    ecs::Entity local_entity{};
+    ClientEntityNetworkId client_network_id = invalid_client_entity_network_id;
+    std::uint32_t wire_network_id = 0;
+    std::uint32_t network_version = 0;
+    SyncArchetypeId archetype = invalid_sync_archetype_id;
+    ecs::Entity component{};
+    std::string component_name;
+};
+
+thread_local const RollbackReasonTraceContext* rollback_reason_trace_context = nullptr;
+
+class ScopedRollbackReasonTraceContext {
+public:
+    explicit ScopedRollbackReasonTraceContext(const RollbackReasonTraceContext& context)
+        : previous_(rollback_reason_trace_context) {
+        rollback_reason_trace_context = &context;
+    }
+
+    ~ScopedRollbackReasonTraceContext() {
+        rollback_reason_trace_context = previous_;
+    }
+
+    ScopedRollbackReasonTraceContext(const ScopedRollbackReasonTraceContext&) = delete;
+    ScopedRollbackReasonTraceContext& operator=(const ScopedRollbackReasonTraceContext&) = delete;
+
+private:
+    const RollbackReasonTraceContext* previous_ = nullptr;
+};
+
+void emit_rollback_reason(const std::string& reason) {
+    const RollbackReasonTraceContext* context = rollback_reason_trace_context;
+    if (context == nullptr || context->tracer == nullptr || !context->tracer->enabled() || reason.empty()) {
+        return;
+    }
+    SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::RollbackReason, context->client, context->frame);
+    event.server_entity = context->server_entity;
+    event.local_entity = context->local_entity;
+    event.client_network_id = context->client_network_id;
+    event.wire_network_id = context->wire_network_id;
+    event.network_version = context->network_version;
+    event.archetype = context->archetype;
+    event.component = context->component;
+    event.component_name = context->component_name;
+    event.data = reason;
+    context->tracer->trace(event);
+}
+
+}  // namespace
+
+void trace_rollback_reason(const char* reason) {
+    emit_rollback_reason(reason != nullptr ? std::string(reason) : std::string{});
+}
+
+void trace_rollback_reason(const std::string& reason) {
+    emit_rollback_reason(reason);
+}
+
+namespace {
+
+void append_trace_component_data(
+    const SyncTracer* tracer,
+    const SyncArchetype& archetype,
+    std::size_t component_index,
+    const std::uint8_t* bytes,
+    SyncTraceEvent& event) {
+    if (component_index < archetype.component_ops.size()) {
+        event.component_name = archetype.component_ops[component_index].name;
+    }
+#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+    if (tracer == nullptr || !tracer->frame_data_enabled() || bytes == nullptr ||
+        component_index >= archetype.component_ops.size()) {
+        return;
+    }
+    const SyncComponentOps& ops = archetype.component_ops[component_index];
+    if (ops.trace == nullptr) {
+        return;
+    }
+    SyncTraceStringBuilder builder;
+    ops.trace(bytes, builder);
+    event.data = std::move(builder.value);
+#else
+    (void)tracer;
+    (void)archetype;
+    (void)component_index;
+    (void)bytes;
+    (void)event;
+#endif
+}
+
+void append_trace_component_name(
+    const SyncArchetype& archetype,
+    std::size_t component_index,
+    SyncTraceEvent& event) {
+    if (component_index < archetype.component_ops.size()) {
+        event.component_name = archetype.component_ops[component_index].name;
+    }
+}
+
+void append_trace_cue_data(
+    const SyncTracer* tracer,
+    const SyncSettings& settings,
+    SyncCueTypeId cue_type,
+    const BitBuffer& payload,
+    SyncTraceEvent& event) {
+#ifdef KAGE_SYNC_TRACE_CUE_DATA
+    if (tracer == nullptr || !tracer->cue_data_enabled() ||
+        cue_type >= settings.cue_ops.size() || settings.cue_ops[cue_type].trace == nullptr) {
+        return;
+    }
+    SyncTraceStringBuilder builder;
+    if (settings.cue_ops[cue_type].trace(payload, builder)) {
+        event.data = std::move(builder.value);
+    }
+#else
+    (void)tracer;
+    (void)settings;
+    (void)cue_type;
+    (void)payload;
+    (void)event;
+#endif
+}
+#endif
 
 bool apply_archetype_tags(
     ecs::Registry& registry,
@@ -693,6 +832,12 @@ bool ReplicationClient::receive(
     }
 }
 
+#ifdef KAGE_SYNC_ENABLE_TRACING
+void ReplicationClient::set_tracer(SyncTracer* tracer) noexcept {
+    tracer_ = tracer;
+}
+#endif
+
 bool ReplicationClient::set_default_entity_mode(ReplicationClientMode mode) noexcept {
     options_.default_entity_mode = mode;
     return true;
@@ -729,9 +874,26 @@ bool ReplicationClient::set_entity_mode(
     }
 
     const SyncSettings& settings = registry.get<SyncSettings>();
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    const ReplicationClientMode previous_mode = state->mode;
+#endif
     const bool switched = switch_entity_mode(registry, settings, *state, mode);
     if (switched) {
         sync_entity_memberships(*state);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+        if (tracer_ != nullptr && tracer_->enabled() && previous_mode != state->mode) {
+            SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ModeChanged, client_id_, state->frame);
+            event.server_entity = ecs::Entity{state->client_entity_network_id};
+            event.local_entity = state->local;
+            event.client_network_id = state->client_entity_network_id;
+            event.wire_network_id = state->wire_network_id;
+            event.network_version = client_entity_network_id_version(state->client_entity_network_id);
+            event.archetype = state->archetype;
+            event.previous_mode = previous_mode;
+            event.mode = state->mode;
+            tracer_->trace(event);
+        }
+#endif
     }
     if (switched && mode != ReplicationClientMode::Predict && !has_predicted_entities()) {
         has_predicted_frame_ = false;
@@ -740,6 +902,65 @@ bool ReplicationClient::set_entity_mode(
     }
     return switched;
 }
+
+#ifdef KAGE_SYNC_ENABLE_TRACING
+void ReplicationClient::trace_frame_components(
+    const ecs::Registry& registry,
+    const SyncSettings& settings,
+    SyncFrame frame,
+    bool resimulated,
+    bool only_pending_rollback,
+    TraceFrameComponentScope scope) {
+    if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->frame_data_enabled()) {
+        return;
+    }
+    for (const EntityState& state : entities_) {
+        if (state.client_entity_network_id == invalid_client_entity_network_id ||
+            !state.local || !registry.alive(state.local) ||
+            state.archetype.value >= settings.archetypes.size()) {
+            continue;
+        }
+        if (only_pending_rollback && !state.prediction_rollback_pending) {
+            continue;
+        }
+        if (scope == TraceFrameComponentScope::Predicted && state.mode != ReplicationClientMode::Predict) {
+            continue;
+        }
+        if (scope == TraceFrameComponentScope::NonPredicted && state.mode == ReplicationClientMode::Predict) {
+            continue;
+        }
+        const SyncArchetype& archetype = settings.archetypes[state.archetype.value];
+        for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
+            const ComponentReplication& replication = archetype.components[component_index];
+            const void* value = registry.get(state.local, replication.component);
+            if (value == nullptr || component_index >= archetype.component_ops.size()) {
+                continue;
+            }
+            const SyncComponentOps& ops = archetype.component_ops[component_index];
+            if (ops.quantize == nullptr) {
+                continue;
+            }
+            SyncComponentOps::QuantizedBytes bytes;
+            bytes.resize(ops.quantized_size);
+            ops.quantize(value, bytes.data());
+            SyncTraceEvent event = make_client_trace_event(
+                resimulated ? SyncTraceEventType::ResimulatedFrameComponent : SyncTraceEventType::FrameComponent,
+                client_id_,
+                frame);
+            event.local_entity = state.local;
+            event.server_entity = ecs::Entity{state.client_entity_network_id};
+            event.client_network_id = state.client_entity_network_id;
+            event.wire_network_id = state.wire_network_id;
+            event.network_version = client_entity_network_id_version(state.client_entity_network_id);
+            event.archetype = state.archetype;
+            event.component = replication.component;
+            event.mode = state.mode;
+            append_trace_component_data(tracer_, archetype, component_index, bytes.data(), event);
+            tracer_->trace(event);
+        }
+    }
+}
+#endif
 
 ReplicationClientMode ReplicationClient::entity_mode(ecs::Entity server_entity) const noexcept {
     const EntityState* state = find_entity_state(server_entity);
@@ -767,6 +988,9 @@ bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds, ecs::Ru
         return false;
     }
 
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    const SyncFrame previous_receive_frame = receive_frame_;
+#endif
     receive_accumulator_seconds_ += dt_seconds;
     while (receive_accumulator_seconds_ >= options_.fixed_dt_seconds) {
         receive_accumulator_seconds_ -= options_.fixed_dt_seconds;
@@ -804,6 +1028,23 @@ bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds, ecs::Ru
     }
 
     update_display_target(dt_seconds);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    if (previous_receive_frame != receive_frame_) {
+        const SyncSettings& settings = registry.get<SyncSettings>();
+        for (SyncFrame frame = previous_receive_frame + 1U; frame <= receive_frame_; ++frame) {
+            trace_frame_components(
+                registry,
+                settings,
+                frame,
+                false,
+                false,
+                TraceFrameComponentScope::NonPredicted);
+            if (frame == receive_frame_) {
+                break;
+            }
+        }
+    }
+#endif
     return true;
 }
 
@@ -836,6 +1077,9 @@ bool ReplicationClient::run_prediction_frame(ecs::Registry& registry, SyncFrame 
 
     last_predicted_frame_ = frame;
     has_predicted_frame_ = true;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    trace_frame_components(registry, settings, frame, false, false, TraceFrameComponentScope::Predicted);
+#endif
     return all_valid;
 }
 
@@ -866,6 +1110,18 @@ bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame client_fr
             ++interpolation_checks;
             ++interpolation_starvations;
 #endif
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            if (tracer_ != nullptr && tracer_->enabled()) {
+                SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::BufferedStarved, client_id_, target_frame);
+                event.server_entity = ecs::Entity{state.client_entity_network_id};
+                event.local_entity = state.local;
+                event.client_network_id = state.client_entity_network_id;
+                event.wire_network_id = state.wire_network_id;
+                event.network_version = client_entity_network_id_version(state.client_entity_network_id);
+                event.archetype = state.archetype;
+                tracer_->trace(event);
+            }
+#endif
             continue;
         }
 
@@ -885,6 +1141,18 @@ bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame client_fr
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
             ++interpolation_checks;
             ++interpolation_starvations;
+#endif
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            if (tracer_ != nullptr && tracer_->enabled()) {
+                SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::BufferedStarved, client_id_, target_frame);
+                event.server_entity = ecs::Entity{state.client_entity_network_id};
+                event.local_entity = state.local;
+                event.client_network_id = state.client_entity_network_id;
+                event.wire_network_id = state.wire_network_id;
+                event.network_version = client_entity_network_id_version(state.client_entity_network_id);
+                event.archetype = state.archetype;
+                tracer_->trace(event);
+            }
 #endif
             all_valid = false;
             continue;
@@ -1266,6 +1534,9 @@ bool ReplicationClient::apply_upsert(
         }
         return &reference_context;
     };
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    std::vector<SyncTraceEvent> pending_component_received_events;
+#endif
 
     EntityState* previous_state = found_state != nullptr && !previous_absent ? found_state : nullptr;
     const QuantizedFrameData* previous_baseline = nullptr;
@@ -1330,6 +1601,19 @@ bool ReplicationClient::apply_upsert(
                     ops.references_entities ? references_for_component() : nullptr)) {
                 return false;
             }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            if (tracer_ != nullptr && tracer_->enabled()) {
+                SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ComponentReceived, client_id_, frame);
+                event.server_entity = ecs::Entity{client_entity_network_id};
+                event.client_network_id = client_entity_network_id;
+                event.wire_network_id = network_id;
+                event.network_version = client_entity_network_id_version(client_entity_network_id);
+                event.archetype = archetype;
+                event.component = component_entity;
+                append_trace_component_data(tracer_, definition, component_index, received_bytes, event);
+                pending_component_received_events.push_back(std::move(event));
+            }
+#endif
             if (collect_decoded_updates) {
                 baseline.bytes.assign(received_bytes, ops.quantized_size);
             }
@@ -1409,6 +1693,19 @@ bool ReplicationClient::apply_upsert(
                     ops.references_entities ? references_for_component() : nullptr)) {
                 return false;
             }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            if (tracer_ != nullptr && tracer_->enabled()) {
+                SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ComponentReceived, client_id_, frame);
+                event.server_entity = ecs::Entity{client_entity_network_id};
+                event.client_network_id = client_entity_network_id;
+                event.wire_network_id = network_id;
+                event.network_version = client_entity_network_id_version(client_entity_network_id);
+                event.archetype = archetype;
+                event.component = component_entity;
+                append_trace_component_data(tracer_, definition, component_index, merged_bytes, event);
+                pending_component_received_events.push_back(std::move(event));
+            }
+#endif
             if (!buffered_without_selector) {
                 std::memcpy(decoded_bytes, merged_bytes, ops.quantized_size);
             }
@@ -1424,10 +1721,44 @@ bool ReplicationClient::apply_upsert(
         }
     }
 
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    if (tracer_ != nullptr && tracer_->enabled() && has_tag_slot(definition)) {
+        const bool tags_changed = full || previous_baseline == nullptr || previous_baseline->tag_mask != merged.tag_mask;
+        if (tags_changed) {
+            for (std::size_t tag_index = 0; tag_index < definition.tags.size(); ++tag_index) {
+                SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::TagReceived, client_id_, frame);
+                event.server_entity = ecs::Entity{client_entity_network_id};
+                event.client_network_id = client_entity_network_id;
+                event.wire_network_id = network_id;
+                event.network_version = client_entity_network_id_version(client_entity_network_id);
+                event.archetype = archetype;
+                event.tag = definition.tags[tag_index].tag;
+                event.remove = (merged.tag_mask & (std::uint64_t{1} << tag_index)) == 0U;
+                tracer_->trace(event);
+            }
+        }
+    }
+#endif
+
     std::vector<EntityState::Cue> received_cues;
     if (!read_cues(packet, received_cues)) {
         return false;
     }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    if (tracer_ != nullptr && tracer_->enabled()) {
+        for (const EntityState::Cue& cue : received_cues) {
+            SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::CueReceived, client_id_, cue.frame);
+            event.server_entity = ecs::Entity{client_entity_network_id};
+            event.client_network_id = client_entity_network_id;
+            event.wire_network_id = network_id;
+            event.network_version = client_entity_network_id_version(client_entity_network_id);
+            event.archetype = archetype;
+            event.cue_type = cue.type;
+            append_trace_cue_data(tracer_, settings, cue.type, cue.payload, event);
+            tracer_->trace(event);
+        }
+    }
+#endif
 
     if (previous_state != nullptr && frame <= previous_state->frame) {
         return false;
@@ -1438,6 +1769,18 @@ bool ReplicationClient::apply_upsert(
         return false;
     }
     EntityState& state = *ensured_state;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    if (tracer_ != nullptr && tracer_->enabled() && full && (found_state == nullptr || previous_absent)) {
+        SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::EntityReceived, client_id_, frame);
+        event.server_entity = ecs::Entity{client_entity_network_id};
+        event.local_entity = state.local;
+        event.client_network_id = client_entity_network_id;
+        event.wire_network_id = network_id;
+        event.network_version = client_entity_network_id_version(client_entity_network_id);
+        event.archetype = archetype;
+        tracer_->trace(event);
+    }
+#endif
     if (!state.mode_selected) {
         ReplicationClientMode selected = options_.default_entity_mode;
         if (options_.entity_mode_selector) {
@@ -1451,9 +1794,33 @@ bool ReplicationClient::apply_upsert(
             update.components = &decoded_updates;
             selected = options_.entity_mode_selector(update);
         }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+        if (tracer_ != nullptr && tracer_->enabled() && state.mode != selected) {
+            SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ModeChanged, client_id_, frame);
+            event.server_entity = ecs::Entity{client_entity_network_id};
+            event.local_entity = state.local;
+            event.client_network_id = client_entity_network_id;
+            event.wire_network_id = network_id;
+            event.network_version = client_entity_network_id_version(client_entity_network_id);
+            event.archetype = archetype;
+            event.previous_mode = state.mode;
+            event.mode = selected;
+            tracer_->trace(event);
+        }
+#endif
         state.mode = selected;
         state.mode_selected = true;
     }
+
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    if (tracer_ != nullptr && tracer_->enabled()) {
+        for (SyncTraceEvent& event : pending_component_received_events) {
+            event.local_entity = state.local;
+            event.mode = state.mode;
+            tracer_->trace(event);
+        }
+    }
+#endif
 
     if (state.mode == ReplicationClientMode::BufferedInterpolation) {
         const bool applied =
@@ -1569,6 +1936,20 @@ bool ReplicationClient::play_cue(
     if (!settings.cue_ops[cue.type].play(registry, state.local, cue.payload, late_seconds)) {
         return false;
     }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    if (tracer_ != nullptr && tracer_->enabled()) {
+        SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::CueInvoked, client_id_, cue.frame);
+        event.server_entity = ecs::Entity{state.client_entity_network_id};
+        event.local_entity = state.local;
+        event.client_network_id = state.client_entity_network_id;
+        event.wire_network_id = state.wire_network_id;
+        event.network_version = client_entity_network_id_version(state.client_entity_network_id);
+        event.archetype = state.archetype;
+        event.cue_type = cue.type;
+        append_trace_cue_data(tracer_, settings, cue.type, cue.payload, event);
+        tracer_->trace(event);
+    }
+#endif
     state.played_cues.push_back(EntityState::PlayedCue{
         cue.frame,
         cue.type,
@@ -1589,7 +1970,22 @@ bool ReplicationClient::rollback_played_cue(
     if (!state.local || !registry.alive(state.local)) {
         return true;
     }
-    return settings.cue_ops[cue.type].rollback(registry, state.local, cue.payload);
+    const bool rolled_back = settings.cue_ops[cue.type].rollback(registry, state.local, cue.payload);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    if (rolled_back && tracer_ != nullptr && tracer_->enabled()) {
+        SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::CueRolledBack, client_id_, cue.frame);
+        event.server_entity = ecs::Entity{state.client_entity_network_id};
+        event.local_entity = state.local;
+        event.client_network_id = state.client_entity_network_id;
+        event.wire_network_id = state.wire_network_id;
+        event.network_version = client_entity_network_id_version(state.client_entity_network_id);
+        event.archetype = state.archetype;
+        event.cue_type = cue.type;
+        append_trace_cue_data(tracer_, settings, cue.type, cue.payload, event);
+        tracer_->trace(event);
+    }
+#endif
+    return rolled_back;
 }
 
 void ReplicationClient::play_snap_cues(
@@ -1771,11 +2167,32 @@ bool ReplicationClient::apply_destroy(ecs::Registry& registry, SyncFrame frame, 
         return true;
     }
     const ClientEntityNetworkId client_entity_network_id = state->client_entity_network_id;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    const ecs::Entity local_entity = state->local;
+    const SyncArchetypeId archetype = state->archetype;
+    auto trace_destroy = [&]() {
+        if (tracer_ == nullptr || !tracer_->enabled()) {
+            return;
+        }
+        SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::EntityDestroyed, client_id_, frame);
+        event.server_entity = ecs::Entity{client_entity_network_id};
+        event.local_entity = local_entity;
+        event.client_network_id = client_entity_network_id;
+        event.wire_network_id = network_id;
+        event.network_version = client_entity_network_id_version(client_entity_network_id);
+        event.archetype = archetype;
+        event.remove = true;
+        tracer_->trace(event);
+    };
+#endif
     if (state->mode == ReplicationClientMode::BufferedInterpolation) {
         const bool applied = apply_buffered_destroy(registry, frame, client_entity_network_id);
         if (applied) {
             record_destroy_tombstone(network_id, frame);
             advance_wire_network_id_version(network_id);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            trace_destroy();
+#endif
         }
         return applied;
     }
@@ -1784,6 +2201,9 @@ bool ReplicationClient::apply_destroy(ecs::Registry& registry, SyncFrame frame, 
         if (applied) {
             record_destroy_tombstone(network_id, frame);
             advance_wire_network_id_version(network_id);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            trace_destroy();
+#endif
         }
         return applied;
     }
@@ -1795,6 +2215,9 @@ bool ReplicationClient::apply_destroy(ecs::Registry& registry, SyncFrame frame, 
     if (found != network_entity_indices_.end()) {
         erase_entity_state(registry, found->second, true);
     }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    trace_destroy();
+#endif
     advance_wire_network_id_version(network_id);
     return true;
 }
@@ -2107,14 +2530,59 @@ bool ReplicationClient::apply_buffered_sample(
     if (state.archetype != sample.archetype && state.archetype.value < settings.archetypes.size()) {
         remove_archetype_tags(registry, state.local, settings.archetypes[state.archetype.value]);
     }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    std::uint64_t previous_tag_mask = 0;
+    if (tracer_ != nullptr && tracer_->enabled()) {
+        for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
+            if (registry.has(state.local, archetype.tags[tag_index].tag)) {
+                previous_tag_mask |= std::uint64_t{1} << tag_index;
+            }
+        }
+    }
+#endif
     if (!apply_archetype_tags(registry, state.local, archetype, sample.baseline.tag_mask)) {
         return false;
     }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    if (tracer_ != nullptr && tracer_->enabled() && previous_tag_mask != sample.baseline.tag_mask) {
+        for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
+            const std::uint64_t bit = std::uint64_t{1} << tag_index;
+            if ((previous_tag_mask & bit) == (sample.baseline.tag_mask & bit)) {
+                continue;
+            }
+            SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::TagApplied, client_id_, sample.frame);
+            event.server_entity = ecs::Entity{state.client_entity_network_id};
+            event.local_entity = state.local;
+            event.client_network_id = state.client_entity_network_id;
+            event.wire_network_id = state.wire_network_id;
+            event.network_version = client_entity_network_id_version(state.client_entity_network_id);
+            event.archetype = sample.archetype;
+            event.tag = archetype.tags[tag_index].tag;
+            event.remove = (sample.baseline.tag_mask & bit) == 0U;
+            tracer_->trace(event);
+        }
+    }
+#endif
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
         const std::uint64_t bit = std::uint64_t{1} << component_index;
         if ((state.applied_present_mask & bit) != 0U &&
             (sample.baseline.present_mask & bit) == 0U) {
             registry.remove(state.local, archetype.components[component_index].component);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            if (tracer_ != nullptr && tracer_->enabled()) {
+                SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ComponentRemoved, client_id_, sample.frame);
+                event.server_entity = ecs::Entity{state.client_entity_network_id};
+                event.local_entity = state.local;
+                event.client_network_id = state.client_entity_network_id;
+                event.wire_network_id = state.wire_network_id;
+                event.network_version = client_entity_network_id_version(state.client_entity_network_id);
+                event.archetype = sample.archetype;
+                event.component = archetype.components[component_index].component;
+                event.remove = true;
+                append_trace_component_name(archetype, component_index, event);
+                tracer_->trace(event);
+            }
+#endif
         }
     }
 
@@ -2209,6 +2677,42 @@ bool ReplicationClient::compare_predicted_frame(
     EntityState& state,
     SyncFrame frame,
     const QuantizedFrameData& authoritative) const {
+#ifdef KAGE_SYNC_ENABLE_TRACING
+#define TRACE_ROLLBACK_CONFLICT_IF(condition)                                                          \
+    do {                                                                                               \
+        if (condition) {                                                                               \
+            if (tracer_ != nullptr && tracer_->enabled()) {                                            \
+                SyncTraceEvent event =                                                                 \
+                    make_client_trace_event(SyncTraceEventType::PredictionRollbackConflict, client_id_, frame); \
+                event.server_entity = ecs::Entity{state.client_entity_network_id};                     \
+                event.local_entity = state.local;                                                      \
+                event.client_network_id = state.client_entity_network_id;                              \
+                event.wire_network_id = state.wire_network_id;                                         \
+                event.network_version = client_entity_network_id_version(state.client_entity_network_id); \
+                event.archetype = state.archetype;                                                     \
+                event.component = rollback_trace_component;                                            \
+                if (rollback_trace_component_index != invalid_component_index &&                        \
+                    rollback_trace_component_bytes != nullptr) {                                        \
+                    append_trace_component_data(                                                       \
+                        tracer_,                                                                       \
+                        archetype,                                                                     \
+                        rollback_trace_component_index,                                                \
+                        rollback_trace_component_bytes,                                                \
+                        event);                                                                        \
+                }                                                                                      \
+                tracer_->trace(event);                                                                 \
+            }                                                                                          \
+            return true;                                                                               \
+        }                                                                                              \
+    } while (false)
+#else
+#define TRACE_ROLLBACK_CONFLICT_IF(condition) \
+    do {                                     \
+        if (condition) {                     \
+            return true;                     \
+        }                                    \
+    } while (false)
+#endif
     if (state.archetype.value >= settings.archetypes.size() || state.predicted_frames.empty()) {
         return false;
     }
@@ -2221,21 +2725,21 @@ bool ReplicationClient::compare_predicted_frame(
         return true;
     }
     const SyncArchetype& archetype = settings.archetypes[state.archetype.value];
-    if (predicted.baseline.tag_mask != authoritative.tag_mask ||
-        predicted.baseline.present_mask != authoritative.present_mask) {
-        return true;
-    }
-    if (predicted.baseline.bytes.size() < archetype.total_quantized_bytes ||
-        authoritative.bytes.size() < archetype.total_quantized_bytes) {
-        return true;
-    }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    constexpr std::size_t invalid_component_index = static_cast<std::size_t>(-1);
+    std::size_t rollback_trace_component_index = invalid_component_index;
+    ecs::Entity rollback_trace_component{};
+    const std::uint8_t* rollback_trace_component_bytes = nullptr;
+#endif
+    TRACE_ROLLBACK_CONFLICT_IF(predicted.baseline.tag_mask != authoritative.tag_mask);
+    TRACE_ROLLBACK_CONFLICT_IF(predicted.baseline.present_mask != authoritative.present_mask);
+    TRACE_ROLLBACK_CONFLICT_IF(predicted.baseline.bytes.size() < archetype.total_quantized_bytes);
+    TRACE_ROLLBACK_CONFLICT_IF(authoritative.bytes.size() < archetype.total_quantized_bytes);
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
         if (!frame_has_component(authoritative, component_index)) {
             continue;
         }
-        if (component_index >= archetype.component_ops.size()) {
-            return true;
-        }
+        TRACE_ROLLBACK_CONFLICT_IF(component_index >= archetype.component_ops.size());
         const SyncComponentOps& ops = archetype.component_ops[component_index];
         if (ops.should_roll_back == nullptr) {
             throw std::logic_error("predicted replicated components must define SyncComponentTraits<T>::should_roll_back");
@@ -2244,10 +2748,29 @@ bool ReplicationClient::compare_predicted_frame(
             unchecked_frame_component_data(archetype, predicted.baseline, component_index);
         const std::uint8_t* authoritative_bytes =
             unchecked_frame_component_data(archetype, authoritative, component_index);
-        if (ops.should_roll_back(predicted_bytes, authoritative_bytes)) {
-            return true;
-        }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+        rollback_trace_component_index = component_index;
+        rollback_trace_component = archetype.components[component_index].component;
+        rollback_trace_component_bytes = authoritative_bytes;
+        RollbackReasonTraceContext rollback_reason_context;
+        rollback_reason_context.tracer = tracer_;
+        rollback_reason_context.client = client_id_;
+        rollback_reason_context.frame = frame;
+        rollback_reason_context.server_entity = ecs::Entity{state.client_entity_network_id};
+        rollback_reason_context.local_entity = state.local;
+        rollback_reason_context.client_network_id = state.client_entity_network_id;
+        rollback_reason_context.wire_network_id = state.wire_network_id;
+        rollback_reason_context.network_version = client_entity_network_id_version(state.client_entity_network_id);
+        rollback_reason_context.archetype = state.archetype;
+        rollback_reason_context.component = rollback_trace_component;
+        rollback_reason_context.component_name = component_index < archetype.component_ops.size()
+            ? archetype.component_ops[component_index].name
+            : std::string{};
+        ScopedRollbackReasonTraceContext scoped_rollback_reason_context(rollback_reason_context);
+#endif
+        TRACE_ROLLBACK_CONFLICT_IF(ops.should_roll_back(predicted_bytes, authoritative_bytes));
     }
+#undef TRACE_ROLLBACK_CONFLICT_IF
     return false;
 }
 
@@ -2391,15 +2914,60 @@ bool ReplicationClient::apply_snap_sample(
         !init_frame_data(archetype, state.baseline)) {
         return false;
     }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    std::uint64_t previous_tag_mask = 0;
+    if (tracer_ != nullptr && tracer_->enabled()) {
+        for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
+            if (registry.has(state.local, archetype.tags[tag_index].tag)) {
+                previous_tag_mask |= std::uint64_t{1} << tag_index;
+            }
+        }
+    }
+#endif
     if (!apply_archetype_tags(registry, state.local, archetype, decoded.tag_mask)) {
         return false;
     }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    if (tracer_ != nullptr && tracer_->enabled() && previous_tag_mask != decoded.tag_mask) {
+        for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
+            const std::uint64_t bit = std::uint64_t{1} << tag_index;
+            if ((previous_tag_mask & bit) == (decoded.tag_mask & bit)) {
+                continue;
+            }
+            SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::TagApplied, client_id_, state.frame);
+            event.server_entity = ecs::Entity{state.client_entity_network_id};
+            event.local_entity = state.local;
+            event.client_network_id = state.client_entity_network_id;
+            event.wire_network_id = state.wire_network_id;
+            event.network_version = client_entity_network_id_version(state.client_entity_network_id);
+            event.archetype = state.archetype;
+            event.tag = archetype.tags[tag_index].tag;
+            event.remove = (decoded.tag_mask & bit) == 0U;
+            tracer_->trace(event);
+        }
+    }
+#endif
     if (full) {
         for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
             const std::uint64_t bit = std::uint64_t{1} << component_index;
             if ((state.baseline.present_mask & bit) != 0U &&
                 (decoded.present_mask & bit) == 0U) {
                 registry.remove(state.local, archetype.components[component_index].component);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+                if (tracer_ != nullptr && tracer_->enabled()) {
+                    SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ComponentRemoved, client_id_, state.frame);
+                    event.server_entity = ecs::Entity{state.client_entity_network_id};
+                    event.local_entity = state.local;
+                    event.client_network_id = state.client_entity_network_id;
+                    event.wire_network_id = state.wire_network_id;
+                    event.network_version = client_entity_network_id_version(state.client_entity_network_id);
+                    event.archetype = state.archetype;
+                    event.component = archetype.components[component_index].component;
+                    event.remove = true;
+                    append_trace_component_name(archetype, component_index, event);
+                    tracer_->trace(event);
+                }
+#endif
             }
         }
 
@@ -2438,7 +3006,6 @@ bool ReplicationClient::apply_snap_sample(
         if (ops.apply == nullptr || !ops.apply(registry, state.local, bytes)) {
             return false;
         }
-
         const std::uint8_t* previous_bytes = frame_component_data(archetype, state.baseline, component_index);
         const bool had_baseline = previous_bytes != nullptr;
         if (had_baseline &&
@@ -2670,6 +3237,9 @@ bool ReplicationClient::resimulate_all_predicted(
                 return false;
             }
         }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+        trace_frame_components(registry, settings, current_frame, true, false, TraceFrameComponentScope::Predicted);
+#endif
         return true;
     }
 
@@ -2689,6 +3259,9 @@ bool ReplicationClient::resimulate_all_predicted(
                 return false;
             }
         }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+        trace_frame_components(registry, settings, frame, true, false, TraceFrameComponentScope::Predicted);
+#endif
         if (frame == current_frame) {
             break;
         }
@@ -2738,6 +3311,9 @@ bool ReplicationClient::resimulate_affected_predicted(
                 return false;
             }
         }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+        trace_frame_components(registry, settings, current_frame, true, true, TraceFrameComponentScope::Predicted);
+#endif
         return true;
     }
 
@@ -2754,6 +3330,9 @@ bool ReplicationClient::resimulate_affected_predicted(
                 return false;
             }
         }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+        trace_frame_components(registry, settings, frame, true, true, TraceFrameComponentScope::Predicted);
+#endif
         if (frame == current_frame) {
             break;
         }
@@ -3211,6 +3790,12 @@ bool ReplicationClient::receive_connect_response(ecs::Registry& registry, BitBuf
         connection_state_ = ReplicationClientConnectionState::Accepted;
         connect_resend_accumulator_seconds_ = options_.connect_resend_interval_seconds;
         configure_client(registry, client_id_);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+        if (tracer_ != nullptr && tracer_->enabled()) {
+            SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ClientConnected, client_id_, receive_frame_);
+            tracer_->trace(event);
+        }
+#endif
         return true;
     }
 
@@ -3221,6 +3806,13 @@ bool ReplicationClient::receive_connect_response(ecs::Registry& registry, BitBuf
     client_id_ = invalid_client_id;
     connect_error_ = std::move(error);
     connection_state_ = ReplicationClientConnectionState::Rejected;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    if (tracer_ != nullptr && tracer_->enabled()) {
+        SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ClientDisconnected, invalid_client_id, receive_frame_);
+        event.data = connect_error_;
+        tracer_->trace(event);
+    }
+#endif
     return true;
 }
 

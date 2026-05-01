@@ -6,4 +6,5 @@
 #include "kage/sync/delta.hpp"
 #include "kage/sync/protocol.hpp"
 #include "kage/sync/server.hpp"
+#include "kage/sync/tracing.hpp"
 #include "kage/sync/types.hpp"

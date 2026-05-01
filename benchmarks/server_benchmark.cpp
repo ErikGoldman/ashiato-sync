@@ -145,6 +145,118 @@ void BM_ServerTickSerializedFullBudget(benchmark::State& state) {
         state.iterations() * static_cast<std::int64_t>(entity_count) * static_cast<std::int64_t>(client_count));
 }
 
+#ifdef KAGE_SYNC_ENABLE_TRACING
+void BM_ServerTickTracingRuntimeDisabled(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int client_count = static_cast<int>(state.range(1));
+
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
+    const std::vector<ecs::Entity> entities = create_position_entities(registry, entity_count);
+
+    std::uint64_t sent = 0;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(Position);
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        sent += client + payload.byte_size();
+        benchmark::DoNotOptimize(sent);
+    };
+
+    kage::sync::SyncTracer tracer;
+    tracer.set_enabled(false);
+
+    kage::sync::ReplicationServer server(options);
+    server.set_tracer(&tracer);
+    add_clients(server, client_count);
+    add_replication_configs(registry, entities, archetype);
+    server.refresh_replicated(registry);
+
+    for (auto _ : state) {
+        server.tick(registry);
+    }
+
+    state.SetItemsProcessed(
+        state.iterations() * static_cast<std::int64_t>(entity_count) * static_cast<std::int64_t>(client_count));
+}
+
+void BM_ServerTickTracingCallbacks(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int client_count = static_cast<int>(state.range(1));
+
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
+    const std::vector<ecs::Entity> entities = create_position_entities(registry, entity_count);
+
+    std::uint64_t sent = 0;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(Position);
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        sent += client + payload.byte_size();
+        benchmark::DoNotOptimize(sent);
+    };
+
+    std::uint64_t events = 0;
+    kage::sync::SyncTraceCallbacks callbacks;
+    callbacks.on_event = [&](const kage::sync::SyncTraceEvent&) {
+        ++events;
+        benchmark::DoNotOptimize(events);
+    };
+    kage::sync::SyncTracer tracer(callbacks);
+
+    kage::sync::ReplicationServer server(options);
+    server.set_tracer(&tracer);
+    add_clients(server, client_count);
+    add_replication_configs(registry, entities, archetype);
+    server.refresh_replicated(registry);
+
+    for (auto _ : state) {
+        server.tick(registry);
+    }
+
+    state.SetItemsProcessed(
+        state.iterations() * static_cast<std::int64_t>(entity_count) * static_cast<std::int64_t>(client_count));
+}
+
+void BM_ServerTickTracingFrameData(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int client_count = static_cast<int>(state.range(1));
+
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
+    const std::vector<ecs::Entity> entities = create_position_entities(registry, entity_count);
+
+    std::uint64_t sent = 0;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(Position);
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        sent += client + payload.byte_size();
+        benchmark::DoNotOptimize(sent);
+    };
+
+    std::uint64_t events = 0;
+    kage::sync::SyncTraceCallbacks callbacks;
+    callbacks.on_event = [&](const kage::sync::SyncTraceEvent&) {
+        ++events;
+        benchmark::DoNotOptimize(events);
+    };
+    kage::sync::SyncTracer tracer(callbacks);
+    tracer.set_frame_data_enabled(true);
+
+    kage::sync::ReplicationServer server(options);
+    server.set_tracer(&tracer);
+    add_clients(server, client_count);
+    add_replication_configs(registry, entities, archetype);
+    server.refresh_replicated(registry);
+
+    for (auto _ : state) {
+        server.tick(registry);
+    }
+
+    state.SetItemsProcessed(
+        state.iterations() * static_cast<std::int64_t>(entity_count) * static_cast<std::int64_t>(client_count));
+}
+#endif
+
 void BM_ServerTickSerializedDelta(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int client_count = static_cast<int>(state.range(1));
@@ -714,6 +826,11 @@ BENCHMARK(BM_ServerTickBudgetLimited)->Apply(LimitedTickArgs);
 BENCHMARK(BM_ServerRefreshReplicatedChanges)->Apply(ChurnArgs);
 BENCHMARK(BM_ServerAddClientsAfterReplicated)->Apply(AddClientArgs);
 BENCHMARK(BM_ServerTickSerializedFullBudget)->Apply(TickArgs);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+BENCHMARK(BM_ServerTickTracingRuntimeDisabled)->Apply(TickArgs);
+BENCHMARK(BM_ServerTickTracingCallbacks)->Apply(TickArgs);
+BENCHMARK(BM_ServerTickTracingFrameData)->Apply(TickArgs);
+#endif
 BENCHMARK(BM_ServerTickSerializedDelta)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickSerializedBudgetLimited)->Apply(LimitedTickArgs);
 BENCHMARK(BM_ServerTickPackedFullBudget)->Apply(TickArgs);

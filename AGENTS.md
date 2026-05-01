@@ -24,3 +24,7 @@ This is a high-performance project. Always consider the performance effect of an
 
 - Previous optimization experiments are in OPTIMIZATION\_EXPERIMENTS.md -- read it for context and update it when trying new experiments.
 - Bandwidth optimization experiments are in BANDWIDTH\_EXPERIMENTS.md
+
+## Trace viewer
+
+There's a trace viewer in tools/ that can visually debug a trace capture. If you work on this tool and need to check for a successful UI change, run with `--control-socket [path].sock` to open a socket for remote automation. Commands are one per like, and include "move x y", "mouse\_down x y", "scroll x y", "screenshot [path]". Sleep briefly between inputs to allow the UI time to refresh and use the screenshots to debug your work.

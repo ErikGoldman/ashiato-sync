@@ -76,6 +76,38 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+## Trace Viewer
+
+Build the Dear ImGui trace viewer with tracing enabled:
+
+```sh
+cmake -S . -B build-viewer \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DKAGE_SYNC_BUILD_TRACE_VIEWER=ON \
+  -DKAGE_SYNC_ENABLE_TRACING=ON
+cmake --build build-viewer --target kage_sync_trace_viewer
+```
+
+For live automation, start the viewer with a local control socket:
+
+```sh
+./build-viewer/kage_sync_trace_viewer \
+  --trace-dir /tmp/kage-balls-trace \
+  --control-socket /tmp/kage_sync_trace_viewer.sock
+```
+
+The socket accepts newline-delimited commands and returns `OK` or `ERR`:
+
+```sh
+printf 'click 120 240\nscreenshot /tmp/kage_sync_trace_viewer.png\nclose\n' | nc -U /tmp/kage_sync_trace_viewer.sock
+```
+
+Supported commands are `load path`, `move x y`, `click x y [left|right|middle]`,
+`mouse_down x y [button]`, `mouse_up x y [button]`, `scroll x y`,
+`screenshot [path]`, `status`, and `close`.
+Screenshot paths are forced to a `.png` extension, and missing parent
+directories are created before writing.
+
 ## Basic Usage
 
 ```cpp

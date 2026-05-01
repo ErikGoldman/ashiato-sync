@@ -12,6 +12,8 @@
 
 namespace kage::sync {
 
+class SyncTracer;
+
 class ReplicationServer {
 public:
     using ReplicateFn = std::function<void(ClientId, ecs::Entity)>;
@@ -23,6 +25,9 @@ public:
     }
 
     void set_transport(TransportFn transport);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    void set_tracer(SyncTracer* tracer) noexcept;
+#endif
 
     bool add_client(ClientId client);
     bool remove_client(ClientId client);
@@ -232,6 +237,9 @@ private:
         ClientState& client,
         std::uint32_t packet_id,
         const std::vector<PacketAckRecord>& records);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    void trace_frame_components(const ecs::Registry& registry, const SyncSettings& settings);
+#endif
 
     ReplicationServerOptions options_;
     std::vector<ReplicatedSlot> replicated_;
@@ -247,6 +255,9 @@ private:
     ClientId next_connect_client_id_ = 1;
     SyncFrame frame_ = 0;
     bool replicated_initialized_ = false;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    SyncTracer* tracer_ = nullptr;
+#endif
 };
 
 template <std::size_t NetworkEntityIdTier0Bits = protocol::default_network_entity_id_tier0_bits>

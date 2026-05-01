@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -121,11 +122,22 @@ struct SyncComponentTraits<BallPosition> {
     }
 
     static bool should_roll_back(const Quantized& predicted, const Quantized& authoritative) {
-        const float dx = predicted.x - authoritative.x;
-        const float dy = predicted.y - authoritative.y;
-        const float dz = predicted.z - authoritative.z;
-        return dx * dx + dy * dy + dz * dz > 0.000001f;
+        TRACE_ROLLBACK_IF(std::fabs(predicted.x - authoritative.x) > 0.001f, "BallPosition.x");
+        TRACE_ROLLBACK_IF(std::fabs(predicted.y - authoritative.y) > 0.001f, "BallPosition.y");
+        TRACE_ROLLBACK_IF(std::fabs(predicted.z - authoritative.z) > 0.001f, "BallPosition.z");
+        return false;
     }
+
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
+        out.append("x=");
+        out.append_number(value.x);
+        out.append(" y=");
+        out.append_number(value.y);
+        out.append(" z=");
+        out.append_number(value.z);
+    }
+#endif
 };
 
 template <>
@@ -150,11 +162,22 @@ struct SyncComponentTraits<BallVelocity> {
     }
 
     static bool should_roll_back(const Quantized& predicted, const Quantized& authoritative) {
-        const float dx = predicted.x - authoritative.x;
-        const float dy = predicted.y - authoritative.y;
-        const float dz = predicted.z - authoritative.z;
-        return dx * dx + dy * dy + dz * dz > 0.000001f;
+        TRACE_ROLLBACK_IF(std::fabs(predicted.x - authoritative.x) > 0.001f, "BallVelocity.x");
+        TRACE_ROLLBACK_IF(std::fabs(predicted.y - authoritative.y) > 0.001f, "BallVelocity.y");
+        TRACE_ROLLBACK_IF(std::fabs(predicted.z - authoritative.z) > 0.001f, "BallVelocity.z");
+        return false;
     }
+
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
+        out.append("x=");
+        out.append_number(value.x);
+        out.append(" y=");
+        out.append_number(value.y);
+        out.append(" z=");
+        out.append_number(value.z);
+    }
+#endif
 };
 
 }  // namespace kage::sync
@@ -214,6 +237,15 @@ struct SyncCueTraits<BallBounceCue> {
     static bool equals_cue(const BallBounceCue& lhs, const BallBounceCue& rhs) {
         return lhs.sequence == rhs.sequence;
     }
+
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    static void trace(const BallBounceCue& cue, SyncTraceStringBuilder& out) {
+        out.append("sequence=");
+        out.append_number(cue.sequence);
+        out.append(" strength=");
+        out.append_number(cue.strength);
+    }
+#endif
 };
 
 template <>
@@ -238,12 +270,28 @@ struct SyncComponentTraits<BallVisual> {
     }
 
     static bool should_roll_back(const Quantized& predicted, const Quantized& authoritative) {
-        return predicted.radius != authoritative.radius ||
-            predicted.r != authoritative.r ||
-            predicted.g != authoritative.g ||
-            predicted.b != authoritative.b ||
-            predicted.a != authoritative.a;
+        TRACE_ROLLBACK_IF(predicted.radius != authoritative.radius, "BallVisual.radius");
+        TRACE_ROLLBACK_IF(predicted.r != authoritative.r, "BallVisual.r");
+        TRACE_ROLLBACK_IF(predicted.g != authoritative.g, "BallVisual.g");
+        TRACE_ROLLBACK_IF(predicted.b != authoritative.b, "BallVisual.b");
+        TRACE_ROLLBACK_IF(predicted.a != authoritative.a, "BallVisual.a");
+        return false;
     }
+
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
+        out.append("radius=");
+        out.append_number(value.radius);
+        out.append(" rgba=");
+        out.append_number(static_cast<int>(value.r));
+        out.append(",");
+        out.append_number(static_cast<int>(value.g));
+        out.append(",");
+        out.append_number(static_cast<int>(value.b));
+        out.append(",");
+        out.append_number(static_cast<int>(value.a));
+    }
+#endif
 };
 
 template <>
@@ -1036,6 +1084,9 @@ int main(int argc, char** argv) {
     float time_dilation_gain = 0.05f;
     LinkSettings link_settings;
     int target_ball_count = 96;
+    std::string trace_dir;
+    bool trace_frame_data = true;
+    bool trace_cue_data = true;
     for (int index = 1; index < argc; ++index) {
         const std::string arg = argv[index];
         auto require_value = [&]() -> std::string {
@@ -1063,6 +1114,31 @@ int main(int argc, char** argv) {
             link_settings.loss_percent = std::stof(require_value());
         } else if (arg == "--entities") {
             target_ball_count = std::clamp(std::stoi(require_value()), min_ball_count, max_ball_count);
+        } else if (arg == "--trace-dir") {
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            trace_dir = require_value();
+#else
+            (void)require_value();
+            throw std::runtime_error("--trace-dir requires a build with KAGE_SYNC_ENABLE_TRACING=ON");
+#endif
+        } else if (arg == "--trace-frame-data") {
+            const std::string value = require_value();
+            if (value == "on" || value == "true" || value == "1") {
+                trace_frame_data = true;
+            } else if (value == "off" || value == "false" || value == "0") {
+                trace_frame_data = false;
+            } else {
+                throw std::runtime_error("--trace-frame-data must be on or off");
+            }
+        } else if (arg == "--trace-cue-data") {
+            const std::string value = require_value();
+            if (value == "on" || value == "true" || value == "1") {
+                trace_cue_data = true;
+            } else if (value == "off" || value == "false" || value == "0") {
+                trace_cue_data = false;
+            } else {
+                throw std::runtime_error("--trace-cue-data must be on or off");
+            }
         } else if (arg == "--auto-interpolation-buffer") {
             const std::string value = require_value();
             if (value == "on" || value == "true" || value == "1") {
@@ -1136,6 +1212,17 @@ int main(int argc, char** argv) {
     client_options.fixed_dt_seconds = 1.0 / 30.0;
     client_options.rollback_policy = kage::sync::ReplicationRollbackPolicy::OnlyAffected;
     kage::sync::ReplicationClient client(client_options);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    std::unique_ptr<kage::sync::KTraceDirectoryWriter> trace_writer;
+    if (!trace_dir.empty()) {
+        trace_writer = std::make_unique<kage::sync::KTraceDirectoryWriter>(
+            kage::sync::KTraceDirectoryWriterOptions{trace_dir});
+        trace_writer->tracer().set_frame_data_enabled(trace_frame_data);
+        trace_writer->tracer().set_cue_data_enabled(trace_cue_data);
+        server.set_tracer(&trace_writer->tracer());
+        client.set_tracer(&trace_writer->tracer());
+    }
+#endif
     register_client_prediction_jobs(client_registry, client);
 
     InitWindow(1280, 720, "kage-sync localhost balls");
@@ -1343,6 +1430,11 @@ int main(int argc, char** argv) {
     }
 
     CloseWindow();
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    if (trace_writer != nullptr) {
+        trace_writer->close();
+    }
+#endif
     close_socket(client_socket);
     close_socket(server_socket);
 #ifdef _WIN32
