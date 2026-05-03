@@ -525,11 +525,6 @@ void ReplicationServer::trace_outgoing_update_packet(
         out << record.entity.value;
     }
     out << "]";
-#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
-    const bool include_cue_data = tracer_ != nullptr && tracer_->frame_data_enabled();
-#else
-    const bool include_cue_data = false;
-#endif
     out << ",cues=[";
     bool first_cue = true;
     for (const PacketAckRecord& record : records) {
@@ -544,9 +539,11 @@ void ReplicationServer::trace_outgoing_update_packet(
             out << "{entity=" << record.entity.value
                 << ",frame=" << cue.frame
                 << ",type=" << cue.type;
-            if (include_cue_data && !cue.data.empty()) {
+#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+            if (tracer_ != nullptr && tracer_->frame_data_enabled() && !cue.data.empty()) {
                 out << ",data=" << cue.data;
             }
+#endif
             out << "}";
         }
     }

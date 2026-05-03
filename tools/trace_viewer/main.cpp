@@ -139,6 +139,7 @@ struct PacketEventInfo {
     bool server_side = false;
     bool send = false;
     int lane = 0;
+    int flow_index = -1;
 };
 
 struct PacketFlow {
@@ -1362,6 +1363,11 @@ void rebuild_packet_log_rows(ViewerState& state) {
             receive_used[static_cast<std::size_t>(best_receive)] = true;
         }
         state.packet_flows.push_back(flow);
+        const int flow_index = static_cast<int>(state.packet_flows.size()) - 1;
+        state.packet_events[static_cast<std::size_t>(send_index)].flow_index = flow_index;
+        if (best_receive >= 0) {
+            state.packet_events[static_cast<std::size_t>(best_receive)].flow_index = flow_index;
+        }
     }
 
     for (int event_index = 0; event_index < static_cast<int>(state.packet_events.size()); ++event_index) {
@@ -3102,6 +3108,41 @@ float packet_event_x(float column_x, const PacketEventInfo& event) {
     return event.server_side ? base - lane_offset : base + lane_offset;
 }
 
+bool packet_event_matches_selection(const PacketEventInfo& event, const SelectedPacketChip& selected) {
+    return selected.source_index == event.source_index && selected.event_index == event.record_index;
+}
+
+bool packet_event_hit(const ImVec2& center, const ImVec2& mouse) {
+    const ImVec2 min(center.x - packet_marker_size * 0.5f, center.y - packet_marker_size * 0.5f);
+    const ImVec2 max(center.x + packet_marker_size * 0.5f, center.y + packet_marker_size * 0.5f);
+    return mouse.x >= min.x && mouse.x <= max.x && mouse.y >= min.y && mouse.y <= max.y;
+}
+
+int selected_packet_event_index(const ViewerState& state) {
+    if (state.selected_packet.source_index < 0 ||
+        state.selected_packet.event_index == std::numeric_limits<std::uint32_t>::max()) {
+        return -1;
+    }
+    for (int event_index = 0; event_index < static_cast<int>(state.packet_events.size()); ++event_index) {
+        const PacketEventInfo& event = state.packet_events[static_cast<std::size_t>(event_index)];
+        if (packet_event_matches_selection(event, state.selected_packet)) {
+            return event_index;
+        }
+    }
+    return -1;
+}
+
+bool packet_flow_active(const ViewerState& state, int flow_index, int hovered_event_index, int selected_event_index) {
+    if (flow_index < 0 || flow_index >= static_cast<int>(state.packet_flows.size())) {
+        return false;
+    }
+    const PacketFlow& flow = state.packet_flows[static_cast<std::size_t>(flow_index)];
+    return hovered_event_index == flow.send_event ||
+        hovered_event_index == flow.receive_event ||
+        selected_event_index == flow.send_event ||
+        selected_event_index == flow.receive_event;
+}
+
 void select_packet_event(ViewerState& state, const PacketEventInfo& event) {
     SelectedPacketChip selected;
     selected.source_index = event.source_index;
@@ -3143,6 +3184,8 @@ void draw_packet_marker(
     const PacketEventInfo& event,
     SyncFrame local_frame,
     const ImVec2& center,
+    bool hovered,
+    bool highlighted,
     const ImVec2& clip_min,
     const ImVec2& clip_max) {
     if (center.y + packet_marker_size < clip_min.y || center.y - packet_marker_size > clip_max.y) {
@@ -3150,18 +3193,34 @@ void draw_packet_marker(
     }
     const ImVec2 min(center.x - packet_marker_size * 0.5f, center.y - packet_marker_size * 0.5f);
     const ImVec2 max(center.x + packet_marker_size * 0.5f, center.y + packet_marker_size * 0.5f);
-    const bool selected = state.selected_packet.source_index == event.source_index &&
-        state.selected_packet.event_index == event.record_index;
+    const bool selected = packet_event_matches_selection(event, state.selected_packet);
+    if (selected) {
+        draw->AddRectFilled(
+            ImVec2(min.x - 5.0f, min.y - 5.0f),
+            ImVec2(max.x + 5.0f, max.y + 5.0f),
+            IM_COL32(255, 218, 112, 80),
+            4.0f);
+    } else if (highlighted) {
+        draw->AddRect(
+            ImVec2(min.x - 3.0f, min.y - 3.0f),
+            ImVec2(max.x + 3.0f, max.y + 3.0f),
+            IM_COL32(255, 218, 112, 150),
+            3.0f,
+            0,
+            1.4f);
+    }
     const ImU32 fill = event.send ? IM_COL32(53, 132, 246, 255) : IM_COL32(51, 177, 103, 255);
     draw->AddRectFilled(min, max, fill, 2.0f);
     if (!event.send) {
         draw->AddRectFilled(ImVec2(min.x + 4.0f, min.y + 4.0f), ImVec2(max.x - 4.0f, max.y - 4.0f), IM_COL32(205, 255, 222, 210), 1.0f);
     }
-    const ImVec2 mouse = ImGui::GetMousePos();
-    const bool hovered = mouse.x >= min.x && mouse.x <= max.x && mouse.y >= min.y && mouse.y <= max.y;
     if (selected) {
-        draw->AddRect(ImVec2(min.x - 2.0f, min.y - 2.0f), ImVec2(max.x + 2.0f, max.y + 2.0f), IM_COL32(255, 230, 155, 255), 2.0f, 0, 2.0f);
-    } else if (hovered) {
+        draw->AddRect(ImVec2(min.x - 4.0f, min.y - 4.0f), ImVec2(max.x + 4.0f, max.y + 4.0f), IM_COL32(255, 218, 112, 255), 3.0f, 0, 2.6f);
+        draw->AddRect(ImVec2(min.x - 1.0f, min.y - 1.0f), ImVec2(max.x + 1.0f, max.y + 1.0f), IM_COL32(255, 246, 205, 255), 2.0f, 0, 1.4f);
+    } else if (highlighted) {
+        draw->AddRect(ImVec2(min.x - 1.5f, min.y - 1.5f), ImVec2(max.x + 1.5f, max.y + 1.5f), IM_COL32(255, 218, 112, 155), 2.0f, 0, 1.2f);
+    }
+    if (hovered && !selected) {
         draw->AddRect(ImVec2(min.x - 1.0f, min.y - 1.0f), ImVec2(max.x + 1.0f, max.y + 1.0f), IM_COL32(230, 238, 255, 210), 2.0f, 0, 1.0f);
     }
     if (hovered) {
@@ -3332,6 +3391,28 @@ void render_event_log(ViewerState& state) {
         clip_min,
         clip_max);
 
+    int hovered_event_index = -1;
+    const ImVec2 mouse = ImGui::GetMousePos();
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+        for (int event_index : client_timeline.event_indices) {
+            if (event_index < 0 || event_index >= static_cast<int>(state.packet_events.size())) {
+                continue;
+            }
+            const PacketEventInfo& event = state.packet_events[static_cast<std::size_t>(event_index)];
+            const float column_x = event.server_side ? server_x : client_x;
+            const ImVec2 center(
+                packet_event_x(column_x, event),
+                packet_event_y(origin, scroll_y, event.relative_us));
+            if (center.y + packet_marker_size < clip_min.y || center.y - packet_marker_size > clip_max.y) {
+                continue;
+            }
+            if (packet_event_hit(center, mouse)) {
+                hovered_event_index = event_index;
+            }
+        }
+    }
+    const int selected_event_index = selected_packet_event_index(state);
+
     int drawn_cells = 0;
     for (int flow_index : client_timeline.flow_indices) {
         if (flow_index < 0 || flow_index >= static_cast<int>(state.packet_flows.size())) {
@@ -3357,13 +3438,16 @@ void render_event_log(ViewerState& state) {
             receive_point.x = send.server_side ? client_x + 28.0f : server_x + packet_column_width - 42.0f;
         }
         if (line_visible(send_point, receive_point, clip_min, clip_max)) {
-            draw->AddLine(send_point, receive_point, IM_COL32(194, 200, 210, 145), 1.4f);
+            const bool active_flow = packet_flow_active(state, flow_index, hovered_event_index, selected_event_index);
+            const ImU32 line_color = active_flow ? IM_COL32(255, 210, 92, 255) : IM_COL32(194, 200, 210, 145);
+            const ImU32 arrow_color = active_flow ? IM_COL32(255, 210, 92, 255) : IM_COL32(194, 200, 210, 160);
+            draw->AddLine(send_point, receive_point, line_color, active_flow ? 3.0f : 1.4f);
             const float arrow_dir = receive_point.x >= send_point.x ? 1.0f : -1.0f;
             draw->AddTriangleFilled(
                 receive_point,
                 ImVec2(receive_point.x - arrow_dir * 8.0f, receive_point.y - 4.0f),
                 ImVec2(receive_point.x - arrow_dir * 8.0f, receive_point.y + 4.0f),
-                IM_COL32(194, 200, 210, 160));
+                arrow_color);
         }
     }
     for (int event_index : client_timeline.event_indices) {
@@ -3378,7 +3462,22 @@ void render_event_log(ViewerState& state) {
         const std::vector<PacketFrameMarker>& local_markers =
             event.server_side ? client_timeline.server_frames : client_timeline.client_frames;
         const SyncFrame local_frame = packet_local_frame_from_markers(event, local_markers);
-        draw_packet_marker(state, draw, event, local_frame, center, clip_min, clip_max);
+        bool highlighted_connected = false;
+        if (event.flow_index >= 0 && event.flow_index < static_cast<int>(state.packet_flows.size())) {
+            const PacketFlow& flow = state.packet_flows[static_cast<std::size_t>(event.flow_index)];
+            highlighted_connected = (flow.send_event == event_index || flow.receive_event == event_index) &&
+                packet_flow_active(state, event.flow_index, hovered_event_index, selected_event_index);
+        }
+        draw_packet_marker(
+            state,
+            draw,
+            event,
+            local_frame,
+            center,
+            hovered_event_index == event_index,
+            highlighted_connected,
+            clip_min,
+            clip_max);
         ++drawn_cells;
     }
     ImGui::Dummy(ImVec2(width, height));
