@@ -200,6 +200,7 @@ void run_client(const AppConfig& config) {
         camera.projection = CAMERA_PERSPECTIVE;
         FpsCombatState local_combat{};
         float local_shot_seconds = 0.0f;
+        bool local_stunned = false;
         bool has_local = false;
         if (local_entity && render_registry.alive(local_entity)) {
             FpsTransform sampled_transform{};
@@ -218,6 +219,7 @@ void run_client(const AppConfig& config) {
                 camera.position = eye_position(*transform);
                 camera.target = add(camera.position, forward_from_angles(transform->yaw, transform->pitch));
                 if (const FpsCombatState* combat = render_registry.try_get<FpsCombatState>(local_entity)) {
+                    local_stunned = render_registry.has(local_entity, render_registry.component<FpsStunned>());
                     local_combat = *combat;
                 }
                 if (const FpsShotEffect* shot = render_registry.try_get<FpsShotEffect>(local_entity)) {
@@ -262,10 +264,13 @@ void run_client(const AppConfig& config) {
             if (render_registry.contains<FpsHitEffect>(sample.local_entity)) {
                 color = Color{255, 80, 80, 255};
             }
-            draw_capsule(Vector3{transform.x, transform.y, transform.z}, *visual, color);
-            draw_third_person_gun(transform);
+            draw_character_body(Vector3{transform.x, transform.y, transform.z}, *visual, color);
+            draw_third_person_gun(transform, *visual);
+            if (render_registry.has(sample.local_entity, render_registry.component<FpsStunned>())) {
+                draw_stunned_effect(transform, *visual);
+            }
             if (render_registry.contains<FpsShotEffect>(sample.local_entity)) {
-                const Vector3 muzzle = third_person_muzzle_position(transform);
+                const Vector3 muzzle = third_person_muzzle_position(transform, *visual);
                 DrawSphere(muzzle, 0.12f, Color{255, 230, 80, 220});
             }
         }
@@ -333,6 +338,18 @@ void run_client(const AppConfig& config) {
         DrawLine(cx + 3, cy, cx + 8, cy, RAYWHITE);
         DrawLine(cx, cy - 8, cx, cy - 3, RAYWHITE);
         DrawLine(cx, cy + 3, cx, cy + 8, RAYWHITE);
+        if (local_stunned && local_combat.dead == 0U) {
+            DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{70, 200, 255, 45});
+            DrawRing(
+                Vector2{static_cast<float>(cx), static_cast<float>(cy)},
+                34.0f,
+                46.0f,
+                0.0f,
+                360.0f,
+                64,
+                Color{150, 235, 255, 180});
+            DrawText("STUNNED", cx - MeasureText("STUNNED", 24) / 2, cy + 58, 24, Color{190, 245, 255, 230});
+        }
 
         DrawRectangle(18, 18, 250, 86, Color{12, 14, 18, 190});
         DrawText(TextFormat("health %d", local_combat.health), 30, 30, 20, RAYWHITE);

@@ -65,12 +65,27 @@ void run_server(const AppConfig& config) {
 
     for (int i = 0; i < config.bots; ++i) {
         const float angle = static_cast<float>(i) * 1.7f;
+        const bool stun_bot = (i & 1) != 0;
         const ecs::Entity bot = spawn_character(
             registry,
             schema,
-            Vector3{std::sin(angle) * 4.5f, 0.0f, std::cos(angle) * 4.5f},
-            Color{230, 170, 70, 255});
-        registry.add<BotBrain>(bot, BotBrain{angle, random_spawn_position(), random_spawn_float(3.0f, 8.0f)});
+            Vector3{std::sin(angle) * 4.5f, stun_bot ? stun_bot_hover_y : 0.0f, std::cos(angle) * 4.5f},
+            stun_bot ? Color{110, 220, 255, 255} : Color{230, 170, 70, 255});
+        if (stun_bot) {
+            FpsVisual& visual = registry.write<FpsVisual>(bot);
+            visual.radius = stun_bot_radius;
+            visual.height = stun_bot_height;
+            visual.style = 1;
+            FpsVelocity& velocity = registry.write<FpsVelocity>(bot);
+            velocity.grounded = 0;
+        }
+        registry.add<BotBrain>(
+            bot,
+            BotBrain{
+                angle,
+                random_spawn_position(),
+                random_spawn_float(3.0f, 8.0f),
+                static_cast<std::uint8_t>(stun_bot ? 1U : 0U)});
         registry.add<kage::sync::NoSimulate>(bot);
     }
 

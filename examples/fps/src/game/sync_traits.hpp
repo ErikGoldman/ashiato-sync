@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 namespace kage::sync {
@@ -26,6 +27,50 @@ using fps::PlayerHitCue;
 using fps::ShotCue;
 using fps::SurfaceHitCue;
 using fps::WallParticle;
+
+namespace detail {
+
+inline std::uint16_t encode_fps_signed_fixed_16(float value, float scale, int min_value, int max_value) {
+    const int quantized = std::clamp(static_cast<int>(std::round(value * scale)), min_value, max_value);
+    return static_cast<std::uint16_t>(quantized + 32768);
+}
+
+inline float decode_fps_signed_fixed_16(std::uint64_t bits, float scale) {
+    const int quantized = static_cast<int>(static_cast<std::uint16_t>(bits)) - 32768;
+    return static_cast<float>(quantized) / scale;
+}
+
+inline void serialize_fps_cue_position(Vector3 value, BitBuffer& out) {
+    constexpr float scale = 256.0f;
+    out.push_unsigned_bits(encode_fps_signed_fixed_16(value.x, scale, -32768, 32767), 16U);
+    out.push_unsigned_bits(encode_fps_signed_fixed_16(value.y, scale, -32768, 32767), 16U);
+    out.push_unsigned_bits(encode_fps_signed_fixed_16(value.z, scale, -32768, 32767), 16U);
+}
+
+inline Vector3 deserialize_fps_cue_position(BitBuffer& in) {
+    constexpr float scale = 256.0f;
+    return Vector3{
+        decode_fps_signed_fixed_16(in.read_unsigned_bits(16U), scale),
+        decode_fps_signed_fixed_16(in.read_unsigned_bits(16U), scale),
+        decode_fps_signed_fixed_16(in.read_unsigned_bits(16U), scale)};
+}
+
+inline void serialize_fps_cue_normal(Vector3 value, BitBuffer& out) {
+    constexpr float scale = 32767.0f;
+    out.push_unsigned_bits(encode_fps_signed_fixed_16(value.x, scale, -32767, 32767), 16U);
+    out.push_unsigned_bits(encode_fps_signed_fixed_16(value.y, scale, -32767, 32767), 16U);
+    out.push_unsigned_bits(encode_fps_signed_fixed_16(value.z, scale, -32767, 32767), 16U);
+}
+
+inline Vector3 deserialize_fps_cue_normal(BitBuffer& in) {
+    constexpr float scale = 32767.0f;
+    return Vector3{
+        std::clamp(decode_fps_signed_fixed_16(in.read_unsigned_bits(16U), scale), -1.0f, 1.0f),
+        std::clamp(decode_fps_signed_fixed_16(in.read_unsigned_bits(16U), scale), -1.0f, 1.0f),
+        std::clamp(decode_fps_signed_fixed_16(in.read_unsigned_bits(16U), scale), -1.0f, 1.0f)};
+}
+
+}  // namespace detail
 
 template <>
 struct SyncComponentTraits<NetworkOwner> {
@@ -411,13 +456,13 @@ struct SyncCueTraits<ShotCue> {
 template <>
 struct SyncCueTraits<SurfaceHitCue> {
     static void serialize(const SurfaceHitCue& cue, BitBuffer& out) {
-        out.push_bytes(reinterpret_cast<const char*>(&cue.position), sizeof(cue.position));
-        out.push_bytes(reinterpret_cast<const char*>(&cue.normal), sizeof(cue.normal));
+        detail::serialize_fps_cue_position(cue.position, out);
+        detail::serialize_fps_cue_normal(cue.normal, out);
     }
 
     static bool deserialize(BitBuffer& in, SurfaceHitCue& out) {
-        in.read_bytes(reinterpret_cast<char*>(&out.position), sizeof(out.position));
-        in.read_bytes(reinterpret_cast<char*>(&out.normal), sizeof(out.normal));
+        out.position = detail::deserialize_fps_cue_position(in);
+        out.normal = detail::deserialize_fps_cue_normal(in);
         return true;
     }
 

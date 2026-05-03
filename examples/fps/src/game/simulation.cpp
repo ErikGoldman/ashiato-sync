@@ -11,41 +11,53 @@ void simulate_character(
     FpsTransform& transform,
     FpsVelocity& velocity,
     FpsCombatState& combat,
-    const FpsInput& input) {
+    const FpsInput& input,
+    bool stunned) {
     if (combat.dead != 0U) {
         velocity = FpsVelocity{};
         transform.y = 0.0f;
         return;
     }
 
-    transform.yaw = input.yaw;
-    transform.pitch = clamp_pitch(input.pitch);
+    if (!stunned) {
+        transform.yaw = input.yaw;
+        transform.pitch = clamp_pitch(input.pitch);
+    }
 
-    if (input.reload_seq != combat.last_reload_seq) {
+    if (!stunned && input.reload_seq != combat.last_reload_seq) {
         combat.last_reload_seq = input.reload_seq;
         if (combat.ammo < magazine_size && combat.reload_remaining <= 0.0f) {
             combat.reload_remaining = reload_seconds;
         }
     }
 
-    if (combat.reload_remaining > 0.0f) {
+    if (stunned) {
+        combat.reload_remaining = 0.0f;
+        combat.last_reload_seq = input.reload_seq;
+    } else if (combat.reload_remaining > 0.0f) {
         combat.reload_remaining = std::max(0.0f, combat.reload_remaining - fixed_dt);
         if (combat.reload_remaining <= 0.0f) {
             combat.ammo = magazine_size;
         }
     }
 
-    Vector3 wish = add(scale(flat_right(transform.yaw), input.move_x), scale(flat_forward(transform.yaw), input.move_y));
+    const float move_x = stunned ? 0.0f : input.move_x;
+    const float move_y = stunned ? 0.0f : input.move_y;
+    Vector3 wish = add(scale(flat_right(transform.yaw), move_x), scale(flat_forward(transform.yaw), move_y));
     wish = normalize_or_zero(wish);
     velocity.x = wish.x * move_speed;
     velocity.z = wish.z * move_speed;
 
-    if (input.jump_seq != combat.last_jump_seq) {
+    if (!stunned && input.jump_seq != combat.last_jump_seq) {
         combat.last_jump_seq = input.jump_seq;
         if (velocity.grounded != 0U) {
             velocity.y = jump_speed;
             velocity.grounded = 0;
         }
+    }
+    if (stunned) {
+        combat.last_jump_seq = input.jump_seq;
+        combat.last_fire_seq = input.fire_seq;
     }
 
     velocity.y -= gravity * fixed_dt;

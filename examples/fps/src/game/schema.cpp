@@ -14,6 +14,7 @@ SyncSchema define_schema(ecs::Registry& registry) {
     const ecs::Entity visual = kage::sync::register_sync_component<FpsVisual>(registry, "FpsVisual");
     const ecs::Entity owner = kage::sync::register_sync_component<kage::sync::NetworkOwner>(registry, "kage.sync.NetworkOwner");
     const ecs::Entity no_simulate = registry.component<kage::sync::NoSimulate>();
+    const ecs::Entity stunned = registry.register_component<FpsStunned>("FpsStunned");
     kage::sync::register_sync_component<FpsInput>(registry, "FpsInput");
     registry.register_component<FpsShotEffect>("FpsShotEffect");
     registry.register_component<FpsHitEffect>("FpsHitEffect");
@@ -21,6 +22,7 @@ SyncSchema define_schema(ecs::Registry& registry) {
     registry.register_component<FpsHitConfirmSuppression>("FpsHitConfirmSuppression");
     registry.register_component<FpsTransformHistory>("FpsTransformHistory");
     registry.register_component<FpsServerFrame>("FpsServerFrame");
+    registry.register_component<FpsStunState>("FpsStunState");
     registry.register_component<BotBrain>("BotBrain");
     (void)kage::sync::set_display_interpolated(registry, transform);
     (void)kage::sync::register_sync_cue<ShotCue>(registry);
@@ -34,7 +36,10 @@ SyncSchema define_schema(ecs::Registry& registry) {
             registry,
             kage::sync::SyncArchetypeDesc{
                 "FpsCharacter",
-                {{no_simulate, kage::sync::ReplicationAudience::All}},
+                {
+                    {no_simulate, kage::sync::ReplicationAudience::All},
+                    {stunned, kage::sync::ReplicationAudience::All},
+                },
                 {
                 {transform, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate},
                 {velocity, kage::sync::ReplicationAudience::All},
@@ -64,7 +69,8 @@ ecs::Entity spawn_character(
             color.r,
             color.g,
             color.b,
-            255});
+            255,
+            0});
     registry.add<FpsInput>(entity, FpsInput{});
     if (registry.get<kage::sync::SyncSettings>().role == kage::sync::SyncRole::Server) {
         registry.add<FpsTransformHistory>(entity, FpsTransformHistory{});

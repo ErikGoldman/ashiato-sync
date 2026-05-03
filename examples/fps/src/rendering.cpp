@@ -38,6 +38,17 @@ void draw_capsule(Vector3 base, const FpsVisual& visual, Color color) {
     DrawSphere(top, visual.radius, color);
 }
 
+void draw_character_body(Vector3 base, const FpsVisual& visual, Color color) {
+    if (visual.style == 1U) {
+        const Vector3 center{base.x, base.y + visual.height * 0.5f, base.z};
+        const Vector3 size{visual.radius * 2.0f, visual.height, visual.radius * 2.0f};
+        DrawCubeV(center, size, color);
+        DrawCubeWiresV(center, size, Color{180, 245, 255, 230});
+        return;
+    }
+    draw_capsule(base, visual, color);
+}
+
 void draw_arena() {
     DrawCube(Vector3{0.0f, -0.03f, 0.0f}, arena_half_x * 2.0f, 0.06f, arena_half_z * 2.0f, Color{48, 52, 58, 255});
     DrawCubeWires(Vector3{0.0f, arena_height * 0.5f, 0.0f}, arena_half_x * 2.0f, arena_height, arena_half_z * 2.0f, Color{125, 132, 145, 255});
@@ -81,7 +92,7 @@ void draw_viewmodel_gun(float shot_seconds) {
     rlEnableDepthTest();
 }
 
-void draw_third_person_gun(const FpsTransform& transform) {
+void draw_third_person_gun(const FpsTransform& transform, const FpsVisual& visual) {
     const Vector3 origin = eye_position(transform);
     const float yaw_degrees = transform.yaw * RAD2DEG;
     const float pitch_degrees = transform.pitch * RAD2DEG;
@@ -90,6 +101,15 @@ void draw_third_person_gun(const FpsTransform& transform) {
     rlTranslatef(origin.x, origin.y - 0.22f, origin.z);
     rlRotatef(yaw_degrees, 0.0f, 1.0f, 0.0f);
     rlRotatef(-pitch_degrees, 1.0f, 0.0f, 0.0f);
+    if (visual.style == 1U) {
+        DrawCubeV(Vector3{0.0f, -0.05f, 0.18f}, Vector3{0.12f, 0.12f, 0.22f}, Color{22, 48, 56, 255});
+        DrawCubeWiresV(Vector3{0.0f, -0.05f, 0.18f}, Vector3{0.12f, 0.12f, 0.22f}, Color{120, 235, 255, 255});
+        DrawCubeV(Vector3{-0.06f, -0.05f, 0.38f}, Vector3{0.035f, 0.035f, 0.26f}, Color{110, 230, 255, 255});
+        DrawCubeV(Vector3{0.06f, -0.05f, 0.38f}, Vector3{0.035f, 0.035f, 0.26f}, Color{110, 230, 255, 255});
+        DrawSphere(Vector3{0.0f, -0.05f, 0.54f}, 0.045f, Color{120, 235, 255, 210});
+        rlPopMatrix();
+        return;
+    }
     DrawCubeV(Vector3{0.22f, -0.08f, 0.34f}, Vector3{0.16f, 0.12f, 0.5f}, Color{40, 44, 50, 255});
     DrawCubeWiresV(Vector3{0.22f, -0.08f, 0.34f}, Vector3{0.16f, 0.12f, 0.5f}, Color{120, 130, 145, 255});
     DrawCubeV(Vector3{0.22f, -0.17f, 0.12f}, Vector3{0.09f, 0.2f, 0.12f}, Color{68, 56, 42, 255});
@@ -98,8 +118,26 @@ void draw_third_person_gun(const FpsTransform& transform) {
     rlPopMatrix();
 }
 
-Vector3 third_person_muzzle_position(const FpsTransform& transform) {
+void draw_stunned_effect(const FpsTransform& transform, const FpsVisual& visual) {
+    const Vector3 center{transform.x, transform.y + visual.height * 0.55f, transform.z};
+    const float radius = visual.height * 0.62f;
+    DrawSphere(center, radius, Color{90, 210, 255, 45});
+    DrawSphereWires(center, radius, 16, 12, Color{150, 235, 255, 190});
+    DrawCircle3D(
+        Vector3{center.x, center.y + visual.height * 0.4f, center.z},
+        visual.radius * 1.8f,
+        Vector3{1.0f, 0.0f, 0.0f},
+        90.0f,
+        Color{190, 245, 255, 220});
+}
+
+Vector3 third_person_muzzle_position(const FpsTransform& transform, const FpsVisual& visual) {
     const Vector3 eye = eye_position(transform);
+    if (visual.style == 1U) {
+        return add(
+            Vector3{eye.x, eye.y - 0.27f, eye.z},
+            scale(forward_from_angles(transform.yaw, transform.pitch), 0.62f));
+    }
     return add(
         add(
             Vector3{eye.x, eye.y - 0.32f, eye.z},

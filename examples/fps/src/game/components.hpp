@@ -39,6 +39,12 @@ struct FpsCombatState {
     std::uint32_t last_reload_seq = 0;
 };
 
+struct FpsStunned {};
+
+struct FpsStunState {
+    float remaining = 0.0f;
+};
+
 struct FpsVisual {
     float radius = capsule_radius;
     float height = capsule_height;
@@ -46,6 +52,7 @@ struct FpsVisual {
     std::uint8_t g = 180;
     std::uint8_t b = 255;
     std::uint8_t a = 255;
+    std::uint8_t style = 0;
 };
 
 struct FpsInput {
@@ -122,6 +129,7 @@ struct BotBrain {
     float phase = 0.0f;
     Vector3 destination{};
     float fire_timer = 0.0f;
+    std::uint8_t stun_attacks = 0;
 };
 
 struct MouseLookState {

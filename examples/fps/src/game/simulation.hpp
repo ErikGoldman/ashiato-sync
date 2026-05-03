@@ -8,6 +8,7 @@ void simulate_character(
     FpsTransform& transform,
     FpsVelocity& velocity,
     FpsCombatState& combat,
-    const FpsInput& input);
+    const FpsInput& input,
+    bool stunned = false);
 
 }  // namespace fps

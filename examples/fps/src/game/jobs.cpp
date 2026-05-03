@@ -52,6 +52,23 @@ bool sample_transform_history(
 }
 
 template <typename View>
+auto apply_stun_hit(View& view, ecs::Entity target, int) -> decltype(view.template add<FpsStunned>(target), void()) {
+    (void)view.template add<FpsStunned>(target);
+    if (view.template contains<FpsStunState>(target)) {
+        view.template write<FpsStunState>(target).remaining = stun_seconds;
+        return;
+    }
+    FpsStunState* stun = view.template add<FpsStunState>(target);
+    if (stun != nullptr) {
+        stun->remaining = stun_seconds;
+    }
+}
+
+template <typename View>
+void apply_stun_hit(View&, ecs::Entity, long) {
+}
+
+template <typename View>
 void simulate_fire(
     View& view,
     kage::sync::SyncSettings& sync,
@@ -75,7 +92,7 @@ void simulate_fire(
     FpsCombatState* best_combat = nullptr;
     FpsDeathInfo* best_death = nullptr;
     float best_t = wall_t;
-    view.each(
+    view.template view<const FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>().each(
         [&view, &best_entity, &best_combat, &best_death, &best_t, shooter, origin, dir, shot_interpolation_frame](ecs::Entity entity, const FpsTransform& target_transform, FpsVelocity&, FpsCombatState& combat, FpsDeathInfo& death, const FpsInput&, kage::sync::SyncSettings&, const kage::sync::SyncAuthority&) {
             if (entity == shooter || combat.dead != 0U || combat.health <= 0) {
                 return;
@@ -103,14 +120,20 @@ void simulate_fire(
         if (authority.is_authoritative()) {
             (void)kage::sync::emit_cue(sync, best_entity, PlayerHitCue{kage::sync::EntityReference{shooter}}, 0.5f);
 
-            best_combat->health = static_cast<std::int16_t>(std::max<int>(0, best_combat->health - shot_damage));
+            const BotBrain* brain = view.template try_get<const BotBrain>(shooter);
+            const bool stun_attack = brain != nullptr && brain->stun_attacks != 0U;
+            if (stun_attack) {
+                apply_stun_hit(view, best_entity, 0);
+            } else {
+                best_combat->health = static_cast<std::int16_t>(std::max<int>(0, best_combat->health - shot_damage));
+            }
             (void)kage::sync::emit_cue(
                 sync,
                 shooter,
                 HitConfirmCue{kage::sync::EntityReference{best_entity}},
                 0.5f,
                 true);
-            if (best_combat->health <= 0 && best_combat->dead == 0U) {
+            if (!stun_attack && best_combat->health <= 0 && best_combat->dead == 0U) {
                 best_combat->dead = 1;
                 best_combat->respawn_remaining = respawn_seconds;
                 (void)kage::sync::emit_cue(sync, best_entity, PlayerDeathCue{}, 0.75f, true);
@@ -131,10 +154,84 @@ void simulate_fire(
     }
 }
 
+template <typename View>
+auto clear_stun_state(View& view, ecs::Entity entity, int) -> decltype(view.template remove<FpsStunned>(entity), void()) {
+    view.template remove<FpsStunned>(entity);
+    view.template remove<FpsStunState>(entity);
+}
+
+template <typename View>
+void clear_stun_state(View&, ecs::Entity, long) {
+}
+
+template <typename View>
+bool is_stun_bot(const View& view, ecs::Entity entity) {
+    const BotBrain* brain = view.template try_get<const BotBrain>(entity);
+    return brain != nullptr && brain->stun_attacks != 0U;
+}
+
+void hover_stun_bot(FpsTransform& transform, FpsVelocity& velocity) {
+    transform.y = stun_bot_hover_y;
+    velocity.y = 0.0f;
+    velocity.grounded = 0;
+}
+
+template <typename View>
+void simulate_character_step(
+    View& view,
+    ecs::Entity entity,
+    FpsTransform& transform,
+    FpsVelocity& velocity,
+    FpsCombatState& combat,
+    const FpsInput& input,
+    kage::sync::SyncSettings& sync,
+    const kage::sync::SyncAuthority& authority,
+    bool stunned) {
+    if (combat.dead != 0U) {
+        if (authority.is_authoritative()) {
+            const bool stun_bot = is_stun_bot(view, entity);
+            clear_stun_state(view, entity, 0);
+            combat.respawn_remaining = std::max(0.0f, combat.respawn_remaining - fixed_dt);
+            if (combat.respawn_remaining <= 0.0f) {
+                respawn_character(transform, velocity, combat);
+                if (stun_bot) {
+                    hover_stun_bot(transform, velocity);
+                }
+            }
+        }
+        return;
+    }
+    const std::uint32_t previous_fire = combat.last_fire_seq;
+    simulate_character(transform, velocity, combat, input, stunned);
+    if (is_stun_bot(view, entity)) {
+        hover_stun_bot(transform, velocity);
+    }
+    if (!stunned && input.fire_seq != previous_fire) {
+        combat.last_fire_seq = input.fire_seq;
+        if (combat.reload_remaining <= 0.0f && combat.ammo > 0U) {
+            --combat.ammo;
+            (void)kage::sync::emit_cue(sync, entity, ShotCue{}, 0.35f);
+            simulate_fire(view, sync, authority, entity, transform, input.shot_interpolation_frame);
+        }
+    }
+}
+
 void register_game_jobs(ecs::Registry& registry) {
     auto frame_job = registry.job<FpsServerFrame>(-2);
         frame_job.single_thread().each([](ecs::Entity, FpsServerFrame& frame) {
         ++frame.frame;
+    });;
+
+    auto stun_job = registry.job<FpsStunState>(-1);
+        stun_job.single_thread().structural<FpsStunned, FpsStunState>().each([](
+        auto& view,
+        ecs::Entity entity,
+        FpsStunState& stun) {
+        stun.remaining = std::max(0.0f, stun.remaining - fixed_dt);
+        if (stun.remaining <= 0.0f) {
+            view.template remove<FpsStunned>(entity);
+            view.template remove<FpsStunState>(entity);
+        }
     });;
 
     auto bot_job = registry.job<FpsTransform, FpsCombatState, FpsInput>(-1);
@@ -209,7 +306,7 @@ void register_game_jobs(ecs::Registry& registry) {
     });;
 
     auto character_job = registry.job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>(0);
-        character_job.single_thread().access_other_entities<const FpsVisual, const FpsTransformHistory, const kage::sync::NetworkOwner>().each([](
+        character_job.single_thread().without_tags<const FpsStunned>().access_other_entities<const FpsVisual, const FpsTransformHistory, const kage::sync::NetworkOwner, const BotBrain, FpsStunState>().structural<FpsStunned, FpsStunState>().each([](
         auto& view,
         ecs::Entity entity,
         FpsTransform& transform,
@@ -220,25 +317,22 @@ void register_game_jobs(ecs::Registry& registry) {
         kage::sync::SyncSettings& sync,
         const kage::sync::SyncAuthority& authority) {
         (void)death;
-        if (combat.dead != 0U) {
-            if (authority.is_authoritative()) {
-                combat.respawn_remaining = std::max(0.0f, combat.respawn_remaining - fixed_dt);
-                if (combat.respawn_remaining <= 0.0f) {
-                    respawn_character(transform, velocity, combat);
-                }
-            }
-            return;
-        }
-        const std::uint32_t previous_fire = combat.last_fire_seq;
-        simulate_character(transform, velocity, combat, input);
-        if (input.fire_seq != previous_fire) {
-            combat.last_fire_seq = input.fire_seq;
-            if (combat.reload_remaining <= 0.0f && combat.ammo > 0U) {
-                --combat.ammo;
-                (void)kage::sync::emit_cue(sync, entity, ShotCue{}, 0.35f);
-                simulate_fire(view, sync, authority, entity, transform, input.shot_interpolation_frame);
-            }
-        }
+        simulate_character_step(view, entity, transform, velocity, combat, input, sync, authority, false);
+    });;
+
+    auto stunned_character_job = registry.job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>(0);
+        stunned_character_job.single_thread().with_tags<const FpsStunned>().access_other_entities<const FpsVisual, const FpsTransformHistory, const kage::sync::NetworkOwner, const BotBrain, FpsStunState>().structural<FpsStunned, FpsStunState>().each([](
+        auto& view,
+        ecs::Entity entity,
+        FpsTransform& transform,
+        FpsVelocity& velocity,
+        FpsCombatState& combat,
+        FpsDeathInfo& death,
+        const FpsInput& input,
+        kage::sync::SyncSettings& sync,
+        const kage::sync::SyncAuthority& authority) {
+        (void)death;
+        simulate_character_step(view, entity, transform, velocity, combat, input, sync, authority, true);
     });;
 
     auto history_job = registry.job<const FpsTransform, FpsTransformHistory, const FpsServerFrame>(1);
@@ -324,7 +418,7 @@ void register_game_jobs(ecs::Registry& registry, kage::sync::ReplicationClient& 
     });;
 
     auto character_job = client.simulation_job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>(registry, 0);
-        character_job.single_thread().access_other_entities<const FpsVisual, const FpsTransformHistory, const kage::sync::NetworkOwner>().each([](
+        character_job.single_thread().without_tags<const FpsStunned>().access_other_entities<const FpsVisual, const FpsTransformHistory, const kage::sync::NetworkOwner, const BotBrain>().each([](
         auto& view,
         ecs::Entity entity,
         FpsTransform& transform,
@@ -335,25 +429,22 @@ void register_game_jobs(ecs::Registry& registry, kage::sync::ReplicationClient& 
         kage::sync::SyncSettings& sync,
         const kage::sync::SyncAuthority& authority) {
         (void)death;
-        if (combat.dead != 0U) {
-            if (authority.is_authoritative()) {
-                combat.respawn_remaining = std::max(0.0f, combat.respawn_remaining - fixed_dt);
-                if (combat.respawn_remaining <= 0.0f) {
-                    respawn_character(transform, velocity, combat);
-                }
-            }
-            return;
-        }
-        const std::uint32_t previous_fire = combat.last_fire_seq;
-        simulate_character(transform, velocity, combat, input);
-        if (input.fire_seq != previous_fire) {
-            combat.last_fire_seq = input.fire_seq;
-            if (combat.reload_remaining <= 0.0f && combat.ammo > 0U) {
-                --combat.ammo;
-                (void)kage::sync::emit_cue(sync, entity, ShotCue{}, 0.35f);
-                simulate_fire(view, sync, authority, entity, transform, input.shot_interpolation_frame);
-            }
-        }
+        simulate_character_step(view, entity, transform, velocity, combat, input, sync, authority, false);
+    });;
+
+    auto stunned_character_job = client.simulation_job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>(registry, 0);
+        stunned_character_job.single_thread().with_tags<const FpsStunned>().access_other_entities<const FpsVisual, const FpsTransformHistory, const kage::sync::NetworkOwner, const BotBrain>().each([](
+        auto& view,
+        ecs::Entity entity,
+        FpsTransform& transform,
+        FpsVelocity& velocity,
+        FpsCombatState& combat,
+        FpsDeathInfo& death,
+        const FpsInput& input,
+        kage::sync::SyncSettings& sync,
+        const kage::sync::SyncAuthority& authority) {
+        (void)death;
+        simulate_character_step(view, entity, transform, velocity, combat, input, sync, authority, true);
     });;
 }
 
