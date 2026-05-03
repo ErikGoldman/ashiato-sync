@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -18,6 +19,14 @@ class ReplicationServer {
 public:
     using ReplicateFn = std::function<void(ClientId, ecs::Entity)>;
 
+    struct ClientInputStats {
+        std::uint64_t input_frames_applied = 0;
+        std::uint64_t input_starvation_frames = 0;
+        std::uint64_t input_reused_frames = 0;
+        SyncFrame latest_received_input_frame = 0;
+        SyncFrame latest_applied_input_frame = 0;
+    };
+
     explicit ReplicationServer(ReplicationServerOptions options = {});
 
     const ReplicationServerOptions& options() const noexcept {
@@ -25,6 +34,7 @@ public:
     }
 
     void set_transport(TransportFn transport);
+    void set_packet_sender(TransportFn sender);
 #ifdef KAGE_SYNC_ENABLE_TRACING
     void set_tracer(SyncTracer* tracer) noexcept;
 #endif
@@ -40,12 +50,29 @@ public:
 
     std::uint64_t priority(ClientId client, ecs::Entity entity) const;
     bool acknowledge_entity(ClientId client, ecs::Entity entity, SyncFrame frame);
+    void receive_packet(ClientId client, BitBuffer packet);
     bool process_packet(ClientId client, BitBuffer packet);
+    bool process_packet(ecs::Registry& registry, ClientId client, BitBuffer packet);
+    ClientInputStats input_stats(ClientId client) const noexcept;
     std::size_t retained_quantized_frame_count() const noexcept;
     std::size_t retained_quantized_frame_bytes() const noexcept;
 
+    void begin_tick(ecs::Registry& registry);
+    void end_tick(ecs::Registry& registry);
+    void end_tick(ecs::Registry& registry, const ReplicateFn& replicate);
+    bool tick(ecs::Registry& registry, double dt_seconds);
     void tick(ecs::Registry& registry);
     void tick(ecs::Registry& registry, const ReplicateFn& replicate);
+    // Current server simulation frame; remains 0 until the first tick begins.
+    SyncFrame frame() const noexcept {
+        return frame_;
+    }
+    double accumulator_seconds() const noexcept {
+        return tick_accumulator_seconds_;
+    }
+    double continuous_frame() const noexcept {
+        return static_cast<double>(frame_) + tick_accumulator_seconds_ / options_.fixed_dt_seconds;
+    }
 
 private:
     static constexpr std::uint32_t invalid_quantized_frame_id = std::numeric_limits<std::uint32_t>::max();
@@ -107,9 +134,18 @@ private:
     };
 
     struct PacketAckRecord {
+        struct CueSummary {
+            SyncFrame frame = 0;
+            SyncCueTypeId type = 0;
+            std::string data;
+        };
+
         ecs::Entity entity;
         SyncFrame frame = 0;
         bool destroy = false;
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+        std::vector<CueSummary> cues{};
+#endif
     };
 
     struct PendingPacketAck {
@@ -130,6 +166,19 @@ private:
         std::vector<ClientEntityState> entity_states;
         std::vector<ClientDestroyState> pending_destroys;
         std::vector<PendingPacketAck> pending_packet_acks;
+        struct InputFrame {
+            SyncFrame frame = 0;
+            bool valid = false;
+            std::vector<std::uint8_t> bytes;
+        };
+        std::vector<InputFrame> input_frames;
+        std::vector<std::uint8_t> latest_input;
+        std::vector<std::uint8_t> latest_applied_input;
+        SyncFrame input_ack_frame = 0;
+        SyncFrame latest_applied_input_frame = 0;
+        bool has_latest_input = false;
+        bool has_latest_applied_input = false;
+        ClientInputStats input_stats;
         struct NetworkIdEntry {
             std::uint32_t slot_or_next_free = 0;
             std::uint32_t version = 0;
@@ -138,6 +187,11 @@ private:
         };
         std::vector<NetworkIdEntry> network_ids;
         std::uint32_t free_network_id = 0;
+    };
+
+    struct PendingInboundPacket {
+        ClientId client = invalid_client_id;
+        BitBuffer packet;
     };
 
     using EntityKey = std::uint64_t;
@@ -172,8 +226,8 @@ private:
     std::uint32_t network_id_for_slot(ClientState& client, std::uint32_t slot);
     bool slot_is_replicable(const ecs::Registry& registry, std::uint32_t slot) const;
     void capture_dirty_components(const ecs::Registry& registry, const SyncSettings& settings);
-    void capture_queued_cues(const SyncSettings& settings);
-    void attach_cue_to_clients(std::uint32_t slot, const QueuedSyncCue& cue);
+    void capture_queued_cues(const ecs::Registry& registry, const SyncSettings& settings);
+    void attach_cue_to_clients(const ecs::Registry& registry, const SyncSettings& settings, std::uint32_t slot, const QueuedSyncCue& cue);
     void expire_pending_cues(ClientState& client, SyncFrame frame);
     void mark_dirty_component(const SyncSettings& settings, std::uint32_t slot, ecs::Entity component);
     void mark_dirty_tag(const SyncSettings& settings, std::uint32_t slot, ecs::Entity tag);
@@ -206,6 +260,9 @@ private:
     void release_quantized_frame(std::uint32_t quantized_frame);
     void clear_client_entity_state(ClientEntityState& state);
     bool acknowledge_packet(ClientState& client, std::uint32_t packet_id);
+    bool process_packet_impl(ecs::Registry* registry, ClientId client, BitBuffer packet);
+    bool process_input_packet(ecs::Registry& registry, ClientState& client, BitBuffer& packet);
+    void apply_client_inputs(ecs::Registry& registry);
     bool packet_ack_record_pending(const ClientState& client, const PacketAckRecord& record) const;
     void cleanup_packet_acks(ClientState& client);
     std::uint32_t allocate_packet_id(ClientState& client);
@@ -232,13 +289,50 @@ private:
         const std::vector<PacketAckRecord>& ack_records);
     bool add_client_for_peer(ClientId peer, ClientId client, bool ready_for_updates);
     void send_connect_response(ClientState& client);
-    void send_pong(ClientId peer, std::uint32_t sequence, SyncFrame send_frame);
+    void send_pong(
+        ClientId peer,
+        std::uint32_t sequence,
+        SyncFrame send_frame,
+        std::uint16_t send_subframe);
     static void track_packet_ack(
         ClientState& client,
         std::uint32_t packet_id,
         const std::vector<PacketAckRecord>& records);
 #ifdef KAGE_SYNC_ENABLE_TRACING
     void trace_frame_components(const ecs::Registry& registry, const SyncSettings& settings);
+    void trace_input_component(
+        ecs::Entity entity,
+        ClientState& client,
+        SyncFrame frame,
+        ecs::Entity component,
+        const SyncComponentOps& ops,
+        const std::uint8_t* quantized);
+    void trace_input_starved(
+        ecs::Entity entity,
+        ClientState& client,
+        SyncFrame due_frame,
+        SyncFrame input_frame,
+        ecs::Entity component,
+        const SyncComponentOps& ops);
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+    void trace_incoming_ack_packet(ClientState& client, const std::vector<std::uint32_t>& acks) const;
+    void trace_incoming_input_packet(
+        ClientState& client,
+        const std::vector<std::uint32_t>& acks,
+        SyncFrame baseline_frame,
+        SyncFrame first_input_frame,
+        SyncFrame last_input_frame) const;
+    void trace_outgoing_update_packet(
+        ClientState& client,
+        SyncFrame frame,
+        std::uint32_t packet_id,
+        SyncFrame input_ack_frame,
+        const std::vector<PacketAckRecord>& records) const;
+    void append_packet_ack_cues(
+        const SyncSettings& settings,
+        const ClientEntityState& state,
+        PacketAckRecord& record) const;
+#endif
 #endif
 
     ReplicationServerOptions options_;
@@ -251,9 +345,11 @@ private:
     std::vector<ClientState> clients_;
     std::unordered_map<ClientId, std::size_t> client_to_index_;
     std::unordered_map<ClientId, std::size_t> peer_to_index_;
+    std::vector<PendingInboundPacket> inbound_packets_;
     std::size_t active_replicated_count_ = 0;
     ClientId next_connect_client_id_ = 1;
     SyncFrame frame_ = 0;
+    double tick_accumulator_seconds_ = 0.0;
     bool replicated_initialized_ = false;
 #ifdef KAGE_SYNC_ENABLE_TRACING
     SyncTracer* tracer_ = nullptr;

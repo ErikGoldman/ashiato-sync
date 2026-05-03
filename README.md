@@ -68,6 +68,28 @@ Use `--time-dilation-min`, `--time-dilation-max`, and
 `--time-dilation-gain` to control how quickly the client playback accumulator
 converges when the desired buffer changes.
 
+The FPS example uses the same examples option and runs as separate UDP server
+and client processes:
+
+```sh
+cmake --build build-examples --target kage_sync_fps_example
+./build-examples/kage_sync_fps_example --server --port 37043 --bots 4
+./build-examples/kage_sync_fps_example --client --host 127.0.0.1 --port 37043
+```
+
+For a quick local multi-client run, launch one headless server plus several
+client windows from one command:
+
+```sh
+./build-examples/kage_sync_fps_example --clients 2 --port 37043 --bots 4
+```
+
+`kage_sync_fps_example` renders replicated capsule characters inside a box
+arena. The local character is predicted, other characters are buffered and
+interpolated, and shooting uses replicated cues for muzzle flashes and hit
+feedback. Controls are WASD, mouse look, Space to jump, left click to shoot,
+and R to reload.
+
 ## Tests
 
 ```sh
@@ -191,7 +213,14 @@ client, so bandwidth-limited clients naturally receive older unsent state first.
   server update frames, applies fixed buffered frames, runs prediction
   rollback/resimulation and ECS jobs for predicted entities, and adjusts
   playback with `timing_stats().time_dilation`. Disable
-  `auto_interpolation_buffer_frames` for a fixed manual buffer. Explicit-frame
+  `auto_interpolation_buffer_frames` for a fixed manual buffer. Fast auto timing
+  recovery is enabled by default; tune it with
+  `auto_timing_fast_recovery_min_frame_gap` or disable it with
+  `auto_timing_fast_recovery`. Gaps at or above that threshold snap prediction
+  and interpolation to the measured targets; smaller changes keep using time
+  dilation to nudge toward the target. Adaptive ping sampling is also enabled by
+  default, using `adaptive_ping_interval_seconds` until latency stabilizes and
+  again after latency jumps. Explicit-frame
   `receive`, `apply_frame`, and `predict_tick` overloads remain available for
   tests and advanced integrations.
 - Predicted replicated components must define
@@ -205,7 +234,7 @@ client, so bandwidth-limited clients naturally receive older unsent state first.
   left as `Step` hold the previous value until the received frame.
 - Mark component entities with `set_display_interpolated` when render code
   should sample them at fractional playback frames without mutating the ECS, then
-  render `client.display_frame(registry).entities`. The display frame contains
+  render `client.display_interpolation_frame(registry).entities`. The display frame contains
   snap and buffered entities in one list. Typed `try_get<T>` reads sampled
   display-interpolated values first and falls back to live ECS values for
   untagged components such as visuals. If auto-buffering changes depth or target

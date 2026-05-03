@@ -16,6 +16,7 @@ using kage_sync_tests::PredictedPosition;
 using kage_sync_tests::Secret;
 using kage_sync_tests::SmoothPosition;
 using kage_sync_tests::CuePlayback;
+using kage_sync_tests::ReferenceCue;
 using kage_sync_tests::TestCue;
 using kage_sync_tests::TargetReference;
 using kage_sync_tests::Visible;
@@ -40,7 +41,16 @@ struct UpdateRecord {
 
 struct UpdatePacket {
     kage::sync::SyncFrame frame = 0;
+    kage::sync::SyncFrame input_ack_frame = 0;
     std::vector<UpdateRecord> records;
+};
+
+struct ClientInputPacket {
+    std::uint16_t ack_count = 0;
+    kage::sync::SyncFrame baseline_frame = 0;
+    kage::sync::SyncFrame first_input_frame = 0;
+    std::uint16_t input_count = 0;
+    bool first_input_full = false;
 };
 
 std::vector<AckRecord> read_acks(kage::sync::BitBuffer packet) {
@@ -54,6 +64,26 @@ std::vector<AckRecord> read_acks(kage::sync::BitBuffer packet) {
         records.push_back(record);
     }
     return records;
+}
+
+ClientInputPacket read_client_input_header(kage::sync::BitBuffer packet) {
+    REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message);
+    ClientInputPacket input;
+    input.ack_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+    for (std::uint16_t index = 0; index < input.ack_count; ++index) {
+        packet.read_bits(kage::sync::protocol::server_packet_id_bits);
+    }
+    input.baseline_frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
+    input.input_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+    input.first_input_full = packet.read_bool();
+    input.first_input_frame = input.input_count == 0U ? 0U : input.baseline_frame + 1U;
+    if (input.first_input_full) {
+        const auto explicit_first_input_frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
+        if (input.input_count != 0U) {
+            input.first_input_frame = explicit_first_input_frame;
+        }
+    }
+    return input;
 }
 
 bool record_ping_sample(
@@ -84,11 +114,58 @@ bool record_ping_sample(
     return false;
 }
 
+struct PingPacket {
+    std::uint32_t sequence = 0;
+    kage::sync::SyncFrame send_frame = 0;
+};
+
+bool read_ping_packet(kage::sync::BitBuffer packet, PingPacket& out) {
+    if (packet.remaining_bits() < 8U) {
+        return false;
+    }
+    const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
+    if (message != kage::sync::protocol::client_ping_message || packet.remaining_bits() < 64U) {
+        return false;
+    }
+    out.sequence = static_cast<std::uint32_t>(packet.read_bits(32U));
+    out.send_frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
+    return true;
+}
+
+bool drain_ping(
+    kage::sync::ReplicationClient& client,
+    ecs::Registry& registry,
+    double dt_seconds,
+    PingPacket& out) {
+    if (dt_seconds > 0.0) {
+        REQUIRE(client.tick(registry, dt_seconds));
+    }
+    for (kage::sync::BitBuffer packet : client.drain_packets()) {
+        if (read_ping_packet(packet, out)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool receive_pong(
+    kage::sync::ReplicationClient& client,
+    ecs::Registry& registry,
+    const PingPacket& ping,
+    kage::sync::SyncFrame receive_frame) {
+    kage::sync::BitBuffer pong;
+    pong.push_bits(kage::sync::protocol::server_pong_message, 8U);
+    pong.push_bits(ping.sequence, 32U);
+    pong.push_bits(ping.send_frame, 32U);
+    return client.receive(registry, pong, receive_frame);
+}
+
 UpdatePacket read_update(kage::sync::BitBuffer packet, std::size_t sync_slot_count = 2U) {
     REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::server_update_message);
     UpdatePacket update;
     update.frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
     packet.read_bits(kage::sync::protocol::server_packet_id_bits);
+    update.input_ack_frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
     const auto count = static_cast<std::uint16_t>(packet.read_bits(16U));
     update.records.reserve(count);
     for (std::uint16_t index = 0; index < count; ++index) {
@@ -179,6 +256,7 @@ kage::sync::BitBuffer make_position_packet(
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
     packet.push_bits(packet_id == 0U ? frame : packet_id, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(0, 32U);
     packet.push_bits(static_cast<std::uint16_t>(records.size()), 16U);
     for (const auto& record : records) {
         packet.push_bool(false);
@@ -204,6 +282,7 @@ kage::sync::BitBuffer make_predicted_position_packet(
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
     packet.push_bits(packet_id == 0U ? frame : packet_id, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(0, 32U);
     packet.push_bits(1, 16U);
     packet.push_bool(false);
     kage::sync::protocol::write_network_entity_id(packet, test_network_id(server_entity));
@@ -223,6 +302,7 @@ kage::sync::BitBuffer make_destroy_packet(kage::sync::SyncFrame frame, ecs::Enti
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
     packet.push_bits(frame, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(0, 32U);
     packet.push_bits(1, 16U);
     packet.push_bool(true);
     kage::sync::protocol::write_network_entity_id(packet, test_network_id(server_entity));
@@ -269,6 +349,69 @@ TEST_CASE("replication client applies full updates and queues ACKs") {
     REQUIRE(acks.size() == 1);
     REQUIRE(acks[0].packet_id != 0);
     REQUIRE(server.process_packet(1, ack_packets[0]));
+}
+
+TEST_CASE("replication client input applies to locally owned entities and drains with ACKs") {
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(registry);
+    REQUIRE(archetype.value == 0);
+    kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    kage::sync::configure_client(registry, 1);
+    REQUIRE(kage::sync::set_client_input_component<NetworkedPosition>(registry));
+
+    const ecs::Entity owned = registry.create();
+    const ecs::Entity other = registry.create();
+    REQUIRE(kage::sync::set_owner(registry, owned, 1));
+    REQUIRE(kage::sync::set_owner(registry, other, 2));
+
+    kage::sync::ReplicationClient client;
+    REQUIRE(client.set_input(registry, NetworkedPosition{3.0f, 4.0f}));
+    REQUIRE(registry.contains<NetworkedPosition>(owned));
+    REQUIRE(registry.get<NetworkedPosition>(owned).x == 3.0f);
+    REQUIRE(registry.get<NetworkedPosition>(owned).y == 4.0f);
+    REQUIRE_FALSE(registry.contains<NetworkedPosition>(other));
+
+    const ecs::Entity server_entity = ecs::Entity{1};
+    REQUIRE(client.receive(registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+
+    const std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
+    auto input_packet = std::find_if(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+        return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
+    });
+    REQUIRE(input_packet != packets.end());
+    const ClientInputPacket input = read_client_input_header(*input_packet);
+    REQUIRE(input.ack_count == 1);
+    REQUIRE(input.baseline_frame == 0);
+    REQUIRE(input.input_count == 1);
+}
+
+TEST_CASE("replication client sends full first input frame after unacked input buffer overwrite") {
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(registry);
+    REQUIRE(archetype.value == 0);
+    kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    kage::sync::configure_client(registry, 1);
+    REQUIRE(kage::sync::set_client_input_component<NetworkedPosition>(registry));
+
+    kage::sync::ReplicationClientOptions options;
+    options.input_buffer_capacity_frames = 4;
+    kage::sync::ReplicationClient client(options);
+    REQUIRE(client.set_input(registry, NetworkedPosition{1.0f, 2.0f}));
+    for (int tick = 0; tick < 6; ++tick) {
+        REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    }
+
+    const std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
+    auto input_packet = std::find_if(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+        return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
+    });
+    REQUIRE(input_packet != packets.end());
+    const ClientInputPacket input = read_client_input_header(*input_packet);
+    REQUIRE(input.baseline_frame == 0);
+    REQUIRE(input.first_input_frame == 3);
+    REQUIRE(input.input_count == 4);
+    REQUIRE(input.first_input_full);
 }
 
 TEST_CASE("replicated snap cues play once with late time and ACK-driven resend") {
@@ -322,6 +465,149 @@ TEST_CASE("replicated snap cues play once with late time and ACK-driven resend")
     REQUIRE_FALSE(packets.empty());
     REQUIRE(client.receive(client_registry, packets.back(), 12));
     REQUIRE(client_registry.get<CuePlayback>(local).plays == 1);
+}
+
+TEST_CASE("owner-only cues replicate only to the cue owner") {
+    ecs::Registry server_registry;
+    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
+    kage::sync::register_sync_cue<TestCue>(server_registry);
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
+    REQUIRE(kage::sync::set_owner(server_registry, server_entity, 1));
+
+    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& packet) {
+        packets.push_back({client, packet});
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(server.add_client(2));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+    REQUIRE(kage::sync::emit_cue(server_registry, server_entity, 1, TestCue{11}, 1.0f, true));
+    server.tick(server_registry);
+
+    ecs::Registry owner_registry;
+    REQUIRE(kage_sync_tests::define_position_archetype(owner_registry) == server_archetype);
+    owner_registry.register_component<CuePlayback>("CuePlayback");
+    kage::sync::register_sync_cue<TestCue>(owner_registry);
+    kage::sync::configure_client(owner_registry, 1);
+
+    ecs::Registry other_registry;
+    REQUIRE(kage_sync_tests::define_position_archetype(other_registry) == server_archetype);
+    other_registry.register_component<CuePlayback>("CuePlayback");
+    kage::sync::register_sync_cue<TestCue>(other_registry);
+    kage::sync::configure_client(other_registry, 2);
+
+    kage::sync::ReplicationClient owner_client;
+    kage::sync::ReplicationClient other_client;
+    REQUIRE(owner_client.receive(owner_registry, packet_for(packets, 1)));
+    REQUIRE(other_client.receive(other_registry, packet_for(packets, 2)));
+
+    const ecs::Entity owner_local = owner_client.local_entity(server_entity);
+    const ecs::Entity other_local = other_client.local_entity(server_entity);
+    REQUIRE(owner_registry.contains<CuePlayback>(owner_local));
+    REQUIRE(owner_registry.get<CuePlayback>(owner_local).last_id == 11);
+    REQUIRE_FALSE(other_registry.contains<CuePlayback>(other_local));
+}
+
+TEST_CASE("default cues still replicate to all clients") {
+    ecs::Registry server_registry;
+    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
+    kage::sync::register_sync_cue<TestCue>(server_registry);
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
+
+    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& packet) {
+        packets.push_back({client, packet});
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(server.add_client(2));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+    REQUIRE(kage::sync::emit_cue(server_registry, server_entity, 1, TestCue{12}, 1.0f));
+    server.tick(server_registry);
+
+    ecs::Registry first_registry;
+    REQUIRE(kage_sync_tests::define_position_archetype(first_registry) == server_archetype);
+    first_registry.register_component<CuePlayback>("CuePlayback");
+    kage::sync::register_sync_cue<TestCue>(first_registry);
+    kage::sync::configure_client(first_registry, 1);
+
+    ecs::Registry second_registry;
+    REQUIRE(kage_sync_tests::define_position_archetype(second_registry) == server_archetype);
+    second_registry.register_component<CuePlayback>("CuePlayback");
+    kage::sync::register_sync_cue<TestCue>(second_registry);
+    kage::sync::configure_client(second_registry, 2);
+
+    kage::sync::ReplicationClient first_client;
+    kage::sync::ReplicationClient second_client;
+    REQUIRE(first_client.receive(first_registry, packet_for(packets, 1)));
+    REQUIRE(second_client.receive(second_registry, packet_for(packets, 2)));
+
+    REQUIRE(first_registry.get<CuePlayback>(first_client.local_entity(server_entity)).last_id == 12);
+    REQUIRE(second_registry.get<CuePlayback>(second_client.local_entity(server_entity)).last_id == 12);
+}
+
+TEST_CASE("cue entity references resolve to client-local entities") {
+    ecs::Registry server_registry;
+    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
+    kage::sync::register_sync_cue<ReferenceCue>(server_registry);
+    const ecs::Entity target = server_registry.create();
+    const ecs::Entity source = server_registry.create();
+    REQUIRE(server_registry.add<Position>(target, Position{1.0f, 2.0f}) != nullptr);
+    REQUIRE(server_registry.add<Position>(source, Position{3.0f, 4.0f}) != nullptr);
+    REQUIRE(kage::sync::set_owner(server_registry, source, 1));
+
+    std::vector<kage::sync::BitBuffer> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(server_registry, target, server_archetype));
+    REQUIRE(start_sync(server_registry, source, server_archetype));
+    REQUIRE(kage::sync::emit_cue(
+        server_registry,
+        source,
+        1,
+        ReferenceCue{kage::sync::EntityReference{target}},
+        1.0f,
+        true));
+    server.tick(server_registry);
+    REQUIRE(packets.size() == 1);
+
+    ecs::Registry client_registry;
+    REQUIRE(kage_sync_tests::define_position_archetype(client_registry) == server_archetype);
+    client_registry.register_component<CuePlayback>("CuePlayback");
+    kage::sync::register_sync_cue<ReferenceCue>(client_registry);
+    kage::sync::configure_client(client_registry, 1);
+    kage::sync::ClientEntityNetworkId target_network_id = kage::sync::invalid_client_entity_network_id;
+    kage::sync::ClientEntityNetworkId source_network_id = kage::sync::invalid_client_entity_network_id;
+    kage::sync::ReplicationClientOptions client_options;
+    client_options.entity_mode_selector = [&](const kage::sync::ReplicatedEntityUpdateView& update) {
+        Position position{};
+        if (update.try_get(client_registry, position) && position.x == 1.0f) {
+            target_network_id = update.client_entity_network_id;
+        } else {
+            source_network_id = update.client_entity_network_id;
+        }
+        return kage::sync::ReplicationClientMode::Snap;
+    };
+    kage::sync::ReplicationClient client(client_options);
+    REQUIRE(client.receive(client_registry, packets[0]));
+
+    const ecs::Entity local_source = client.local_entity(source_network_id);
+    const ecs::Entity local_target = client.local_entity(target_network_id);
+    REQUIRE(local_source);
+    REQUIRE(local_target);
+    const CuePlayback& playback = client_registry.get<CuePlayback>(local_source);
+    REQUIRE(playback.plays == 1);
+    REQUIRE(playback.last_target == local_target);
+    REQUIRE(playback.last_target_network_id != kage::sync::invalid_client_entity_network_id);
 }
 
 TEST_CASE("entity references serialize as client-local network ids") {
@@ -507,7 +793,9 @@ TEST_CASE("resolve entity reference clears destroyed and reused network ids") {
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
+    kage::sync::register_sync_component<NetworkedPosition>(client_registry, "NetworkedPosition");
     kage::sync::configure_client(client_registry, 1);
+    REQUIRE(kage::sync::set_client_input_component<NetworkedPosition>(client_registry));
 
     const ecs::Entity server_entity{42};
     const std::uint32_t wire_id = test_network_id(server_entity);
@@ -673,6 +961,96 @@ TEST_CASE("predicted client traces rollback reason separately from rollback conf
     REQUIRE(reason->component_name == "PredictedPosition");
     REQUIRE(reason->data == "PredictedPosition.x mismatch");
 }
+
+TEST_CASE("predicted cue rollback tracing records server mismatch reason") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    registry.register_component<CuePlayback>("CuePlayback");
+    kage::sync::register_sync_cue<TestCue>(registry);
+    kage::sync::configure_client(registry, 1);
+
+    bool emit_prediction_cue = true;
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+    kage::sync::ReplicationClient client(options);
+    client.simulation_job<PredictedPosition>(registry, 0).each(
+        [&](ecs::Entity entity, PredictedPosition& position) {
+            position.x += 1.0f;
+            if (emit_prediction_cue) {
+                REQUIRE(kage::sync::emit_cue(registry, entity, TestCue{7}, 1.0f));
+                emit_prediction_cue = false;
+            }
+        });
+
+    std::vector<kage::sync::SyncTraceEvent> events;
+    kage::sync::SyncTracer tracer;
+    tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
+        [&](const kage::sync::SyncTraceEvent& event) { events.push_back(event); }});
+    client.set_tracer(&tracer);
+
+    const ecs::Entity server_entity = registry.create();
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
+
+    REQUIRE(std::any_of(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
+        return event.type == kage::sync::SyncTraceEventType::CueRolledBack &&
+            event.data.find("rollback_reason=server_mismatch") != std::string::npos;
+    }));
+}
+
+TEST_CASE("predicted cue rollback tracing records resim omission reason") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    registry.register_component<CuePlayback>("CuePlayback");
+    kage::sync::register_sync_cue<TestCue>(registry);
+    kage::sync::configure_client(registry, 1);
+
+    int prediction_jobs = 0;
+    bool emit_during_resim = false;
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+    options.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
+    kage::sync::ReplicationClient client(options);
+    client.simulation_job<PredictedPosition>(registry, 0).each(
+        [&](ecs::Entity entity, PredictedPosition& position) {
+            position.x += 1.0f;
+            ++prediction_jobs;
+            if (prediction_jobs == 2 || emit_during_resim) {
+                REQUIRE(kage::sync::emit_cue(registry, entity, TestCue{9}, 1.0f));
+            }
+        });
+
+    std::vector<kage::sync::SyncTraceEvent> events;
+    kage::sync::SyncTracer tracer;
+    tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
+        [&](const kage::sync::SyncTraceEvent& event) { events.push_back(event); }});
+    client.set_tracer(&tracer);
+
+    const ecs::Entity server_entity = registry.create();
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+
+    REQUIRE(std::any_of(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
+        return event.type == kage::sync::SyncTraceEventType::CueRolledBack &&
+            event.data.find("rollback_reason=resim_not_replayed") != std::string::npos;
+    }));
+}
 #endif
 
 TEST_CASE("predicted client error blends display-interpolated resim corrections") {
@@ -703,11 +1081,11 @@ TEST_CASE("predicted client error blends display-interpolated resim corrections"
     REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
     REQUIRE(registry.get<PredictedPosition>(local).x == 3.0f);
 
-    const kage::sync::DisplaySampleBuffer& display = client.display_frame(registry);
+    const kage::sync::DisplayInterpolationSampleBuffer& display = client.display_interpolation_frame(registry);
     REQUIRE(display.entities.size() == 1);
     PredictedPosition shown;
-    REQUIRE(display.entities[0].try_get(registry, shown));
-    REQUIRE(shown.x == Catch::Approx(2.1f));
+    REQUIRE(display.entities[0].try_get_display_value(registry, shown));
+    REQUIRE(shown.x == Catch::Approx(2.2f));
 }
 
 TEST_CASE("predicted client display samples prediction history between fixed ticks") {
@@ -734,11 +1112,11 @@ TEST_CASE("predicted client display samples prediction history between fixed tic
     REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
     REQUIRE(client.tick(registry, client.options().fixed_dt_seconds * 0.5));
 
-    const kage::sync::DisplaySampleBuffer& display = client.display_frame(registry);
+    const kage::sync::DisplayInterpolationSampleBuffer& display = client.display_interpolation_frame(registry);
     REQUIRE(display.entities.size() == 1);
     PredictedPosition shown;
-    REQUIRE(display.entities[0].try_get(registry, shown));
-    REQUIRE(shown.x == Catch::Approx(2.5f));
+    REQUIRE(display.entities[0].try_get_display_value(registry, shown));
+    REQUIRE(shown.x == Catch::Approx(2.7f));
 }
 
 TEST_CASE("predicted client keeps local prediction phase when authoritative frames arrive early") {
@@ -1109,6 +1487,7 @@ TEST_CASE("replication client rejects invalid deltas without ACKing") {
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
     packet.push_bits(1, 32U);
     packet.push_bits(1, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(0, 32U);
     packet.push_bits(1, 16U);
     packet.push_bool(false);
     kage::sync::protocol::write_network_entity_id(packet, 1);
@@ -1149,6 +1528,7 @@ TEST_CASE("replication client rejects malformed update packets without ACKing") 
     invalid_archetype.push_bits(kage::sync::protocol::server_update_message, 8U);
     invalid_archetype.push_bits(1, 32U);
     invalid_archetype.push_bits(1, kage::sync::protocol::server_packet_id_bits);
+    invalid_archetype.push_bits(0, 32U);
     invalid_archetype.push_bits(1, 16U);
     invalid_archetype.push_bool(false);
     kage::sync::protocol::write_network_entity_id(invalid_archetype, 1);
@@ -1222,7 +1602,7 @@ TEST_CASE("replication client packs ACKs within the configured MTU") {
 
     std::vector<kage::sync::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.mtu_bytes = 25;
+    server_options.mtu_bytes = 29;
     server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
         packets.push_back(packet);
     };
@@ -1699,7 +2079,9 @@ TEST_CASE("entity mode selector chooses snap or buffered from decoded component 
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
+    kage::sync::register_sync_component<NetworkedPosition>(client_registry, "NetworkedPosition");
     kage::sync::configure_client(client_registry, 1);
+    REQUIRE(kage::sync::set_client_input_component<NetworkedPosition>(client_registry));
 
     const ecs::Entity snap_entity{41};
     const ecs::Entity buffered_entity{42};
@@ -2352,8 +2734,8 @@ TEST_CASE("display interpolation samples fractional frames without mutating ECS"
     REQUIRE(local);
     REQUIRE(client_registry.get<SmoothPosition>(local).x == 0.0f);
 
-    kage::sync::DisplaySampleBuffer display;
-    REQUIRE(client.sample_display_frame(client_registry, 2.5, display));
+    kage::sync::DisplayInterpolationSampleBuffer display;
+    REQUIRE(client.sample_display_interpolation_frame(client_registry, 2.5, display));
     REQUIRE(display.entities.size() == 1);
     REQUIRE(display.entities[0].client_entity_network_id == client_entity_network_id);
     REQUIRE(display.entities[0].local_entity == local);
@@ -2361,7 +2743,7 @@ TEST_CASE("display interpolation samples fractional frames without mutating ECS"
     REQUIRE(display.entities[0].alpha == Catch::Approx(0.5f));
 
     SmoothPosition sampled;
-    REQUIRE(display.entities[0].try_get(client_registry, sampled));
+    REQUIRE(display.entities[0].try_get_display_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(5.0f));
     REQUIRE(sampled.y == Catch::Approx(0.0f));
     REQUIRE(client_registry.get<SmoothPosition>(local).x == 0.0f);
@@ -2389,12 +2771,12 @@ TEST_CASE("display interpolation returns floor samples when the next frame is un
         client_registry,
         make_position_packet(1, {{server_entity, Position{7.0f, 3.0f}}})));
 
-    kage::sync::DisplaySampleBuffer display;
-    REQUIRE(client.sample_display_frame(client_registry, 2.75, display));
+    kage::sync::DisplayInterpolationSampleBuffer display;
+    REQUIRE(client.sample_display_interpolation_frame(client_registry, 2.75, display));
     REQUIRE(display.entities.size() == 1);
 
     SmoothPosition sampled;
-    REQUIRE(display.entities[0].try_get(client_registry, sampled));
+    REQUIRE(display.entities[0].try_get_display_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(7.0f));
     REQUIRE(sampled.y == Catch::Approx(3.0f));
 }
@@ -2420,9 +2802,74 @@ TEST_CASE("display interpolation omits untagged components from samples") {
         client_registry,
         make_position_packet(1, {{server_entity, Position{7.0f, 3.0f}}})));
 
-    kage::sync::DisplaySampleBuffer display;
-    REQUIRE(client.sample_display_frame(client_registry, 2.0, display));
+    kage::sync::DisplayInterpolationSampleBuffer display;
+    REQUIRE(client.sample_display_interpolation_frame(client_registry, 2.0, display));
     REQUIRE(display.entities.empty());
+}
+
+TEST_CASE("display samples throw for non-display components instead of falling through to ECS") {
+    auto define_actor = [](ecs::Registry& registry, bool display_position) {
+        const ecs::Entity position =
+            kage::sync::register_sync_component<SmoothPosition>(registry, "SmoothPosition");
+        const ecs::Entity health = kage::sync::register_sync_component<Health>(registry, "Health");
+        if (display_position) {
+            REQUIRE(kage::sync::set_display_interpolated(registry, position));
+        }
+        return kage::sync::define_archetype(
+            registry,
+            "Actor",
+            {
+                {position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate},
+                {health, kage::sync::ReplicationAudience::All},
+            });
+    };
+
+    ecs::Registry server_registry;
+    const kage::sync::SyncArchetypeId server_archetype = define_actor(server_registry, false);
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<SmoothPosition>(server_entity, SmoothPosition{0.0f, 0.0f}) != nullptr);
+    REQUIRE(server_registry.add<Health>(server_entity, Health{100}) != nullptr);
+
+    std::vector<kage::sync::BitBuffer> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+    server.tick(server_registry);
+    server_registry.write<SmoothPosition>(server_entity) = SmoothPosition{10.0f, 0.0f};
+    server_registry.write<Health>(server_entity) = Health{0};
+    server.tick(server_registry);
+    REQUIRE(packets.size() == 2);
+
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = define_actor(client_registry, true);
+    REQUIRE(client_archetype == server_archetype);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        1,
+        8});
+    REQUIRE(client.receive(client_registry, packets[0]));
+    REQUIRE(client.receive(client_registry, packets[1]));
+
+    kage::sync::DisplayInterpolationSampleBuffer display;
+    REQUIRE(client.sample_display_interpolation_frame(client_registry, 2.5, display));
+    REQUIRE(display.entities.size() == 1);
+
+    SmoothPosition sampled_position;
+    Health sampled_health;
+    REQUIRE(display.entities[0].try_get_display_value(client_registry, sampled_position));
+    REQUIRE(sampled_position.x == Catch::Approx(5.0f));
+    REQUIRE_THROWS_AS(display.entities[0].try_get_display_value(client_registry, sampled_health), std::logic_error);
+
+    REQUIRE(client.sample_display_interpolation_frame(client_registry, 3.0, display));
+    REQUIRE(display.entities.size() == 1);
+    REQUIRE_THROWS_AS(display.entities[0].try_get_display_value(client_registry, sampled_health), std::logic_error);
 }
 
 TEST_CASE("display interpolation steps entity destroy at the floor frame") {
@@ -2448,11 +2895,11 @@ TEST_CASE("display interpolation steps entity destroy at the floor frame") {
         make_position_packet(1, {{server_entity, Position{7.0f, 3.0f}}})));
     REQUIRE(client.receive(client_registry, make_destroy_packet(2, server_entity)));
 
-    kage::sync::DisplaySampleBuffer display;
-    REQUIRE(client.sample_display_frame(client_registry, 2.5, display));
+    kage::sync::DisplayInterpolationSampleBuffer display;
+    REQUIRE(client.sample_display_interpolation_frame(client_registry, 2.5, display));
     REQUIRE(display.entities.size() == 1);
 
-    REQUIRE(client.sample_display_frame(client_registry, 3.0, display));
+    REQUIRE(client.sample_display_interpolation_frame(client_registry, 3.0, display));
     REQUIRE(display.entities.empty());
 }
 
@@ -2481,18 +2928,18 @@ TEST_CASE("client-owned display frame holds instead of rewinding when buffer dep
     REQUIRE(client.receive(client_registry, make_position_packet(3, {{server_entity, Position{30.0f, 0.0f}}})));
 
     REQUIRE(client.tick(client_registry, 3.0));
-    const kage::sync::DisplaySampleBuffer& before = client.display_frame(client_registry);
+    const kage::sync::DisplayInterpolationSampleBuffer& before = client.display_interpolation_frame(client_registry);
     REQUIRE(before.entities.size() == 1);
     SmoothPosition sampled;
-    REQUIRE(before.entities[0].try_get(client_registry, sampled));
-    REQUIRE(sampled.x == Catch::Approx(20.0f));
+    REQUIRE(before.entities[0].try_get_display_value(client_registry, sampled));
+    REQUIRE(sampled.x == Catch::Approx(21.5f));
 
     REQUIRE(client.set_interpolation_buffer_frames(3));
     REQUIRE(client.tick(client_registry, 1.0 / 120.0));
-    const kage::sync::DisplaySampleBuffer& after = client.display_frame(client_registry);
+    const kage::sync::DisplayInterpolationSampleBuffer& after = client.display_interpolation_frame(client_registry);
     REQUIRE(after.entities.size() == 1);
-    REQUIRE(after.entities[0].try_get(client_registry, sampled));
-    REQUIRE(sampled.x == Catch::Approx(20.0f));
+    REQUIRE(after.entities[0].try_get_display_value(client_registry, sampled));
+    REQUIRE(sampled.x == Catch::Approx(21.5f));
 }
 
 TEST_CASE("client-owned display frame returns the previous valid sample when target data is missing") {
@@ -2517,16 +2964,16 @@ TEST_CASE("client-owned display frame returns the previous valid sample when tar
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{10.0f, 0.0f}}})));
     REQUIRE(client.tick(client_registry, 2.0));
-    const kage::sync::DisplaySampleBuffer& before = client.display_frame(client_registry);
+    const kage::sync::DisplayInterpolationSampleBuffer& before = client.display_interpolation_frame(client_registry);
     REQUIRE(before.entities.size() == 1);
     SmoothPosition sampled;
-    REQUIRE(before.entities[0].try_get(client_registry, sampled));
+    REQUIRE(before.entities[0].try_get_display_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(10.0f));
 
     REQUIRE(client.tick(client_registry, 1.0));
-    const kage::sync::DisplaySampleBuffer& after = client.display_frame(client_registry);
+    const kage::sync::DisplayInterpolationSampleBuffer& after = client.display_interpolation_frame(client_registry);
     REQUIRE(after.entities.size() == 1);
-    REQUIRE(after.entities[0].try_get(client_registry, sampled));
+    REQUIRE(after.entities[0].try_get_display_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(10.0f));
 }
 
@@ -2563,12 +3010,12 @@ TEST_CASE("client-owned display frame exposes snap and buffered entities in one 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{ecs::Entity{43}, Position{20.0f, 0.0f}}}, 3U)));
     REQUIRE(client.tick(client_registry, 2.0));
 
-    const kage::sync::DisplaySampleBuffer& display = client.display_frame(client_registry);
+    const kage::sync::DisplayInterpolationSampleBuffer& display = client.display_interpolation_frame(client_registry);
     REQUIRE(display.entities.size() == 2);
     int found = 0;
-    for (const kage::sync::DisplayEntitySample& entity : display.entities) {
+    for (const kage::sync::DisplayInterpolationSample& entity : display.entities) {
         SmoothPosition sampled;
-        REQUIRE(entity.try_get(client_registry, sampled));
+        REQUIRE(entity.try_get_display_value(client_registry, sampled));
         if (entity.client_entity_network_id == test_client_entity_network_id(1, test_network_id(ecs::Entity{42}))) {
             REQUIRE(sampled.x == Catch::Approx(10.0f));
             ++found;
@@ -2604,20 +3051,20 @@ TEST_CASE("client-owned display frame keeps previous entities while committing n
     const ecs::Entity incoming{43};
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{existing, Position{10.0f, 0.0f}}})));
     REQUIRE(client.tick(client_registry, 2.0));
-    REQUIRE(client.display_frame(client_registry).entities.size() == 1);
+    REQUIRE(client.display_interpolation_frame(client_registry).entities.size() == 1);
 
     REQUIRE(client.set_default_entity_mode(kage::sync::ReplicationClientMode::BufferedInterpolation));
     REQUIRE(client.set_entity_mode(client_registry, existing, kage::sync::ReplicationClientMode::BufferedInterpolation));
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{incoming, Position{20.0f, 0.0f}}})));
     REQUIRE(client.tick(client_registry, 1.0));
 
-    const kage::sync::DisplaySampleBuffer& display = client.display_frame(client_registry);
+    const kage::sync::DisplayInterpolationSampleBuffer& display = client.display_interpolation_frame(client_registry);
     REQUIRE(display.entities.size() == 2);
 
     int found = 0;
-    for (const kage::sync::DisplayEntitySample& entity : display.entities) {
+    for (const kage::sync::DisplayInterpolationSample& entity : display.entities) {
         SmoothPosition sampled;
-        REQUIRE(entity.try_get(client_registry, sampled));
+        REQUIRE(entity.try_get_display_value(client_registry, sampled));
         if (entity.client_entity_network_id == test_client_entity_network_id(1, test_network_id(existing))) {
             REQUIRE(sampled.x == Catch::Approx(10.0f));
             ++found;
@@ -2634,6 +3081,7 @@ TEST_CASE("snap display error blending uses tick dt without mutating ECS") {
     ecs::Registry client_registry;
     const ecs::Entity smooth =
         kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
+    REQUIRE(kage::sync::set_display_interpolated(client_registry, smooth));
     REQUIRE(kage::sync::define_archetype(
                 client_registry,
                 "SmoothActor",
@@ -2649,10 +3097,10 @@ TEST_CASE("snap display error blending uses tick dt without mutating ECS") {
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{0.0f, 0.0f}}})));
     REQUIRE(client.tick(client_registry, 0.5));
-    const kage::sync::DisplaySampleBuffer& first = client.display_frame(client_registry);
+    const kage::sync::DisplayInterpolationSampleBuffer& first = client.display_interpolation_frame(client_registry);
     REQUIRE(first.entities.size() == 1);
     SmoothPosition sampled;
-    REQUIRE(first.entities[0].try_get(client_registry, sampled));
+    REQUIRE(first.entities[0].try_get_display_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(0.0f));
 
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{10.0f, 0.0f}}})));
@@ -2661,15 +3109,15 @@ TEST_CASE("snap display error blending uses tick dt without mutating ECS") {
     REQUIRE(client_registry.get<SmoothPosition>(local).x == Catch::Approx(10.0f));
 
     REQUIRE(client.tick(client_registry, 0.25));
-    const kage::sync::DisplaySampleBuffer& blended = client.display_frame(client_registry);
+    const kage::sync::DisplayInterpolationSampleBuffer& blended = client.display_interpolation_frame(client_registry);
     REQUIRE(blended.entities.size() == 1);
-    REQUIRE(blended.entities[0].try_get(client_registry, sampled));
+    REQUIRE(blended.entities[0].try_get_display_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(2.5f));
     REQUIRE(client_registry.get<SmoothPosition>(local).x == Catch::Approx(10.0f));
 
-    const kage::sync::DisplaySampleBuffer& repeated = client.display_frame(client_registry);
+    const kage::sync::DisplayInterpolationSampleBuffer& repeated = client.display_interpolation_frame(client_registry);
     REQUIRE(repeated.entities.size() == 1);
-    REQUIRE(repeated.entities[0].try_get(client_registry, sampled));
+    REQUIRE(repeated.entities[0].try_get_display_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(2.5f));
 }
 
@@ -2677,6 +3125,7 @@ TEST_CASE("snap display error blending clears after the accumulated tick dt cons
     ecs::Registry client_registry;
     const ecs::Entity smooth =
         kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
+    REQUIRE(kage::sync::set_display_interpolated(client_registry, smooth));
     REQUIRE(kage::sync::define_archetype(
                 client_registry,
                 "SmoothActor",
@@ -2694,14 +3143,14 @@ TEST_CASE("snap display error blending clears after the accumulated tick dt cons
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{10.0f, 0.0f}}})));
     REQUIRE(client.tick(client_registry, 1.0));
 
-    const kage::sync::DisplaySampleBuffer& display = client.display_frame(client_registry);
+    const kage::sync::DisplayInterpolationSampleBuffer& display = client.display_interpolation_frame(client_registry);
     REQUIRE(display.entities.size() == 1);
     SmoothPosition sampled;
-    REQUIRE(display.entities[0].try_get(client_registry, sampled));
+    REQUIRE(display.entities[0].try_get_display_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(10.0f));
 }
 
-TEST_CASE("snap display components without error traits keep snapped values") {
+TEST_CASE("display samples throw for unmarked snap components") {
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
@@ -2717,11 +3166,10 @@ TEST_CASE("snap display components without error traits keep snapped values") {
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{10.0f, 0.0f}}})));
     REQUIRE(client.tick(client_registry, 0.25));
 
-    const kage::sync::DisplaySampleBuffer& display = client.display_frame(client_registry);
+    const kage::sync::DisplayInterpolationSampleBuffer& display = client.display_interpolation_frame(client_registry);
     REQUIRE(display.entities.size() == 1);
     Position sampled;
-    REQUIRE(display.entities[0].try_get(client_registry, sampled));
-    REQUIRE(sampled.x == Catch::Approx(10.0f));
+    REQUIRE_THROWS_AS(display.entities[0].try_get_display_value(client_registry, sampled), std::logic_error);
 }
 
 TEST_CASE("buffered interpolation validates wrapped buffer samples by frame") {
@@ -3144,7 +3592,7 @@ TEST_CASE("buffered interpolation validates client buffer options") {
         4});
     REQUIRE(client.set_interpolation_buffer_frames(3));
     REQUIRE_FALSE(client.set_interpolation_buffer_frames(4));
-    REQUIRE(client.options().interpolation_buffer_frames == 3);
+    REQUIRE(client.current_interpolation_buffer_frames() == 3);
 
     REQUIRE_THROWS_AS(
         kage::sync::ReplicationClient(kage::sync::ReplicationClientOptions{
@@ -3246,14 +3694,192 @@ TEST_CASE("frame-aware receive records latency and emits dilation without jumpin
     REQUIRE(client.timing_stats().target_interpolation_buffer_frames == 4);
     REQUIRE(client.timing_stats().measured_interpolation_buffer_frames == Catch::Approx(0.0f));
     REQUIRE(client.timing_stats().time_dilation == Catch::Approx(0.90f));
-    REQUIRE(client.options().interpolation_buffer_frames == 1);
+    REQUIRE(client.current_interpolation_buffer_frames() == 1);
 
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{3.0f, 4.0f}}}), 4));
     REQUIRE(client.timing_stats().sample_count == 1);
     REQUIRE(client.timing_stats().latency_frames == Catch::Approx(4.0f));
     REQUIRE(client.timing_stats().jitter_frames == Catch::Approx(0.0f));
     REQUIRE(client.timing_stats().target_interpolation_buffer_frames == 4);
-    REQUIRE(client.options().interpolation_buffer_frames == 1);
+    REQUIRE(client.current_interpolation_buffer_frames() == 1);
+}
+
+TEST_CASE("ping samples compute conservative prediction lead and prediction dilation") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::register_sync_component<NetworkedPosition>(client_registry, "NetworkedPosition");
+    kage::sync::configure_client(client_registry, 1);
+    REQUIRE(kage::sync::set_client_input_component<NetworkedPosition>(client_registry));
+
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    options.interpolation_buffer_capacity_frames = 8;
+    options.input_buffer_capacity_frames = 16;
+    options.auto_interpolation_smoothing = 1.0f;
+    options.auto_prediction_time_dilation_min = 0.90f;
+    options.auto_prediction_time_dilation_max = 1.10f;
+    options.auto_prediction_time_dilation_gain = 0.10f;
+    options.auto_timing_fast_recovery = false;
+    kage::sync::ReplicationClient client(options);
+    const ecs::Entity server_entity{42};
+    REQUIRE(client.set_input(client_registry, NetworkedPosition{1.0f, 0.0f}));
+
+    REQUIRE(record_ping_sample(client, client_registry, 8));
+    REQUIRE(client.timing_stats().latency_frames == Catch::Approx(4.0f));
+    REQUIRE(client.timing_stats().desired_prediction_lead_frames == 9);
+    REQUIRE(client.timing_stats().target_prediction_lead_frames == 9);
+
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}), 5));
+    REQUIRE(client.timing_stats().measured_prediction_lead_frames == Catch::Approx(0.0f));
+    REQUIRE(client.timing_stats().current_prediction_lead_frames == 0);
+    REQUIRE(client.timing_stats().prediction_time_dilation == Catch::Approx(1.10f));
+
+    REQUIRE(client.tick(client_registry, client.options().fixed_dt_seconds));
+    REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{3.0f, 4.0f}}}), 6));
+    REQUIRE(client.timing_stats().measured_prediction_lead_frames == Catch::Approx(0.0f));
+    REQUIRE(client.timing_stats().prediction_time_dilation == Catch::Approx(1.10f));
+}
+
+TEST_CASE("server update lag fast recovery pre-fills future input frames") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::register_sync_component<NetworkedPosition>(client_registry, "NetworkedPosition");
+    kage::sync::configure_client(client_registry, 1);
+    REQUIRE(kage::sync::set_client_input_component<NetworkedPosition>(client_registry));
+
+    kage::sync::ReplicationClientOptions options;
+    options.input_buffer_capacity_frames = 32;
+    options.auto_timing_warmup_samples = 3;
+    kage::sync::ReplicationClient client(options);
+    const ecs::Entity server_entity{42};
+    REQUIRE(client.set_input(client_registry, NetworkedPosition{1.0f, 0.0f}));
+
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}), 8));
+
+    REQUIRE(client.timing_stats().target_prediction_lead_frames == 15);
+    REQUIRE(client.timing_stats().current_prediction_lead_frames == 15);
+    REQUIRE(client.timing_stats().measured_prediction_lead_frames == Catch::Approx(15.0f));
+    std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
+    auto input_packet = std::find_if(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+        return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
+    });
+    REQUIRE(input_packet != packets.end());
+    const ClientInputPacket input = read_client_input_header(*input_packet);
+    REQUIRE(input.first_input_frame == 1);
+    REQUIRE(input.input_count >= 16);
+}
+
+TEST_CASE("ping-derived prediction target jump pre-fills future input frames") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::register_sync_component<NetworkedPosition>(client_registry, "NetworkedPosition");
+    kage::sync::configure_client(client_registry, 1);
+    REQUIRE(kage::sync::set_client_input_component<NetworkedPosition>(client_registry));
+
+    kage::sync::ReplicationClientOptions options;
+    options.input_buffer_capacity_frames = 32;
+    options.auto_interpolation_smoothing = 1.0f;
+    options.auto_timing_warmup_samples = 1;
+    kage::sync::ReplicationClient client(options);
+    const ecs::Entity server_entity{42};
+    REQUIRE(client.set_input(client_registry, NetworkedPosition{1.0f, 0.0f}));
+
+    PingPacket ping;
+    REQUIRE(drain_ping(client, client_registry, 0.0, ping));
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(99, {{server_entity, Position{1.0f, 2.0f}}}),
+        72));
+    REQUIRE(client.timing_stats().target_prediction_lead_frames == 2);
+
+    REQUIRE(receive_pong(client, client_registry, ping, ping.send_frame + 14));
+
+    REQUIRE(client.timing_stats().target_prediction_lead_frames == 15);
+    REQUIRE(client.timing_stats().current_prediction_lead_frames == 15);
+    std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
+    auto input_packet = std::find_if(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+        return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
+    });
+    REQUIRE(input_packet != packets.end());
+    const ClientInputPacket input = read_client_input_header(*input_packet);
+    REQUIRE(input.first_input_frame <= 114);
+    REQUIRE(input.first_input_frame + input.input_count - 1U >= 114);
+}
+
+TEST_CASE("replication client tick emits packets through configured sender") {
+    ecs::Registry registry;
+    kage::sync::configure_client(registry, 1);
+
+    std::vector<kage::sync::BitBuffer> sent;
+    kage::sync::ReplicationClient client;
+    client.set_packet_sender([&](const kage::sync::BitBuffer& packet) {
+        sent.push_back(packet);
+    });
+
+    REQUIRE(client.tick(registry, 0.0));
+    REQUIRE_FALSE(sent.empty());
+}
+
+TEST_CASE("replication client queued receive packets are processed during tick") {
+    ecs::Registry registry;
+    kage::sync::configure_client(registry, 1);
+
+    kage::sync::ReplicationClient client;
+    kage::sync::BitBuffer response;
+    response.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
+    response.push_bits(1U, 1U);
+    response.push_unsigned_bits(1U, 64U);
+    client.receive_packet(response);
+
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds * 0.5));
+    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Accepted);
+    REQUIRE(client.continuous_receive_frame() == Catch::Approx(0.5));
+}
+
+TEST_CASE("replication client queued stale receive packets do not fail tick") {
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(registry);
+    REQUIRE(archetype.value == 0);
+    kage::sync::configure_client(registry, 1);
+
+    kage::sync::ReplicationClient client;
+    const ecs::Entity server_entity{42};
+    const kage::sync::BitBuffer packet =
+        make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}});
+    REQUIRE(client.receive(registry, packet, 1));
+    REQUIRE(client.drain_ack_packets().size() == 1);
+    REQUIRE_FALSE(client.receive(registry, packet, 1));
+
+    client.receive_packet(packet);
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(client.pending_ack_count() == 0);
+}
+
+TEST_CASE("client input frames are immutable samples from the input clock") {
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(registry);
+    REQUIRE(archetype.value == 0);
+    kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    kage::sync::configure_client(registry, 1);
+    REQUIRE(kage::sync::set_client_input_component<NetworkedPosition>(registry));
+
+    kage::sync::ReplicationClient client;
+    REQUIRE(client.set_input(registry, NetworkedPosition{3.0f, 4.0f}));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+
+    std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
+    auto input_packet = std::find_if(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+        return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
+    });
+    REQUIRE(input_packet != packets.end());
+
+    const ClientInputPacket input = read_client_input_header(*input_packet);
+    REQUIRE(input.baseline_frame == 0);
+    REQUIRE(input.input_count == 1);
+    REQUIRE(client.timing_stats().current_prediction_lead_frames == 2);
 }
 
 TEST_CASE("replication client delays server update packet loss until gaps leave the receive window") {
@@ -3456,12 +4082,12 @@ TEST_CASE("auto interpolation buffer moves one frame when dilation creates headr
 
     REQUIRE(record_ping_sample(client, client_registry, 8));
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}), 5));
-    REQUIRE(client.options().interpolation_buffer_frames == 1);
+    REQUIRE(client.current_interpolation_buffer_frames() == 1);
 
     REQUIRE(client.receive(client_registry, make_position_packet(6, {{server_entity, Position{3.0f, 4.0f}}}), 6));
     REQUIRE(client.timing_stats().desired_interpolation_buffer_frames > 1);
     REQUIRE(client.timing_stats().measured_interpolation_buffer_frames >= 1.0f);
-    REQUIRE(client.options().interpolation_buffer_frames == 2);
+    REQUIRE(client.current_interpolation_buffer_frames() == 2);
 }
 
 TEST_CASE("auto interpolation target uses downstream update lag as a floor") {
@@ -3496,7 +4122,7 @@ TEST_CASE("auto interpolation target uses downstream update lag as a floor") {
     REQUIRE(client.timing_stats().desired_interpolation_buffer_frames == 2);
     REQUIRE(client.timing_stats().target_interpolation_buffer_frames == 3);
     REQUIRE(client.timing_stats().time_dilation == Catch::Approx(0.90f));
-    REQUIRE(client.options().interpolation_buffer_frames == 2);
+    REQUIRE(client.current_interpolation_buffer_frames() == 2);
 }
 
 TEST_CASE("auto interpolation emits speedup when buffered data exceeds the desired depth") {
@@ -3550,19 +4176,19 @@ TEST_CASE("auto interpolation buffer shrinks one frame at a time and returns to 
     REQUIRE(client.timing_stats().desired_interpolation_buffer_frames == 1);
     REQUIRE(client.timing_stats().measured_interpolation_buffer_frames == Catch::Approx(3.0f));
     REQUIRE(client.timing_stats().time_dilation == Catch::Approx(1.10f));
-    REQUIRE(client.options().interpolation_buffer_frames == 3);
+    REQUIRE(client.current_interpolation_buffer_frames() == 3);
 
     REQUIRE(client.receive(client_registry, make_position_packet(11, {{server_entity, Position{2.0f, 3.0f}}}), 12));
-    REQUIRE(client.options().interpolation_buffer_frames == 2);
+    REQUIRE(client.current_interpolation_buffer_frames() == 2);
 
     REQUIRE(client.receive(client_registry, make_position_packet(12, {{server_entity, Position{3.0f, 4.0f}}}), 13));
-    REQUIRE(client.options().interpolation_buffer_frames == 1);
+    REQUIRE(client.current_interpolation_buffer_frames() == 1);
 
     REQUIRE(client.receive(client_registry, make_position_packet(13, {{server_entity, Position{4.0f, 5.0f}}}), 13));
     REQUIRE(client.timing_stats().desired_interpolation_buffer_frames == 1);
     REQUIRE(client.timing_stats().measured_interpolation_buffer_frames == Catch::Approx(1.0f));
     REQUIRE(client.timing_stats().time_dilation == Catch::Approx(1.0f));
-    REQUIRE(client.options().interpolation_buffer_frames == 1);
+    REQUIRE(client.current_interpolation_buffer_frames() == 1);
 }
 
 TEST_CASE("auto interpolation buffer clamps and can be disabled") {
@@ -3588,7 +4214,7 @@ TEST_CASE("auto interpolation buffer clamps and can be disabled") {
     REQUIRE(clamped.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}), 20));
     REQUIRE(clamped.timing_stats().target_interpolation_buffer_frames == 3);
     REQUIRE(clamped.timing_stats().time_dilation == Catch::Approx(0.90f));
-    REQUIRE(clamped.options().interpolation_buffer_frames == 1);
+    REQUIRE(clamped.current_interpolation_buffer_frames() == 1);
 
     ecs::Registry manual_registry;
     kage_sync_tests::define_position_archetype(manual_registry);
@@ -3610,7 +4236,7 @@ TEST_CASE("auto interpolation buffer clamps and can be disabled") {
     REQUIRE(manual.timing_stats().target_interpolation_buffer_frames == 4);
     REQUIRE(manual.timing_stats().current_interpolation_buffer_frames == 2);
     REQUIRE(manual.timing_stats().time_dilation == Catch::Approx(1.0f));
-    REQUIRE(manual.options().interpolation_buffer_frames == 2);
+    REQUIRE(manual.current_interpolation_buffer_frames() == 2);
 }
 
 TEST_CASE("frame-aware receive failures do not update timing stats") {
@@ -3694,7 +4320,7 @@ TEST_CASE("snap mode records timing without emitting playback dilation") {
     REQUIRE(client.timing_stats().latency_frames == Catch::Approx(4.0f));
     REQUIRE(client.timing_stats().desired_interpolation_buffer_frames == 4);
     REQUIRE(client.timing_stats().time_dilation == Catch::Approx(1.0f));
-    REQUIRE(client.options().interpolation_buffer_frames == 2);
+    REQUIRE(client.current_interpolation_buffer_frames() == 2);
 
     const ecs::Entity local = client.local_entity(server_entity);
     REQUIRE(local);
@@ -3724,7 +4350,7 @@ TEST_CASE("zero dilation gain keeps playback speed neutral while tracking desire
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}), 5));
     REQUIRE(client.timing_stats().desired_interpolation_buffer_frames == 4);
     REQUIRE(client.timing_stats().time_dilation == Catch::Approx(1.0f));
-    REQUIRE(client.options().interpolation_buffer_frames == 1);
+    REQUIRE(client.current_interpolation_buffer_frames() == 1);
 }
 
 TEST_CASE("manual buffer override resets auto timing target and dilation") {
@@ -3756,7 +4382,7 @@ TEST_CASE("manual buffer override resets auto timing target and dilation") {
     REQUIRE(client.timing_stats().target_interpolation_buffer_frames == 3);
     REQUIRE(client.timing_stats().current_interpolation_buffer_frames == 3);
     REQUIRE(client.timing_stats().time_dilation == Catch::Approx(1.0f));
-    REQUIRE(client.options().interpolation_buffer_frames == 3);
+    REQUIRE(client.current_interpolation_buffer_frames() == 3);
 }
 
 TEST_CASE("buffered interpolation applies correct target frame after auto buffer depth changes") {
@@ -3781,9 +4407,9 @@ TEST_CASE("buffered interpolation applies correct target frame after auto buffer
 
     REQUIRE(record_ping_sample(client, client_registry, 8));
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}), 5));
-    REQUIRE(client.options().interpolation_buffer_frames == 1);
+    REQUIRE(client.current_interpolation_buffer_frames() == 1);
     REQUIRE(client.receive(client_registry, make_position_packet(6, {{server_entity, Position{6.0f, 2.0f}}}), 6));
-    REQUIRE(client.options().interpolation_buffer_frames == 2);
+    REQUIRE(client.current_interpolation_buffer_frames() == 2);
 
     REQUIRE(client.apply_frame(client_registry, 7));
     const ecs::Entity local = client.local_entity(server_entity);
@@ -3793,7 +4419,7 @@ TEST_CASE("buffered interpolation applies correct target frame after auto buffer
     REQUIRE(client_registry.get<Position>(local).x == 6.0f);
 
     REQUIRE(client.receive(client_registry, make_destroy_packet(7, server_entity), 7));
-    REQUIRE(client.options().interpolation_buffer_frames == 3);
+    REQUIRE(client.current_interpolation_buffer_frames() == 3);
     REQUIRE(client.apply_frame(client_registry, 9));
     REQUIRE(client_registry.alive(local));
     REQUIRE(client.apply_frame(client_registry, 10));
@@ -3814,7 +4440,7 @@ TEST_CASE("normal receive records timing from the client-owned clock without mov
         8});
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
     REQUIRE(client.timing_stats().sample_count == 0);
-    REQUIRE(client.options().interpolation_buffer_frames == 2);
+    REQUIRE(client.current_interpolation_buffer_frames() == 2);
 }
 
 TEST_CASE("client connect handshake ACKs accepted id until first update") {
@@ -3864,6 +4490,112 @@ TEST_CASE("client connect handshake ACKs accepted id until first update") {
         REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) !=
                 kage::sync::protocol::client_connect_ack_message);
     }
+}
+
+TEST_CASE("adaptive ping interval samples frequently until latency stabilizes") {
+    ecs::Registry client_registry;
+    kage_sync_tests::define_position_archetype(client_registry);
+
+    kage::sync::ReplicationClientOptions options;
+    options.ping_interval_seconds = 3.0;
+    options.adaptive_ping_interval_seconds = 0.25;
+    options.adaptive_ping_stable_samples = 3;
+    options.adaptive_ping_stable_threshold_frames = 0.5f;
+    kage::sync::ReplicationClient client(options);
+
+    PingPacket ping;
+    REQUIRE(drain_ping(client, client_registry, 0.0, ping));
+    REQUIRE(receive_pong(client, client_registry, ping, ping.send_frame + 8));
+
+    REQUIRE(drain_ping(client, client_registry, 0.25, ping));
+    REQUIRE(receive_pong(client, client_registry, ping, ping.send_frame + 8));
+
+    REQUIRE(drain_ping(client, client_registry, 0.25, ping));
+    REQUIRE(receive_pong(client, client_registry, ping, ping.send_frame + 8));
+
+    REQUIRE_FALSE(drain_ping(client, client_registry, 0.25, ping));
+    REQUIRE_FALSE(drain_ping(client, client_registry, 2.50, ping));
+    REQUIRE(drain_ping(client, client_registry, 0.25, ping));
+}
+
+TEST_CASE("adaptive ping interval re-enters fast mode after latency jumps") {
+    ecs::Registry client_registry;
+    kage_sync_tests::define_position_archetype(client_registry);
+
+    kage::sync::ReplicationClientOptions options;
+    options.ping_interval_seconds = 3.0;
+    options.adaptive_ping_interval_seconds = 0.25;
+    options.adaptive_ping_stable_samples = 2;
+    options.adaptive_ping_stable_threshold_frames = 0.5f;
+    options.adaptive_ping_jump_threshold_frames = 3.0f;
+    kage::sync::ReplicationClient client(options);
+
+    PingPacket ping;
+    REQUIRE(drain_ping(client, client_registry, 0.0, ping));
+    REQUIRE(receive_pong(client, client_registry, ping, ping.send_frame + 8));
+    REQUIRE(drain_ping(client, client_registry, 0.25, ping));
+    REQUIRE(receive_pong(client, client_registry, ping, ping.send_frame + 8));
+
+    REQUIRE_FALSE(drain_ping(client, client_registry, 0.25, ping));
+    REQUIRE(drain_ping(client, client_registry, 2.75, ping));
+    REQUIRE(receive_pong(client, client_registry, ping, ping.send_frame + 20));
+
+    REQUIRE(drain_ping(client, client_registry, 0.25, ping));
+    REQUIRE(receive_pong(client, client_registry, ping, ping.send_frame + 20));
+    REQUIRE(drain_ping(client, client_registry, 0.25, ping));
+}
+
+TEST_CASE("adaptive ping interval can be disabled") {
+    ecs::Registry client_registry;
+    kage_sync_tests::define_position_archetype(client_registry);
+
+    kage::sync::ReplicationClientOptions options;
+    options.ping_interval_seconds = 3.0;
+    options.adaptive_ping_interval = false;
+    options.adaptive_ping_interval_seconds = 0.25;
+    kage::sync::ReplicationClient client(options);
+
+    PingPacket ping;
+    REQUIRE(drain_ping(client, client_registry, 0.0, ping));
+    REQUIRE_FALSE(drain_ping(client, client_registry, 0.25, ping));
+    REQUIRE(drain_ping(client, client_registry, 2.75, ping));
+}
+
+TEST_CASE("client does not send input packets before first server update") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::register_sync_component<NetworkedPosition>(client_registry, "NetworkedPosition");
+    kage::sync::configure_client(client_registry, 1);
+    REQUIRE(kage::sync::set_client_input_component<NetworkedPosition>(client_registry));
+
+    kage::sync::ReplicationClientOptions options;
+    options.connect_token = "token";
+    kage::sync::ReplicationClient client(options);
+
+    kage::sync::BitBuffer accepted;
+    accepted.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
+    accepted.push_bool(true);
+    accepted.push_unsigned_bits(1, 64U);
+    REQUIRE(client.receive(client_registry, accepted));
+    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Accepted);
+
+    REQUIRE(client.set_input(client_registry, NetworkedPosition{5.0f, 6.0f}));
+    REQUIRE(client.tick(client_registry, client.options().fixed_dt_seconds));
+    std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
+    REQUIRE(std::none_of(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+        return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
+    }));
+
+    const ecs::Entity server_entity{42};
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
+    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Ready);
+
+    REQUIRE(client.tick(client_registry, client.options().fixed_dt_seconds));
+    packets = client.drain_packets();
+    REQUIRE(std::any_of(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+        return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
+    }));
 }
 
 TEST_CASE("buffered interpolation does not recreate destroyed entities before the new target frame") {

@@ -20,6 +20,7 @@ inline constexpr std::uint8_t server_connect_response_message = 4;
 inline constexpr std::uint8_t client_connect_ack_message = 5;
 inline constexpr std::uint8_t client_ping_message = 6;
 inline constexpr std::uint8_t server_pong_message = 7;
+inline constexpr std::uint8_t client_input_message = 8;
 
 inline constexpr std::size_t default_max_pending_packet_acks_per_client = 255U;
 inline constexpr std::size_t network_entity_id_bits = 32U;
@@ -29,8 +30,10 @@ inline constexpr std::uint32_t network_entity_id_tier1_max =
     (std::uint32_t{1} << network_entity_id_tier1_bits) - 1U;
 inline constexpr std::size_t client_ack_header_bits = 8U + 16U;
 inline constexpr std::size_t client_connect_ack_bits = 8U + 64U;
-inline constexpr std::size_t client_ping_bits = 8U + 32U + 32U;
-inline constexpr std::size_t server_pong_bits = 8U + 32U + 32U;
+inline constexpr std::size_t frame_subframe_bits = 16U;
+inline constexpr std::uint32_t frame_subframe_scale = std::uint32_t{1} << frame_subframe_bits;
+inline constexpr std::size_t client_ping_bits = 8U + 32U + 32U + frame_subframe_bits;
+inline constexpr std::size_t server_pong_bits = 8U + 32U + 32U + frame_subframe_bits + 32U + frame_subframe_bits;
 inline constexpr std::size_t baseline_frame_delta_bits = KAGE_SYNC_BASELINE_FRAME_DELTA_BITS;
 
 static_assert(baseline_frame_delta_bits > 0U, "KAGE_SYNC_BASELINE_FRAME_DELTA_BITS must be at least 1");
@@ -72,7 +75,7 @@ inline constexpr std::uint32_t packet_id_mask(std::size_t packet_id_bits) noexce
 
 inline constexpr std::size_t server_packet_id_bits =
     packet_id_bits_for_max_pending(default_max_pending_packet_acks_per_client);
-inline constexpr std::size_t server_update_header_bits = 8U + 32U + server_packet_id_bits + 16U;
+inline constexpr std::size_t server_update_header_bits = 8U + 32U + server_packet_id_bits + 32U + 16U;
 inline constexpr std::size_t client_ack_record_bits = server_packet_id_bits;
 
 inline constexpr bool valid_network_entity_id_tier0_bits(std::size_t tier0_bits) noexcept {

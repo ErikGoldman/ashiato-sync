@@ -378,11 +378,11 @@ struct SyncComponentOps {
 };
 
 struct SyncCueOps {
-    using SerializeFn = void (*)(const void*, BitBuffer&);
-    using PlayFn = bool (*)(ecs::Registry&, ecs::Entity, const BitBuffer&, float);
-    using RollbackFn = bool (*)(ecs::Registry&, ecs::Entity, const BitBuffer&);
-    using EqualsFn = bool (*)(const BitBuffer&, const BitBuffer&);
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_CUE_DATA)
+    using SerializeFn = void (*)(const void*, BitBuffer&, EntityReferenceContext*);
+    using PlayFn = bool (*)(ecs::Registry&, ecs::Entity, const BitBuffer&, float, SyncFrame, EntityReferenceContext*);
+    using RollbackFn = bool (*)(ecs::Registry&, ecs::Entity, const BitBuffer&, EntityReferenceContext*);
+    using EqualsFn = bool (*)(const BitBuffer&, const BitBuffer&, EntityReferenceContext*);
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
     using TraceFn = bool (*)(const BitBuffer&, SyncTraceStringBuilder&);
 #endif
 
@@ -390,7 +390,9 @@ struct SyncCueOps {
     PlayFn play = nullptr;
     RollbackFn rollback = nullptr;
     EqualsFn equals = nullptr;
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_CUE_DATA)
+    std::string name;
+    bool references_entities = false;
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
     TraceFn trace = nullptr;
 #endif
 };
@@ -401,6 +403,8 @@ struct QueuedSyncCue {
     SyncCueTypeId type = 0;
     float relevance_seconds = 0.0f;
     BitBuffer payload;
+    std::shared_ptr<void> value;
+    bool only_replicate_to_owner = false;
 };
 
 struct SyncCueQueue {
@@ -432,11 +436,20 @@ struct QuantizedFrameData {
 struct SyncSettings {
     SyncRole role = SyncRole::Server;
     ClientId local_client = invalid_client_id;
+    ecs::Entity input_component;
     std::vector<SyncArchetype> archetypes;
     std::unordered_map<std::uint64_t, SyncComponentOps> component_ops;
     std::vector<SyncCueOps> cue_ops;
     std::unordered_map<std::type_index, SyncCueTypeId> cue_type_ids;
     std::shared_ptr<SyncCueQueue> cue_queue = std::make_shared<SyncCueQueue>();
+};
+
+struct SyncAuthority {
+    bool authoritative = true;
+
+    bool is_authoritative() const noexcept {
+        return authoritative;
+    }
 };
 
 struct Replicated {
@@ -461,6 +474,7 @@ struct ReplicationServerOptions {
     double connect_resend_interval_seconds = 0.25;
     double idle_client_timeout_seconds = 0.0;
     std::size_t network_entity_id_tier0_bits = protocol::default_network_entity_id_tier0_bits;
+    std::size_t input_buffer_capacity_frames = 64;
     SyncFrame prioritizer_interval_frames = 4;
     ReplicationPrioritizerFn prioritizer;
     ConnectHandlerFn connect_handler;

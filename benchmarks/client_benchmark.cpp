@@ -183,11 +183,11 @@ void BM_ClientSampleDisplayInterpolation(benchmark::State& state) {
         for (const kage::sync::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
-        kage::sync::DisplaySampleBuffer display;
+        kage::sync::DisplayInterpolationSampleBuffer display;
         state.ResumeTiming();
 
         for (int frame = 1; frame < frame_count; ++frame) {
-            benchmark::DoNotOptimize(client.sample_display_target_frame(
+            benchmark::DoNotOptimize(client.sample_display_interpolation_target_frame(
                 registry,
                 static_cast<double>(frame) + 0.5,
                 display));
@@ -341,6 +341,31 @@ void BM_ClientTickBufferedAutoInterpolation(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(packets.size()));
 }
 
+void BM_ClientInputRecordAndDrain(benchmark::State& state) {
+    const int frame_count = static_cast<int>(state.range(0));
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        ecs::Registry registry;
+        kage::sync::register_sync_component<DeltaPosition>(registry, "DeltaPosition");
+        kage::sync::configure_client(registry, 1);
+        kage::sync::set_client_input_component<DeltaPosition>(registry);
+        const ecs::Entity owned = registry.create();
+        kage::sync::set_owner(registry, owned, 1);
+        kage::sync::ReplicationClient client;
+        state.ResumeTiming();
+
+        for (int frame = 0; frame < frame_count; ++frame) {
+            benchmark::DoNotOptimize(client.set_input(registry, DeltaPosition{frame, frame + 1}));
+            benchmark::DoNotOptimize(client.tick(registry, client.options().fixed_dt_seconds));
+        }
+        std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
+        benchmark::DoNotOptimize(packets.size());
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(frame_count));
+}
+
 BENCHMARK(BM_ClientReceiveSnap)->Apply(ClientArgs);
 BENCHMARK(BM_ClientReceiveBufferedInterpolation)->Apply(ClientArgs);
 BENCHMARK(BM_ClientReceivePredict)->Apply(ClientArgs);
@@ -353,5 +378,6 @@ BENCHMARK(BM_ClientDrainDuplicateHeavyAckPackets)->Args({1024, 64})->Args({4096,
 BENCHMARK(BM_ClientReceiveDestroySnap)->Apply(DestroyArgs);
 BENCHMARK(BM_ClientReceiveDestroyBuffered)->Apply(DestroyArgs);
 BENCHMARK(BM_ClientTickBufferedAutoInterpolation)->Apply(ClientArgs);
+BENCHMARK(BM_ClientInputRecordAndDrain)->Arg(16)->Arg(64);
 
 }  // namespace

@@ -14,13 +14,21 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <atomic>
+#include <deque>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <numeric>
 #include <sstream>
 #include <string>
+#include <thread>
+#include <type_traits>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -43,6 +51,11 @@ using namespace kage::sync;
 constexpr float label_width = 340.0f;
 constexpr float row_height = 24.0f;
 constexpr float frame_pitch = 18.0f;
+constexpr float packet_time_us_pitch = 0.0035f;
+constexpr float packet_column_width = 300.0f;
+constexpr float packet_column_gap = 140.0f;
+constexpr float packet_marker_size = 13.0f;
+constexpr float packet_lane_spacing = 20.0f;
 constexpr float pill_width = 14.0f;
 constexpr float pill_height = 14.0f;
 constexpr float timeline_header_height = 24.0f;
@@ -76,6 +89,22 @@ struct SelectedRecordDetail {
     std::string source;
 };
 
+struct SelectedPacketChip {
+    int source_index = -1;
+    std::uint32_t event_index = std::numeric_limits<std::uint32_t>::max();
+    std::vector<std::pair<int, std::uint32_t>> event_indices;
+};
+
+bool operator==(const SelectedPacketChip& lhs, const SelectedPacketChip& rhs) {
+    return lhs.source_index == rhs.source_index &&
+        lhs.event_index == rhs.event_index &&
+        lhs.event_indices == rhs.event_indices;
+}
+
+bool operator!=(const SelectedPacketChip& lhs, const SelectedPacketChip& rhs) {
+    return !(lhs == rhs);
+}
+
 struct SourceMetrics {
     SyncFrame min_frame = 0;
     SyncFrame max_frame = 0;
@@ -86,6 +115,51 @@ struct SourceMetrics {
 struct TimelineNavCell {
     SelectedCell selected;
     int row = 0;
+};
+
+struct PacketKeyValues {
+    std::unordered_map<std::string, std::string> values;
+};
+
+struct PacketEventInfo {
+    int source_index = -1;
+    std::uint32_t record_index = 0;
+    SyncFrame frame = 0;
+    std::uint64_t absolute_us = 0;
+    std::uint64_t relative_us = 0;
+    ClientId client = invalid_client_id;
+    std::string direction;
+    std::string message;
+    std::string sequence;
+    std::string acks;
+    std::string baseline;
+    std::string server_frame;
+    std::string input_frames;
+    std::string input_ack;
+    bool server_side = false;
+    bool send = false;
+    int lane = 0;
+};
+
+struct PacketFlow {
+    int send_event = -1;
+    int receive_event = -1;
+    ClientId client = invalid_client_id;
+    bool server_to_client = true;
+};
+
+struct PacketFrameMarker {
+    SyncFrame frame = 0;
+    std::uint64_t absolute_us = 0;
+    std::uint64_t relative_us = 0;
+};
+
+struct PacketClientTimeline {
+    ClientId client = invalid_client_id;
+    std::vector<int> event_indices;
+    std::vector<int> flow_indices;
+    std::vector<PacketFrameMarker> server_frames;
+    std::vector<PacketFrameMarker> client_frames;
 };
 
 struct DirectoryPickerEntry {
@@ -115,6 +189,51 @@ struct BenchmarkState {
     int frame_index = 0;
     bool click_requested = false;
     bool report_written = false;
+};
+
+struct TraceSourceHeader {
+    std::string path;
+    SyncTraceRole role = SyncTraceRole::Server;
+    ClientId client = invalid_client_id;
+    std::uint64_t recorded_unix_ns = 0;
+    std::uint32_t flags = 0;
+    std::uint64_t data_offset = 0;
+    std::uint64_t file_size = 0;
+};
+
+struct TraceLoadMessage {
+    enum class Type {
+        SourceBegin,
+        Records,
+        Finished,
+        Failed
+    };
+
+    Type type = Type::Records;
+    int source_index = -1;
+    TraceSourceHeader source;
+    std::vector<KTraceRecord> records;
+    std::uint64_t bytes_read = 0;
+    std::uint64_t total_bytes = 0;
+    double load_ms = 0.0;
+    std::string error;
+};
+
+struct TraceLoadState {
+    std::thread worker;
+    std::shared_ptr<std::atomic_bool> cancel;
+    std::mutex mutex;
+    std::deque<TraceLoadMessage> messages;
+    std::uint64_t bytes_read = 0;
+    std::uint64_t total_bytes = 0;
+    double load_ms = 0.0;
+    bool active = false;
+    bool finished = false;
+};
+
+enum class ViewerMode {
+    Frames,
+    EventLog
 };
 
 struct EntityExpansionKey {
@@ -158,13 +277,21 @@ struct ViewerState {
     std::array<char, 1024> directory{};
     std::string status;
     SelectedCell selected;
+    SelectedPacketChip selected_packet;
     int selected_source = 0;
+    ViewerMode mode = ViewerMode::Frames;
     BenchmarkState benchmark;
     FrameTiming current_timing;
     SelectedCell cached_detail_selection;
     std::vector<SelectedRecordDetail> cached_details;
     std::vector<SourceMetrics> source_metrics;
     std::vector<SelectedCell> benchmark_candidates;
+    std::vector<PacketEventInfo> packet_events;
+    std::vector<PacketFlow> packet_flows;
+    std::vector<PacketClientTimeline> packet_clients;
+    std::uint64_t packet_log_min_us = 0;
+    std::uint64_t packet_log_max_us = 0;
+    int selected_packet_client = 0;
     std::array<char, 1024> picker_path{};
     std::vector<DirectoryPickerEntry> picker_entries;
     std::string picker_error;
@@ -179,6 +306,8 @@ struct ViewerState {
     bool screenshot_failed = false;
     bool selected_source_dirty = true;
     bool details_dirty = true;
+    bool packet_details_dirty = true;
+    TraceLoadState loader;
 };
 
 struct PendingMouseClick {
@@ -225,11 +354,13 @@ enum class CellVisualKind {
     ServerGolden,
     Interpolated,
     Predicted,
+    InputReceived,
     CorrectPrediction,
     Mispredicted,
     Starved,
     Removed,
-    Resimulated
+    Resimulated,
+    Cue
 };
 
 struct CellVisual {
@@ -240,7 +371,11 @@ struct CellVisual {
 };
 
 bool has_state(const KTraceFrameCell& cell, KTraceCellState state) {
-    return (cell.state_mask & static_cast<std::uint16_t>(state)) != 0U;
+    return (cell.state_mask & static_cast<std::uint32_t>(state)) != 0U;
+}
+
+bool is_cue_row_component(ecs::Entity component) noexcept {
+    return (component.value & (std::uint64_t{1} << 63U)) != 0U;
 }
 
 using Clock = std::chrono::steady_clock;
@@ -464,6 +599,9 @@ std::string handle_control_command(
         std::ostringstream out;
         out << "OK sources=" << state.history.sources.size()
             << " selected_source=" << state.selected_source
+            << " loading=" << (state.loader.active ? 1 : 0)
+            << " bytes_read=" << state.loader.bytes_read
+            << " total_bytes=" << state.loader.total_bytes
             << " screenshot_path=" << (state.screenshot_path.empty() ? std::string("<default>") : state.screenshot_path)
             << " last_screenshot=" << state.last_screenshot_path
             << "\n";
@@ -900,16 +1038,76 @@ std::string event_name(SyncTraceEventType type) {
     case SyncTraceEventType::BufferedStarved: return "buffered starved";
     case SyncTraceEventType::PredictionRollbackConflict: return "rollback conflict";
     case SyncTraceEventType::FrameComponent: return "frame component";
-    case SyncTraceEventType::CueInvoked: return "cue invoked";
-    case SyncTraceEventType::CueRolledBack: return "cue rolled back";
+    case SyncTraceEventType::CueEmitted: return "cue emitted";
+    case SyncTraceEventType::CueSent: return "cue sent";
     case SyncTraceEventType::CueReceived: return "cue received";
+    case SyncTraceEventType::CuePlayed: return "cue played";
+    case SyncTraceEventType::CueRolledBack: return "cue rolled back";
+    case SyncTraceEventType::CueConfirmed: return "cue confirmed";
     case SyncTraceEventType::TagReceived: return "tag received";
     case SyncTraceEventType::EntityDestroyed: return "entity destroyed";
     case SyncTraceEventType::ResimulatedFrameComponent: return "resimulated frame component";
     case SyncTraceEventType::ComponentName: return "component name";
+    case SyncTraceEventType::CueName: return "cue name";
     case SyncTraceEventType::RollbackReason: return "rollback reason";
+    case SyncTraceEventType::InputStarved: return "input starved";
+    case SyncTraceEventType::PacketLog: return "packet log";
+    case SyncTraceEventType::ClockSkew: return "clock skew";
     }
     return "unknown";
+}
+
+bool is_cue_event(SyncTraceEventType type) {
+    return type == SyncTraceEventType::CueEmitted ||
+        type == SyncTraceEventType::CueSent ||
+        type == SyncTraceEventType::CueReceived ||
+        type == SyncTraceEventType::CuePlayed ||
+        type == SyncTraceEventType::CueRolledBack ||
+        type == SyncTraceEventType::CueConfirmed;
+}
+
+std::string normalized_cue_data_key(const std::string& data) {
+    std::string out;
+    std::size_t begin = 0;
+    while (begin <= data.size()) {
+        const std::size_t end = data.find(',', begin);
+        const std::size_t token_end = end == std::string::npos ? data.size() : end;
+        const std::string token = data.substr(begin, token_end - begin);
+        if (!token.empty() &&
+            token.rfind("source=", 0) != 0 &&
+            token.rfind("rollback_reason=", 0) != 0) {
+            if (!out.empty()) {
+                out += ",";
+            }
+            out += token;
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        begin = end + 1U;
+    }
+    return out;
+}
+
+std::string cue_instance_key(const SyncTraceEvent& event) {
+    std::string key = std::to_string(event.frame);
+    key += "|";
+    key += std::to_string(event.cue_type);
+    key += "|";
+    key += normalized_cue_data_key(event.data);
+    return key;
+}
+
+std::size_t cue_lifecycle_slot(SyncTraceEventType type) {
+    switch (type) {
+    case SyncTraceEventType::CueEmitted: return 0;
+    case SyncTraceEventType::CueSent: return 1;
+    case SyncTraceEventType::CueReceived: return 2;
+    case SyncTraceEventType::CuePlayed: return 3;
+    case SyncTraceEventType::CueRolledBack: return 4;
+    case SyncTraceEventType::CueConfirmed: return 5;
+    default: return 0;
+    }
 }
 
 std::string mode_name(ReplicationClientMode mode) {
@@ -926,6 +1124,321 @@ std::string source_label(const KTraceSourceHistory& source) {
         return "server";
     }
     return "client " + std::to_string(source.client);
+}
+
+bool packet_logs_enabled_in_trace(const ViewerState& state) {
+    return std::any_of(state.history.sources.begin(), state.history.sources.end(), [](const KTraceSourceHistory& source) {
+        return (source.flags & ktrace_flag_packet_logs) != 0U;
+    });
+}
+
+std::uint64_t source_recorded_us(const KTraceSourceHistory& source) {
+    return source.recorded_unix_ns / 1000U;
+}
+
+std::vector<std::string> split_packet_fields(const std::string& data) {
+    std::vector<std::string> fields;
+    std::string field;
+    int bracket_depth = 0;
+    for (char c : data) {
+        if (c == '[') {
+            ++bracket_depth;
+        } else if (c == ']' && bracket_depth > 0) {
+            --bracket_depth;
+        }
+        if (c == ',' && bracket_depth == 0) {
+            fields.push_back(field);
+            field.clear();
+        } else {
+            field.push_back(c);
+        }
+    }
+    if (!field.empty()) {
+        fields.push_back(field);
+    }
+    return fields;
+}
+
+PacketKeyValues parse_packet_data(const std::string& data) {
+    PacketKeyValues parsed;
+    for (const std::string& field : split_packet_fields(data)) {
+        const std::size_t equals = field.find('=');
+        if (equals == std::string::npos || equals == 0U) {
+            continue;
+        }
+        parsed.values[field.substr(0, equals)] = field.substr(equals + 1U);
+    }
+    return parsed;
+}
+
+std::string packet_value(const PacketKeyValues& values, const char* key) {
+    const auto found = values.values.find(key);
+    return found != values.values.end() ? found->second : std::string{};
+}
+
+ClientId parse_packet_client(const PacketKeyValues& values, const KTraceSourceHistory& source, const SyncTraceEvent& event) {
+    const std::string client = packet_value(values, "client");
+    if (!client.empty()) {
+        try {
+            return static_cast<ClientId>(std::stoull(client));
+        } catch (...) {
+        }
+    }
+    if (event.client != invalid_client_id) {
+        return event.client;
+    }
+    return source.role == SyncTraceRole::Client ? source.client : invalid_client_id;
+}
+
+std::string packet_match_key(const PacketEventInfo& event) {
+    std::ostringstream out;
+    out << event.client << "|" << event.message << "|";
+    if (event.message == "server_update") {
+        out << event.sequence;
+    } else if (event.message == "client_input") {
+        out << event.acks << "|" << event.baseline << "|" << event.input_frames;
+    } else {
+        out << event.acks;
+    }
+    return out.str();
+}
+
+bool packet_endpoints_match(const PacketEventInfo& send, const PacketEventInfo& receive) {
+    if (!send.send || receive.send ||
+        send.client != receive.client ||
+        send.message != receive.message ||
+        send.server_side == receive.server_side) {
+        return false;
+    }
+    return packet_match_key(send) == packet_match_key(receive);
+}
+
+void assign_packet_lanes(ViewerState& state) {
+    std::vector<int> order(state.packet_events.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [&](int lhs, int rhs) {
+        const PacketEventInfo& left = state.packet_events[static_cast<std::size_t>(lhs)];
+        const PacketEventInfo& right = state.packet_events[static_cast<std::size_t>(rhs)];
+        if (left.client != right.client) {
+            return left.client < right.client;
+        }
+        if (left.server_side != right.server_side) {
+            return left.server_side && !right.server_side;
+        }
+        return left.absolute_us < right.absolute_us;
+    });
+
+    ClientId active_client = invalid_client_id;
+    bool active_server_side = false;
+    std::vector<std::uint64_t> lane_times;
+    const std::uint64_t min_gap_us = static_cast<std::uint64_t>(packet_marker_size / packet_time_us_pitch) + 1U;
+    for (int event_index : order) {
+        PacketEventInfo& event = state.packet_events[static_cast<std::size_t>(event_index)];
+        if (event.client != active_client || event.server_side != active_server_side) {
+            active_client = event.client;
+            active_server_side = event.server_side;
+            lane_times.clear();
+        }
+        int selected_lane = 0;
+        for (; selected_lane < static_cast<int>(lane_times.size()); ++selected_lane) {
+            if (event.absolute_us >= lane_times[static_cast<std::size_t>(selected_lane)] + min_gap_us) {
+                break;
+            }
+        }
+        if (selected_lane == static_cast<int>(lane_times.size())) {
+            lane_times.push_back(event.absolute_us);
+        } else {
+            lane_times[static_cast<std::size_t>(selected_lane)] = event.absolute_us;
+        }
+        event.lane = selected_lane;
+    }
+}
+
+std::vector<PacketFrameMarker> source_frame_markers(const KTraceSourceHistory& source) {
+    std::vector<PacketFrameMarker> markers;
+    std::unordered_set<SyncFrame> seen_frames;
+    const std::uint64_t source_start_us = source_recorded_us(source);
+    for (const KTraceRecord& record : source.records) {
+        if (record.event.frame == 0U || seen_frames.count(record.event.frame) != 0U) {
+            continue;
+        }
+        seen_frames.insert(record.event.frame);
+        markers.push_back(PacketFrameMarker{
+            record.event.frame,
+            source_start_us + record.timestamp_us,
+            0U});
+    }
+    std::sort(markers.begin(), markers.end(), [](const PacketFrameMarker& lhs, const PacketFrameMarker& rhs) {
+        if (lhs.absolute_us != rhs.absolute_us) {
+            return lhs.absolute_us < rhs.absolute_us;
+        }
+        return lhs.frame < rhs.frame;
+    });
+    return markers;
+}
+
+void rebuild_packet_log_rows(ViewerState& state) {
+    state.packet_events.clear();
+    state.packet_flows.clear();
+    state.packet_clients.clear();
+    state.packet_log_min_us = 0;
+    state.packet_log_max_us = 0;
+    bool initialized = false;
+    for (int source_index = 0; source_index < static_cast<int>(state.history.sources.size()); ++source_index) {
+        const KTraceSourceHistory& source = state.history.sources[static_cast<std::size_t>(source_index)];
+        const std::uint64_t source_start_us = source_recorded_us(source);
+        for (std::uint32_t record_index = 0; record_index < source.records.size(); ++record_index) {
+            const KTraceRecord& record = source.records[record_index];
+            if (record.event.type != SyncTraceEventType::PacketLog) {
+                continue;
+            }
+            const PacketKeyValues values = parse_packet_data(record.event.data);
+            const std::uint64_t absolute_us = source_start_us + record.timestamp_us;
+            if (!initialized) {
+                state.packet_log_min_us = absolute_us;
+                state.packet_log_max_us = absolute_us;
+                initialized = true;
+            } else {
+                state.packet_log_min_us = std::min(state.packet_log_min_us, absolute_us);
+                state.packet_log_max_us = std::max(state.packet_log_max_us, absolute_us);
+            }
+            PacketEventInfo event;
+            event.source_index = source_index;
+            event.record_index = record_index;
+            event.frame = record.event.frame;
+            event.absolute_us = absolute_us;
+            event.client = parse_packet_client(values, source, record.event);
+            event.direction = packet_value(values, "direction");
+            event.message = packet_value(values, "message");
+            event.sequence = packet_value(values, "sequence");
+            event.acks = packet_value(values, "acks");
+            event.baseline = packet_value(values, "baseline");
+            event.server_frame = packet_value(values, "server_frame");
+            event.input_frames = packet_value(values, "input_frames");
+            event.input_ack = packet_value(values, "input_ack");
+            event.server_side = source.role == SyncTraceRole::Server;
+            event.send = event.direction == "out";
+            state.packet_events.push_back(std::move(event));
+        }
+    }
+    for (PacketEventInfo& event : state.packet_events) {
+        event.relative_us = event.absolute_us >= state.packet_log_min_us
+            ? event.absolute_us - state.packet_log_min_us
+            : 0U;
+    }
+
+    std::vector<bool> receive_used(state.packet_events.size(), false);
+    for (int send_index = 0; send_index < static_cast<int>(state.packet_events.size()); ++send_index) {
+        const PacketEventInfo& send = state.packet_events[static_cast<std::size_t>(send_index)];
+        if (!send.send) {
+            continue;
+        }
+        int best_receive = -1;
+        std::uint64_t best_delta = std::numeric_limits<std::uint64_t>::max();
+        for (int receive_index = 0; receive_index < static_cast<int>(state.packet_events.size()); ++receive_index) {
+            if (receive_used[static_cast<std::size_t>(receive_index)]) {
+                continue;
+            }
+            const PacketEventInfo& receive = state.packet_events[static_cast<std::size_t>(receive_index)];
+            if (!packet_endpoints_match(send, receive)) {
+                continue;
+            }
+            const std::uint64_t delta = receive.absolute_us >= send.absolute_us
+                ? receive.absolute_us - send.absolute_us
+                : send.absolute_us - receive.absolute_us;
+            if (best_receive < 0 ||
+                (receive.absolute_us >= send.absolute_us && state.packet_events[static_cast<std::size_t>(best_receive)].absolute_us < send.absolute_us) ||
+                delta < best_delta) {
+                best_receive = receive_index;
+                best_delta = delta;
+            }
+        }
+        PacketFlow flow;
+        flow.send_event = send_index;
+        flow.receive_event = best_receive;
+        flow.client = send.client;
+        flow.server_to_client = send.server_side;
+        if (best_receive >= 0) {
+            receive_used[static_cast<std::size_t>(best_receive)] = true;
+        }
+        state.packet_flows.push_back(flow);
+    }
+
+    for (int event_index = 0; event_index < static_cast<int>(state.packet_events.size()); ++event_index) {
+        const PacketEventInfo& event = state.packet_events[static_cast<std::size_t>(event_index)];
+        if (event.client == invalid_client_id) {
+            continue;
+        }
+        auto found = std::find_if(state.packet_clients.begin(), state.packet_clients.end(), [&](const PacketClientTimeline& client) {
+            return client.client == event.client;
+        });
+        if (found == state.packet_clients.end()) {
+            state.packet_clients.push_back(PacketClientTimeline{event.client, {}, {}});
+            found = state.packet_clients.end() - 1;
+        }
+        found->event_indices.push_back(event_index);
+    }
+    for (int flow_index = 0; flow_index < static_cast<int>(state.packet_flows.size()); ++flow_index) {
+        const PacketFlow& flow = state.packet_flows[static_cast<std::size_t>(flow_index)];
+        auto found = std::find_if(state.packet_clients.begin(), state.packet_clients.end(), [&](const PacketClientTimeline& client) {
+            return client.client == flow.client;
+        });
+        if (found != state.packet_clients.end()) {
+            found->flow_indices.push_back(flow_index);
+        }
+    }
+    std::sort(state.packet_clients.begin(), state.packet_clients.end(), [](const PacketClientTimeline& lhs, const PacketClientTimeline& rhs) {
+        return lhs.client < rhs.client;
+    });
+    std::vector<PacketFrameMarker> server_frames;
+    for (const KTraceSourceHistory& source : state.history.sources) {
+        std::vector<PacketFrameMarker> markers = source_frame_markers(source);
+        for (PacketFrameMarker& marker : markers) {
+            marker.relative_us = marker.absolute_us >= state.packet_log_min_us
+                ? marker.absolute_us - state.packet_log_min_us
+                : 0U;
+        }
+        if (source.role == SyncTraceRole::Server) {
+            server_frames.insert(
+                server_frames.end(),
+                std::make_move_iterator(markers.begin()),
+                std::make_move_iterator(markers.end()));
+            continue;
+        }
+        auto found = std::find_if(state.packet_clients.begin(), state.packet_clients.end(), [&](const PacketClientTimeline& client) {
+            return client.client == source.client;
+        });
+        if (found != state.packet_clients.end()) {
+            found->client_frames = std::move(markers);
+        }
+    }
+    std::sort(server_frames.begin(), server_frames.end(), [](const PacketFrameMarker& lhs, const PacketFrameMarker& rhs) {
+        if (lhs.absolute_us != rhs.absolute_us) {
+            return lhs.absolute_us < rhs.absolute_us;
+        }
+        return lhs.frame < rhs.frame;
+    });
+    for (PacketClientTimeline& client : state.packet_clients) {
+        client.server_frames = server_frames;
+    }
+    state.selected_packet_client = std::min(
+        state.selected_packet_client,
+        std::max(0, static_cast<int>(state.packet_clients.size()) - 1));
+    assign_packet_lanes(state);
+}
+
+const PacketEventInfo* selected_packet_event(const ViewerState& state) {
+    if (state.selected_packet.source_index < 0 ||
+        state.selected_packet.event_index == std::numeric_limits<std::uint32_t>::max()) {
+        return nullptr;
+    }
+    for (const PacketEventInfo& event : state.packet_events) {
+        if (event.source_index == state.selected_packet.source_index &&
+            event.record_index == state.selected_packet.event_index) {
+            return &event;
+        }
+    }
+    return nullptr;
 }
 
 std::string entity_label(const KTraceEntityRow& entity) {
@@ -946,6 +1459,9 @@ std::string component_label(const KTraceSourceHistory& source, ecs::Entity compo
     if (!component) {
         return "entity lifetime";
     }
+    if (is_cue_row_component(component)) {
+        return "cues";
+    }
     const auto found = source.component_names.find(component.value);
     if (found != source.component_names.end() && !found->second.empty()) {
         return found->second;
@@ -956,6 +1472,31 @@ std::string component_label(const KTraceSourceHistory& source, ecs::Entity compo
 CellVisual visual_for_cell(const KTraceFrameCell& cell, SyncTraceRole role) {
     if (has_state(cell, KTraceCellState::Removed) || has_state(cell, KTraceCellState::EntityDestroyed)) {
         return CellVisual{CellVisualKind::Removed, IM_COL32(112, 119, 132, 255), IM_COL32(230, 236, 245, 190), "removed"};
+    }
+    if (has_state(cell, KTraceCellState::CueRolledBack)) {
+        return CellVisual{CellVisualKind::Cue, IM_COL32(190, 62, 78, 255), IM_COL32(255, 214, 220, 220), "cue rolled back"};
+    }
+    if (has_state(cell, KTraceCellState::CueConfirmed)) {
+        return CellVisual{CellVisualKind::Cue, IM_COL32(54, 172, 118, 255), IM_COL32(199, 255, 226, 210), "cue confirmed"};
+    }
+    if (has_state(cell, KTraceCellState::CuePlayed)) {
+        return CellVisual{CellVisualKind::Cue, IM_COL32(40, 159, 178, 255), IM_COL32(189, 247, 255, 190), "cue played"};
+    }
+    if (has_state(cell, KTraceCellState::CueReceived)) {
+        return CellVisual{CellVisualKind::Cue, IM_COL32(66, 125, 218, 255), IM_COL32(196, 222, 255, 180), "cue received"};
+    }
+    if (has_state(cell, KTraceCellState::CueSent)) {
+        return CellVisual{CellVisualKind::Cue, IM_COL32(117, 101, 222, 255), IM_COL32(218, 209, 255, 180), "cue sent"};
+    }
+    if (has_state(cell, KTraceCellState::CueEmitted)) {
+        return CellVisual{CellVisualKind::Cue, IM_COL32(202, 126, 46, 255), IM_COL32(255, 224, 184, 190), "cue emitted"};
+    }
+    if (has_state(cell, KTraceCellState::InputReceived)) {
+        return CellVisual{
+            CellVisualKind::InputReceived,
+            IM_COL32(53, 132, 246, 255),
+            IM_COL32(176, 216, 255, 170),
+            has_state(cell, KTraceCellState::Starved) ? "input starved" : "input received"};
     }
     if (has_state(cell, KTraceCellState::Starved)) {
         return CellVisual{CellVisualKind::Starved, IM_COL32(134, 31, 42, 255), IM_COL32(255, 126, 136, 220), "starved"};
@@ -985,6 +1526,40 @@ CellVisual visual_for_cell(const KTraceFrameCell& cell, SyncTraceRole role) {
     return CellVisual{CellVisualKind::Unknown, IM_COL32(100, 108, 122, 255), IM_COL32(210, 218, 232, 120), "unknown"};
 }
 
+int cue_count_for_cell(const KTraceSourceHistory& source, const KTraceFrameCell& cell) {
+    struct CueLifecycleCounts {
+        std::array<int, 6> counts{};
+    };
+    std::unordered_map<std::string, CueLifecycleCounts> cue_counts;
+    for (std::uint32_t event_index : cell.event_indices) {
+        if (event_index >= source.records.size()) {
+            continue;
+        }
+        const SyncTraceEvent& event = source.records[event_index].event;
+        const SyncTraceEventType type = event.type;
+        if (!is_cue_event(type)) {
+            continue;
+        }
+        ++cue_counts[cue_instance_key(event)].counts[cue_lifecycle_slot(type)];
+    }
+    int count = 0;
+    for (const auto& item : cue_counts) {
+        const int primary_count = std::max({
+            item.second.counts[cue_lifecycle_slot(SyncTraceEventType::CueEmitted)],
+            item.second.counts[cue_lifecycle_slot(SyncTraceEventType::CuePlayed)],
+            item.second.counts[cue_lifecycle_slot(SyncTraceEventType::CueRolledBack)]});
+        count += primary_count != 0 ? primary_count : 1;
+    }
+    return count;
+}
+
+void draw_starved_mark(ImDrawList* draw, const ImVec2& min, const ImVec2&, ImU32 color) {
+    draw->AddRectFilled(ImVec2(min.x + 2.0f, min.y + 2.0f), ImVec2(min.x + 5.0f, min.y + 5.0f), color);
+    draw->AddRectFilled(ImVec2(min.x + 8.0f, min.y + 2.0f), ImVec2(min.x + 11.0f, min.y + 5.0f), color);
+    draw->AddRectFilled(ImVec2(min.x + 5.0f, min.y + 8.0f), ImVec2(min.x + 8.0f, min.y + 11.0f), color);
+    draw->AddRectFilled(ImVec2(min.x + 11.0f, min.y + 8.0f), ImVec2(min.x + 14.0f, min.y + 11.0f), color);
+}
+
 void draw_cell_marks(ImDrawList* draw, const ImVec2& min, const ImVec2& max, const CellVisual& visual) {
     switch (visual.kind) {
     case CellVisualKind::Predicted:
@@ -1005,10 +1580,7 @@ void draw_cell_marks(ImDrawList* draw, const ImVec2& min, const ImVec2& max, con
         draw->AddLine(ImVec2(min.x + 2.0f, min.y + 2.0f), ImVec2(max.x - 2.0f, max.y - 2.0f), visual.accent, 2.0f);
         break;
     case CellVisualKind::Starved:
-        draw->AddRectFilled(ImVec2(min.x + 2.0f, min.y + 2.0f), ImVec2(min.x + 5.0f, min.y + 5.0f), visual.accent);
-        draw->AddRectFilled(ImVec2(min.x + 8.0f, min.y + 2.0f), ImVec2(min.x + 11.0f, min.y + 5.0f), visual.accent);
-        draw->AddRectFilled(ImVec2(min.x + 5.0f, min.y + 8.0f), ImVec2(min.x + 8.0f, min.y + 11.0f), visual.accent);
-        draw->AddRectFilled(ImVec2(min.x + 11.0f, min.y + 8.0f), ImVec2(min.x + 14.0f, min.y + 11.0f), visual.accent);
+        draw_starved_mark(draw, min, max, visual.accent);
         break;
     case CellVisualKind::Removed:
         draw->AddLine(ImVec2(min.x + 2.0f, min.y + 2.0f), ImVec2(max.x - 2.0f, max.y - 2.0f), visual.accent, 1.5f);
@@ -1020,6 +1592,8 @@ void draw_cell_marks(ImDrawList* draw, const ImVec2& min, const ImVec2& max, con
     case CellVisualKind::Applied:
         draw->AddRectFilled(ImVec2(min.x + 5.0f, min.y), ImVec2(min.x + 9.0f, max.y), visual.accent);
         break;
+    case CellVisualKind::InputReceived:
+    case CellVisualKind::Cue:
     case CellVisualKind::Unknown:
         break;
     }
@@ -1105,6 +1679,8 @@ void render_legend() {
     draw_legend_item(CellVisual{CellVisualKind::Starved, IM_COL32(134, 31, 42, 255), IM_COL32(255, 126, 136, 220), "starved"}, "starved");
     ImGui::SameLine(0.0f, 18.0f);
     draw_legend_item(CellVisual{CellVisualKind::Removed, IM_COL32(112, 119, 132, 255), IM_COL32(230, 236, 245, 190), "removed"}, "removed");
+    ImGui::SameLine();
+    draw_legend_item(CellVisual{CellVisualKind::Cue, IM_COL32(40, 159, 178, 255), IM_COL32(189, 247, 255, 190), "cue"}, "cue");
 }
 
 float frame_center_x(const ImVec2& origin, float scroll_x, SyncFrame min_frame, SyncFrame frame) {
@@ -1256,6 +1832,22 @@ void draw_cell(
         : visual_for_cell(cell, source.role);
     draw->AddRectFilled(min, max, visual.fill);
     draw_cell_marks(draw, min, max, visual);
+    if (visual.kind != CellVisualKind::Starved && has_state(cell, KTraceCellState::Starved)) {
+        draw_starved_mark(draw, min, max, IM_COL32(255, 126, 136, 220));
+    }
+    if (visual.kind == CellVisualKind::Cue) {
+        const int cue_count = cue_count_for_cell(source, cell);
+        if (cue_count > 1) {
+            const std::string text = cue_count > 9 ? "9+" : std::to_string(cue_count);
+            const ImVec2 text_size = ImGui::CalcTextSize(text.c_str());
+            draw->AddText(
+                ImVec2(
+                    min.x + (pill_width - text_size.x) * 0.5f,
+                    min.y + (pill_height - text_size.y) * 0.5f - 1.0f),
+                IM_COL32(248, 252, 255, 255),
+                text.c_str());
+        }
+    }
 
     const ImVec2 mouse = ImGui::GetMousePos();
     const bool hovered = mouse.x >= min.x && mouse.x <= max.x && mouse.y >= min.y && mouse.y <= max.y;
@@ -1779,42 +2371,444 @@ std::vector<TimelineNavCell> collect_timeline_nav_cells(
 SourceMetrics compute_source_metrics(const KTraceSourceHistory& source, const ViewerState& state, int source_index);
 void rebuild_source_metrics(ViewerState& state);
 
-void load_directory(ViewerState& state) {
-    try {
-        const auto start = Clock::now();
-        KTraceReader reader;
-        state.history = reader.read_directory(state.directory.data());
-        std::sort(state.history.sources.begin(), state.history.sources.end(), [](const KTraceSourceHistory& lhs, const KTraceSourceHistory& rhs) {
-            if (lhs.role != rhs.role) {
-                return rhs.role == SyncTraceRole::Server;
+template <typename T>
+T read_trace_pod(const std::vector<std::uint8_t>& bytes, std::size_t& offset) {
+    if (offset + sizeof(T) > bytes.size()) {
+        throw std::runtime_error("ktrace record is truncated");
+    }
+    typename std::make_unsigned<T>::type raw = 0;
+    for (std::size_t byte = 0; byte < sizeof(T); ++byte) {
+        raw |= static_cast<typename std::make_unsigned<T>::type>(bytes[offset + byte]) << (byte * 8U);
+    }
+    offset += sizeof(T);
+    return static_cast<T>(raw);
+}
+
+std::string read_trace_string(const std::vector<std::uint8_t>& bytes, std::size_t& offset) {
+    const std::uint32_t size = read_trace_pod<std::uint32_t>(bytes, offset);
+    if (offset + size > bytes.size()) {
+        throw std::runtime_error("ktrace string is truncated");
+    }
+    std::string value(reinterpret_cast<const char*>(bytes.data() + offset), size);
+    offset += size;
+    return value;
+}
+
+SyncTraceEvent read_trace_event_payload_viewer(
+    SyncTraceEventType type,
+    const std::vector<std::uint8_t>& payload) {
+    std::size_t offset = 0;
+    SyncTraceEvent event;
+    event.type = type;
+    event.role = static_cast<SyncTraceRole>(read_trace_pod<std::uint8_t>(payload, offset));
+    event.client = read_trace_pod<std::uint64_t>(payload, offset);
+    event.frame = read_trace_pod<std::uint32_t>(payload, offset);
+    event.server_entity = ecs::Entity{read_trace_pod<std::uint64_t>(payload, offset)};
+    event.local_entity = ecs::Entity{read_trace_pod<std::uint64_t>(payload, offset)};
+    event.client_network_id = read_trace_pod<std::uint64_t>(payload, offset);
+    event.wire_network_id = read_trace_pod<std::uint32_t>(payload, offset);
+    event.network_version = read_trace_pod<std::uint32_t>(payload, offset);
+    event.archetype = SyncArchetypeId{read_trace_pod<std::uint32_t>(payload, offset)};
+    event.component = ecs::Entity{read_trace_pod<std::uint64_t>(payload, offset)};
+    event.tag = ecs::Entity{read_trace_pod<std::uint64_t>(payload, offset)};
+    event.cue_type = read_trace_pod<std::uint16_t>(payload, offset);
+    event.previous_mode = static_cast<ReplicationClientMode>(read_trace_pod<std::uint8_t>(payload, offset));
+    event.mode = static_cast<ReplicationClientMode>(read_trace_pod<std::uint8_t>(payload, offset));
+    event.remove = read_trace_pod<std::uint8_t>(payload, offset) != 0U;
+    event.data = read_trace_string(payload, offset);
+    event.component_name = read_trace_string(payload, offset);
+    if (offset != payload.size()) {
+        throw std::runtime_error("ktrace record has trailing bytes");
+    }
+    return event;
+}
+
+std::uint8_t read_trace_byte(std::ifstream& file) {
+    char byte = 0;
+    file.read(&byte, 1);
+    if (!file) {
+        throw std::runtime_error("ktrace header is truncated");
+    }
+    return static_cast<std::uint8_t>(byte);
+}
+
+std::uint16_t read_trace_u16(std::ifstream& file) {
+    return static_cast<std::uint16_t>(read_trace_byte(file) | (std::uint16_t{read_trace_byte(file)} << 8U));
+}
+
+std::uint32_t read_trace_u32(std::ifstream& file) {
+    std::uint32_t value = 0;
+    for (std::size_t byte = 0; byte < 4U; ++byte) {
+        value |= std::uint32_t{read_trace_byte(file)} << (byte * 8U);
+    }
+    return value;
+}
+
+std::uint64_t read_trace_u64(std::ifstream& file) {
+    std::uint64_t value = 0;
+    for (std::size_t byte = 0; byte < 8U; ++byte) {
+        value |= std::uint64_t{read_trace_byte(file)} << (byte * 8U);
+    }
+    return value;
+}
+
+TraceSourceHeader read_trace_source_header(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        throw std::runtime_error("failed to open ktrace file: " + path.string());
+    }
+
+    char magic[8]{};
+    file.read(magic, sizeof(magic));
+    if (std::string(magic, sizeof(magic)) != "KTRACE03") {
+        throw std::runtime_error("unsupported ktrace magic in " + path.string());
+    }
+
+    const std::uint16_t version = read_trace_u16(file);
+    if (version != ktrace_format_version) {
+        throw std::runtime_error("unsupported ktrace version in " + path.string());
+    }
+
+    TraceSourceHeader header;
+    header.path = path.string();
+    header.role = static_cast<SyncTraceRole>(read_trace_byte(file));
+    header.recorded_unix_ns = read_trace_u64(file);
+    header.client = read_trace_u64(file);
+    header.flags = read_trace_u32(file);
+    header.data_offset = static_cast<std::uint64_t>(file.tellg());
+    std::error_code ec;
+    header.file_size = std::filesystem::file_size(path, ec);
+    if (ec) {
+        header.file_size = header.data_offset;
+    }
+    return header;
+}
+
+void apply_server_entity_links(SyncTraceHistory& history) {
+    std::unordered_map<ClientEntityNetworkId, ecs::Entity> server_entities_by_network_id;
+    for (const KTraceSourceHistory& source : history.sources) {
+        if (source.role != SyncTraceRole::Server) {
+            continue;
+        }
+        for (const KTraceRecord& record : source.records) {
+            const SyncTraceEvent& event = record.event;
+            if (event.type == SyncTraceEventType::EntityStartedSyncing &&
+                event.client_network_id != invalid_client_entity_network_id &&
+                event.server_entity) {
+                server_entities_by_network_id[event.client_network_id] = event.server_entity;
             }
-            return lhs.client < rhs.client;
-        });
-        state.expanded_entities.clear();
-        state.expanded_components.clear();
+        }
+    }
+    if (server_entities_by_network_id.empty()) {
+        return;
+    }
+    for (KTraceSourceHistory& source : history.sources) {
+        if (source.role != SyncTraceRole::Client) {
+            continue;
+        }
+        for (KTraceEntityRow& entity : source.entities) {
+            const auto found = server_entities_by_network_id.find(entity.client_network_id);
+            if (found != server_entities_by_network_id.end()) {
+                entity.server_entity = found->second;
+            }
+        }
+    }
+}
+
+void push_loader_message(TraceLoadState& loader, TraceLoadMessage message) {
+    std::lock_guard<std::mutex> lock(loader.mutex);
+    loader.messages.push_back(std::move(message));
+}
+
+void reset_loaded_trace(ViewerState& state) {
+    state.history.sources.clear();
+    state.selected = {};
+    state.selected_packet = {};
+    state.expanded_entities.clear();
+    state.expanded_components.clear();
+    state.details_dirty = true;
+    state.packet_details_dirty = true;
+    state.cached_details.clear();
+    state.source_metrics.clear();
+    state.benchmark_candidates.clear();
+    state.packet_events.clear();
+    state.packet_flows.clear();
+    state.packet_clients.clear();
+    state.packet_log_min_us = 0;
+    state.packet_log_max_us = 0;
+    state.selected_source = 0;
+    state.selected_source_dirty = true;
+}
+
+void stop_loading_directory(ViewerState& state) {
+    if (state.loader.cancel) {
+        state.loader.cancel->store(true);
+    }
+    if (state.loader.worker.joinable()) {
+        state.loader.worker.join();
+    }
+    {
+        std::lock_guard<std::mutex> lock(state.loader.mutex);
+        state.loader.messages.clear();
+    }
+    state.loader.cancel.reset();
+    state.loader.active = false;
+}
+
+void rebuild_streamed_source(ViewerState& state, int source_index) {
+    if (source_index < 0 || source_index >= static_cast<int>(state.history.sources.size())) {
+        return;
+    }
+    KTraceSourceHistory& current = state.history.sources[static_cast<std::size_t>(source_index)];
+    KTraceFile file;
+    file.path = current.path;
+    file.role = current.role;
+    file.client = current.client;
+    file.recorded_unix_ns = current.recorded_unix_ns;
+    file.flags = current.flags;
+    file.records = std::move(current.records);
+    current = KTraceReader::build_source_history(std::move(file));
+}
+
+void process_loader_messages(ViewerState& state) {
+    constexpr std::size_t max_messages_per_frame = 8;
+    std::deque<TraceLoadMessage> messages;
+    {
+        std::lock_guard<std::mutex> lock(state.loader.mutex);
+        while (!state.loader.messages.empty() && messages.size() < max_messages_per_frame) {
+            messages.push_back(std::move(state.loader.messages.front()));
+            state.loader.messages.pop_front();
+        }
+    }
+    if (messages.empty()) {
+        return;
+    }
+
+    bool data_changed = false;
+    for (TraceLoadMessage& message : messages) {
+        state.loader.bytes_read = message.bytes_read;
+        state.loader.total_bytes = message.total_bytes;
+        switch (message.type) {
+        case TraceLoadMessage::Type::SourceBegin: {
+            if (message.source_index < 0) {
+                break;
+            }
+            if (static_cast<int>(state.history.sources.size()) <= message.source_index) {
+                state.history.sources.resize(static_cast<std::size_t>(message.source_index + 1));
+            }
+            KTraceSourceHistory& source = state.history.sources[static_cast<std::size_t>(message.source_index)];
+            source = {};
+            source.role = message.source.role;
+            source.client = message.source.client;
+            source.path = message.source.path;
+            source.recorded_unix_ns = message.source.recorded_unix_ns;
+            source.flags = message.source.flags;
+            state.selected_source = std::min(state.selected_source, static_cast<int>(state.history.sources.size()) - 1);
+            state.selected_source_dirty = true;
+            data_changed = true;
+            break;
+        }
+        case TraceLoadMessage::Type::Records: {
+            if (message.source_index < 0 || message.source_index >= static_cast<int>(state.history.sources.size())) {
+                break;
+            }
+            KTraceSourceHistory& source = state.history.sources[static_cast<std::size_t>(message.source_index)];
+            source.records.insert(
+                source.records.end(),
+                std::make_move_iterator(message.records.begin()),
+                std::make_move_iterator(message.records.end()));
+            rebuild_streamed_source(state, message.source_index);
+            data_changed = true;
+            break;
+        }
+        case TraceLoadMessage::Type::Finished:
+            state.loader.active = false;
+            state.loader.finished = true;
+            state.loader.load_ms = message.load_ms;
+            state.benchmark.load_ms = message.load_ms;
+            state.status = "loaded " + std::to_string(state.history.sources.size()) + " trace source(s)";
+            break;
+        case TraceLoadMessage::Type::Failed:
+            state.loader.active = false;
+            state.loader.finished = true;
+            state.benchmark.load_ms = 0.0;
+            state.status = message.error;
+            break;
+        }
+    }
+
+    if (data_changed) {
+        apply_server_entity_links(state.history);
         rebuild_source_metrics(state);
-        state.benchmark.load_ms = elapsed_ms(start);
-        state.status = "loaded " + std::to_string(state.history.sources.size()) + " trace source(s)";
-        state.selected = {};
+        rebuild_packet_log_rows(state);
         state.details_dirty = true;
+        state.packet_details_dirty = true;
         state.cached_details.clear();
-        state.selected_source = std::min(state.selected_source, static_cast<int>(state.history.sources.size()) - 1);
         if (state.selected_source < 0) {
             state.selected_source = 0;
         }
-        state.selected_source_dirty = true;
-    } catch (const std::exception& error) {
-        state.history.sources.clear();
-        state.benchmark.load_ms = 0.0;
-        state.selected = {};
-        state.expanded_entities.clear();
-        state.expanded_components.clear();
-        state.details_dirty = true;
-        state.cached_details.clear();
-        state.source_metrics.clear();
-        state.benchmark_candidates.clear();
-        state.status = error.what();
     }
+}
+
+void stream_trace_directory(
+    const std::string directory,
+    TraceLoadState& loader,
+    std::shared_ptr<std::atomic_bool> cancel) {
+    constexpr std::size_t records_per_chunk = 2048;
+    const auto start = Clock::now();
+    try {
+        std::vector<TraceSourceHeader> sources;
+        for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(directory)) {
+            if (cancel->load()) {
+                return;
+            }
+            if (!entry.is_regular_file() || entry.path().extension() != ".ktrace") {
+                continue;
+            }
+            sources.push_back(read_trace_source_header(entry.path()));
+        }
+        std::sort(sources.begin(), sources.end(), [](const TraceSourceHeader& lhs, const TraceSourceHeader& rhs) {
+            if (lhs.role != rhs.role) {
+                return rhs.role == SyncTraceRole::Server;
+            }
+            if (lhs.client != rhs.client) {
+                return lhs.client < rhs.client;
+            }
+            return lhs.path < rhs.path;
+        });
+
+        std::uint64_t total_bytes = 0;
+        for (const TraceSourceHeader& source : sources) {
+            total_bytes += source.file_size;
+        }
+
+        std::uint64_t completed_file_bytes = 0;
+        for (int source_index = 0; source_index < static_cast<int>(sources.size()); ++source_index) {
+            if (cancel->load()) {
+                return;
+            }
+            const TraceSourceHeader& source = sources[static_cast<std::size_t>(source_index)];
+            push_loader_message(loader, TraceLoadMessage{
+                TraceLoadMessage::Type::SourceBegin,
+                source_index,
+                source,
+                {},
+                completed_file_bytes,
+                total_bytes,
+                0.0,
+                {}});
+
+            std::ifstream file(source.path, std::ios::binary);
+            if (!file) {
+                throw std::runtime_error("failed to open ktrace file: " + source.path);
+            }
+            file.seekg(static_cast<std::streamoff>(source.data_offset), std::ios::beg);
+
+            std::vector<KTraceRecord> chunk;
+            chunk.reserve(records_per_chunk);
+            while (!cancel->load()) {
+                const int type_byte = file.get();
+                if (type_byte == std::char_traits<char>::eof()) {
+                    break;
+                }
+                if (!file) {
+                    break;
+                }
+                const auto type = static_cast<SyncTraceEventType>(static_cast<std::uint8_t>(type_byte));
+
+                std::uint8_t record_header[12]{};
+                file.read(reinterpret_cast<char*>(record_header), sizeof(record_header));
+                if (file.gcount() != static_cast<std::streamsize>(sizeof(record_header))) {
+                    break;
+                }
+                std::uint64_t timestamp_us = 0;
+                for (std::size_t byte = 0; byte < 8U; ++byte) {
+                    timestamp_us |= std::uint64_t{record_header[byte]} << (byte * 8U);
+                }
+                std::uint32_t payload_size = 0;
+                for (std::size_t byte = 0; byte < 4U; ++byte) {
+                    payload_size |= std::uint32_t{record_header[8U + byte]} << (byte * 8U);
+                }
+
+                std::vector<std::uint8_t> payload(payload_size);
+                if (payload_size != 0U) {
+                    file.read(reinterpret_cast<char*>(payload.data()), payload.size());
+                    if (file.gcount() != static_cast<std::streamsize>(payload.size())) {
+                        break;
+                    }
+                }
+                chunk.push_back(KTraceRecord{read_trace_event_payload_viewer(type, payload), timestamp_us});
+                if (chunk.size() >= records_per_chunk) {
+                    const std::uint64_t offset = static_cast<std::uint64_t>(file.tellg());
+                    push_loader_message(loader, TraceLoadMessage{
+                        TraceLoadMessage::Type::Records,
+                        source_index,
+                        {},
+                        std::move(chunk),
+                        completed_file_bytes + std::min(offset, source.file_size),
+                        total_bytes,
+                        0.0,
+                        {}});
+                    chunk.clear();
+                    chunk.reserve(records_per_chunk);
+                }
+            }
+            if (!chunk.empty() && !cancel->load()) {
+                const std::uint64_t offset = file ? static_cast<std::uint64_t>(file.tellg()) : source.file_size;
+                push_loader_message(loader, TraceLoadMessage{
+                    TraceLoadMessage::Type::Records,
+                    source_index,
+                    {},
+                    std::move(chunk),
+                    completed_file_bytes + std::min(offset, source.file_size),
+                    total_bytes,
+                    0.0,
+                    {}});
+            }
+            completed_file_bytes += source.file_size;
+        }
+
+        if (!cancel->load()) {
+            push_loader_message(loader, TraceLoadMessage{
+                TraceLoadMessage::Type::Finished,
+                -1,
+                {},
+                {},
+                total_bytes,
+                total_bytes,
+                elapsed_ms(start),
+                {}});
+        }
+    } catch (const std::exception& error) {
+        if (!cancel->load()) {
+            push_loader_message(loader, TraceLoadMessage{
+                TraceLoadMessage::Type::Failed,
+                -1,
+                {},
+                {},
+                0,
+                0,
+                elapsed_ms(start),
+                error.what()});
+        }
+    }
+}
+
+void load_directory(ViewerState& state) {
+    stop_loading_directory(state);
+    reset_loaded_trace(state);
+    state.loader.bytes_read = 0;
+    state.loader.total_bytes = 0;
+    state.loader.load_ms = 0.0;
+    state.loader.active = true;
+    state.loader.finished = false;
+    state.loader.cancel = std::make_shared<std::atomic_bool>(false);
+    state.status = "loading trace data...";
+    const std::string directory = state.directory.data();
+    std::shared_ptr<std::atomic_bool> cancel = state.loader.cancel;
+    state.loader.worker = std::thread([directory, &loader = state.loader, cancel]() {
+        stream_trace_directory(directory, loader, cancel);
+    });
 }
 
 std::string path_to_string(const std::filesystem::path& path) {
@@ -2094,6 +3088,304 @@ void apply_benchmark_scroll(ViewerState& state, float max_scroll_x, float max_sc
     const int frames = std::max(1, state.benchmark.options.frames);
     ImGui::SetScrollX(static_cast<float>(benchmark_phase(frame, frames, 0.0) * max_scroll_x));
     ImGui::SetScrollY(static_cast<float>(benchmark_phase(frame, frames, 0.23) * max_scroll_y));
+}
+
+float packet_event_y(const ImVec2& origin, float scroll_y, std::uint64_t relative_us) {
+    return origin.y + timeline_header_height + 32.0f + static_cast<float>(relative_us) * packet_time_us_pitch - scroll_y;
+}
+
+float packet_event_x(float column_x, const PacketEventInfo& event) {
+    const float base = event.server_side
+        ? column_x + packet_column_width - 42.0f
+        : column_x + 28.0f;
+    const float lane_offset = static_cast<float>(event.lane) * packet_lane_spacing;
+    return event.server_side ? base - lane_offset : base + lane_offset;
+}
+
+void select_packet_event(ViewerState& state, const PacketEventInfo& event) {
+    SelectedPacketChip selected;
+    selected.source_index = event.source_index;
+    selected.event_index = event.record_index;
+    selected.event_indices.push_back({event.source_index, event.record_index});
+    if (state.selected_packet != selected) {
+        state.selected_packet = std::move(selected);
+        state.packet_details_dirty = true;
+    }
+}
+
+SyncFrame packet_local_frame_from_markers(
+    const PacketEventInfo& event,
+    const std::vector<PacketFrameMarker>& markers) {
+    if (markers.empty()) {
+        return event.frame;
+    }
+    if (event.send) {
+        const PacketFrameMarker* selected = nullptr;
+        for (const PacketFrameMarker& marker : markers) {
+            if (marker.absolute_us > event.absolute_us) {
+                break;
+            }
+            selected = &marker;
+        }
+        return selected != nullptr ? selected->frame : markers.front().frame;
+    }
+    for (const PacketFrameMarker& marker : markers) {
+        if (marker.absolute_us >= event.absolute_us) {
+            return marker.frame;
+        }
+    }
+    return markers.back().frame;
+}
+
+void draw_packet_marker(
+    ViewerState& state,
+    ImDrawList* draw,
+    const PacketEventInfo& event,
+    SyncFrame local_frame,
+    const ImVec2& center,
+    const ImVec2& clip_min,
+    const ImVec2& clip_max) {
+    if (center.y + packet_marker_size < clip_min.y || center.y - packet_marker_size > clip_max.y) {
+        return;
+    }
+    const ImVec2 min(center.x - packet_marker_size * 0.5f, center.y - packet_marker_size * 0.5f);
+    const ImVec2 max(center.x + packet_marker_size * 0.5f, center.y + packet_marker_size * 0.5f);
+    const bool selected = state.selected_packet.source_index == event.source_index &&
+        state.selected_packet.event_index == event.record_index;
+    const ImU32 fill = event.send ? IM_COL32(53, 132, 246, 255) : IM_COL32(51, 177, 103, 255);
+    draw->AddRectFilled(min, max, fill, 2.0f);
+    if (!event.send) {
+        draw->AddRectFilled(ImVec2(min.x + 4.0f, min.y + 4.0f), ImVec2(max.x - 4.0f, max.y - 4.0f), IM_COL32(205, 255, 222, 210), 1.0f);
+    }
+    const ImVec2 mouse = ImGui::GetMousePos();
+    const bool hovered = mouse.x >= min.x && mouse.x <= max.x && mouse.y >= min.y && mouse.y <= max.y;
+    if (selected) {
+        draw->AddRect(ImVec2(min.x - 2.0f, min.y - 2.0f), ImVec2(max.x + 2.0f, max.y + 2.0f), IM_COL32(255, 230, 155, 255), 2.0f, 0, 2.0f);
+    } else if (hovered) {
+        draw->AddRect(ImVec2(min.x - 1.0f, min.y - 1.0f), ImVec2(max.x + 1.0f, max.y + 1.0f), IM_COL32(230, 238, 255, 210), 2.0f, 0, 1.0f);
+    }
+    if (hovered) {
+        if (event.message == "client_input") {
+            ImGui::BeginTooltip();
+            ImGui::SetWindowFontScale(1.25f);
+            ImGui::Text("Local frame %u", local_frame);
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::Separator();
+            ImGui::Text("Input frames %s", event.input_frames.empty() ? "unknown" : event.input_frames.c_str());
+            ImGui::Text(
+                "%s %s at %.3fms",
+                event.send ? "sent" : "received",
+                event.message.c_str(),
+                static_cast<double>(event.relative_us) / 1000.0);
+            ImGui::EndTooltip();
+        } else if (event.message == "server_update") {
+            const std::string server_frame = event.server_frame.empty()
+                ? std::to_string(event.frame)
+                : event.server_frame;
+            ImGui::BeginTooltip();
+            ImGui::SetWindowFontScale(1.25f);
+            ImGui::Text("Local frame %u", local_frame);
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::Separator();
+            ImGui::Text("Server frame %s", server_frame.c_str());
+            ImGui::Text(
+                "%s %s at %.3fms",
+                event.send ? "sent" : "received",
+                event.message.c_str(),
+                static_cast<double>(event.relative_us) / 1000.0);
+            ImGui::EndTooltip();
+        } else {
+            ImGui::SetTooltip(
+                "%s %s at %.3fms",
+                event.send ? "sent" : "received",
+                event.message.c_str(),
+                static_cast<double>(event.relative_us) / 1000.0);
+        }
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            select_packet_event(state, event);
+        }
+    }
+}
+
+void draw_packet_frame_markers(
+    ImDrawList* draw,
+    const std::vector<PacketFrameMarker>& markers,
+    const ImVec2& origin,
+    float scroll_y,
+    float column_x,
+    float column_width,
+    bool label_on_right,
+    const ImVec2& clip_min,
+    const ImVec2& clip_max) {
+    for (const PacketFrameMarker& marker : markers) {
+        const float y = packet_event_y(origin, scroll_y, marker.relative_us);
+        if (y < clip_min.y || y > clip_max.y) {
+            continue;
+        }
+        draw->AddLine(
+            ImVec2(column_x + 8.0f, y),
+            ImVec2(column_x + column_width - 8.0f, y),
+            IM_COL32(230, 238, 255, 80),
+            1.0f);
+        draw->AddCircleFilled(ImVec2(column_x + 8.0f, y), 2.0f, IM_COL32(230, 238, 255, 130));
+        if ((marker.frame % 5U) == 0U) {
+            char buffer[32];
+            std::snprintf(buffer, sizeof(buffer), "f%u", marker.frame);
+            const ImVec2 text_size = ImGui::CalcTextSize(buffer);
+            const float label_x = label_on_right
+                ? column_x + column_width - 12.0f - text_size.x
+                : column_x + 12.0f;
+            draw->AddText(ImVec2(label_x, y + 2.0f), IM_COL32(166, 177, 195, 180), buffer);
+        }
+    }
+}
+
+void render_event_log(ViewerState& state) {
+    const auto start = Clock::now();
+    if (state.packet_clients.empty()) {
+        ImGui::BeginChild("packet_event_log", ImVec2(0.0f, -180.0f), true);
+        ImGui::TextColored(ImVec4(0.56f, 0.62f, 0.70f, 1.0f), "No packet events.");
+        ImGui::EndChild();
+        state.current_timing.timeline_ms += elapsed_ms(start);
+        return;
+    }
+    state.selected_packet_client = std::clamp(
+        state.selected_packet_client,
+        0,
+        static_cast<int>(state.packet_clients.size()) - 1);
+    if (ImGui::BeginTabBar("packet_clients")) {
+        for (int i = 0; i < static_cast<int>(state.packet_clients.size()); ++i) {
+            const std::string label = "client " + std::to_string(state.packet_clients[static_cast<std::size_t>(i)].client);
+            if (ImGui::BeginTabItem(label.c_str())) {
+                state.selected_packet_client = i;
+                ImGui::EndTabItem();
+            }
+        }
+        ImGui::EndTabBar();
+    }
+
+    const PacketClientTimeline& client_timeline =
+        state.packet_clients[static_cast<std::size_t>(state.selected_packet_client)];
+    const std::uint64_t duration_us = state.packet_log_max_us >= state.packet_log_min_us
+        ? state.packet_log_max_us - state.packet_log_min_us
+        : 0U;
+    const float width = packet_column_width * 2.0f + packet_column_gap + 80.0f;
+    const float height = timeline_header_height + 72.0f + static_cast<float>(duration_us) * packet_time_us_pitch;
+
+    ImGui::BeginChild("packet_event_log", ImVec2(0.0f, -180.0f), true);
+    float scroll_y = ImGui::GetScrollY();
+    const float max_scroll_y = std::max(0.0f, height - ImGui::GetWindowHeight());
+    if (scroll_y > max_scroll_y) {
+        scroll_y = max_scroll_y;
+        ImGui::SetScrollY(scroll_y);
+    }
+    const ImVec2 cursor = ImGui::GetCursorScreenPos();
+    const ImVec2 origin(cursor.x, cursor.y + scroll_y);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 clip_min = draw->GetClipRectMin();
+    const ImVec2 clip_max = draw->GetClipRectMax();
+    const float server_x = origin.x + 20.0f;
+    const float client_x = server_x + packet_column_width + packet_column_gap;
+
+    draw->AddRectFilled(origin, ImVec2(origin.x + width, origin.y + timeline_header_height), IM_COL32(22, 26, 32, 255));
+    draw->AddRectFilled(ImVec2(server_x, origin.y + timeline_header_height), ImVec2(server_x + packet_column_width, origin.y + height), IM_COL32(26, 30, 37, 150));
+    draw->AddRectFilled(ImVec2(client_x, origin.y + timeline_header_height), ImVec2(client_x + packet_column_width, origin.y + height), IM_COL32(26, 30, 37, 150));
+    draw->AddText(ImVec2(server_x + 10.0f, origin.y + 5.0f), IM_COL32(238, 242, 247, 255), "server");
+    const std::string client_title = "client " + std::to_string(client_timeline.client);
+    draw->AddText(ImVec2(client_x + 10.0f, origin.y + 5.0f), IM_COL32(238, 242, 247, 255), client_title.c_str());
+
+    const float first_visible_us =
+        (clip_min.y - origin.y - timeline_header_height - 32.0f + scroll_y) / packet_time_us_pitch;
+    const float last_visible_us =
+        (clip_max.y - origin.y - timeline_header_height - 32.0f + scroll_y) / packet_time_us_pitch;
+    const int first_tick = std::max(0, static_cast<int>(std::floor(first_visible_us / 100000.0f)) - 1);
+    const int last_tick = std::max(first_tick, static_cast<int>(std::ceil(last_visible_us / 100000.0f)) + 1);
+    for (int tick = first_tick; tick <= last_tick; ++tick) {
+        const float us = static_cast<float>(tick) * 100000.0f;
+        const float y = packet_event_y(origin, scroll_y, static_cast<std::uint64_t>(us));
+        if (y < clip_min.y || y > clip_max.y) {
+            continue;
+        }
+        draw->AddLine(ImVec2(server_x, y), ImVec2(client_x + packet_column_width, y), IM_COL32(78, 91, 112, 90), 1.0f);
+        char buffer[32];
+        std::snprintf(buffer, sizeof(buffer), "%.1fs", us / 1000000.0f);
+        draw->AddText(ImVec2(origin.x + width - 56.0f, y - 8.0f), IM_COL32(154, 166, 184, 255), buffer);
+    }
+    draw_packet_frame_markers(
+        draw,
+        client_timeline.server_frames,
+        origin,
+        scroll_y,
+        server_x,
+        packet_column_width,
+        false,
+        clip_min,
+        clip_max);
+    draw_packet_frame_markers(
+        draw,
+        client_timeline.client_frames,
+        origin,
+        scroll_y,
+        client_x,
+        packet_column_width,
+        true,
+        clip_min,
+        clip_max);
+
+    int drawn_cells = 0;
+    for (int flow_index : client_timeline.flow_indices) {
+        if (flow_index < 0 || flow_index >= static_cast<int>(state.packet_flows.size())) {
+            continue;
+        }
+        const PacketFlow& flow = state.packet_flows[static_cast<std::size_t>(flow_index)];
+        if (flow.send_event < 0 || flow.send_event >= static_cast<int>(state.packet_events.size())) {
+            continue;
+        }
+        const PacketEventInfo& send = state.packet_events[static_cast<std::size_t>(flow.send_event)];
+        const float send_column = send.server_side ? server_x : client_x;
+        const ImVec2 send_point(
+            packet_event_x(send_column, send),
+            packet_event_y(origin, scroll_y, send.relative_us));
+        ImVec2 receive_point = send_point;
+        if (flow.receive_event >= 0 && flow.receive_event < static_cast<int>(state.packet_events.size())) {
+            const PacketEventInfo& receive = state.packet_events[static_cast<std::size_t>(flow.receive_event)];
+            const float receive_column = receive.server_side ? server_x : client_x;
+            receive_point = ImVec2(
+                packet_event_x(receive_column, receive),
+                packet_event_y(origin, scroll_y, receive.relative_us));
+        } else {
+            receive_point.x = send.server_side ? client_x + 28.0f : server_x + packet_column_width - 42.0f;
+        }
+        if (line_visible(send_point, receive_point, clip_min, clip_max)) {
+            draw->AddLine(send_point, receive_point, IM_COL32(194, 200, 210, 145), 1.4f);
+            const float arrow_dir = receive_point.x >= send_point.x ? 1.0f : -1.0f;
+            draw->AddTriangleFilled(
+                receive_point,
+                ImVec2(receive_point.x - arrow_dir * 8.0f, receive_point.y - 4.0f),
+                ImVec2(receive_point.x - arrow_dir * 8.0f, receive_point.y + 4.0f),
+                IM_COL32(194, 200, 210, 160));
+        }
+    }
+    for (int event_index : client_timeline.event_indices) {
+        if (event_index < 0 || event_index >= static_cast<int>(state.packet_events.size())) {
+            continue;
+        }
+        const PacketEventInfo& event = state.packet_events[static_cast<std::size_t>(event_index)];
+        const float column_x = event.server_side ? server_x : client_x;
+        const ImVec2 center(
+            packet_event_x(column_x, event),
+            packet_event_y(origin, scroll_y, event.relative_us));
+        const std::vector<PacketFrameMarker>& local_markers =
+            event.server_side ? client_timeline.server_frames : client_timeline.client_frames;
+        const SyncFrame local_frame = packet_local_frame_from_markers(event, local_markers);
+        draw_packet_marker(state, draw, event, local_frame, center, clip_min, clip_max);
+        ++drawn_cells;
+    }
+    ImGui::Dummy(ImVec2(width, height));
+    ImGui::EndChild();
+    state.current_timing.timeline_ms += elapsed_ms(start);
+    state.current_timing.visible_rows += 2;
+    state.current_timing.visible_cells += drawn_cells;
 }
 
 void render_timeline(ViewerState& state, int source_index) {
@@ -2574,6 +3866,9 @@ std::string detail_component_label(const KTraceSourceHistory& source, const Sync
 std::string detail_frame_component_label(const KTraceRecord& record, const KTraceSourceHistory& source) {
     const SyncTraceEvent& event = record.event;
     if (event.role == SyncTraceRole::Server) {
+        if (event.client != invalid_client_id) {
+            return "server " + detail_component_label(source, event) + " input received";
+        }
         return "server " + detail_component_label(source, event);
     }
     std::string label = "client " + detail_component_label(source, event) + " ";
@@ -2602,6 +3897,9 @@ std::string detail_received_component_label(const SyncTraceEvent& event, const K
 
 const char* detail_source_label(const KTraceRecord& record, const char* source) {
     const SyncTraceEvent& event = record.event;
+    if (is_cue_event(event.type)) {
+        return event.role == SyncTraceRole::Server ? "server" : "client";
+    }
     if (event.role == SyncTraceRole::Server) {
         return "server";
     }
@@ -2633,12 +3931,161 @@ bool is_rollback_reason_detail(const SyncTraceEvent& event) {
     return event.type == SyncTraceEventType::RollbackReason;
 }
 
-void render_record_detail(const SelectedRecordDetail& detail) {
+std::string cue_type_label(const SyncTraceEvent& event) {
+    if (!event.component_name.empty()) {
+        return event.component_name;
+    }
+    return "cue " + std::to_string(event.cue_type);
+}
+
+std::string cue_type_label(const SyncTraceEvent& event, const KTraceSourceHistory* source) {
+    if (source != nullptr) {
+        const auto found = source->cue_names.find(event.cue_type);
+        if (found != source->cue_names.end() && !found->second.empty()) {
+            return found->second;
+        }
+    }
+    return cue_type_label(event);
+}
+
+std::string trace_data_field(const std::string& data, const std::string& key);
+std::string trace_data_without_viewer_fields(const std::string& data);
+
+struct CueDisplaySummary {
+    const SyncTraceEvent* event = nullptr;
+    const KTraceSourceHistory* source = nullptr;
+    bool predicted = false;
+    bool confirmed = false;
+    bool rolled_back = false;
+    std::string rollback_reason;
+    std::string data;
+};
+
+void merge_cue_display_event(CueDisplaySummary& summary, const SelectedRecordDetail& detail) {
+    if (detail.record == nullptr) {
+        return;
+    }
+    const SyncTraceEvent& event = detail.record->event;
+    if (!is_cue_event(event.type)) {
+        return;
+    }
+    if (summary.event == nullptr ||
+        event.type == SyncTraceEventType::CuePlayed ||
+        (summary.event->type != SyncTraceEventType::CuePlayed && event.type == SyncTraceEventType::CueEmitted)) {
+        summary.event = &event;
+        summary.source = detail.source_history;
+    }
+    const std::string cue_source = trace_data_field(event.data, "source");
+    summary.predicted = summary.predicted || cue_source == "local_prediction";
+    summary.confirmed = summary.confirmed || event.type == SyncTraceEventType::CueConfirmed;
+    summary.rolled_back = summary.rolled_back || event.type == SyncTraceEventType::CueRolledBack;
+    const std::string rollback_reason = trace_data_field(event.data, "rollback_reason");
+    if (!rollback_reason.empty()) {
+        summary.rollback_reason = rollback_reason;
+    }
+    const std::string data = trace_data_without_viewer_fields(event.data);
+    if (!data.empty() && summary.data.empty()) {
+        summary.data = data;
+    }
+}
+
+std::string cue_display_status(const CueDisplaySummary& summary) {
+    if (summary.predicted) {
+        if (summary.confirmed) {
+            return "predicted, confirmed";
+        }
+        if (summary.rolled_back) {
+            if (summary.rollback_reason == "resim_not_replayed") {
+                return "predicted, rolled back from resim";
+            }
+            return "predicted, rolled back by server";
+        }
+        return "predicted";
+    }
+    return "from server";
+}
+
+void render_merged_cue_details(const std::vector<SelectedRecordDetail>& details) {
+    std::vector<std::string> order;
+    std::unordered_map<std::string, CueDisplaySummary> summaries;
+    for (const SelectedRecordDetail& detail : details) {
+        if (detail.record == nullptr || !is_cue_event(detail.record->event.type)) {
+            continue;
+        }
+        const std::string key = cue_instance_key(detail.record->event);
+        if (summaries.find(key) == summaries.end()) {
+            order.push_back(key);
+        }
+        merge_cue_display_event(summaries[key], detail);
+    }
+    for (const std::string& key : order) {
+        const auto found = summaries.find(key);
+        if (found == summaries.end() || found->second.event == nullptr) {
+            continue;
+        }
+        const CueDisplaySummary& summary = found->second;
+        const std::string label = "cue played: " +
+            cue_type_label(*summary.event, summary.source) +
+            " (" + cue_display_status(summary) + ")";
+        ImGui::TextColored(ImVec4(0.72f, 0.78f, 0.86f, 1.0f), "%s", label.c_str());
+        if (!summary.data.empty()) {
+            ImGui::TextWrapped("  data: %s", summary.data.c_str());
+        }
+    }
+}
+
+std::string trace_data_field(const std::string& data, const std::string& key) {
+    const std::string prefix = key + "=";
+    std::size_t begin = 0;
+    while (begin <= data.size()) {
+        const std::size_t end = data.find(',', begin);
+        const std::size_t token_end = end == std::string::npos ? data.size() : end;
+        if (data.compare(begin, prefix.size(), prefix) == 0) {
+            return data.substr(begin + prefix.size(), token_end - (begin + prefix.size()));
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        begin = end + 1U;
+    }
+    return {};
+}
+
+std::string trace_data_without_viewer_fields(const std::string& data) {
+    std::string out;
+    std::size_t begin = 0;
+    while (begin <= data.size()) {
+        const std::size_t end = data.find(',', begin);
+        const std::size_t token_end = end == std::string::npos ? data.size() : end;
+        const std::string token = data.substr(begin, token_end - begin);
+        if (!token.empty() &&
+            token.rfind("source=", 0) != 0 &&
+            token.rfind("rollback_reason=", 0) != 0) {
+            if (!out.empty()) {
+                out += ",";
+            }
+            out += token;
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        begin = end + 1U;
+    }
+    return out;
+}
+
+void render_record_detail(
+    const SelectedRecordDetail& detail,
+    const std::vector<SelectedRecordDetail>* selection_details = nullptr) {
     if (detail.record == nullptr) {
         return;
     }
     const KTraceRecord& record = *detail.record;
     const SyncTraceEvent& event = record.event;
+    if (is_cue_event(event.type)) {
+        (void)selection_details;
+        return;
+    }
     if (is_rollback_conflict_detail(event)) {
         ImGui::TextColored(
             ImVec4(0.72f, 0.78f, 0.86f, 1.0f),
@@ -2726,9 +4173,54 @@ void rebuild_detail_cache(ViewerState& state) {
     state.current_timing.selection_ms += elapsed_ms(start);
 }
 
+void rebuild_packet_detail_cache(ViewerState& state) {
+    if (!state.packet_details_dirty) {
+        return;
+    }
+    const auto start = Clock::now();
+    state.cached_details.clear();
+    state.packet_details_dirty = false;
+    const PacketEventInfo* event = selected_packet_event(state);
+    if (event != nullptr &&
+        event->source_index >= 0 &&
+        event->source_index < static_cast<int>(state.history.sources.size())) {
+        const KTraceSourceHistory& source = state.history.sources[static_cast<std::size_t>(event->source_index)];
+        if (event->record_index < source.records.size()) {
+            state.cached_details.push_back(SelectedRecordDetail{&source.records[event->record_index], &source, source_label(source)});
+        }
+    }
+    state.current_timing.selection_ms += elapsed_ms(start);
+}
+
 void render_details(ViewerState& state) {
     const auto start = Clock::now();
     ImGui::BeginChild("details", ImVec2(0.0f, 0.0f), true);
+    if (state.mode == ViewerMode::EventLog) {
+        const PacketEventInfo* event = selected_packet_event(state);
+        if (event == nullptr) {
+            ImGui::TextColored(ImVec4(0.56f, 0.62f, 0.70f, 1.0f), "Select a packet event.");
+            ImGui::EndChild();
+            state.current_timing.details_ms += elapsed_ms(start);
+            return;
+        }
+        rebuild_packet_detail_cache(state);
+        ImGui::SetWindowFontScale(1.2f);
+        ImGui::TextColored(
+            ImVec4(0.82f, 0.88f, 0.96f, 1.0f),
+            "%s %s %.3fms",
+            event->send ? "Sent" : "Received",
+            event->message.c_str(),
+            static_cast<double>(event->relative_us) / 1000.0);
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::Separator();
+        render_merged_cue_details(state.cached_details);
+        for (const SelectedRecordDetail& detail : state.cached_details) {
+            render_record_detail(detail, &state.cached_details);
+        }
+        ImGui::EndChild();
+        state.current_timing.details_ms += elapsed_ms(start);
+        return;
+    }
     if (state.selected.source_index < 0 || state.selected.source_index >= static_cast<int>(state.history.sources.size())) {
         ImGui::TextColored(ImVec4(0.56f, 0.62f, 0.70f, 1.0f), "Select a frame.");
         ImGui::EndChild();
@@ -2742,8 +4234,9 @@ void render_details(ViewerState& state) {
     ImGui::SetWindowFontScale(1.0f);
     ImGui::Separator();
 
+    render_merged_cue_details(state.cached_details);
     for (const SelectedRecordDetail& detail : state.cached_details) {
-        render_record_detail(detail);
+        render_record_detail(detail, &state.cached_details);
     }
     ImGui::EndChild();
     state.current_timing.details_ms += elapsed_ms(start);
@@ -2777,6 +4270,17 @@ void render_app(ViewerState& state) {
     if (ImGui::Button("Reload", ImVec2(70.0f, 0.0f))) {
         load_directory(state);
     }
+    if (state.loader.active || state.loader.bytes_read != 0U || state.loader.total_bytes != 0U) {
+        const float progress = state.loader.total_bytes != 0U
+            ? std::min(1.0f, static_cast<float>(
+                  static_cast<double>(state.loader.bytes_read) / static_cast<double>(state.loader.total_bytes)))
+            : 0.0f;
+        ImGui::SameLine();
+        ImGui::TextColored(
+            ImVec4(0.48f, 0.55f, 0.65f, 1.0f),
+            "%.0f%% loaded",
+            static_cast<double>(progress) * 100.0);
+    }
     if (!state.status.empty()) {
         ImGui::TextColored(ImVec4(0.58f, 0.66f, 0.76f, 1.0f), "%s", state.status.c_str());
     }
@@ -2784,7 +4288,35 @@ void render_app(ViewerState& state) {
     render_legend();
     ImGui::Spacing();
 
-    if (ImGui::BeginTabBar("sources")) {
+    const bool has_packet_logs = packet_logs_enabled_in_trace(state);
+    if (!has_packet_logs && state.mode == ViewerMode::EventLog) {
+        state.mode = ViewerMode::Frames;
+    }
+    if (has_packet_logs) {
+        const char* current_mode = state.mode == ViewerMode::Frames ? "Frames" : "Event Log";
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::BeginCombo("View", current_mode)) {
+            const bool frames_selected = state.mode == ViewerMode::Frames;
+            if (ImGui::Selectable("Frames", frames_selected)) {
+                state.mode = ViewerMode::Frames;
+            }
+            if (frames_selected) {
+                ImGui::SetItemDefaultFocus();
+            }
+            const bool event_selected = state.mode == ViewerMode::EventLog;
+            if (ImGui::Selectable("Event Log", event_selected)) {
+                state.mode = ViewerMode::EventLog;
+            }
+            if (event_selected) {
+                ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+    }
+
+    if (state.mode == ViewerMode::EventLog) {
+        render_event_log(state);
+    } else if (ImGui::BeginTabBar("sources")) {
         for (int i = 0; i < static_cast<int>(state.history.sources.size()); ++i) {
             const std::string label = source_label(state.history.sources[static_cast<std::size_t>(i)]);
             ImGuiTabItemFlags flags = 0;
@@ -3029,6 +4561,7 @@ int main(int argc, char** argv) {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         poll_control_server(control_server, state, automation_input, window);
+        process_loader_messages(state);
         apply_automation_input(automation_input);
         ImGui::NewFrame();
         if (!state.benchmark.options.enabled && ImGui::IsKeyPressed(ImGuiKey_F12, false)) {
@@ -3078,6 +4611,7 @@ int main(int argc, char** argv) {
     }
 
     stop_control_server(control_server);
+    stop_loading_directory(state);
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

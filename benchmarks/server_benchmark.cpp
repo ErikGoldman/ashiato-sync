@@ -2,6 +2,7 @@
 
 #include <benchmark/benchmark.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -797,6 +798,85 @@ void BM_BitBufferAppendBits(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(bit_count));
 }
 
+void BM_ServerProcessInputPacket(benchmark::State& state) {
+    const int frame_count = static_cast<int>(state.range(0));
+
+    ecs::Registry client_registry;
+    kage::sync::register_sync_component<DeltaPosition>(client_registry, "DeltaPosition");
+    kage::sync::configure_client(client_registry, 1);
+    kage::sync::set_client_input_component<DeltaPosition>(client_registry);
+    const ecs::Entity client_owned = client_registry.create();
+    kage::sync::set_owner(client_registry, client_owned, 1);
+    kage::sync::ReplicationClient client;
+    for (int frame = 0; frame < frame_count; ++frame) {
+        client.set_input(client_registry, DeltaPosition{frame, frame + 1});
+        client.tick(client_registry, client.options().fixed_dt_seconds);
+    }
+    std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
+    auto input_packet = std::find_if(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+        return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
+    });
+    if (input_packet == packets.end()) {
+        state.SkipWithError("client did not emit input packet");
+        return;
+    }
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        ecs::Registry registry;
+        kage::sync::register_sync_component<DeltaPosition>(registry, "DeltaPosition");
+        kage::sync::configure_server(registry);
+        kage::sync::set_client_input_component<DeltaPosition>(registry);
+        kage::sync::ReplicationServer server;
+        server.add_client(1);
+        kage::sync::BitBuffer packet = *input_packet;
+        state.ResumeTiming();
+
+        benchmark::DoNotOptimize(server.process_packet(registry, 1, packet));
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(frame_count));
+}
+
+void BM_ServerTickInputUpsert(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+
+    ecs::Registry registry;
+    kage::sync::register_sync_component<DeltaPosition>(registry, "DeltaPosition");
+    kage::sync::configure_server(registry);
+    kage::sync::set_client_input_component<DeltaPosition>(registry);
+    for (int index = 0; index < entity_count; ++index) {
+        const ecs::Entity entity = registry.create();
+        kage::sync::set_owner(registry, entity, 1);
+    }
+
+    ecs::Registry client_registry;
+    kage::sync::register_sync_component<DeltaPosition>(client_registry, "DeltaPosition");
+    kage::sync::configure_client(client_registry, 1);
+    kage::sync::set_client_input_component<DeltaPosition>(client_registry);
+    const ecs::Entity client_owned = client_registry.create();
+    kage::sync::set_owner(client_registry, client_owned, 1);
+    kage::sync::ReplicationClient client;
+    client.set_input(client_registry, DeltaPosition{10, 20});
+    client.tick(client_registry, client.options().fixed_dt_seconds);
+    std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
+
+    kage::sync::ReplicationServer server;
+    server.add_client(1);
+    for (const kage::sync::BitBuffer& packet : packets) {
+        kage::sync::BitBuffer copy = packet;
+        if (static_cast<std::uint8_t>(copy.read_bits(8U)) == kage::sync::protocol::client_input_message) {
+            benchmark::DoNotOptimize(server.process_packet(registry, 1, packet));
+        }
+    }
+
+    for (auto _ : state) {
+        server.tick(registry, kage::sync::ReplicationServer::ReplicateFn{});
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(entity_count));
+}
+
 void TickArgs(benchmark::internal::Benchmark* benchmark) {
     benchmark->Args({1024, 1})->Args({16384, 1})->Args({16384, 8})->Args({65536, 8});
 }
@@ -815,6 +895,10 @@ void AddClientArgs(benchmark::internal::Benchmark* benchmark) {
 
 void ProcessAckArgs(benchmark::internal::Benchmark* benchmark) {
     benchmark->Arg(128)->Arg(1024)->Arg(4096);
+}
+
+void InputFrameArgs(benchmark::internal::Benchmark* benchmark) {
+    benchmark->Arg(16)->Arg(64);
 }
 
 void PendingDestroyArgs(benchmark::internal::Benchmark* benchmark) {
@@ -844,6 +928,8 @@ BENCHMARK(BM_ServerTickOwnerAudienceMixed)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickTaggedOwnerMixed)->Args({1024, 4, 8})->Args({16384, 4, 16});
 BENCHMARK(BM_ServerTickArchetypeDiversity)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickStressScheduler)->Args({4096, 4, 1})->Args({4096, 4, 2})->Args({4096, 4, 4});
+BENCHMARK(BM_ServerProcessInputPacket)->Apply(InputFrameArgs);
+BENCHMARK(BM_ServerTickInputUpsert)->Arg(1024)->Arg(16384);
 BENCHMARK(BM_BitBufferUnalignedBytes)->Arg(64)->Arg(1024)->Arg(16384);
 BENCHMARK(BM_BitBufferUnalignedReadUnsigned)->Arg(1024)->Arg(16384);
 BENCHMARK(BM_BitBufferAppendBits)->Arg(512)->Arg(8192)->Arg(131072);

@@ -125,6 +125,38 @@ SyncTraceEvent make_component_name_event(const SyncTraceEvent& event) {
     return mapping;
 }
 
+SyncTraceEvent make_cue_name_event(const SyncTraceEvent& event) {
+    SyncTraceEvent mapping;
+    mapping.type = SyncTraceEventType::CueName;
+    mapping.role = event.role;
+    mapping.client = event.client;
+    mapping.frame = event.frame;
+    mapping.cue_type = event.cue_type;
+    mapping.data = event.component_name;
+    return mapping;
+}
+
+bool event_has_cue_name(const SyncTraceEvent& event) {
+    switch (event.type) {
+    case SyncTraceEventType::CueEmitted:
+    case SyncTraceEventType::CueSent:
+    case SyncTraceEventType::CueReceived:
+    case SyncTraceEventType::CuePlayed:
+    case SyncTraceEventType::CueRolledBack:
+    case SyncTraceEventType::CueConfirmed:
+        return !event.component_name.empty();
+    default:
+        return false;
+    }
+}
+
+SyncTraceEvent stored_trace_event(SyncTraceEvent event) {
+    if (event_has_cue_name(event)) {
+        event.component_name.clear();
+    }
+    return event;
+}
+
 std::vector<std::uint8_t> encode_v2_record(const SyncTraceEvent& event, std::uint64_t timestamp_us) {
     std::vector<std::uint8_t> payload;
     append_event_payload(payload, event);
@@ -139,6 +171,9 @@ std::vector<std::uint8_t> encode_v2_record(const SyncTraceEvent& event, std::uin
 }
 
 ClientEntityNetworkId event_network_key(const SyncTraceEvent& event) {
+    if (event.role == SyncTraceRole::Server && event.server_entity) {
+        return event.server_entity.value;
+    }
     if (event.client_network_id != invalid_client_entity_network_id) {
         return event.client_network_id;
     }
@@ -159,11 +194,15 @@ void add_cell_state(KTraceComponentRow& row, SyncFrame frame, KTraceCellState st
         row.cells.push_back(KTraceFrameCell{frame, 0, {}});
         found = row.cells.end() - 1;
     }
-    found->state_mask |= static_cast<std::uint16_t>(state);
+    found->state_mask |= static_cast<std::uint32_t>(state);
     if (std::find(found->event_indices.begin(), found->event_indices.end(), event_index) ==
         found->event_indices.end()) {
         found->event_indices.push_back(event_index);
     }
+}
+
+ecs::Entity cue_row_component() noexcept {
+    return ecs::Entity{std::uint64_t{1} << 63U};
 }
 
 void add_cell_event(KTraceComponentRow& row, SyncFrame frame, std::uint32_t event_index) {
@@ -265,6 +304,11 @@ void SyncTracer::trace(const SyncTraceEvent& event) const {
     if (!enabled_) {
         return;
     }
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+    if (event.type == SyncTraceEventType::PacketLog && !packet_logs_enabled_) {
+        return;
+    }
+#endif
     if (callbacks_.on_event) {
         callbacks_.on_event(event);
     }
@@ -314,14 +358,23 @@ void SyncTracer::trace(const SyncTraceEvent& event) const {
     case SyncTraceEventType::FrameComponent:
         if (callbacks_.on_frame_component) callbacks_.on_frame_component(event);
         break;
-    case SyncTraceEventType::CueInvoked:
-        if (callbacks_.on_cue_invoked) callbacks_.on_cue_invoked(event);
+    case SyncTraceEventType::CueEmitted:
+        if (callbacks_.on_cue_emitted) callbacks_.on_cue_emitted(event);
+        break;
+    case SyncTraceEventType::CueSent:
+        if (callbacks_.on_cue_sent) callbacks_.on_cue_sent(event);
         break;
     case SyncTraceEventType::CueRolledBack:
         if (callbacks_.on_cue_rolled_back) callbacks_.on_cue_rolled_back(event);
         break;
     case SyncTraceEventType::CueReceived:
         if (callbacks_.on_cue_received) callbacks_.on_cue_received(event);
+        break;
+    case SyncTraceEventType::CuePlayed:
+        if (callbacks_.on_cue_played) callbacks_.on_cue_played(event);
+        break;
+    case SyncTraceEventType::CueConfirmed:
+        if (callbacks_.on_cue_confirmed) callbacks_.on_cue_confirmed(event);
         break;
     case SyncTraceEventType::EntityDestroyed:
         if (callbacks_.on_entity_destroyed) callbacks_.on_entity_destroyed(event);
@@ -332,9 +385,29 @@ void SyncTracer::trace(const SyncTraceEvent& event) const {
     case SyncTraceEventType::ComponentName:
         if (callbacks_.on_component_name) callbacks_.on_component_name(event);
         break;
+    case SyncTraceEventType::CueName:
+        if (callbacks_.on_cue_name) callbacks_.on_cue_name(event);
+        break;
     case SyncTraceEventType::RollbackReason:
         if (callbacks_.on_rollback_reason) callbacks_.on_rollback_reason(event);
         break;
+    case SyncTraceEventType::InputStarved:
+        if (callbacks_.on_input_starved) callbacks_.on_input_starved(event);
+        break;
+    case SyncTraceEventType::ClockSkew:
+        if (callbacks_.on_clock_skew) callbacks_.on_clock_skew(event);
+        break;
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+    case SyncTraceEventType::PacketLog:
+        if (!packet_logs_enabled_) {
+            break;
+        }
+        if (callbacks_.on_packet_log) callbacks_.on_packet_log(event);
+        break;
+#else
+    case SyncTraceEventType::PacketLog:
+        break;
+#endif
     }
 }
 
@@ -397,7 +470,10 @@ void BinarySyncTraceWriter::record(const SyncTraceEvent& event) {
         sink.named_components.insert(event.component.value).second) {
         append_event(sink.pending, make_component_name_event(event));
     }
-    append_event(sink.pending, event);
+    if (event_has_cue_name(event) && sink.named_cues.insert(event.cue_type).second) {
+        append_event(sink.pending, make_cue_name_event(event));
+    }
+    append_event(sink.pending, stored_trace_event(event));
     if (sink.pending.size() >= options_.flush_threshold_bytes) {
         sink.flush_requested = true;
         sink.cv.notify_one();
@@ -498,7 +574,12 @@ void KTraceDirectoryWriter::write_header(Sink& sink) {
     for (std::size_t byte = 0; byte < sizeof(sink.client); ++byte) {
         sink.file.put(static_cast<char>((sink.client >> (byte * 8U)) & 0xffU));
     }
-    const std::uint32_t flags = 0;
+    const std::uint32_t flags =
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+        tracer_.packet_logs_enabled() ? ktrace_flag_packet_logs : 0U;
+#else
+        0U;
+#endif
     for (std::size_t byte = 0; byte < sizeof(flags); ++byte) {
         sink.file.put(static_cast<char>((flags >> (byte * 8U)) & 0xffU));
     }
@@ -548,7 +629,12 @@ void KTraceDirectoryWriter::record(const SyncTraceEvent& event) {
         name_record = encode_v2_record(make_component_name_event(event), timestamp_us);
         record_size += name_record.size();
     }
-    record = encode_v2_record(event, timestamp_us);
+    if (event_has_cue_name(event) && sink.named_cues.insert(event.cue_type).second) {
+        emit_name = true;
+        name_record = encode_v2_record(make_cue_name_event(event), timestamp_us);
+        record_size += name_record.size();
+    }
+    record = encode_v2_record(stored_trace_event(event), timestamp_us);
     record_size += record.size();
     sink.cv.wait(lock, [&]() {
         if (sink.closing) {
@@ -707,17 +793,37 @@ KTraceFile KTraceReader::read_file(const std::string& path) const {
     result.role = static_cast<SyncTraceRole>(read_byte());
     result.recorded_unix_ns = read_u64();
     result.client = read_u64();
-    (void)read_u32();
+    result.flags = read_u32();
 
-    while (file.peek() != std::char_traits<char>::eof()) {
-        const auto type = static_cast<SyncTraceEventType>(read_byte());
-        const std::uint64_t timestamp_us = read_u64();
-        const std::uint32_t payload_size = read_u32();
+    while (true) {
+        const int type_byte = file.get();
+        if (type_byte == std::char_traits<char>::eof()) {
+            break;
+        }
+        if (!file) {
+            break;
+        }
+        const auto type = static_cast<SyncTraceEventType>(static_cast<std::uint8_t>(type_byte));
+
+        std::uint8_t record_header[12]{};
+        file.read(reinterpret_cast<char*>(record_header), sizeof(record_header));
+        if (file.gcount() != static_cast<std::streamsize>(sizeof(record_header))) {
+            break;
+        }
+        std::uint64_t timestamp_us = 0;
+        for (std::size_t byte = 0; byte < 8U; ++byte) {
+            timestamp_us |= std::uint64_t{record_header[byte]} << (byte * 8U);
+        }
+        std::uint32_t payload_size = 0;
+        for (std::size_t byte = 0; byte < 4U; ++byte) {
+            payload_size |= std::uint32_t{record_header[8U + byte]} << (byte * 8U);
+        }
+
         std::vector<std::uint8_t> payload(payload_size);
         if (payload_size != 0U) {
             file.read(reinterpret_cast<char*>(payload.data()), payload.size());
-            if (!file) {
-                throw std::runtime_error("ktrace payload is truncated");
+            if (file.gcount() != static_cast<std::streamsize>(payload.size())) {
+                break;
             }
         }
         result.records.push_back(KTraceRecord{read_event_payload(type, payload), timestamp_us});
@@ -731,8 +837,10 @@ KTraceSourceHistory KTraceReader::build_source_history(KTraceFile file) {
     source.client = file.client;
     source.path = std::move(file.path);
     source.recorded_unix_ns = file.recorded_unix_ns;
+    source.flags = file.flags;
     source.records = std::move(file.records);
     source.component_names = std::move(file.component_names);
+    source.cue_names = std::move(file.cue_names);
 
     std::unordered_map<ClientEntityNetworkId, ReplicationClientMode> modes;
     std::unordered_map<ClientEntityNetworkId, std::unordered_map<std::uint64_t, bool>> predicted_conflicts;
@@ -745,11 +853,20 @@ KTraceSourceHistory KTraceReader::build_source_history(KTraceFile file) {
             if (event.type == SyncTraceEventType::ComponentName && event.component && !event.data.empty()) {
                 source.component_names[event.component.value] = event.data;
             }
+            if (event.type == SyncTraceEventType::CueName && !event.data.empty()) {
+                source.cue_names[event.cue_type] = event.data;
+            }
             continue;
         }
         if (event.type == SyncTraceEventType::ComponentName) {
             if (event.component && !event.data.empty()) {
                 source.component_names[event.component.value] = event.data;
+            }
+            continue;
+        }
+        if (event.type == SyncTraceEventType::CueName) {
+            if (!event.data.empty()) {
+                source.cue_names[event.cue_type] = event.data;
             }
             continue;
         }
@@ -806,6 +923,7 @@ KTraceSourceHistory KTraceReader::build_source_history(KTraceFile file) {
             }
             break;
         case SyncTraceEventType::BufferedStarved:
+        case SyncTraceEventType::InputStarved:
             {
             KTraceComponentRow& row = component_row(entity.components, event.component);
             add_cell_state(row, event.frame, KTraceCellState::Starved, event_index);
@@ -839,6 +957,41 @@ KTraceSourceHistory KTraceReader::build_source_history(KTraceFile file) {
             }
             break;
         }
+        case SyncTraceEventType::ClockSkew: {
+            KTraceComponentRow& row = component_row(entity.components, event.component);
+            add_cell_event(row, event.frame, event_index);
+            break;
+        }
+        case SyncTraceEventType::CueEmitted: {
+            KTraceComponentRow& row = component_row(entity.components, cue_row_component());
+            add_cell_state(row, event.frame, KTraceCellState::CueEmitted, event_index);
+            break;
+        }
+        case SyncTraceEventType::CueSent: {
+            KTraceComponentRow& row = component_row(entity.components, cue_row_component());
+            add_cell_state(row, event.frame, KTraceCellState::CueSent, event_index);
+            break;
+        }
+        case SyncTraceEventType::CueReceived: {
+            KTraceComponentRow& row = component_row(entity.components, cue_row_component());
+            add_cell_state(row, event.frame, KTraceCellState::CueReceived, event_index);
+            break;
+        }
+        case SyncTraceEventType::CuePlayed: {
+            KTraceComponentRow& row = component_row(entity.components, cue_row_component());
+            add_cell_state(row, event.frame, KTraceCellState::CuePlayed, event_index);
+            break;
+        }
+        case SyncTraceEventType::CueConfirmed: {
+            KTraceComponentRow& row = component_row(entity.components, cue_row_component());
+            add_cell_state(row, event.frame, KTraceCellState::CueConfirmed, event_index);
+            break;
+        }
+        case SyncTraceEventType::CueRolledBack: {
+            KTraceComponentRow& row = component_row(entity.components, cue_row_component());
+            add_cell_state(row, event.frame, KTraceCellState::CueRolledBack, event_index);
+            break;
+        }
         case SyncTraceEventType::ResimulatedFrameComponent: {
             if (!event.component) {
                 break;
@@ -854,7 +1007,9 @@ KTraceSourceHistory KTraceReader::build_source_history(KTraceFile file) {
             }
             KTraceComponentRow& row = component_row(entity.components, event.component);
             const ReplicationClientMode mode = modes.count(key) != 0U ? modes[key] : event.mode;
-            if (source.role == SyncTraceRole::Client && mode == ReplicationClientMode::BufferedInterpolation) {
+            if (source.role == SyncTraceRole::Server && event.client != invalid_client_id) {
+                add_cell_state(row, event.frame, KTraceCellState::InputReceived, event_index);
+            } else if (source.role == SyncTraceRole::Client && mode == ReplicationClientMode::BufferedInterpolation) {
                 add_cell_state(row, event.frame, KTraceCellState::LocalInterpolated, event_index);
             } else if (source.role == SyncTraceRole::Client && mode == ReplicationClientMode::Predict) {
                 add_cell_state(row, event.frame, KTraceCellState::LocalPredicted, event_index);

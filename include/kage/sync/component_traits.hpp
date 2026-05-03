@@ -5,6 +5,7 @@
 #include <cstring>
 #include <string>
 #include <type_traits>
+#include <typeinfo>
 #include <utility>
 #include <vector>
 
@@ -81,36 +82,106 @@ bool is_display_interpolated(const ecs::Registry& registry) {
 
 namespace detail {
 
+template <typename T, typename = void>
+struct has_context_cue_serialize : std::false_type {};
+
 template <typename T>
-bool read_cue_payload(const BitBuffer& payload, T& out) {
-    BitBuffer copy = payload;
-    return SyncCueTraits<T>::deserialize(copy, out);
+struct has_context_cue_serialize<
+    T,
+    std::void_t<decltype(SyncCueTraits<T>::serialize(
+        std::declval<const T&>(),
+        std::declval<BitBuffer&>(),
+        std::declval<EntityReferenceContext&>()))>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_context_cue_deserialize : std::false_type {};
+
+template <typename T>
+struct has_context_cue_deserialize<
+    T,
+    std::void_t<decltype(SyncCueTraits<T>::deserialize(
+        std::declval<BitBuffer&>(),
+        std::declval<T&>(),
+        std::declval<EntityReferenceContext&>()))>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_frame_cue_play : std::false_type {};
+
+template <typename T>
+struct has_frame_cue_play<
+    T,
+    std::void_t<decltype(SyncCueTraits<T>::play(
+        std::declval<ecs::Registry&>(),
+        std::declval<ecs::Entity>(),
+        std::declval<const T&>(),
+        std::declval<float>(),
+        std::declval<SyncFrame>()))>> : std::true_type {};
+
+template <typename T>
+void serialize_cue_payload(const T& cue, BitBuffer& out, EntityReferenceContext* references) {
+    if constexpr (has_context_cue_serialize<T>::value) {
+        EntityReferenceContext empty_references;
+        SyncCueTraits<T>::serialize(cue, out, references != nullptr ? *references : empty_references);
+    } else {
+        (void)references;
+        SyncCueTraits<T>::serialize(cue, out);
+    }
 }
 
 template <typename T>
-bool play_cue_payload(ecs::Registry& registry, ecs::Entity owner, const BitBuffer& payload, float late_seconds) {
+bool read_cue_payload(const BitBuffer& payload, T& out, EntityReferenceContext* references = nullptr) {
+    BitBuffer copy = payload;
+    if constexpr (has_context_cue_deserialize<T>::value) {
+        EntityReferenceContext empty_references;
+        return SyncCueTraits<T>::deserialize(copy, out, references != nullptr ? *references : empty_references);
+    } else {
+        (void)references;
+        return SyncCueTraits<T>::deserialize(copy, out);
+    }
+}
+
+template <typename T>
+bool play_cue_payload(
+    ecs::Registry& registry,
+    ecs::Entity owner,
+    const BitBuffer& payload,
+    float late_seconds,
+    SyncFrame frame,
+    EntityReferenceContext* references) {
     T value{};
-    if (!read_cue_payload(payload, value)) {
+    if (!read_cue_payload(payload, value, references)) {
         return false;
     }
-    return SyncCueTraits<T>::play(registry, owner, value, late_seconds);
+    if constexpr (has_frame_cue_play<T>::value) {
+        return SyncCueTraits<T>::play(registry, owner, value, late_seconds, frame);
+    } else {
+        (void)frame;
+        return SyncCueTraits<T>::play(registry, owner, value, late_seconds);
+    }
 }
 
 template <typename T>
-bool rollback_cue_payload(ecs::Registry& registry, ecs::Entity owner, const BitBuffer& payload) {
+bool rollback_cue_payload(
+    ecs::Registry& registry,
+    ecs::Entity owner,
+    const BitBuffer& payload,
+    EntityReferenceContext* references) {
     T value{};
-    if (!read_cue_payload(payload, value)) {
+    if (!read_cue_payload(payload, value, references)) {
         return false;
     }
     return SyncCueTraits<T>::rollback(registry, owner, value);
 }
 
 template <typename T>
-bool equal_cue_payloads(const BitBuffer& lhs_payload, const BitBuffer& rhs_payload) {
+bool equal_cue_payloads(
+    const BitBuffer& lhs_payload,
+    const BitBuffer& rhs_payload,
+    EntityReferenceContext* references) {
     T lhs{};
     T rhs{};
-    if (!read_cue_payload(lhs_payload, lhs) || !read_cue_payload(rhs_payload, rhs)) {
-        return false;
+    if (!read_cue_payload(lhs_payload, lhs, references) || !read_cue_payload(rhs_payload, rhs, references)) {
+        return lhs_payload == rhs_payload;
     }
     return SyncCueTraits<T>::equals_cue(lhs, rhs);
 }
@@ -358,7 +429,7 @@ void trace_component_quantized(const std::uint8_t* quantized_bytes, SyncTraceStr
 }
 #endif
 
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_CUE_DATA)
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
 template <typename Traits, typename Cue, typename = void>
 struct has_trace_cue : std::false_type {};
 
@@ -390,9 +461,65 @@ namespace ecs {
 template <>
 struct is_singleton_component<kage::sync::SyncSettings> : std::true_type {};
 
+template <>
+struct is_singleton_component<kage::sync::SyncAuthority> : std::true_type {};
+
 }  // namespace ecs
 
 namespace kage::sync {
+
+namespace detail {
+
+inline bool remove_prefix(std::string& value, const char* prefix) {
+    const std::size_t length = std::char_traits<char>::length(prefix);
+    if (value.compare(0U, length, prefix) != 0) {
+        return false;
+    }
+    value.erase(0U, length);
+    return true;
+}
+
+inline std::string short_type_name(std::string name) {
+    (void)remove_prefix(name, "struct ");
+    (void)remove_prefix(name, "class ");
+
+    const std::string anonymous_namespace = "anonymous namespace";
+    const std::size_t anonymous = name.find(anonymous_namespace);
+    if (anonymous != std::string::npos) {
+        std::size_t begin = anonymous + anonymous_namespace.size();
+        while (begin < name.size() && (name[begin] == ')' || name[begin] == '}' ||
+               name[begin] == '\'' || name[begin] == '`' || name[begin] == ':' ||
+               name[begin] == ' ')) {
+            ++begin;
+        }
+        name.erase(0U, begin);
+    }
+
+    const std::size_t scope = name.rfind("::");
+    if (scope != std::string::npos) {
+        name = name.substr(scope + 2U);
+    }
+    return name;
+}
+
+template <typename T>
+std::string default_type_name() {
+#if defined(__clang__) || defined(__GNUC__)
+    std::string pretty = __PRETTY_FUNCTION__;
+    const std::string marker = "T = ";
+    const std::size_t begin = pretty.find(marker);
+    if (begin != std::string::npos) {
+        std::size_t end = pretty.find_first_of(";]", begin + marker.size());
+        if (end == std::string::npos) {
+            end = pretty.size();
+        }
+        return short_type_name(pretty.substr(begin + marker.size(), end - (begin + marker.size())));
+    }
+#endif
+    return short_type_name(typeid(T).name());
+}
+
+}  // namespace detail
 
 template <typename T>
 ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = {}) {
@@ -491,7 +618,7 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
 }
 
 template <typename T>
-SyncCueTypeId register_sync_cue(ecs::Registry& registry) {
+SyncCueTypeId register_sync_cue(ecs::Registry& registry, std::string name = {}) {
     register_components(registry);
 
     SyncSettings& settings = registry.write<SyncSettings>();
@@ -506,13 +633,17 @@ SyncCueTypeId register_sync_cue(ecs::Registry& registry) {
 
     const SyncCueTypeId id = static_cast<SyncCueTypeId>(settings.cue_ops.size());
     SyncCueOps ops;
-    ops.serialize = [](const void* value, BitBuffer& out) {
-        SyncCueTraits<T>::serialize(*static_cast<const T*>(value), out);
+    ops.name = name.empty() ? detail::default_type_name<T>() : std::move(name);
+    ops.serialize = [](const void* value, BitBuffer& out, EntityReferenceContext* references) {
+        detail::serialize_cue_payload<T>(*static_cast<const T*>(value), out, references);
     };
     ops.play = &detail::play_cue_payload<T>;
     ops.rollback = &detail::rollback_cue_payload<T>;
     ops.equals = &detail::equal_cue_payloads<T>;
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_CUE_DATA)
+    ops.references_entities =
+        detail::has_context_cue_serialize<T>::value ||
+        detail::has_context_cue_deserialize<T>::value;
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
     if constexpr (detail::has_trace_cue<SyncCueTraits<T>, T>::value) {
         ops.trace = &detail::trace_cue_payload<T>;
     }
@@ -524,17 +655,16 @@ SyncCueTypeId register_sync_cue(ecs::Registry& registry) {
 
 template <typename T>
 bool emit_cue(
-    ecs::Registry& registry,
+    SyncSettings& settings,
     ecs::Entity entity,
     SyncFrame frame,
     const T& cue,
-    float relevance_seconds) {
-    register_components(registry);
-    if (!registry.alive(entity) || relevance_seconds < 0.0f) {
+    float relevance_seconds,
+    bool only_replicate_to_owner = false) {
+    if (!entity || relevance_seconds < 0.0f) {
         return false;
     }
 
-    SyncSettings& settings = registry.write<SyncSettings>();
     const auto found_type = settings.cue_type_ids.find(std::type_index(typeid(T)));
     if (found_type == settings.cue_type_ids.end()) {
         return false;
@@ -552,10 +682,50 @@ bool emit_cue(
     queued.frame = frame;
     queued.type = type;
     queued.relevance_seconds = relevance_seconds;
-    settings.cue_ops[type].serialize(&cue, queued.payload);
+    queued.only_replicate_to_owner = only_replicate_to_owner;
+    if (settings.cue_ops[type].references_entities) {
+        queued.value = std::make_shared<T>(cue);
+    } else {
+        settings.cue_ops[type].serialize(&cue, queued.payload, nullptr);
+    }
     std::lock_guard<std::mutex> lock(settings.cue_queue->mutex);
     settings.cue_queue->cues.push_back(std::move(queued));
     return true;
+}
+
+template <typename T>
+bool emit_cue(
+    SyncSettings& settings,
+    ecs::Entity entity,
+    const T& cue,
+    float relevance_seconds,
+    bool only_replicate_to_owner = false) {
+    return emit_cue(settings, entity, SyncFrame{0}, cue, relevance_seconds, only_replicate_to_owner);
+}
+
+template <typename T>
+bool emit_cue(
+    ecs::Registry& registry,
+    ecs::Entity entity,
+    SyncFrame frame,
+    const T& cue,
+    float relevance_seconds,
+    bool only_replicate_to_owner = false) {
+    register_components(registry);
+    if (!registry.alive(entity)) {
+        return false;
+    }
+    return emit_cue(registry.write<SyncSettings>(), entity, frame, cue, relevance_seconds, only_replicate_to_owner);
+}
+
+template <typename T>
+bool emit_cue(
+    ecs::Registry& registry,
+    ecs::Entity entity,
+    const T& cue,
+    float relevance_seconds,
+    bool only_replicate_to_owner = false) {
+    return emit_cue(registry, entity, SyncFrame{0}, cue, relevance_seconds, only_replicate_to_owner);
 }
 
 void configure_server(ecs::Registry& registry);
@@ -570,5 +740,12 @@ SyncArchetypeId define_archetype(
 const SyncArchetype* find_archetype(const ecs::Registry& registry, SyncArchetypeId id);
 
 bool set_owner(ecs::Registry& registry, ecs::Entity entity, ClientId client);
+bool set_client_input_component(ecs::Registry& registry, ecs::Entity component);
+
+template <typename T>
+bool set_client_input_component(ecs::Registry& registry) {
+    register_components(registry);
+    return set_client_input_component(registry, registry.component<T>());
+}
 
 }  // namespace kage::sync

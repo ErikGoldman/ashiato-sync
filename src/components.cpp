@@ -35,6 +35,7 @@ void validate_tag_replication(const ecs::Registry& registry, const SyncTagReplic
 
 void register_components(ecs::Registry& registry) {
     registry.register_component<SyncSettings>("kage.sync.SyncSettings");
+    registry.register_component<SyncAuthority>("kage.sync.SyncAuthority");
     registry.register_component<Replicated>("kage.sync.Replicated");
     registry.register_component<NetworkOwner>("kage.sync.NetworkOwner");
     registry.register_component<DisplayInterpolated>("kage.sync.DisplayInterpolated");
@@ -83,6 +84,7 @@ void configure_server(ecs::Registry& registry) {
     SyncSettings& settings = registry.write<SyncSettings>();
     settings.role = SyncRole::Server;
     settings.local_client = invalid_client_id;
+    registry.write<SyncAuthority>().authoritative = true;
 }
 
 void configure_client(ecs::Registry& registry, ClientId local_client) {
@@ -94,6 +96,7 @@ void configure_client(ecs::Registry& registry, ClientId local_client) {
     SyncSettings& settings = registry.write<SyncSettings>();
     settings.role = SyncRole::Client;
     settings.local_client = local_client;
+    registry.write<SyncAuthority>().authoritative = false;
 }
 
 SyncArchetypeId define_archetype(ecs::Registry& registry, SyncArchetypeDesc desc) {
@@ -178,6 +181,18 @@ bool set_owner(ecs::Registry& registry, ecs::Entity entity, ClientId client) {
     }
 
     return registry.add<NetworkOwner>(entity, NetworkOwner{client}) != nullptr;
+}
+
+bool set_client_input_component(ecs::Registry& registry, ecs::Entity component) {
+    register_components(registry);
+    if (!component || registry.component_info(component) == nullptr) {
+        return false;
+    }
+    if (find_component_ops(registry, component) == nullptr) {
+        return false;
+    }
+    registry.write<SyncSettings>().input_component = component;
+    return true;
 }
 
 }  // namespace kage::sync

@@ -9,6 +9,7 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -27,12 +28,31 @@ bool is_power_of_two(std::size_t value) {
     return value != 0U && (value & (value - 1U)) == 0U;
 }
 
-SyncFrame clamp_auto_interpolation_target(
-    const ReplicationClientOptions& options,
-    SyncFrame target) noexcept {
-    target = std::max(target, options.auto_interpolation_min_frames);
-    const SyncFrame max_frames = static_cast<SyncFrame>(options.interpolation_buffer_capacity_frames - 1U);
-    return std::min(target, max_frames);
+ReplicationClientClockConfig make_clock_config(const ReplicationClientOptions& options) noexcept {
+    ReplicationClientClockConfig config;
+    config.fixed_dt_seconds = options.fixed_dt_seconds;
+    config.interpolation_buffer_frames = options.interpolation_buffer_frames;
+    config.interpolation_buffer_capacity_frames = options.interpolation_buffer_capacity_frames;
+    config.auto_interpolation_buffer_frames = options.auto_interpolation_buffer_frames;
+    config.auto_interpolation_min_frames = options.auto_interpolation_min_frames;
+    config.auto_interpolation_jitter_multiplier = options.auto_interpolation_jitter_multiplier;
+    config.auto_interpolation_smoothing = options.auto_interpolation_smoothing;
+    config.auto_interpolation_time_dilation_min = options.auto_interpolation_time_dilation_min;
+    config.auto_interpolation_time_dilation_max = options.auto_interpolation_time_dilation_max;
+    config.auto_interpolation_time_dilation_gain = options.auto_interpolation_time_dilation_gain;
+    config.auto_prediction_lead_frames = options.auto_prediction_lead_frames;
+    config.prediction_lead_frames = options.prediction_lead_frames;
+    config.input_buffer_capacity_frames = options.input_buffer_capacity_frames;
+    config.auto_prediction_min_frames = options.auto_prediction_min_frames;
+    config.auto_prediction_safety_frames = options.auto_prediction_safety_frames;
+    config.auto_prediction_jitter_multiplier = options.auto_prediction_jitter_multiplier;
+    config.auto_prediction_time_dilation_min = options.auto_prediction_time_dilation_min;
+    config.auto_prediction_time_dilation_max = options.auto_prediction_time_dilation_max;
+    config.auto_prediction_time_dilation_gain = options.auto_prediction_time_dilation_gain;
+    config.auto_timing_warmup_samples = options.auto_timing_warmup_samples;
+    config.auto_timing_fast_recovery = options.auto_timing_fast_recovery;
+    config.auto_timing_fast_recovery_min_frame_gap = options.auto_timing_fast_recovery_min_frame_gap;
+    return config;
 }
 
 std::uint32_t count_bits(std::uint64_t value) noexcept {
@@ -151,6 +171,20 @@ bool tag_bit_set(std::uint64_t tag_mask, std::size_t tag_index) noexcept {
     return tag_index < 64U && (tag_mask & (std::uint64_t{1} << tag_index)) != 0U;
 }
 
+std::uint16_t encode_subframe(double subframe) noexcept {
+    if (!std::isfinite(subframe)) {
+        return 0;
+    }
+    const auto scaled = static_cast<std::uint32_t>(std::floor(
+        std::clamp(subframe, 0.0, 1.0) * static_cast<double>(protocol::frame_subframe_scale)));
+    return static_cast<std::uint16_t>(std::min(scaled, protocol::frame_subframe_scale - 1U));
+}
+
+double decode_continuous_frame(SyncFrame frame, std::uint16_t subframe) noexcept {
+    return static_cast<double>(frame) +
+        static_cast<double>(subframe) / static_cast<double>(protocol::frame_subframe_scale);
+}
+
 #ifdef KAGE_SYNC_ENABLE_TRACING
 SyncTraceEvent make_client_trace_event(SyncTraceEventType type, ClientId client, SyncFrame frame) {
     SyncTraceEvent event;
@@ -255,6 +289,27 @@ void append_trace_component_data(
 #endif
 }
 
+void append_trace_input_component_data(
+    const SyncTracer* tracer,
+    const SyncComponentOps& ops,
+    const std::uint8_t* bytes,
+    SyncTraceEvent& event) {
+    event.component_name = ops.name;
+#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+    if (tracer == nullptr || !tracer->frame_data_enabled() || bytes == nullptr || ops.trace == nullptr) {
+        return;
+    }
+    SyncTraceStringBuilder builder;
+    ops.trace(bytes, builder);
+    event.data = std::move(builder.value);
+#else
+    (void)tracer;
+    (void)ops;
+    (void)bytes;
+    (void)event;
+#endif
+}
+
 void append_trace_component_name(
     const SyncArchetype& archetype,
     std::size_t component_index,
@@ -270,8 +325,8 @@ void append_trace_cue_data(
     SyncCueTypeId cue_type,
     const BitBuffer& payload,
     SyncTraceEvent& event) {
-#ifdef KAGE_SYNC_TRACE_CUE_DATA
-    if (tracer == nullptr || !tracer->cue_data_enabled() ||
+#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+    if (tracer == nullptr || !tracer->frame_data_enabled() ||
         cue_type >= settings.cue_ops.size() || settings.cue_ops[cue_type].trace == nullptr) {
         return;
     }
@@ -287,6 +342,39 @@ void append_trace_cue_data(
     (void)event;
 #endif
 }
+
+void append_trace_data_field(SyncTraceEvent& event, const char* key, const char* value) {
+    if (key == nullptr || value == nullptr || value[0] == '\0') {
+        return;
+    }
+    if (!event.data.empty()) {
+        event.data += ",";
+    }
+    event.data += key;
+    event.data += "=";
+    event.data += value;
+}
+
+void append_trace_cue_name(const SyncSettings& settings, SyncCueTypeId cue_type, SyncTraceEvent& event) {
+    if (cue_type < settings.cue_ops.size()) {
+        event.component_name = settings.cue_ops[cue_type].name;
+    }
+}
+
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+std::string packet_ack_list(const std::vector<std::uint32_t>& acks) {
+    std::ostringstream out;
+    out << "[";
+    for (std::size_t index = 0; index < acks.size(); ++index) {
+        if (index != 0U) {
+            out << ",";
+        }
+        out << acks[index];
+    }
+    out << "]";
+    return out.str();
+}
+#endif
 #endif
 
 bool apply_archetype_tags(
@@ -360,12 +448,15 @@ bool ReplicatedEntityUpdateView::has_tag(const ecs::Registry& registry, ecs::Ent
     return false;
 }
 
-bool DisplayEntitySample::try_get(
+bool DisplayInterpolationSample::try_get_display_value(
     const ecs::Registry& registry,
     ecs::Entity component,
     void* out) const {
     if (out == nullptr) {
         return false;
+    }
+    if (!registry.has<DisplayInterpolated>(component)) {
+        throw std::logic_error("display sample component is not marked display-interpolated");
     }
 
     const auto found = std::find_if(
@@ -375,16 +466,7 @@ bool DisplayEntitySample::try_get(
             return update.component == component;
         });
     if (found == components.end()) {
-        if (!local_entity || !registry.alive(local_entity)) {
-            return false;
-        }
-        const void* value = registry.get(local_entity, component);
-        const ecs::ComponentInfo* info = registry.component_info(component);
-        if (value == nullptr || info == nullptr || info->tag) {
-            return false;
-        }
-        std::memcpy(out, value, info->size);
-        return true;
+        return false;
     }
 
     const SyncSettings& settings = registry.get<SyncSettings>();
@@ -400,7 +482,7 @@ bool DisplayEntitySample::try_get(
     return true;
 }
 
-bool DisplayEntitySample::has_tag(const ecs::Registry& registry, ecs::Entity tag) const {
+bool DisplayInterpolationSample::has_tag(const ecs::Registry& registry, ecs::Entity tag) const {
     const SyncSettings& settings = registry.get<SyncSettings>();
     if (archetype.value >= settings.archetypes.size()) {
         return false;
@@ -415,7 +497,8 @@ bool DisplayEntitySample::has_tag(const ecs::Registry& registry, ecs::Entity tag
 }
 
 ReplicationClient::ReplicationClient(ReplicationClientOptions options)
-    : options_(options) {
+    : options_(options),
+      clock_(make_clock_config(options_)) {
     if (!protocol::valid_network_entity_id_tier0_bits(options_.network_entity_id_tier0_bits)) {
         throw std::invalid_argument("network entity id tier0 bits must be in [1, 22]");
     }
@@ -424,6 +507,9 @@ ReplicationClient::ReplicationClient(ReplicationClientOptions options)
     }
     if (!is_power_of_two(options_.prediction_buffer_capacity_frames)) {
         throw std::invalid_argument("prediction buffer capacity must be a nonzero power of two");
+    }
+    if (!is_power_of_two(options_.input_buffer_capacity_frames)) {
+        throw std::invalid_argument("input buffer capacity must be a nonzero power of two");
     }
     if (options_.interpolation_buffer_frames >= options_.interpolation_buffer_capacity_frames) {
         throw std::invalid_argument("interpolation buffer amount must be smaller than capacity");
@@ -447,6 +533,28 @@ ReplicationClient::ReplicationClient(ReplicationClientOptions options)
     if (options_.auto_interpolation_time_dilation_gain < 0.0f) {
         throw std::invalid_argument("auto interpolation time dilation gain must be non-negative");
     }
+    if (options_.prediction_lead_frames >= options_.input_buffer_capacity_frames) {
+        throw std::invalid_argument("prediction lead frames must be smaller than input buffer capacity");
+    }
+    if (options_.auto_prediction_min_frames >= options_.input_buffer_capacity_frames) {
+        throw std::invalid_argument("auto prediction lead minimum must be smaller than input buffer capacity");
+    }
+    if (options_.auto_prediction_jitter_multiplier < 0.0f) {
+        throw std::invalid_argument("auto prediction jitter multiplier must be non-negative");
+    }
+    if (options_.auto_prediction_time_dilation_min <= 0.0f ||
+        options_.auto_prediction_time_dilation_min > 1.0f) {
+        throw std::invalid_argument("auto prediction time dilation minimum must be in the range (0, 1]");
+    }
+    if (options_.auto_prediction_time_dilation_max < 1.0f) {
+        throw std::invalid_argument("auto prediction time dilation maximum must be at least 1");
+    }
+    if (options_.auto_prediction_time_dilation_gain < 0.0f) {
+        throw std::invalid_argument("auto prediction time dilation gain must be non-negative");
+    }
+    if (options_.auto_timing_fast_recovery_min_frame_gap == 0U) {
+        throw std::invalid_argument("auto timing fast recovery min frame gap must be greater than zero");
+    }
     if (options_.fixed_dt_seconds <= 0.0 || !std::isfinite(options_.fixed_dt_seconds)) {
         throw std::invalid_argument("fixed dt seconds must be finite and positive");
     }
@@ -457,12 +565,26 @@ ReplicationClient::ReplicationClient(ReplicationClientOptions options)
     if (options_.ping_interval_seconds <= 0.0 || !std::isfinite(options_.ping_interval_seconds)) {
         throw std::invalid_argument("ping interval seconds must be finite and positive");
     }
+    if (options_.adaptive_ping_interval_seconds <= 0.0 ||
+        !std::isfinite(options_.adaptive_ping_interval_seconds)) {
+        throw std::invalid_argument("adaptive ping interval seconds must be finite and positive");
+    }
+    if (options_.adaptive_ping_stable_samples == 0U) {
+        throw std::invalid_argument("adaptive ping stable samples must be greater than zero");
+    }
+    if (options_.adaptive_ping_stable_threshold_frames < 0.0f ||
+        !std::isfinite(options_.adaptive_ping_stable_threshold_frames)) {
+        throw std::invalid_argument("adaptive ping stable threshold frames must be finite and non-negative");
+    }
+    if (options_.adaptive_ping_jump_threshold_frames < 0.0f ||
+        !std::isfinite(options_.adaptive_ping_jump_threshold_frames)) {
+        throw std::invalid_argument("adaptive ping jump threshold frames must be finite and non-negative");
+    }
+    adaptive_ping_active_ = options_.adaptive_ping_interval;
     if (options_.connect_token.empty()) {
         connection_state_ = ReplicationClientConnectionState::Ready;
+        (void)clock_.bootstrap_from_server_update(0, false, true);
     }
-    timing_stats_.desired_interpolation_buffer_frames = options_.interpolation_buffer_frames;
-    timing_stats_.target_interpolation_buffer_frames = options_.interpolation_buffer_frames;
-    timing_stats_.current_interpolation_buffer_frames = options_.interpolation_buffer_frames;
 }
 
 ReplicationClient::EntityState* ReplicationClient::find_entity_state(ecs::Entity server_entity) noexcept {
@@ -546,6 +668,18 @@ const ReplicationClient::EntityState* ReplicationClient::find_entity_state(std::
     }
     const EntityState& state = entities_[entity_index];
     return state.wire_network_id == network_id ? &state : nullptr;
+}
+
+ReplicationClient::EntityState* ReplicationClient::find_entity_state_for_local(ecs::Entity local) noexcept {
+    if (!local) {
+        return nullptr;
+    }
+    for (EntityState& state : entities_) {
+        if (state.local == local) {
+            return &state;
+        }
+    }
+    return nullptr;
 }
 
 ReplicationClient::EntityState* ReplicationClient::ensure_entity_state(
@@ -763,19 +897,95 @@ bool ReplicationClient::receive(ecs::Registry& registry, BitBuffer packet) {
             return receive_connect_response(registry, packet);
         }
         if (message == protocol::server_pong_message) {
-            return receive_pong(packet, receive_frame_);
+            return receive_pong(registry, packet, clock_.receive_frame());
         }
         if (message != protocol::server_update_message) {
             return false;
         }
         const auto frame = static_cast<SyncFrame>(packet.read_bits(32U));
         const auto packet_id = static_cast<std::uint32_t>(packet.read_bits(configured_packet_id_bits(options_)));
+        const auto input_ack_frame = static_cast<SyncFrame>(packet.read_bits(32U));
         const auto record_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+        if (client_id_ == invalid_client_id) {
+            const SyncSettings& settings = registry.get<SyncSettings>();
+            if (settings.local_client != invalid_client_id) {
+                client_id_ = settings.local_client;
+            }
+        }
+        current_packet_cue_summaries_.clear();
+#endif
+        acknowledge_input_frame(input_ack_frame);
         const bool applied = apply_update(registry, packet, packet_id, frame, record_count);
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+        trace_incoming_update_packet(clock_.receive_frame(), frame, packet_id, input_ack_frame, record_count);
+#endif
         if (applied) {
             connection_state_ = ReplicationClientConnectionState::Ready;
+            last_server_update_frame_ = frame;
+            last_server_update_receive_frame_ = clock_.continuous_receive_frame();
+            has_received_server_update_ = true;
+            if (clock_.bootstrap_from_server_update(frame)) {
+                const SyncSettings& settings = registry.get<SyncSettings>();
+                (void)fill_input_frames_through(registry, settings, clock_.input_frame());
+            }
             record_server_packet_sequence(packet_id);
-            record_update_timing(frame, receive_frame_, playback_frame_);
+            const SyncFrame decision_last_recorded_input_frame = last_recorded_input_frame_;
+            SyncFrame prefill_input_frame =
+                clock_.record_server_update(
+                    frame,
+                    clock_.continuous_receive_frame(),
+                    clock_.continuous_playback_frame(),
+                    clock_.continuous_input_frame(),
+                    has_buffered_entities(),
+                    decision_last_recorded_input_frame);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            const bool clock_requested_prefill = prefill_input_frame != 0U;
+#endif
+            if (prefill_input_frame != 0U) {
+                active_prediction_snap_lead_frames_ = clock_.stats().target_prediction_lead_frames;
+            } else if (active_prediction_snap_lead_frames_ != 0U) {
+                if (clock_.stats().target_prediction_lead_frames < active_prediction_snap_lead_frames_) {
+                    active_prediction_snap_lead_frames_ = 0;
+                } else if (clock_.stats().current_prediction_lead_frames < active_prediction_snap_lead_frames_) {
+                    prefill_input_frame = frame + active_prediction_snap_lead_frames_;
+                }
+            }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            trace_clock_skew(
+                clock_requested_prefill ? "clock_requested_prefill" :
+                    (prefill_input_frame != 0U ? "active_snap_topup" : "no_prefill"),
+                clock_.receive_frame(),
+                frame,
+                clock_.receive_frame(),
+                clock_.playback_frame(),
+                decision_last_recorded_input_frame,
+                prefill_input_frame);
+#endif
+            if (prefill_input_frame > last_recorded_input_frame_) {
+                const SyncSettings& settings = registry.get<SyncSettings>();
+                (void)fill_input_frames_through(registry, settings, prefill_input_frame);
+                if (prefill_input_frame > pending_prediction_catchup_frame_) {
+                    pending_prediction_catchup_frame_ = prefill_input_frame;
+                    pending_prediction_catchup_server_frame_ = frame;
+                }
+                if (!has_predicted_entities()) {
+                    clock_.advance_input_frame_to(prefill_input_frame);
+                    clock_.record_prediction_lead(frame, prefill_input_frame);
+                } else {
+                    clock_.record_prediction_lead(frame, prefill_input_frame);
+                }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+                trace_clock_skew(
+                    "prefill_applied",
+                    clock_.receive_frame(),
+                    frame,
+                    clock_.receive_frame(),
+                    clock_.playback_frame(),
+                    decision_last_recorded_input_frame,
+                    prefill_input_frame);
+#endif
+            }
         }
         return applied;
     } catch (const std::logic_error& error) {
@@ -798,7 +1008,7 @@ bool ReplicationClient::receive(
     SyncFrame receive_frame,
     SyncFrame playback_frame) {
     try {
-        advance_control_time_to(receive_frame);
+        clock_.advance_receive_frame_to(receive_frame);
         if (packet.remaining_bits() < 8U) {
             return false;
         }
@@ -807,19 +1017,93 @@ bool ReplicationClient::receive(
             return receive_connect_response(registry, packet);
         }
         if (message == protocol::server_pong_message) {
-            return receive_pong(packet, receive_frame);
+            return receive_pong(registry, packet, receive_frame);
         }
         if (message != protocol::server_update_message) {
             return false;
         }
         const auto frame = static_cast<SyncFrame>(packet.read_bits(32U));
         const auto packet_id = static_cast<std::uint32_t>(packet.read_bits(configured_packet_id_bits(options_)));
+        const auto input_ack_frame = static_cast<SyncFrame>(packet.read_bits(32U));
         const auto record_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+        if (client_id_ == invalid_client_id) {
+            const SyncSettings& settings = registry.get<SyncSettings>();
+            if (settings.local_client != invalid_client_id) {
+                client_id_ = settings.local_client;
+            }
+        }
+        current_packet_cue_summaries_.clear();
+#endif
+        acknowledge_input_frame(input_ack_frame);
         const bool applied = apply_update(registry, packet, packet_id, frame, record_count);
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+        trace_incoming_update_packet(receive_frame, frame, packet_id, input_ack_frame, record_count);
+#endif
         if (applied) {
             connection_state_ = ReplicationClientConnectionState::Ready;
+            last_server_update_frame_ = frame;
+            last_server_update_receive_frame_ = static_cast<double>(receive_frame);
+            has_received_server_update_ = true;
+            if (clock_.bootstrap_from_server_update(frame)) {
+                const SyncSettings& settings = registry.get<SyncSettings>();
+                (void)fill_input_frames_through(registry, settings, clock_.input_frame());
+            }
             record_server_packet_sequence(packet_id);
-            record_update_timing(frame, receive_frame, playback_frame);
+            const SyncFrame decision_last_recorded_input_frame = last_recorded_input_frame_;
+            SyncFrame prefill_input_frame = clock_.record_server_update(
+                frame,
+                static_cast<double>(receive_frame),
+                static_cast<double>(playback_frame),
+                static_cast<double>(decision_last_recorded_input_frame),
+                has_buffered_entities());
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            const bool clock_requested_prefill = prefill_input_frame != 0U;
+#endif
+            if (prefill_input_frame != 0U) {
+                active_prediction_snap_lead_frames_ = clock_.stats().target_prediction_lead_frames;
+            } else if (active_prediction_snap_lead_frames_ != 0U) {
+                if (clock_.stats().target_prediction_lead_frames < active_prediction_snap_lead_frames_) {
+                    active_prediction_snap_lead_frames_ = 0;
+                } else if (clock_.stats().current_prediction_lead_frames < active_prediction_snap_lead_frames_) {
+                    prefill_input_frame = frame + active_prediction_snap_lead_frames_;
+                }
+            }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            trace_clock_skew(
+                clock_requested_prefill ? "clock_requested_prefill" :
+                    (prefill_input_frame != 0U ? "active_snap_topup" : "no_prefill"),
+                receive_frame,
+                frame,
+                receive_frame,
+                playback_frame,
+                decision_last_recorded_input_frame,
+                prefill_input_frame);
+#endif
+            if (prefill_input_frame > last_recorded_input_frame_) {
+                const SyncSettings& settings = registry.get<SyncSettings>();
+                (void)fill_input_frames_through(registry, settings, prefill_input_frame);
+                if (prefill_input_frame > pending_prediction_catchup_frame_) {
+                    pending_prediction_catchup_frame_ = prefill_input_frame;
+                    pending_prediction_catchup_server_frame_ = frame;
+                }
+                if (!has_predicted_entities()) {
+                    clock_.advance_input_frame_to(prefill_input_frame);
+                    clock_.record_prediction_lead(frame, prefill_input_frame);
+                } else {
+                    clock_.record_prediction_lead(frame, prefill_input_frame);
+                }
+#ifdef KAGE_SYNC_ENABLE_TRACING
+                trace_clock_skew(
+                    "prefill_applied",
+                    receive_frame,
+                    frame,
+                    receive_frame,
+                    playback_frame,
+                    decision_last_recorded_input_frame,
+                    prefill_input_frame);
+#endif
+            }
         }
         return applied;
     } catch (const std::logic_error& error) {
@@ -870,7 +1154,6 @@ bool ReplicationClient::set_entity_mode(
     if (mode == ReplicationClientMode::Predict && !has_predicted_entities()) {
         has_predicted_frame_ = false;
         last_predicted_frame_ = 0;
-        prediction_accumulator_seconds_ = 0.0;
     }
 
     const SyncSettings& settings = registry.get<SyncSettings>();
@@ -898,7 +1181,6 @@ bool ReplicationClient::set_entity_mode(
     if (switched && mode != ReplicationClientMode::Predict && !has_predicted_entities()) {
         has_predicted_frame_ = false;
         last_predicted_frame_ = 0;
-        prediction_accumulator_seconds_ = 0.0;
     }
     return switched;
 }
@@ -960,6 +1242,207 @@ void ReplicationClient::trace_frame_components(
         }
     }
 }
+
+void ReplicationClient::trace_input_components(
+    ecs::Registry& registry,
+    const SyncSettings& settings,
+    SyncFrame frame,
+    ecs::Entity component,
+    const std::uint8_t* quantized) {
+    if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->frame_data_enabled() ||
+        settings.local_client == invalid_client_id || quantized == nullptr || !component) {
+        return;
+    }
+    const auto found_ops = settings.component_ops.find(component.value);
+    if (found_ops == settings.component_ops.end()) {
+        return;
+    }
+    const SyncComponentOps& ops = found_ops->second;
+    registry.view<const NetworkOwner>().each([&](ecs::Entity entity, const NetworkOwner& owner) {
+        if (owner.client != settings.local_client) {
+            return;
+        }
+        SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::FrameComponent, client_id_, frame);
+        event.local_entity = entity;
+        const EntityState* state = find_entity_state_for_local(entity);
+        if (state != nullptr && state->client_entity_network_id != invalid_client_entity_network_id) {
+            event.server_entity = ecs::Entity{state->client_entity_network_id};
+            event.client_network_id = state->client_entity_network_id;
+            event.wire_network_id = state->wire_network_id;
+            event.network_version = client_entity_network_id_version(state->client_entity_network_id);
+            event.archetype = state->archetype;
+            event.mode = state->mode;
+        }
+        event.component = component;
+        append_trace_input_component_data(tracer_, ops, quantized, event);
+        tracer_->trace(event);
+    });
+}
+
+void ReplicationClient::trace_clock_skew(
+    const char* stage,
+    SyncFrame local_frame,
+    SyncFrame server_frame,
+    SyncFrame observed_receive_frame,
+    SyncFrame observed_playback_frame,
+    SyncFrame last_recorded_input_frame,
+    SyncFrame prefill_input_frame) const {
+    if (tracer_ == nullptr || !tracer_->enabled()) {
+        return;
+    }
+    const ReplicationClientTimingStats& timing = clock_.stats();
+    const SyncFrame observed_downstream =
+        observed_receive_frame > server_frame ? observed_receive_frame - server_frame : 0U;
+    const SyncFrame measured_prediction =
+        last_recorded_input_frame >= server_frame ? last_recorded_input_frame - server_frame : 0U;
+    const SyncFrame input_frame = clock_.input_frame();
+    const SyncFrame input_lead = input_frame >= server_frame ? input_frame - server_frame : 0U;
+
+    SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ClockSkew, client_id_, local_frame);
+    event.local_entity = ecs::Entity{client_id_ == invalid_client_id ? 0U : client_id_};
+    event.component = ecs::Entity{std::numeric_limits<std::uint64_t>::max() - 1U};
+    event.component_name = "Clock";
+    std::ostringstream out;
+    out << "stage=" << stage
+        << ",server_frame=" << server_frame
+        << ",receive_frame=" << observed_receive_frame
+        << ",playback_frame=" << observed_playback_frame
+        << ",input_frame=" << input_frame
+        << ",last_recorded_input=" << last_recorded_input_frame
+        << ",last_predicted=" << last_predicted_frame_
+        << ",observed_downstream=" << observed_downstream
+        << ",measured_prediction=" << measured_prediction
+        << ",input_lead=" << input_lead
+        << ",prediction_current=" << timing.current_prediction_lead_frames
+        << ",prediction_target=" << timing.target_prediction_lead_frames
+        << ",prediction_desired=" << timing.desired_prediction_lead_frames
+        << ",prediction_measured=" << timing.measured_prediction_lead_frames
+        << ",prediction_dilation=" << timing.prediction_time_dilation
+        << ",interpolation_current=" << timing.current_interpolation_buffer_frames
+        << ",interpolation_target=" << timing.target_interpolation_buffer_frames
+        << ",interpolation_desired=" << timing.desired_interpolation_buffer_frames
+        << ",interpolation_measured=" << timing.measured_interpolation_buffer_frames
+        << ",time_dilation=" << timing.time_dilation
+        << ",prefill_input=" << prefill_input_frame
+        << ",active_snap_lead=" << active_prediction_snap_lead_frames_
+        << ",pending_catchup=" << pending_prediction_catchup_frame_
+        << ",pending_catchup_server=" << pending_prediction_catchup_server_frame_
+        << ",has_predicted_entities=" << (has_predicted_entities() ? 1 : 0)
+        << ",has_predicted_frame=" << (has_predicted_frame_ ? 1 : 0);
+    event.data = out.str();
+    tracer_->trace(event);
+}
+
+void ReplicationClient::trace_cue_event(
+    SyncTraceEventType type,
+    const SyncSettings& settings,
+    const EntityState& state,
+    const EntityState::Cue& cue,
+    const char* rollback_reason,
+    const char* cue_source) const {
+    if (tracer_ == nullptr || !tracer_->enabled()) {
+        return;
+    }
+    SyncTraceEvent event = make_client_trace_event(type, client_id_, cue.frame);
+    event.server_entity = ecs::Entity{state.client_entity_network_id};
+    event.local_entity = state.local;
+    event.client_network_id = state.client_entity_network_id;
+    event.wire_network_id = state.wire_network_id;
+    event.network_version = client_entity_network_id_version(state.client_entity_network_id);
+    event.archetype = state.archetype;
+    event.cue_type = cue.type;
+    append_trace_cue_name(settings, cue.type, event);
+    append_trace_cue_data(tracer_, settings, cue.type, cue.payload, event);
+    append_trace_data_field(event, "source", cue_source);
+    append_trace_data_field(event, "rollback_reason", rollback_reason);
+    tracer_->trace(event);
+}
+
+void ReplicationClient::trace_cue_event(
+    SyncTraceEventType type,
+    const SyncSettings& settings,
+    const EntityState& state,
+    const EntityState::PlayedCue& cue,
+    const char* rollback_reason,
+    const char* cue_source) const {
+    if (tracer_ == nullptr || !tracer_->enabled()) {
+        return;
+    }
+    SyncTraceEvent event = make_client_trace_event(type, client_id_, cue.frame);
+    event.server_entity = ecs::Entity{state.client_entity_network_id};
+    event.local_entity = state.local;
+    event.client_network_id = state.client_entity_network_id;
+    event.wire_network_id = state.wire_network_id;
+    event.network_version = client_entity_network_id_version(state.client_entity_network_id);
+    event.archetype = state.archetype;
+    event.cue_type = cue.type;
+    append_trace_cue_name(settings, cue.type, event);
+    append_trace_cue_data(tracer_, settings, cue.type, cue.payload, event);
+    append_trace_data_field(event, "source", cue_source);
+    append_trace_data_field(event, "rollback_reason", rollback_reason);
+    tracer_->trace(event);
+}
+
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+void ReplicationClient::trace_outgoing_ack_packet(const std::vector<std::uint32_t>& acks) const {
+    if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->packet_logs_enabled()) {
+        return;
+    }
+    SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::PacketLog, client_id_, clock_.input_frame());
+    event.data = "direction=out,message=client_ack,acks=" + packet_ack_list(acks);
+    tracer_->trace(event);
+}
+
+void ReplicationClient::trace_outgoing_input_packet(
+    const std::vector<std::uint32_t>& acks,
+    SyncFrame baseline_frame,
+    SyncFrame first_input_frame,
+    SyncFrame last_input_frame) const {
+    if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->packet_logs_enabled()) {
+        return;
+    }
+    SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::PacketLog, client_id_, clock_.input_frame());
+    std::ostringstream out;
+    out << "direction=out,message=client_input,acks=" << packet_ack_list(acks)
+        << ",input_frames=";
+    if (first_input_frame != 0U && last_input_frame >= first_input_frame) {
+        out << first_input_frame << "-" << last_input_frame;
+    } else {
+        out << "none";
+    }
+    out << ",baseline=" << baseline_frame;
+    event.data = out.str();
+    tracer_->trace(event);
+}
+
+void ReplicationClient::trace_incoming_update_packet(
+    SyncFrame local_frame,
+    SyncFrame server_frame,
+    std::uint32_t packet_id,
+    SyncFrame input_ack_frame,
+    std::uint16_t record_count) const {
+    if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->packet_logs_enabled()) {
+        return;
+    }
+    SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::PacketLog, client_id_, local_frame);
+    std::ostringstream out;
+    out << "direction=in,message=server_update,client=" << client_id_
+        << ",sequence=" << packet_id
+        << ",server_frame=" << server_frame
+        << ",input_ack=" << input_ack_frame
+        << ",record_count=" << record_count
+        << ",cues=[";
+    for (std::size_t index = 0; index < current_packet_cue_summaries_.size(); ++index) {
+        if (index != 0U) {
+            out << ";";
+        }
+        out << current_packet_cue_summaries_[index];
+    }
+    out << "]";
+    event.data = out.str();
+    tracer_->trace(event);
+}
+#endif
 #endif
 
 ReplicationClientMode ReplicationClient::entity_mode(ecs::Entity server_entity) const noexcept {
@@ -968,19 +1451,49 @@ ReplicationClientMode ReplicationClient::entity_mode(ecs::Entity server_entity) 
 }
 
 bool ReplicationClient::set_interpolation_buffer_frames(SyncFrame frames) noexcept {
-    if (frames >= options_.interpolation_buffer_capacity_frames) {
+    if (!clock_.set_interpolation_buffer_frames(frames)) {
         return false;
     }
     options_.interpolation_buffer_frames = frames;
-    timing_stats_.desired_interpolation_buffer_frames = frames;
-    timing_stats_.target_interpolation_buffer_frames = frames;
-    timing_stats_.current_interpolation_buffer_frames = frames;
-    timing_stats_.time_dilation = 1.0f;
     return true;
+}
+
+SyncFrame ReplicationClient::current_interpolation_buffer_frames() const noexcept {
+    return clock_.interpolation_buffer_frames();
+}
+
+double ReplicationClient::estimated_server_frame() const noexcept {
+    if (!has_received_server_update_) {
+        return 0.0;
+    }
+    const double elapsed_receive_frames = clock_.continuous_receive_frame() - last_server_update_receive_frame_;
+    return static_cast<double>(last_server_update_frame_) + std::max(0.0, elapsed_receive_frames);
+}
+
+double ReplicationClient::continuous_prediction_frames_ahead() const noexcept {
+    if (!has_received_server_update_) {
+        return 0.0;
+    }
+    return clock_.continuous_input_frame() - estimated_server_frame();
+}
+
+double ReplicationClient::continuous_interpolation_frames_behind() const noexcept {
+    if (!has_received_server_update_) {
+        return 0.0;
+    }
+    return clock_.continuous_playback_frame() - clock_.display_target_frame();
 }
 
 bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds) {
     return tick(registry, dt_seconds, {});
+}
+
+void ReplicationClient::set_packet_sender(std::function<void(const BitBuffer&)> sender) {
+    packet_sender_ = std::move(sender);
+}
+
+void ReplicationClient::receive_packet(BitBuffer packet) {
+    inbound_packets_.push_back(std::move(packet));
 }
 
 bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds, ecs::RunJobsOptions prediction_options) {
@@ -988,14 +1501,8 @@ bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds, ecs::Ru
         return false;
     }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
-    const SyncFrame previous_receive_frame = receive_frame_;
-#endif
-    receive_accumulator_seconds_ += dt_seconds;
-    while (receive_accumulator_seconds_ >= options_.fixed_dt_seconds) {
-        receive_accumulator_seconds_ -= options_.fixed_dt_seconds;
-        ++receive_frame_;
-    }
+    ReplicationClientClock::AdvanceResult advance;
+    advance.receive = clock_.advance_receive(dt_seconds);
 
     if (connection_state_ == ReplicationClientConnectionState::Connecting ||
         connection_state_ == ReplicationClientConnectionState::Accepted) {
@@ -1006,32 +1513,69 @@ bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds, ecs::Ru
         ping_accumulator_seconds_ += dt_seconds;
     }
 
-    playback_accumulator_seconds_ += dt_seconds * static_cast<double>(timing_stats_.time_dilation);
-    display_accumulator_seconds_ += dt_seconds;
-    while (playback_accumulator_seconds_ >= options_.fixed_dt_seconds) {
-        playback_accumulator_seconds_ -= options_.fixed_dt_seconds;
-        ++playback_frame_;
-        (void)apply_frame(registry, playback_frame_);
+    if (!process_inbound_packets(registry)) {
+        return false;
     }
 
-    if (has_predicted_entities() && has_predicted_frame_) {
-        prediction_accumulator_seconds_ += dt_seconds;
-        while (prediction_accumulator_seconds_ >= options_.fixed_dt_seconds) {
-            prediction_accumulator_seconds_ -= options_.fixed_dt_seconds;
-            const SyncFrame next_prediction_frame = last_predicted_frame_ + 1U;
-            if (!run_prediction_frame(registry, next_prediction_frame, prediction_options)) {
+    const ReplicationClientClock::AdvanceResult playback_input = clock_.advance_playback_input(dt_seconds);
+    advance.playback = playback_input.playback;
+    advance.input = playback_input.input;
+
+    for (SyncFrame frame = advance.playback.first; !advance.playback.empty() && frame <= advance.playback.last; ++frame) {
+        (void)apply_frame(registry, frame);
+    }
+
+    for (SyncFrame frame = advance.input.first; !advance.input.empty() && frame <= advance.input.last; ++frame) {
+        const SyncSettings& settings = registry.get<SyncSettings>();
+        (void)record_input_frame(registry, settings, frame);
+        if (has_predicted_entities() && has_predicted_frame_ && frame > last_predicted_frame_) {
+            if (!run_prediction_frame(registry, frame, prediction_options)) {
                 return false;
             }
         }
-    } else {
-        prediction_accumulator_seconds_ = 0.0;
     }
 
-    update_display_target(dt_seconds);
-#ifdef KAGE_SYNC_ENABLE_TRACING
-    if (previous_receive_frame != receive_frame_) {
+    if (options_.auto_timing_fast_recovery &&
+        has_predicted_entities() &&
+        has_predicted_frame_ &&
+        pending_prediction_catchup_frame_ > clock_.input_frame()) {
+        const SyncFrame first = clock_.input_frame() + 1U;
+        const SyncFrame last = pending_prediction_catchup_frame_;
         const SyncSettings& settings = registry.get<SyncSettings>();
-        for (SyncFrame frame = previous_receive_frame + 1U; frame <= receive_frame_; ++frame) {
+        for (SyncFrame frame = first; frame <= last; ++frame) {
+            (void)record_input_frame(registry, settings, frame);
+            if (frame > last_predicted_frame_ && !run_prediction_frame(registry, frame, prediction_options)) {
+                return false;
+            }
+            clock_.advance_input_frame_to(frame);
+        }
+        if (pending_prediction_catchup_server_frame_ != 0U) {
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            const SyncFrame catchup_server_frame = pending_prediction_catchup_server_frame_;
+#endif
+            clock_.record_prediction_lead(pending_prediction_catchup_server_frame_, clock_.input_frame());
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            trace_clock_skew(
+                "prediction_catchup_applied",
+                clock_.receive_frame(),
+                catchup_server_frame,
+                clock_.receive_frame(),
+                clock_.playback_frame(),
+                last_recorded_input_frame_,
+                clock_.input_frame());
+#endif
+        }
+    }
+    if (pending_prediction_catchup_frame_ <= clock_.input_frame()) {
+        pending_prediction_catchup_frame_ = 0;
+        pending_prediction_catchup_server_frame_ = 0;
+    }
+
+    clock_.update_display_target(dt_seconds);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    if (!advance.receive.empty()) {
+        const SyncSettings& settings = registry.get<SyncSettings>();
+        for (SyncFrame frame = advance.receive.first; frame <= advance.receive.last; ++frame) {
             trace_frame_components(
                 registry,
                 settings,
@@ -1039,12 +1583,13 @@ bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds, ecs::Ru
                 false,
                 false,
                 TraceFrameComponentScope::NonPredicted);
-            if (frame == receive_frame_) {
+            if (frame == advance.receive.last) {
                 break;
             }
         }
     }
 #endif
+    send_pending_packets();
     return true;
 }
 
@@ -1057,9 +1602,12 @@ bool ReplicationClient::run_prediction_frame(ecs::Registry& registry, SyncFrame 
         return false;
     }
 
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    if (!apply_input_frame(registry, settings, frame)) {
+        return false;
+    }
     registry.run_jobs(options);
 
-    const SyncSettings& settings = registry.get<SyncSettings>();
     drain_emitted_prediction_cues(registry, settings, frame, true);
     bool all_valid = true;
     for (std::uint32_t entity_index : active_entities_) {
@@ -1087,11 +1635,12 @@ bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame client_fr
     if (!has_buffered_entities()) {
         return true;
     }
-    if (client_frame < options_.interpolation_buffer_frames) {
+    const SyncFrame interpolation_buffer_frames = clock_.interpolation_buffer_frames();
+    if (client_frame < interpolation_buffer_frames) {
         return false;
     }
 
-    const SyncFrame target_frame = client_frame - options_.interpolation_buffer_frames;
+    const SyncFrame target_frame = client_frame - interpolation_buffer_frames;
     last_applied_buffered_frame_ = target_frame;
     has_applied_buffered_frame_ = true;
     const SyncSettings& settings = registry.get<SyncSettings>();
@@ -1188,32 +1737,32 @@ void ReplicationClient::record_interpolation_frame(std::uint64_t checks, std::ui
 }
 #endif
 
-bool ReplicationClient::sample_display_target_frame(
+bool ReplicationClient::sample_display_interpolation_target_frame(
     const ecs::Registry& registry,
     double target_frame,
-    DisplaySampleBuffer& out) const {
+    DisplayInterpolationSampleBuffer& out) const {
     return write_display_samples(registry, target_frame, false, false, out);
 }
 
-bool ReplicationClient::sample_display_frame(
+bool ReplicationClient::sample_display_interpolation_frame(
     const ecs::Registry& registry,
     double client_frame,
-    DisplaySampleBuffer& out) const {
-    return sample_display_target_frame(
+    DisplayInterpolationSampleBuffer& out) const {
+    return sample_display_interpolation_target_frame(
         registry,
-        client_frame - static_cast<double>(options_.interpolation_buffer_frames),
+        client_frame - static_cast<double>(clock_.interpolation_buffer_frames()),
         out);
 }
 
-const DisplaySampleBuffer& ReplicationClient::display_frame(const ecs::Registry& registry) {
-    const float display_dt = display_accumulator_seconds_ > 0.0 && std::isfinite(display_accumulator_seconds_)
-        ? static_cast<float>(display_accumulator_seconds_)
+const DisplayInterpolationSampleBuffer& ReplicationClient::display_interpolation_frame(const ecs::Registry& registry) {
+    const double display_accumulator_seconds = clock_.consume_display_accumulator_seconds();
+    const float display_dt = display_accumulator_seconds > 0.0 && std::isfinite(display_accumulator_seconds)
+        ? static_cast<float>(display_accumulator_seconds)
         : 0.0f;
-    display_accumulator_seconds_ = 0.0;
     if (display_dt > 0.0f) {
         blend_snap_errors(registry.get<SyncSettings>(), display_dt);
     }
-    if (write_display_samples(registry, display_target_frame_, true, true, display_scratch_)) {
+    if (write_display_samples(registry, clock_.display_target_frame(), true, true, display_scratch_)) {
         display_frame_.entities.swap(display_scratch_.entities);
         display_scratch_.clear();
     } else if (display_frame_.entities.empty()) {
@@ -1227,6 +1776,7 @@ std::vector<BitBuffer> ReplicationClient::drain_packets() {
     std::vector<BitBuffer> packets;
     drain_connect_packets(packets);
     drain_ping_packets(packets);
+    drain_input_packets_into(packets);
     drain_ack_packets_into(packets);
     return packets;
 }
@@ -1235,6 +1785,23 @@ std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
     std::vector<BitBuffer> packets;
     drain_ack_packets_into(packets);
     return packets;
+}
+
+bool ReplicationClient::process_inbound_packets(ecs::Registry& registry) {
+    for (BitBuffer& packet : inbound_packets_) {
+        (void)receive(registry, std::move(packet));
+    }
+    inbound_packets_.clear();
+    return true;
+}
+
+void ReplicationClient::send_pending_packets() {
+    if (!packet_sender_) {
+        return;
+    }
+    for (const BitBuffer& packet : drain_packets()) {
+        packet_sender_(packet);
+    }
 }
 
 void ReplicationClient::drain_ack_packets_into(std::vector<BitBuffer>& packets) {
@@ -1262,6 +1829,9 @@ void ReplicationClient::drain_ack_packets_into(std::vector<BitBuffer>& packets) 
     BitBuffer packet;
     std::uint16_t packet_ack_count = 0;
     std::size_t packet_count_offset = 0;
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+    std::vector<std::uint32_t> packet_acks;
+#endif
     auto begin_packet = [&]() {
         packet.clear();
         packet.reserve_bytes(options_.mtu_bytes);
@@ -1269,12 +1839,18 @@ void ReplicationClient::drain_ack_packets_into(std::vector<BitBuffer>& packets) 
         packet_count_offset = packet.bit_size();
         packet.push_bits(0, 16U);
         packet_ack_count = 0;
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+        packet_acks.clear();
+#endif
     };
     auto finish_packet = [&]() {
         if (packet_ack_count == 0U) {
             return;
         }
         packet.overwrite_unsigned_bits(packet_count_offset, packet_ack_count, 16U);
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+        trace_outgoing_ack_packet(packet_acks);
+#endif
         packets.push_back(std::move(packet));
         packet = BitBuffer{};
     };
@@ -1286,6 +1862,9 @@ void ReplicationClient::drain_ack_packets_into(std::vector<BitBuffer>& packets) 
             begin_packet();
         }
         packet.push_bits(packet_id, packet_id_bits);
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+        packet_acks.push_back(packet_id);
+#endif
         ++packet_ack_count;
     }
     finish_packet();
@@ -1293,8 +1872,281 @@ void ReplicationClient::drain_ack_packets_into(std::vector<BitBuffer>& packets) 
     pending_acks_.clear();
 }
 
+void ReplicationClient::drain_input_packets_into(std::vector<BitBuffer>& packets) {
+    if (connection_state_ != ReplicationClientConnectionState::Ready || !clock_.bootstrapped()) {
+        return;
+    }
+    const bool has_input_frames = has_latest_input_ && last_recorded_input_frame_ > acked_input_frame_;
+    if (!has_input_ops_ || !has_input_frames) {
+        return;
+    }
+
+    const std::size_t packet_id_bits = configured_packet_id_bits(options_);
+    const std::size_t mtu_bits = options_.mtu_bytes * 8U;
+    const std::size_t fixed_header_bits = 8U + 16U + 32U + 16U + 1U;
+    if (mtu_bits < fixed_header_bits) {
+        return;
+    }
+
+    SyncFrame first_input_frame = 0;
+    const InputFrame* first_input = nullptr;
+    if (!input_frames_.empty()) {
+        for (SyncFrame frame = acked_input_frame_ + 1U; frame <= last_recorded_input_frame_; ++frame) {
+            const InputFrame& input = input_frames_[frame & (input_frames_.size() - 1U)];
+            if (input.valid && input.frame == frame && input.bytes.size() == input_ops_.quantized_size) {
+                first_input_frame = frame;
+                first_input = &input;
+                break;
+            }
+        }
+    }
+    const bool baseline_valid = acked_input_frame_ == 0U || has_acked_input_baseline_;
+    const bool first_input_full = first_input != nullptr &&
+        (input_history_discontinuous_ || first_input_frame != acked_input_frame_ + 1U || !baseline_valid);
+
+    BitBuffer packet;
+    packet.reserve_bytes(options_.mtu_bytes);
+    packet.push_bits(protocol::client_input_message, 8U);
+    const std::size_t ack_count_offset = packet.bit_size();
+    packet.push_bits(0, 16U);
+
+    std::size_t reserved_first_input_bits = 0;
+    if (first_input != nullptr) {
+        BitBuffer first_input_payload;
+        const std::uint8_t* previous = first_input_full || acked_input_baseline_.empty()
+            ? nullptr
+            : acked_input_baseline_.data();
+        input_ops_.serialize(previous, first_input->bytes.data(), first_input_payload, nullptr);
+        reserved_first_input_bits = first_input_payload.bit_size();
+    }
+
+    std::uint16_t ack_count = 0;
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+    std::vector<std::uint32_t> packet_acks;
+#endif
+    const std::size_t max_acks = std::min<std::size_t>(
+        std::numeric_limits<std::uint16_t>::max(),
+        (mtu_bits - fixed_header_bits) / packet_id_bits);
+    while (ack_count < max_acks && ack_count < pending_acks_.size()) {
+        BitBuffer candidate = packet;
+        candidate.push_bits(pending_acks_[ack_count], packet_id_bits);
+        const std::size_t explicit_first_frame_bits = first_input_full ? 32U : 0U;
+        if (protocol::bytes_for_bits(
+                candidate.bit_size() + 32U + 16U + 1U + explicit_first_frame_bits + reserved_first_input_bits) >
+            options_.mtu_bytes) {
+            break;
+        }
+        packet = std::move(candidate);
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+        packet_acks.push_back(pending_acks_[ack_count]);
+#endif
+        ++ack_count;
+    }
+    packet.overwrite_unsigned_bits(ack_count_offset, ack_count, 16U);
+
+    packet.push_bits(acked_input_frame_, 32U);
+    const std::size_t input_count_offset = packet.bit_size();
+    packet.push_bits(0, 16U);
+    packet.push_bool(first_input_full);
+    if (first_input_full) {
+        packet.push_bits(first_input_frame, 32U);
+    }
+
+    std::uint16_t input_count = 0;
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+    SyncFrame last_input_frame = 0;
+#endif
+    const std::uint8_t* previous = first_input_full || acked_input_baseline_.empty()
+        ? nullptr
+        : acked_input_baseline_.data();
+    if (first_input_frame != 0U) {
+        for (SyncFrame frame = first_input_frame; frame <= last_recorded_input_frame_; ++frame) {
+            if (input_frames_.empty()) {
+                break;
+            }
+            const InputFrame& input = input_frames_[frame & (input_frames_.size() - 1U)];
+            if (!input.valid || input.frame != frame || input.bytes.size() != input_ops_.quantized_size) {
+                break;
+            }
+
+            BitBuffer candidate = packet;
+            input_ops_.serialize(previous, input.bytes.data(), candidate, nullptr);
+            if (protocol::bytes_for_bits(candidate.bit_size()) > options_.mtu_bytes) {
+                break;
+            }
+            packet = std::move(candidate);
+            previous = input.bytes.data();
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+            last_input_frame = frame;
+#endif
+            ++input_count;
+            if (input_count == std::numeric_limits<std::uint16_t>::max()) {
+                break;
+            }
+        }
+    }
+
+    if (ack_count == 0U && input_count == 0U) {
+        return;
+    }
+    packet.overwrite_unsigned_bits(input_count_offset, input_count, 16U);
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+    trace_outgoing_input_packet(packet_acks, acked_input_frame_, first_input_frame, last_input_frame);
+#endif
+    packets.push_back(std::move(packet));
+    if (input_count != 0U) {
+        input_history_discontinuous_ = false;
+    }
+    if (ack_count != 0U) {
+        pending_acks_.erase(pending_acks_.begin(), pending_acks_.begin() + ack_count);
+    }
+}
+
 std::size_t ReplicationClient::pending_ack_count() const noexcept {
     return pending_acks_.size();
+}
+
+bool ReplicationClient::set_input_bytes(ecs::Registry& registry, ecs::Entity component, const void* input) {
+    if (input == nullptr) {
+        return false;
+    }
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    if (!settings.input_component || settings.input_component != component) {
+        return false;
+    }
+    const auto found_ops = settings.component_ops.find(component.value);
+    if (found_ops == settings.component_ops.end() ||
+        found_ops->second.quantize == nullptr ||
+        found_ops->second.serialize == nullptr ||
+        found_ops->second.apply == nullptr ||
+        found_ops->second.quantized_size == 0U) {
+        return false;
+    }
+
+    input_component_ = component;
+    input_ops_ = found_ops->second;
+    has_input_ops_ = true;
+    latest_input_.assign(input_ops_.quantized_size, 0U);
+    input_ops_.quantize(input, latest_input_.data());
+    if (acked_input_baseline_.size() != input_ops_.quantized_size) {
+        acked_input_baseline_.assign(input_ops_.quantized_size, 0U);
+    }
+    has_acked_input_baseline_ = true;
+    has_latest_input_ = true;
+    apply_input_to_owned_entities(registry, component, latest_input_.data());
+    return true;
+}
+
+bool ReplicationClient::record_input_frame(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame) {
+    if (!has_latest_input_ || !has_input_ops_ || !settings.input_component ||
+        settings.input_component != input_component_ || frame <= acked_input_frame_) {
+        return true;
+    }
+    if (input_frames_.empty()) {
+        input_frames_.resize(options_.input_buffer_capacity_frames);
+    }
+    InputFrame& stored = input_frames_[frame & (input_frames_.size() - 1U)];
+    if (stored.valid && stored.frame != frame && stored.frame > acked_input_frame_) {
+        input_history_discontinuous_ = true;
+    }
+    stored.frame = frame;
+    stored.valid = true;
+    stored.bytes = latest_input_;
+    last_recorded_input_frame_ = std::max(last_recorded_input_frame_, frame);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    trace_input_components(registry, settings, frame, input_component_, stored.bytes.data());
+#else
+    (void)registry;
+#endif
+    return true;
+}
+
+bool ReplicationClient::fill_input_frames_through(
+    ecs::Registry& registry,
+    const SyncSettings& settings,
+    SyncFrame frame) {
+    if (!has_latest_input_ || !has_input_ops_ || !settings.input_component ||
+        settings.input_component != input_component_ || frame <= acked_input_frame_) {
+        return true;
+    }
+    if (input_frames_.empty()) {
+        input_frames_.resize(options_.input_buffer_capacity_frames);
+    }
+    if (input_frames_.empty()) {
+        return true;
+    }
+    const SyncFrame begin = std::max(acked_input_frame_ + 1U, last_recorded_input_frame_ + 1U);
+    for (SyncFrame current = begin; current <= frame; ++current) {
+        InputFrame& stored = input_frames_[current & (input_frames_.size() - 1U)];
+        if (stored.valid && stored.frame == current && stored.bytes.size() == input_ops_.quantized_size) {
+            last_recorded_input_frame_ = std::max(last_recorded_input_frame_, current);
+            continue;
+        }
+        if (stored.valid && stored.frame != current && stored.frame > acked_input_frame_) {
+            input_history_discontinuous_ = true;
+        }
+        stored.frame = current;
+        stored.valid = true;
+        stored.bytes = latest_input_;
+        last_recorded_input_frame_ = std::max(last_recorded_input_frame_, current);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+        trace_input_components(registry, settings, current, input_component_, stored.bytes.data());
+#else
+        (void)registry;
+#endif
+    }
+    return true;
+}
+
+bool ReplicationClient::apply_input_frame(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame) {
+    if (!has_input_ops_ || !settings.input_component || settings.input_component != input_component_) {
+        return true;
+    }
+    if (input_frames_.empty()) {
+        return true;
+    }
+    const InputFrame& stored = input_frames_[frame & (input_frames_.size() - 1U)];
+    if (!stored.valid || stored.frame != frame || stored.bytes.size() != input_ops_.quantized_size) {
+        return true;
+    }
+    apply_input_to_owned_entities(registry, input_component_, stored.bytes.data());
+    return true;
+}
+
+void ReplicationClient::apply_input_to_owned_entities(
+    ecs::Registry& registry,
+    ecs::Entity component,
+    const std::uint8_t* quantized) {
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    if (settings.local_client == invalid_client_id || quantized == nullptr || input_ops_.apply == nullptr) {
+        return;
+    }
+    registry.view<const NetworkOwner>().each([&](ecs::Entity entity, const NetworkOwner& owner) {
+        if (owner.client == settings.local_client) {
+            (void)input_ops_.apply(registry, entity, quantized);
+        }
+    });
+    (void)component;
+}
+
+void ReplicationClient::acknowledge_input_frame(SyncFrame frame) {
+    if (frame <= acked_input_frame_) {
+        return;
+    }
+    bool found_baseline = false;
+    if (!input_frames_.empty()) {
+        for (SyncFrame current = acked_input_frame_ + 1U; current <= frame; ++current) {
+            InputFrame& stored = input_frames_[current & (input_frames_.size() - 1U)];
+            if (stored.valid && stored.frame == current) {
+                if (current == frame) {
+                    acked_input_baseline_ = stored.bytes;
+                    found_baseline = true;
+                }
+            }
+        }
+    }
+    has_acked_input_baseline_ = frame == 0U || found_baseline;
+    acked_input_frame_ = frame;
 }
 
 ecs::Entity ReplicationClient::local_entity(ecs::Entity server_entity) const {
@@ -1744,6 +2596,28 @@ bool ReplicationClient::apply_upsert(
     if (!read_cues(packet, received_cues)) {
         return false;
     }
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+    if (!received_cues.empty()) {
+        current_packet_cue_summaries_.reserve(current_packet_cue_summaries_.size() + received_cues.size());
+        for (const EntityState::Cue& cue : received_cues) {
+            std::ostringstream out;
+            out << "{entity=" << client_entity_network_id
+                << ",frame=" << cue.frame
+                << ",type=" << cue.type;
+#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+            if (tracer_ != nullptr && tracer_->frame_data_enabled() &&
+                cue.type < settings.cue_ops.size() && settings.cue_ops[cue.type].trace != nullptr) {
+                SyncTraceStringBuilder builder;
+                if (settings.cue_ops[cue.type].trace(cue.payload, builder) && !builder.value.empty()) {
+                    out << ",data=" << builder.value;
+                }
+            }
+#endif
+            out << "}";
+            current_packet_cue_summaries_.push_back(out.str());
+        }
+    }
+#endif
 #ifdef KAGE_SYNC_ENABLE_TRACING
     if (tracer_ != nullptr && tracer_->enabled()) {
         for (const EntityState::Cue& cue : received_cues) {
@@ -1754,7 +2628,9 @@ bool ReplicationClient::apply_upsert(
             event.network_version = client_entity_network_id_version(client_entity_network_id);
             event.archetype = archetype;
             event.cue_type = cue.type;
+            append_trace_cue_name(settings, cue.type, event);
             append_trace_cue_data(tracer_, settings, cue.type, cue.payload, event);
+            append_trace_data_field(event, "source", "server");
             tracer_->trace(event);
         }
     }
@@ -1915,6 +2791,16 @@ bool ReplicationClient::play_cue(
     if (cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].play == nullptr) {
         return false;
     }
+    EntityReferenceContext reference_context;
+    reference_context.user = this;
+    reference_context.network_entity_id_tier0_bits = options_.network_entity_id_tier0_bits;
+    reference_context.client_entity_network_id_for_wire = [](void* user, std::uint32_t wire_network_id) {
+        return static_cast<ReplicationClient*>(user)->client_entity_network_id_for_wire(wire_network_id);
+    };
+    reference_context.client_local_entity = [](void* user, ClientEntityNetworkId network_id) {
+        return static_cast<ReplicationClient*>(user)->local_entity(network_id);
+    };
+    EntityReferenceContext* references = settings.cue_ops[cue.type].references_entities ? &reference_context : nullptr;
     auto existing = std::find_if(
         state.played_cues.begin(),
         state.played_cues.end(),
@@ -1923,32 +2809,35 @@ bool ReplicationClient::play_cue(
                 settings.cue_ops[cue.type].equals == nullptr) {
                 return false;
             }
-            return settings.cue_ops[cue.type].equals(played.payload, cue.payload);
+            return settings.cue_ops[cue.type].equals(played.payload, cue.payload, references);
         });
     if (existing != state.played_cues.end()) {
+#ifdef KAGE_SYNC_ENABLE_TRACING
+        const bool newly_confirmed = confirmed && !existing->confirmed;
+#endif
         existing->confirmed = existing->confirmed || confirmed;
         existing->seen_in_resim = true;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+        if (newly_confirmed) {
+            trace_cue_event(SyncTraceEventType::CueConfirmed, settings, state, *existing, nullptr, "server");
+        }
+#endif
         return true;
     }
     if (!state.local || !registry.alive(state.local)) {
         return false;
     }
-    if (!settings.cue_ops[cue.type].play(registry, state.local, cue.payload, late_seconds)) {
+    if (!settings.cue_ops[cue.type].play(registry, state.local, cue.payload, late_seconds, cue.frame, references)) {
         return false;
     }
 #ifdef KAGE_SYNC_ENABLE_TRACING
-    if (tracer_ != nullptr && tracer_->enabled()) {
-        SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::CueInvoked, client_id_, cue.frame);
-        event.server_entity = ecs::Entity{state.client_entity_network_id};
-        event.local_entity = state.local;
-        event.client_network_id = state.client_entity_network_id;
-        event.wire_network_id = state.wire_network_id;
-        event.network_version = client_entity_network_id_version(state.client_entity_network_id);
-        event.archetype = state.archetype;
-        event.cue_type = cue.type;
-        append_trace_cue_data(tracer_, settings, cue.type, cue.payload, event);
-        tracer_->trace(event);
-    }
+    trace_cue_event(
+        SyncTraceEventType::CuePlayed,
+        settings,
+        state,
+        cue,
+        nullptr,
+        confirmed ? "server" : "local_prediction");
 #endif
     state.played_cues.push_back(EntityState::PlayedCue{
         cue.frame,
@@ -1963,26 +2852,31 @@ bool ReplicationClient::rollback_played_cue(
     ecs::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
-    const EntityState::PlayedCue& cue) {
+    const EntityState::PlayedCue& cue,
+    const char* rollback_reason) {
+#ifndef KAGE_SYNC_ENABLE_TRACING
+    (void)rollback_reason;
+#endif
     if (cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].rollback == nullptr) {
         return false;
     }
     if (!state.local || !registry.alive(state.local)) {
         return true;
     }
-    const bool rolled_back = settings.cue_ops[cue.type].rollback(registry, state.local, cue.payload);
+    EntityReferenceContext reference_context;
+    reference_context.user = this;
+    reference_context.network_entity_id_tier0_bits = options_.network_entity_id_tier0_bits;
+    reference_context.client_entity_network_id_for_wire = [](void* user, std::uint32_t wire_network_id) {
+        return static_cast<ReplicationClient*>(user)->client_entity_network_id_for_wire(wire_network_id);
+    };
+    reference_context.client_local_entity = [](void* user, ClientEntityNetworkId network_id) {
+        return static_cast<ReplicationClient*>(user)->local_entity(network_id);
+    };
+    EntityReferenceContext* references = settings.cue_ops[cue.type].references_entities ? &reference_context : nullptr;
+    const bool rolled_back = settings.cue_ops[cue.type].rollback(registry, state.local, cue.payload, references);
 #ifdef KAGE_SYNC_ENABLE_TRACING
-    if (rolled_back && tracer_ != nullptr && tracer_->enabled()) {
-        SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::CueRolledBack, client_id_, cue.frame);
-        event.server_entity = ecs::Entity{state.client_entity_network_id};
-        event.local_entity = state.local;
-        event.client_network_id = state.client_entity_network_id;
-        event.wire_network_id = state.wire_network_id;
-        event.network_version = client_entity_network_id_version(state.client_entity_network_id);
-        event.archetype = state.archetype;
-        event.cue_type = cue.type;
-        append_trace_cue_data(tracer_, settings, cue.type, cue.payload, event);
-        tracer_->trace(event);
+    if (rolled_back) {
+        trace_cue_event(SyncTraceEventType::CueRolledBack, settings, state, cue, rollback_reason, "local_prediction");
     }
 #endif
     return rolled_back;
@@ -1994,7 +2888,8 @@ void ReplicationClient::play_snap_cues(
     EntityState& state,
     const std::vector<EntityState::Cue>& cues) {
     for (const EntityState::Cue& cue : cues) {
-        const SyncFrame late_frames = receive_frame_ > cue.frame ? receive_frame_ - cue.frame : 0U;
+        const SyncFrame receive_frame = clock_.receive_frame();
+        const SyncFrame late_frames = receive_frame > cue.frame ? receive_frame - cue.frame : 0U;
         (void)play_cue(
             registry,
             settings,
@@ -2034,13 +2929,22 @@ void ReplicationClient::reconcile_authoritative_predicted_cues(
                     cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].equals == nullptr) {
                     return false;
                 }
-                return settings.cue_ops[cue.type].equals(played.payload, cue.payload);
-            });
+                return settings.cue_ops[cue.type].equals(played.payload, cue.payload, nullptr);
+        });
         if (found != state.played_cues.end()) {
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            const bool newly_confirmed = !found->confirmed;
+#endif
             found->confirmed = true;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            if (newly_confirmed) {
+                trace_cue_event(SyncTraceEventType::CueConfirmed, settings, state, *found, nullptr, "server");
+            }
+#endif
             continue;
         }
-        const SyncFrame late_frames = receive_frame_ > cue.frame ? receive_frame_ - cue.frame : 0U;
+        const SyncFrame receive_frame = clock_.receive_frame();
+        const SyncFrame late_frames = receive_frame > cue.frame ? receive_frame - cue.frame : 0U;
         (void)play_cue(
             registry,
             settings,
@@ -2063,14 +2967,22 @@ void ReplicationClient::reconcile_authoritative_predicted_cues(
                     cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].equals == nullptr) {
                     return false;
                 }
-                return settings.cue_ops[cue.type].equals(played->payload, cue.payload);
+                return settings.cue_ops[cue.type].equals(played->payload, cue.payload, nullptr);
             });
         if (authoritative_match) {
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            const bool newly_confirmed = !played->confirmed;
+#endif
             played->confirmed = true;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            if (newly_confirmed) {
+                trace_cue_event(SyncTraceEventType::CueConfirmed, settings, state, *played, nullptr, "server");
+            }
+#endif
             ++played;
             continue;
         }
-        (void)rollback_played_cue(registry, settings, state, *played);
+        (void)rollback_played_cue(registry, settings, state, *played, "server_mismatch");
         played = state.played_cues.erase(played);
     }
 }
@@ -2091,6 +3003,9 @@ void ReplicationClient::drain_emitted_prediction_cues(
 
     for (const QueuedSyncCue& emitted : cues) {
         EntityState* state = find_entity_state(emitted.entity);
+        if (state == nullptr) {
+            state = find_entity_state_for_local(emitted.entity);
+        }
         if (state == nullptr || state->mode != ReplicationClientMode::Predict) {
             continue;
         }
@@ -2099,6 +3014,9 @@ void ReplicationClient::drain_emitted_prediction_cues(
         cue.type = emitted.type;
         cue.relevance_seconds = emitted.relevance_seconds;
         cue.payload = emitted.payload;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+        trace_cue_event(SyncTraceEventType::CueEmitted, settings, *state, cue, nullptr, "local_prediction");
+#endif
 
         auto found = std::find_if(
             state->played_cues.begin(),
@@ -2108,7 +3026,7 @@ void ReplicationClient::drain_emitted_prediction_cues(
                     cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].equals == nullptr) {
                     return false;
                 }
-                return settings.cue_ops[cue.type].equals(played.payload, cue.payload);
+                return settings.cue_ops[cue.type].equals(played.payload, cue.payload, nullptr);
             });
         if (found != state->played_cues.end()) {
             found->seen_in_resim = true;
@@ -2144,7 +3062,7 @@ bool ReplicationClient::finish_cue_resimulation(ecs::Registry& registry, const S
                 ++cue;
                 continue;
             }
-            all_valid = rollback_played_cue(registry, settings, state, *cue) && all_valid;
+            all_valid = rollback_played_cue(registry, settings, state, *cue, "resim_not_replayed") && all_valid;
             cue = state.played_cues.erase(cue);
         }
     }
@@ -2377,9 +3295,12 @@ bool ReplicationClient::apply_predicted_upsert(
         }
     }
     if (!has_predicted_frame_) {
-        last_predicted_frame_ = frame;
+        if (!fill_input_frames_through(registry, settings, frame)) {
+            return false;
+        }
+        clock_.advance_input_frame_to(frame);
+        last_predicted_frame_ = frame != 0U ? frame - 1U : 0U;
         has_predicted_frame_ = true;
-        prediction_accumulator_seconds_ = 0.0;
     }
     sync_entity_memberships(state);
     return true;
@@ -3123,9 +4044,12 @@ bool ReplicationClient::switch_entity_mode(
             sample.archetype = state.archetype;
             sample.baseline = state.baseline;
             if (state.entity_present && !has_predicted_frame_) {
+                if (!fill_input_frames_through(registry, settings, state.frame)) {
+                    return false;
+                }
+                clock_.advance_input_frame_to(state.frame);
                 last_predicted_frame_ = state.frame;
                 has_predicted_frame_ = true;
-                prediction_accumulator_seconds_ = 0.0;
             }
         }
         state.buffered_frames.clear();
@@ -3247,6 +4171,9 @@ bool ReplicationClient::resimulate_all_predicted(
         if (!apply_frame(registry, frame)) {
             return false;
         }
+        if (!apply_input_frame(registry, settings, frame)) {
+            return false;
+        }
         resim_job_graph(registry).tick(registry, options);
         drain_emitted_prediction_cues(registry, settings, frame, true);
         for (std::uint32_t entity_index : active_entities_) {
@@ -3318,6 +4245,9 @@ bool ReplicationClient::resimulate_affected_predicted(
     }
 
     for (SyncFrame frame = begin_frame + 1U; frame <= current_frame; ++frame) {
+        if (!apply_input_frame(registry, settings, frame)) {
+            return false;
+        }
         resim_job_graph(registry).tick_for_entities(registry, rollback_affected_entities_scratch_, options);
         drain_emitted_prediction_cues(registry, settings, frame, true);
         for (std::uint32_t entity_index : active_entities_) {
@@ -3387,7 +4317,7 @@ bool ReplicationClient::write_display_samples(
     double target_frame,
     bool include_snap,
     bool include_empty_buffered,
-    DisplaySampleBuffer& out) const {
+    DisplayInterpolationSampleBuffer& out) const {
     out.clear();
     const bool target_valid = target_frame >= 0.0 &&
         std::isfinite(target_frame) &&
@@ -3398,17 +4328,17 @@ bool ReplicationClient::write_display_samples(
     const SyncSettings& settings = registry.get<SyncSettings>();
     bool all_valid = target_valid || !has_buffered_entities();
     std::size_t sampled_count = 0;
-    auto previous_display = [&](ClientEntityNetworkId network_id) -> const DisplayEntitySample* {
+    auto previous_display = [&](ClientEntityNetworkId network_id) -> const DisplayInterpolationSample* {
         const auto found = std::find_if(
             display_frame_.entities.begin(),
             display_frame_.entities.end(),
-            [network_id](const DisplayEntitySample& sample) {
+            [network_id](const DisplayInterpolationSample& sample) {
                 return sample.client_entity_network_id == network_id;
             });
         return found != display_frame_.entities.end() ? &*found : nullptr;
     };
     auto append_previous_display = [&](ClientEntityNetworkId network_id) {
-        const DisplayEntitySample* previous = previous_display(network_id);
+        const DisplayInterpolationSample* previous = previous_display(network_id);
         if (previous == nullptr) {
             return false;
         }
@@ -3445,14 +4375,14 @@ bool ReplicationClient::write_display_samples(
                         if (candidate.valid && candidate.frame == previous_frame && candidate.entity_present) {
                             previous_sample = &candidate;
                             predicted_alpha = 1.0f + static_cast<float>(
-                                prediction_accumulator_seconds_ / options_.fixed_dt_seconds);
+                                clock_.input_accumulator_seconds() / options_.fixed_dt_seconds);
                         }
                     }
 
                     if (sampled_count == out.entities.size()) {
                         out.entities.emplace_back();
                     }
-                    DisplayEntitySample& display = out.entities[sampled_count];
+                    DisplayInterpolationSample& display = out.entities[sampled_count];
                     display.client_entity_network_id = state.client_entity_network_id;
                     display.server_entity = ecs::Entity{state.client_entity_network_id};
                     display.local_entity = state.local;
@@ -3481,7 +4411,8 @@ bool ReplicationClient::write_display_samples(
                         }
 
                         if (previous_sample != nullptr &&
-                            frame_has_component(previous_sample->baseline, component_index)) {
+                            frame_has_component(previous_sample->baseline, component_index) &&
+                            display_archetype.components[component_index].interpolation == ComponentInterpolation::Interpolate) {
                             if (component_index >= display_archetype.component_ops.size() ||
                                 ops.interpolate == nullptr) {
                                 return false;
@@ -3524,7 +4455,7 @@ bool ReplicationClient::write_display_samples(
             if (sampled_count == out.entities.size()) {
                 out.entities.emplace_back();
             }
-            DisplayEntitySample& display = out.entities[sampled_count++];
+            DisplayInterpolationSample& display = out.entities[sampled_count++];
             display.client_entity_network_id = state.client_entity_network_id;
             display.server_entity = ecs::Entity{state.client_entity_network_id};
             display.local_entity = state.local;
@@ -3533,25 +4464,40 @@ bool ReplicationClient::write_display_samples(
             display.alpha = 0.0f;
             display.tag_mask = state.baseline.tag_mask;
             display.components.clear();
-            display.components.reserve(state.snap_errors.size());
-            for (const EntityState::ComponentError& error : state.snap_errors) {
-                const auto found_ops = settings.component_ops.find(error.component.value);
-                if (found_ops == settings.component_ops.end() ||
-                    found_ops->second.quantize == nullptr ||
-                    found_ops->second.apply_error == nullptr) {
+            const SyncArchetype& display_archetype = settings.archetypes[state.archetype.value];
+            display.components.reserve(display_archetype.components.size());
+            for (std::size_t component_index = 0; component_index < display_archetype.components.size(); ++component_index) {
+                const ecs::Entity component = display_archetype.components[component_index].component;
+                if (!registry.has<DisplayInterpolated>(component)) {
+                    continue;
+                }
+                if (component_index >= display_archetype.component_ops.size()) {
                     return false;
                 }
-                const void* current = registry.get(state.local, error.component);
-                if (current == nullptr) {
+                const SyncComponentOps& ops = display_archetype.component_ops[component_index];
+                if (ops.quantize == nullptr) {
                     return false;
+                }
+                const void* current = registry.get(state.local, component);
+                if (current == nullptr) {
+                    continue;
                 }
 
                 ReplicatedComponentUpdate value;
-                value.component = error.component;
-                value.bytes.resize(found_ops->second.quantized_size);
-                found_ops->second.quantize(current, value.bytes.data());
-                if (!found_ops->second.apply_error(value.bytes.data(), error.bytes, value.bytes)) {
-                    return false;
+                value.component = component;
+                value.bytes.resize(ops.quantized_size);
+                ops.quantize(current, value.bytes.data());
+                const auto found_error = std::find_if(
+                    state.snap_errors.begin(),
+                    state.snap_errors.end(),
+                    [component](const EntityState::ComponentError& error) {
+                        return error.component == component;
+                    });
+                if (found_error != state.snap_errors.end()) {
+                    if (ops.apply_error == nullptr ||
+                        !ops.apply_error(value.bytes.data(), found_error->bytes, value.bytes)) {
+                        return false;
+                    }
                 }
                 display.components.push_back(std::move(value));
             }
@@ -3589,7 +4535,7 @@ bool ReplicationClient::write_display_samples(
         if (sampled_count == out.entities.size()) {
             out.entities.emplace_back();
         }
-        DisplayEntitySample& display = out.entities[sampled_count];
+        DisplayInterpolationSample& display = out.entities[sampled_count];
         display.client_entity_network_id = state.client_entity_network_id;
         display.server_entity = ecs::Entity{state.client_entity_network_id};
         display.local_entity = state.local;
@@ -3617,7 +4563,9 @@ bool ReplicationClient::write_display_samples(
                 return false;
             }
 
-            if (next_sample != nullptr && frame_has_component(next_sample->baseline, component_index)) {
+            if (next_sample != nullptr &&
+                frame_has_component(next_sample->baseline, component_index) &&
+                display_archetype.components[component_index].interpolation == ComponentInterpolation::Interpolate) {
                 if (component_index >= display_archetype.component_ops.size() ||
                     ops.interpolate == nullptr) {
                     return false;
@@ -3641,24 +4589,6 @@ bool ReplicationClient::write_display_samples(
 
     out.entities.resize(sampled_count);
     return include_empty_buffered || all_valid;
-}
-
-void ReplicationClient::update_display_target(double dt_seconds) noexcept {
-    const double playback_frame =
-        static_cast<double>(playback_frame_) + playback_accumulator_seconds_ / options_.fixed_dt_seconds;
-    const double desired = playback_frame - static_cast<double>(options_.interpolation_buffer_frames);
-    if (!has_display_target_frame_ || desired < 0.0) {
-        display_target_frame_ = desired;
-        has_display_target_frame_ = true;
-        return;
-    }
-    if (desired <= display_target_frame_) {
-        return;
-    }
-
-    const double max_advance_frames =
-        dt_seconds / options_.fixed_dt_seconds * static_cast<double>(options_.auto_interpolation_time_dilation_max);
-    display_target_frame_ = std::min(desired, display_target_frame_ + max_advance_frames);
 }
 
 ComponentInterpolation ReplicationClient::interpolation_for(
@@ -3702,7 +4632,8 @@ void ReplicationClient::record_server_packet_sequence(std::uint32_t packet_id) n
         return;
     }
 
-    ++timing_stats_.server_update_packets_received;
+    ReplicationClientTimingStats& timing_stats = clock_.mutable_stats();
+    ++timing_stats.server_update_packets_received;
 
     const std::uint32_t window_size = packet_id_window_size(max_packet_id);
     if (!has_server_update_packet_window_) {
@@ -3733,7 +4664,7 @@ void ReplicationClient::record_server_packet_sequence(std::uint32_t packet_id) n
                 } else {
                     finalized_received = count_bits(server_update_packet_window_mask_);
                 }
-                timing_stats_.server_update_packets_missing += finalized_count - finalized_received;
+                timing_stats.server_update_packets_missing += finalized_count - finalized_received;
             }
 
             server_update_packet_window_mask_ =
@@ -3743,7 +4674,7 @@ void ReplicationClient::record_server_packet_sequence(std::uint32_t packet_id) n
             server_update_packet_window_span_ = new_span;
             highest_server_update_packet_id_ = packet_id;
         } else {
-            ++timing_stats_.server_update_packets_reordered_or_duplicate;
+            ++timing_stats.server_update_packets_reordered_or_duplicate;
             if (backward_distance < server_update_packet_window_span_ && backward_distance < 64U) {
                 server_update_packet_window_mask_ |= std::uint64_t{1} << backward_distance;
             }
@@ -3751,26 +4682,10 @@ void ReplicationClient::record_server_packet_sequence(std::uint32_t packet_id) n
     }
 
     const std::uint64_t total =
-        timing_stats_.server_update_packets_received + timing_stats_.server_update_packets_missing;
-    timing_stats_.server_update_packet_loss = total == 0U
+        timing_stats.server_update_packets_received + timing_stats.server_update_packets_missing;
+    timing_stats.server_update_packet_loss = total == 0U
         ? 0.0f
-        : static_cast<float>(timing_stats_.server_update_packets_missing) / static_cast<float>(total);
-}
-
-void ReplicationClient::advance_control_time_to(SyncFrame receive_frame) noexcept {
-    if (receive_frame <= receive_frame_) {
-        return;
-    }
-    const double elapsed = static_cast<double>(receive_frame - receive_frame_) * options_.fixed_dt_seconds;
-    receive_frame_ = receive_frame;
-    if (connection_state_ == ReplicationClientConnectionState::Connecting ||
-        connection_state_ == ReplicationClientConnectionState::Accepted) {
-        connect_resend_accumulator_seconds_ += elapsed;
-    }
-    if (connection_state_ == ReplicationClientConnectionState::Accepted ||
-        connection_state_ == ReplicationClientConnectionState::Ready) {
-        ping_accumulator_seconds_ += elapsed;
-    }
+        : static_cast<float>(timing_stats.server_update_packets_missing) / static_cast<float>(total);
 }
 
 bool ReplicationClient::receive_connect_response(ecs::Registry& registry, BitBuffer& packet) {
@@ -3792,7 +4707,7 @@ bool ReplicationClient::receive_connect_response(ecs::Registry& registry, BitBuf
         configure_client(registry, client_id_);
 #ifdef KAGE_SYNC_ENABLE_TRACING
         if (tracer_ != nullptr && tracer_->enabled()) {
-            SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ClientConnected, client_id_, receive_frame_);
+            SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ClientConnected, client_id_, clock_.receive_frame());
             tracer_->trace(event);
         }
 #endif
@@ -3808,7 +4723,7 @@ bool ReplicationClient::receive_connect_response(ecs::Registry& registry, BitBuf
     connection_state_ = ReplicationClientConnectionState::Rejected;
 #ifdef KAGE_SYNC_ENABLE_TRACING
     if (tracer_ != nullptr && tracer_->enabled()) {
-        SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ClientDisconnected, invalid_client_id, receive_frame_);
+        SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ClientDisconnected, invalid_client_id, clock_.receive_frame());
         event.data = connect_error_;
         tracer_->trace(event);
     }
@@ -3816,18 +4731,99 @@ bool ReplicationClient::receive_connect_response(ecs::Registry& registry, BitBuf
     return true;
 }
 
-bool ReplicationClient::receive_pong(BitBuffer& packet, SyncFrame receive_frame) {
+bool ReplicationClient::receive_pong(ecs::Registry& registry, BitBuffer& packet, SyncFrame receive_frame) {
     if (packet.remaining_bits() < 64U) {
         return false;
     }
     const auto sequence = static_cast<std::uint32_t>(packet.read_bits(32U));
     const auto send_frame = static_cast<SyncFrame>(packet.read_bits(32U));
+    std::uint16_t send_subframe = 0;
+    if (packet.remaining_bits() >= protocol::frame_subframe_bits) {
+        send_subframe = static_cast<std::uint16_t>(packet.read_bits(protocol::frame_subframe_bits));
+    }
+    SyncFrame server_frame = 0;
+    std::uint16_t server_subframe = 0;
+    if (packet.remaining_bits() >= 32U + protocol::frame_subframe_bits) {
+        server_frame = static_cast<SyncFrame>(packet.read_bits(32U));
+        server_subframe = static_cast<std::uint16_t>(packet.read_bits(protocol::frame_subframe_bits));
+    }
     const auto found = pending_pings_.find(sequence);
-    if (found == pending_pings_.end() || found->second != send_frame || receive_frame < send_frame) {
+    if (found == pending_pings_.end() ||
+        found->second.frame != send_frame ||
+        found->second.subframe != send_subframe ||
+        receive_frame < send_frame) {
         return false;
     }
     pending_pings_.erase(found);
-    record_ping_sample(static_cast<float>(receive_frame - send_frame) * 0.5f);
+    (void)server_frame;
+    (void)server_subframe;
+    const double sent_continuous_frame = decode_continuous_frame(send_frame, send_subframe);
+    const double received_continuous_frame = receive_frame == clock_.receive_frame()
+        ? clock_.continuous_receive_frame()
+        : static_cast<double>(receive_frame);
+    const float sample = static_cast<float>((received_continuous_frame - sent_continuous_frame) * 0.5);
+    if (options_.adaptive_ping_interval) {
+        if (clock_.stats().sample_count == 0U) {
+            stable_ping_samples_ = 1U;
+        } else {
+            const float delta = std::fabs(sample - clock_.stats().latency_frames);
+            if (delta >= options_.adaptive_ping_jump_threshold_frames) {
+                adaptive_ping_active_ = true;
+                stable_ping_samples_ = 0U;
+            } else if (delta <= options_.adaptive_ping_stable_threshold_frames) {
+                ++stable_ping_samples_;
+                if (stable_ping_samples_ >= options_.adaptive_ping_stable_samples) {
+                    adaptive_ping_active_ = false;
+                }
+            } else {
+                stable_ping_samples_ = 0U;
+            }
+        }
+    }
+    const ReplicationClientTimingStats before = clock_.stats();
+    clock_.record_continuous_pong(sent_continuous_frame, received_continuous_frame);
+    const ReplicationClientTimingStats& after = clock_.stats();
+    if (options_.auto_timing_fast_recovery &&
+        options_.auto_prediction_lead_frames &&
+        has_received_server_update_ &&
+        after.target_prediction_lead_frames > before.current_prediction_lead_frames &&
+        after.target_prediction_lead_frames - before.current_prediction_lead_frames >=
+            options_.auto_timing_fast_recovery_min_frame_gap) {
+        const SyncFrame prefill_input_frame = last_server_update_frame_ + after.target_prediction_lead_frames;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+        trace_clock_skew(
+            "pong_requested_prefill",
+            receive_frame,
+            last_server_update_frame_,
+            receive_frame,
+            clock_.playback_frame(),
+            last_recorded_input_frame_,
+            prefill_input_frame);
+#endif
+        if (prefill_input_frame > last_recorded_input_frame_) {
+            const SyncSettings& settings = registry.get<SyncSettings>();
+            (void)fill_input_frames_through(registry, settings, prefill_input_frame);
+            active_prediction_snap_lead_frames_ = after.target_prediction_lead_frames;
+            if (prefill_input_frame > pending_prediction_catchup_frame_) {
+                pending_prediction_catchup_frame_ = prefill_input_frame;
+                pending_prediction_catchup_server_frame_ = last_server_update_frame_;
+            }
+            if (!has_predicted_entities()) {
+                clock_.advance_input_frame_to(prefill_input_frame);
+            }
+            clock_.record_prediction_lead(last_server_update_frame_, prefill_input_frame);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            trace_clock_skew(
+                "pong_prefill_applied",
+                receive_frame,
+                last_server_update_frame_,
+                receive_frame,
+                clock_.playback_frame(),
+                last_recorded_input_frame_,
+                prefill_input_frame);
+#endif
+        }
+    }
     return true;
 }
 
@@ -3869,86 +4865,28 @@ void ReplicationClient::drain_ping_packets(std::vector<BitBuffer>& packets) {
         connection_state_ != ReplicationClientConnectionState::Ready) {
         return;
     }
-    if (sent_initial_ping_ && ping_accumulator_seconds_ < options_.ping_interval_seconds) {
+    const double interval_seconds =
+        options_.adaptive_ping_interval && adaptive_ping_active_
+            ? options_.adaptive_ping_interval_seconds
+            : options_.ping_interval_seconds;
+    if (sent_initial_ping_ && ping_accumulator_seconds_ < interval_seconds) {
         return;
     }
 
     const std::uint32_t sequence = next_ping_sequence_++;
-    const SyncFrame send_frame = receive_frame_;
-    pending_pings_[sequence] = send_frame;
+    const SyncFrame send_frame = clock_.receive_frame();
+    const std::uint16_t send_subframe = encode_subframe(clock_.receive_subframe());
+    pending_pings_[sequence] = PendingPing{send_frame, send_subframe};
 
     BitBuffer packet;
     packet.reserve_bytes(options_.mtu_bytes);
     packet.push_bits(protocol::client_ping_message, 8U);
     packet.push_bits(sequence, 32U);
     packet.push_bits(send_frame, 32U);
+    packet.push_bits(send_subframe, protocol::frame_subframe_bits);
     packets.push_back(std::move(packet));
     sent_initial_ping_ = true;
     ping_accumulator_seconds_ = 0.0;
-}
-
-void ReplicationClient::record_ping_sample(float sample) noexcept {
-    if (timing_stats_.sample_count == 0) {
-        timing_stats_.latency_frames = sample;
-        timing_stats_.jitter_frames = 0.0f;
-    } else {
-        const float smoothing = options_.auto_interpolation_smoothing;
-        const float previous_latency = timing_stats_.latency_frames;
-        timing_stats_.latency_frames += (sample - timing_stats_.latency_frames) * smoothing;
-        const float deviation = std::fabs(sample - previous_latency);
-        timing_stats_.jitter_frames += (deviation - timing_stats_.jitter_frames) * smoothing;
-    }
-    ++timing_stats_.sample_count;
-
-    const float wanted = timing_stats_.latency_frames +
-        options_.auto_interpolation_jitter_multiplier * timing_stats_.jitter_frames;
-    const SyncFrame target = clamp_auto_interpolation_target(
-        options_,
-        static_cast<SyncFrame>(std::ceil(std::max(0.0f, wanted))));
-    timing_stats_.desired_interpolation_buffer_frames = target;
-    timing_stats_.target_interpolation_buffer_frames = target;
-}
-
-void ReplicationClient::record_update_timing(
-    SyncFrame server_frame,
-    SyncFrame receive_frame,
-    SyncFrame playback_frame) noexcept {
-    if (options_.auto_interpolation_buffer_frames && receive_frame > server_frame) {
-        const SyncFrame observed_target = clamp_auto_interpolation_target(
-            options_,
-            receive_frame - server_frame);
-        timing_stats_.target_interpolation_buffer_frames =
-            std::max(timing_stats_.target_interpolation_buffer_frames, observed_target);
-    }
-    const SyncFrame target = timing_stats_.target_interpolation_buffer_frames;
-
-    const SyncFrame current = options_.interpolation_buffer_frames;
-    const SyncFrame applied_frame = playback_frame >= current ? playback_frame - current : 0U;
-    const float measured = server_frame >= applied_frame
-        ? static_cast<float>(server_frame - applied_frame)
-        : 0.0f;
-    timing_stats_.measured_interpolation_buffer_frames = measured;
-
-    const bool internal_clock_started = receive_frame != 0 || playback_frame != 0;
-    if (internal_clock_started &&
-        has_buffered_entities() &&
-        options_.auto_interpolation_buffer_frames) {
-        const float error = measured - static_cast<float>(target);
-        const float unclamped = 1.0f + error * options_.auto_interpolation_time_dilation_gain;
-        timing_stats_.time_dilation = std::min(
-            options_.auto_interpolation_time_dilation_max,
-            std::max(options_.auto_interpolation_time_dilation_min, unclamped));
-
-        if (current < target && measured >= static_cast<float>(current)) {
-            options_.interpolation_buffer_frames = current + 1U;
-        } else if (current > target && measured <= static_cast<float>(current)) {
-            options_.interpolation_buffer_frames = current - 1U;
-        }
-        timing_stats_.current_interpolation_buffer_frames = options_.interpolation_buffer_frames;
-    } else {
-        timing_stats_.current_interpolation_buffer_frames = options_.interpolation_buffer_frames;
-        timing_stats_.time_dilation = 1.0f;
-    }
 }
 
 }  // namespace kage::sync

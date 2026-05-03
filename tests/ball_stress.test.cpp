@@ -304,6 +304,7 @@ TEST_CASE("ball stress packet classifier counts update record kinds") {
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
     packet.push_bits(7, 32U);
     packet.push_bits(99, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(0, 32U);
     packet.push_bits(3, 16U);
 
     packet.push_bool(false);
@@ -342,7 +343,7 @@ TEST_CASE("ball stress packet classifier counts update record kinds") {
     const stress::PacketBreakdown diagnostic_breakdown = stress::classify_packet(packet, &wire);
 
     REQUIRE(diagnostic_breakdown.type == stress::PacketType::ServerUpdate);
-    REQUIRE(wire.packet_bits == 174);
+    REQUIRE(wire.packet_bits == 206);
     REQUIRE(wire.padding_bits == 2);
     REQUIRE(wire.server_update_header_bits == kage::sync::protocol::server_update_header_bits);
     REQUIRE(wire.server_update_entities == 3);
@@ -387,6 +388,7 @@ TEST_CASE("ball stress packet classifier honors custom network id tier width") {
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
     packet.push_bits(1, 32U);
     packet.push_bits(1, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(0, 32U);
     packet.push_bits(1, 16U);
     packet.push_bool(true);
     kage::sync::protocol::write_network_entity_id(packet, 255U, 8U);

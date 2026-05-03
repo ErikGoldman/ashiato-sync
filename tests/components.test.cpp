@@ -19,6 +19,7 @@ TEST_CASE("sync components register into the ecs registry") {
     kage::sync::register_components(registry);
 
     REQUIRE(registry.component<kage::sync::SyncSettings>());
+    REQUIRE(registry.component<kage::sync::SyncAuthority>());
     REQUIRE(registry.component<kage::sync::Replicated>());
     REQUIRE(registry.component<kage::sync::NetworkOwner>());
     REQUIRE(registry.component<kage::sync::DisplayInterpolated>());
@@ -27,6 +28,7 @@ TEST_CASE("sync components register into the ecs registry") {
     REQUIRE(settings.role == kage::sync::SyncRole::Server);
     REQUIRE(settings.local_client == kage::sync::invalid_client_id);
     REQUIRE(settings.archetypes.empty());
+    REQUIRE(registry.get<kage::sync::SyncAuthority>().is_authoritative());
 }
 
 TEST_CASE("display interpolation marker is stored as a component entity tag") {
@@ -53,11 +55,13 @@ TEST_CASE("server and client configuration update singleton settings") {
 
     REQUIRE(registry.get<kage::sync::SyncSettings>().role == kage::sync::SyncRole::Client);
     REQUIRE(registry.get<kage::sync::SyncSettings>().local_client == 42);
+    REQUIRE_FALSE(registry.get<kage::sync::SyncAuthority>().is_authoritative());
 
     kage::sync::configure_server(registry);
 
     REQUIRE(registry.get<kage::sync::SyncSettings>().role == kage::sync::SyncRole::Server);
     REQUIRE(registry.get<kage::sync::SyncSettings>().local_client == kage::sync::invalid_client_id);
+    REQUIRE(registry.get<kage::sync::SyncAuthority>().is_authoritative());
 }
 
 TEST_CASE("sync archetypes store component replication settings in the singleton") {

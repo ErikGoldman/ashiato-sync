@@ -528,6 +528,7 @@ inline PacketBreakdown classify_packet(
         result.type = PacketType::ServerUpdate;
         const auto frame = static_cast<std::uint32_t>(packet.read_bits(32U));
         packet.read_bits(protocol::server_packet_id_bits);
+        packet.read_bits(32U);
         const auto entity_count = static_cast<std::uint16_t>(packet.read_bits(16U));
         if (wire != nullptr) {
             wire->server_update_header_bits += protocol::server_update_header_bits;

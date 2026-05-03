@@ -1,5 +1,6 @@
 #pragma once
 
+#include "kage/sync/client_clock.hpp"
 #include "kage/sync/component_traits.hpp"
 
 #include <array>
@@ -15,6 +16,7 @@
 namespace kage::sync {
 
 class SyncTracer;
+enum class SyncTraceEventType : std::uint8_t;
 
 struct ReplicatedComponentUpdate {
     ecs::Entity component;
@@ -44,7 +46,7 @@ private:
     const std::vector<ReplicatedComponentUpdate>* components = nullptr;
 };
 
-struct DisplayEntitySample {
+struct DisplayInterpolationSample {
     ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
     ecs::Entity server_entity;
     ecs::Entity local_entity;
@@ -55,17 +57,17 @@ struct DisplayEntitySample {
     std::vector<ReplicatedComponentUpdate> components;
 
     template <typename T>
-    bool try_get(const ecs::Registry& registry, T& out) const {
+    bool try_get_display_value(const ecs::Registry& registry, T& out) const {
         const ecs::Entity component = registry.component<T>();
-        return try_get(registry, component, &out);
+        return try_get_display_value(registry, component, &out);
     }
 
-    bool try_get(const ecs::Registry& registry, ecs::Entity component, void* out) const;
+    bool try_get_display_value(const ecs::Registry& registry, ecs::Entity component, void* out) const;
     bool has_tag(const ecs::Registry& registry, ecs::Entity tag) const;
 };
 
-struct DisplaySampleBuffer {
-    std::vector<DisplayEntitySample> entities;
+struct DisplayInterpolationSampleBuffer {
+    std::vector<DisplayInterpolationSample> entities;
 
     void clear() {
         entities.clear();
@@ -110,21 +112,23 @@ struct ReplicationClientOptions {
     std::size_t network_entity_id_tier0_bits = protocol::default_network_entity_id_tier0_bits;
     ReplicationRollbackPolicy rollback_policy = ReplicationRollbackPolicy::All;
     std::size_t prediction_buffer_capacity_frames = 64;
-};
-
-struct ReplicationClientTimingStats {
-    std::uint64_t sample_count = 0;
-    float latency_frames = 0.0f;
-    float jitter_frames = 0.0f;
-    float measured_interpolation_buffer_frames = 0.0f;
-    SyncFrame desired_interpolation_buffer_frames = 0;
-    SyncFrame target_interpolation_buffer_frames = 0;
-    SyncFrame current_interpolation_buffer_frames = 0;
-    float time_dilation = 1.0f;
-    std::uint64_t server_update_packets_received = 0;
-    std::uint64_t server_update_packets_missing = 0;
-    std::uint64_t server_update_packets_reordered_or_duplicate = 0;
-    float server_update_packet_loss = 0.0f;
+    std::size_t input_buffer_capacity_frames = 64;
+    bool auto_prediction_lead_frames = true;
+    SyncFrame prediction_lead_frames = 2;
+    SyncFrame auto_prediction_min_frames = 1;
+    SyncFrame auto_prediction_safety_frames = 1;
+    float auto_prediction_jitter_multiplier = 2.0f;
+    float auto_prediction_time_dilation_min = 0.95f;
+    float auto_prediction_time_dilation_max = 1.10f;
+    float auto_prediction_time_dilation_gain = 0.05f;
+    std::uint32_t auto_timing_warmup_samples = 3;
+    bool auto_timing_fast_recovery = true;
+    SyncFrame auto_timing_fast_recovery_min_frame_gap = 4;
+    bool adaptive_ping_interval = true;
+    double adaptive_ping_interval_seconds = 0.25;
+    std::uint32_t adaptive_ping_stable_samples = 4;
+    float adaptive_ping_stable_threshold_frames = 0.5f;
+    float adaptive_ping_jump_threshold_frames = 3.0f;
 };
 
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
@@ -298,7 +302,20 @@ public:
     bool set_entity_mode(ecs::Registry& registry, ClientEntityNetworkId network_id, ReplicationClientMode mode);
     ReplicationClientMode entity_mode(ecs::Entity server_entity) const noexcept;
     bool set_interpolation_buffer_frames(SyncFrame frames) noexcept;
+    SyncFrame current_interpolation_buffer_frames() const noexcept;
+    template <typename T>
+    bool set_input(ecs::Registry& registry, const T& input) {
+        register_components(registry);
+        const ecs::Entity component = registry.template component<T>();
+        const SyncSettings& settings = registry.template get<SyncSettings>();
+        if (settings.input_component != component) {
+            return false;
+        }
+        return set_input_bytes(registry, component, &input);
+    }
     bool tick(ecs::Registry& registry, double dt_seconds);
+    void set_packet_sender(std::function<void(const BitBuffer&)> sender);
+    void receive_packet(BitBuffer packet);
     bool receive(ecs::Registry& registry, BitBuffer packet);
     bool receive(ecs::Registry& registry, BitBuffer packet, SyncFrame client_frame);
     bool receive(
@@ -321,15 +338,15 @@ public:
         return detail::ClientJobBuilder<decltype(builder), false>(registry, std::move(builder), simulation_jobs_);
     }
     bool apply_frame(ecs::Registry& registry, SyncFrame client_frame);
-    bool sample_display_target_frame(
+    bool sample_display_interpolation_target_frame(
         const ecs::Registry& registry,
         double target_frame,
-        DisplaySampleBuffer& out) const;
-    bool sample_display_frame(
+        DisplayInterpolationSampleBuffer& out) const;
+    bool sample_display_interpolation_frame(
         const ecs::Registry& registry,
         double client_frame,
-        DisplaySampleBuffer& out) const;
-    const DisplaySampleBuffer& display_frame(const ecs::Registry& registry);
+        DisplayInterpolationSampleBuffer& out) const;
+    const DisplayInterpolationSampleBuffer& display_interpolation_frame(const ecs::Registry& registry);
     std::vector<BitBuffer> drain_packets();
     std::vector<BitBuffer> drain_ack_packets();
     std::size_t pending_ack_count() const noexcept;
@@ -347,13 +364,31 @@ public:
     }
     ecs::Entity local_entity(ecs::Entity server_entity) const;
     SyncFrame receive_frame() const noexcept {
-        return receive_frame_;
+        return clock_.receive_frame();
+    }
+    double continuous_receive_frame() const noexcept {
+        return clock_.continuous_receive_frame();
     }
     SyncFrame playback_frame() const noexcept {
-        return playback_frame_;
+        return clock_.playback_frame();
     }
+    double continuous_playback_frame() const noexcept {
+        return clock_.continuous_playback_frame();
+    }
+    SyncFrame input_frame() const noexcept {
+        return clock_.input_frame();
+    }
+    double continuous_input_frame() const noexcept {
+        return clock_.continuous_input_frame();
+    }
+    double display_target_frame() const noexcept {
+        return clock_.display_target_frame();
+    }
+    double estimated_server_frame() const noexcept;
+    double continuous_prediction_frames_ahead() const noexcept;
+    double continuous_interpolation_frames_behind() const noexcept;
     const ReplicationClientTimingStats& timing_stats() const noexcept {
-        return timing_stats_;
+        return clock_.stats();
     }
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     const ReplicationClientInterpolationDiagnostics& interpolation_diagnostics() const noexcept {
@@ -443,6 +478,7 @@ private:
     const EntityState* find_entity_state(ClientEntityNetworkId network_id) const noexcept;
     EntityState* find_entity_state(std::uint32_t network_id) noexcept;
     const EntityState* find_entity_state(std::uint32_t network_id) const noexcept;
+    EntityState* find_entity_state_for_local(ecs::Entity local) noexcept;
     EntityState* ensure_entity_state(
         ecs::Registry& registry,
         ClientEntityNetworkId network_id,
@@ -479,7 +515,8 @@ private:
         ecs::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
-        const EntityState::PlayedCue& cue);
+        const EntityState::PlayedCue& cue,
+        const char* rollback_reason);
     void play_snap_cues(
         ecs::Registry& registry,
         const SyncSettings& settings,
@@ -595,8 +632,7 @@ private:
         double target_frame,
         bool include_snap,
         bool include_empty_buffered,
-        DisplaySampleBuffer& out) const;
-    void update_display_target(double dt_seconds) noexcept;
+        DisplayInterpolationSampleBuffer& out) const;
     ComponentInterpolation interpolation_for(
         const SyncSettings& settings,
         SyncArchetypeId archetype,
@@ -604,14 +640,14 @@ private:
     void remember_baseline(EntityState& state);
     void queue_ack(std::uint32_t packet_id);
     void record_server_packet_sequence(std::uint32_t packet_id) noexcept;
-    void record_update_timing(SyncFrame server_frame, SyncFrame receive_frame, SyncFrame playback_frame) noexcept;
-    void record_ping_sample(float latency_frames) noexcept;
-    void advance_control_time_to(SyncFrame receive_frame) noexcept;
     bool receive_connect_response(ecs::Registry& registry, BitBuffer& packet);
-    bool receive_pong(BitBuffer& packet, SyncFrame receive_frame);
+    bool receive_pong(ecs::Registry& registry, BitBuffer& packet, SyncFrame receive_frame);
     void drain_connect_packets(std::vector<BitBuffer>& packets);
     void drain_ping_packets(std::vector<BitBuffer>& packets);
     void drain_ack_packets_into(std::vector<BitBuffer>& packets);
+    void drain_input_packets_into(std::vector<BitBuffer>& packets);
+    bool process_inbound_packets(ecs::Registry& registry);
+    void send_pending_packets();
     ClientEntityNetworkId client_entity_network_id_for_wire(std::uint32_t wire_network_id);
     void advance_wire_network_id_version(std::uint32_t wire_network_id);
 #ifdef KAGE_SYNC_ENABLE_TRACING
@@ -628,7 +664,55 @@ private:
         bool resimulated = false,
         bool only_pending_rollback = false,
         TraceFrameComponentScope scope = TraceFrameComponentScope::All);
+    void trace_input_components(
+        ecs::Registry& registry,
+        const SyncSettings& settings,
+        SyncFrame frame,
+        ecs::Entity component,
+        const std::uint8_t* quantized);
+    void trace_clock_skew(
+        const char* stage,
+        SyncFrame local_frame,
+        SyncFrame server_frame,
+        SyncFrame observed_receive_frame,
+        SyncFrame observed_playback_frame,
+        SyncFrame last_recorded_input_frame,
+        SyncFrame prefill_input_frame) const;
+    void trace_cue_event(
+        SyncTraceEventType type,
+        const SyncSettings& settings,
+        const EntityState& state,
+        const EntityState::Cue& cue,
+        const char* rollback_reason = nullptr,
+        const char* cue_source = nullptr) const;
+    void trace_cue_event(
+        SyncTraceEventType type,
+        const SyncSettings& settings,
+        const EntityState& state,
+        const EntityState::PlayedCue& cue,
+        const char* rollback_reason = nullptr,
+        const char* cue_source = nullptr) const;
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+    void trace_outgoing_ack_packet(const std::vector<std::uint32_t>& acks) const;
+    void trace_outgoing_input_packet(
+        const std::vector<std::uint32_t>& acks,
+        SyncFrame baseline_frame,
+        SyncFrame first_input_frame,
+        SyncFrame last_input_frame) const;
+    void trace_incoming_update_packet(
+        SyncFrame local_frame,
+        SyncFrame server_frame,
+        std::uint32_t packet_id,
+        SyncFrame input_ack_frame,
+        std::uint16_t record_count) const;
 #endif
+#endif
+    bool set_input_bytes(ecs::Registry& registry, ecs::Entity component, const void* input);
+    bool record_input_frame(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame);
+    bool fill_input_frames_through(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame);
+    bool apply_input_frame(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame);
+    void apply_input_to_owned_entities(ecs::Registry& registry, ecs::Entity component, const std::uint8_t* quantized);
+    void acknowledge_input_frame(SyncFrame frame);
 
     struct WireNetworkIdState {
         std::uint32_t version = 0;
@@ -636,8 +720,14 @@ private:
         bool alive = false;
     };
 
+    struct InputFrame {
+        SyncFrame frame = 0;
+        bool valid = false;
+        std::vector<std::uint8_t> bytes;
+    };
+
     ReplicationClientOptions options_;
-    ReplicationClientTimingStats timing_stats_;
+    ReplicationClientClock clock_;
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     ReplicationClientInterpolationDiagnostics interpolation_diagnostics_;
 #endif
@@ -656,32 +746,53 @@ private:
     std::vector<WireNetworkIdState> wire_network_ids_;
     std::unordered_map<ClientEntityNetworkId, std::uint32_t> network_entity_indices_;
     std::vector<std::uint32_t> pending_acks_;
-    std::unordered_map<std::uint32_t, SyncFrame> pending_pings_;
+    std::vector<InputFrame> input_frames_;
+    std::vector<std::uint8_t> latest_input_;
+    std::vector<std::uint8_t> acked_input_baseline_;
+    SyncComponentOps input_ops_;
+    ecs::Entity input_component_;
+    SyncFrame last_recorded_input_frame_ = 0;
+    SyncFrame last_server_update_frame_ = 0;
+    double last_server_update_receive_frame_ = 0.0;
+    SyncFrame acked_input_frame_ = 0;
+    bool has_latest_input_ = false;
+    bool has_input_ops_ = false;
+    bool has_acked_input_baseline_ = true;
+    bool input_history_discontinuous_ = false;
+    bool has_received_server_update_ = false;
+    struct PendingPing {
+        SyncFrame frame = 0;
+        std::uint16_t subframe = 0;
+    };
+
+    std::unordered_map<std::uint32_t, PendingPing> pending_pings_;
     std::unordered_map<std::uint32_t, SyncFrame> destroy_tombstones_;
-    DisplaySampleBuffer display_frame_;
-    DisplaySampleBuffer display_scratch_;
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+    std::vector<std::string> current_packet_cue_summaries_;
+#endif
+    std::vector<BitBuffer> inbound_packets_;
+    std::function<void(const BitBuffer&)> packet_sender_;
+    DisplayInterpolationSampleBuffer display_frame_;
+    DisplayInterpolationSampleBuffer display_scratch_;
     std::string connect_error_;
     ClientId client_id_ = invalid_client_id;
     ReplicationClientConnectionState connection_state_ = ReplicationClientConnectionState::Connecting;
     double connect_resend_accumulator_seconds_ = 0.0;
     double ping_accumulator_seconds_ = 0.0;
     std::uint32_t next_ping_sequence_ = 1;
+    std::uint32_t stable_ping_samples_ = 0;
     bool sent_initial_connect_request_ = false;
     bool sent_initial_ping_ = false;
-    double receive_accumulator_seconds_ = 0.0;
-    double playback_accumulator_seconds_ = 0.0;
-    double prediction_accumulator_seconds_ = 0.0;
-    double display_accumulator_seconds_ = 0.0;
-    double display_target_frame_ = 0.0;
-    SyncFrame receive_frame_ = 0;
-    SyncFrame playback_frame_ = 0;
+    bool adaptive_ping_active_ = true;
     SyncFrame last_applied_buffered_frame_ = 0;
     bool has_applied_buffered_frame_ = false;
     SyncFrame last_predicted_frame_ = 0;
     bool has_predicted_frame_ = false;
+    SyncFrame active_prediction_snap_lead_frames_ = 0;
+    SyncFrame pending_prediction_catchup_frame_ = 0;
+    SyncFrame pending_prediction_catchup_server_frame_ = 0;
     SyncFrame pending_prediction_rollback_frame_ = 0;
     bool has_pending_prediction_rollback_ = false;
-    bool has_display_target_frame_ = false;
     std::uint32_t highest_server_update_packet_id_ = 0;
     std::uint64_t server_update_packet_window_mask_ = 0;
     std::uint32_t server_update_packet_window_span_ = 0;

@@ -60,10 +60,16 @@ struct TestCue {
     std::int32_t id = 0;
 };
 
+struct ReferenceCue {
+    kage::sync::EntityReference target;
+};
+
 struct CuePlayback {
     std::int32_t plays = 0;
     std::int32_t rollbacks = 0;
     std::int32_t last_id = 0;
+    ecs::Entity last_target;
+    kage::sync::ClientEntityNetworkId last_target_network_id = kage::sync::invalid_client_entity_network_id;
     float last_late_seconds = 0.0f;
 };
 
@@ -132,12 +138,64 @@ struct SyncCueTraits<kage_sync_tests::TestCue> {
         return lhs.id == rhs.id;
     }
 
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_CUE_DATA)
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
     static void trace(const kage_sync_tests::TestCue& cue, SyncTraceStringBuilder& out) {
         out.append("id=");
         out.append_number(cue.id);
     }
 #endif
+};
+
+template <>
+struct SyncCueTraits<kage_sync_tests::ReferenceCue> {
+    static void serialize(
+        const kage_sync_tests::ReferenceCue& cue,
+        BitBuffer& out,
+        EntityReferenceContext& references) {
+        (void)write_entity_reference(out, cue.target, references);
+    }
+
+    static bool deserialize(
+        BitBuffer& in,
+        kage_sync_tests::ReferenceCue& out,
+        EntityReferenceContext& references) {
+        return read_entity_reference(in, references, out.target);
+    }
+
+    static bool play(
+        ecs::Registry& registry,
+        ecs::Entity owner,
+        const kage_sync_tests::ReferenceCue& cue,
+        float late_seconds) {
+        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
+            registry.add<kage_sync_tests::CuePlayback>(owner);
+        }
+        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
+            return false;
+        }
+        kage_sync_tests::CuePlayback& playback = registry.write<kage_sync_tests::CuePlayback>(owner);
+        ++playback.plays;
+        playback.last_target = cue.target.entity;
+        playback.last_target_network_id = cue.target.client_entity_network_id;
+        playback.last_late_seconds = late_seconds;
+        return true;
+    }
+
+    static bool rollback(ecs::Registry& registry, ecs::Entity owner, const kage_sync_tests::ReferenceCue&) {
+        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
+            registry.add<kage_sync_tests::CuePlayback>(owner);
+        }
+        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
+            return false;
+        }
+        ++registry.write<kage_sync_tests::CuePlayback>(owner).rollbacks;
+        return true;
+    }
+
+    static bool equals_cue(const kage_sync_tests::ReferenceCue& lhs, const kage_sync_tests::ReferenceCue& rhs) {
+        return lhs.target.client_entity_network_id == rhs.target.client_entity_network_id &&
+            lhs.target.entity == rhs.target.entity;
+    }
 };
 
 template <>

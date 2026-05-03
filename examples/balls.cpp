@@ -1086,7 +1086,9 @@ int main(int argc, char** argv) {
     int target_ball_count = 96;
     std::string trace_dir;
     bool trace_frame_data = true;
-    bool trace_cue_data = true;
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+    bool trace_packet_logs = false;
+#endif
     for (int index = 1; index < argc; ++index) {
         const std::string arg = argv[index];
         auto require_value = [&]() -> std::string {
@@ -1130,15 +1132,20 @@ int main(int argc, char** argv) {
             } else {
                 throw std::runtime_error("--trace-frame-data must be on or off");
             }
-        } else if (arg == "--trace-cue-data") {
+        } else if (arg == "--trace-packet-logs") {
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
             const std::string value = require_value();
             if (value == "on" || value == "true" || value == "1") {
-                trace_cue_data = true;
+                trace_packet_logs = true;
             } else if (value == "off" || value == "false" || value == "0") {
-                trace_cue_data = false;
+                trace_packet_logs = false;
             } else {
-                throw std::runtime_error("--trace-cue-data must be on or off");
+                throw std::runtime_error("--trace-packet-logs must be on or off");
             }
+#else
+            (void)require_value();
+            throw std::runtime_error("--trace-packet-logs requires a build with KAGE_SYNC_TRACE_PACKET_LOGS=ON");
+#endif
         } else if (arg == "--auto-interpolation-buffer") {
             const std::string value = require_value();
             if (value == "on" || value == "true" || value == "1") {
@@ -1218,7 +1225,9 @@ int main(int argc, char** argv) {
         trace_writer = std::make_unique<kage::sync::KTraceDirectoryWriter>(
             kage::sync::KTraceDirectoryWriterOptions{trace_dir});
         trace_writer->tracer().set_frame_data_enabled(trace_frame_data);
-        trace_writer->tracer().set_cue_data_enabled(trace_cue_data);
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+        trace_writer->tracer().set_packet_logs_enabled(trace_packet_logs);
+#endif
         server.set_tracer(&trace_writer->tracer());
         client.set_tracer(&trace_writer->tracer());
     }
@@ -1242,6 +1251,10 @@ int main(int argc, char** argv) {
     float server_accumulator = 0.0f;
     kage::sync::SyncFrame server_frame = 0;
     send_hello(client_socket, server_address);
+    client.set_packet_sender([&](const kage::sync::BitBuffer& packet) {
+        ++stats.client_packets;
+        queue_packet(upstream_link, client_socket, server_address, packet, stats, false);
+    });
 
     while (!WindowShouldClose()) {
         const float dt = GetFrameTime();
@@ -1268,7 +1281,7 @@ int main(int argc, char** argv) {
                     server.add_client(client_id);
                 }
             } else {
-                server.process_packet(client_id, received);
+                server.receive_packet(client_id, received);
             }
         }
 
@@ -1283,7 +1296,7 @@ int main(int argc, char** argv) {
                 1.0f / 30.0f,
                 spawn_index,
                 target_ball_count);
-            server.tick(server_registry);
+            server.tick(server_registry, 1.0f / 30.0f);
         }
         stats.server_entities = static_cast<int>(balls.size());
 
@@ -1293,8 +1306,8 @@ int main(int argc, char** argv) {
                 static_cast<std::uint8_t>(read.read_bits(8U)) == kage::sync::protocol::server_update_message) {
                 stats.frame = static_cast<kage::sync::SyncFrame>(read.read_bits(32U));
             }
-            client.receive(client_registry, received);
-            interpolation_buffer_frames = client.options().interpolation_buffer_frames;
+            client.receive_packet(received);
+            interpolation_buffer_frames = client.current_interpolation_buffer_frames();
         }
         client.tick(client_registry, dt);
         std::vector<ecs::Entity> expired_flashes;
@@ -1306,10 +1319,6 @@ int main(int argc, char** argv) {
         });
         for (ecs::Entity entity : expired_flashes) {
             client_registry.remove<BallCueFlash>(entity);
-        }
-        for (const kage::sync::BitBuffer& packet : client.drain_packets()) {
-            ++stats.client_packets;
-            queue_packet(upstream_link, client_socket, server_address, packet, stats, false);
         }
         stats.receive_frame = client.receive_frame();
         stats.client_frame = client.playback_frame();
@@ -1327,20 +1336,22 @@ int main(int argc, char** argv) {
         DrawGrid(12, 1.0f);
         const float pulse_time = static_cast<float>(GetTime());
         rendered_balls.clear();
-        for (const kage::sync::DisplayEntitySample& entity : client.display_frame(client_registry).entities) {
+        for (const kage::sync::DisplayInterpolationSample& entity : client.display_interpolation_frame(client_registry).entities) {
             BallPosition position;
-            BallVisual visual;
-            if (!entity.try_get(client_registry, position) || !entity.try_get(client_registry, visual)) {
+            if (!entity.try_get_display_value(client_registry, position)) {
                 continue;
             }
-            BallContact contact{};
-            (void)entity.try_get(client_registry, contact);
+            const BallVisual* visual = client_registry.try_get<BallVisual>(entity.local_entity);
+            if (visual == nullptr) {
+                continue;
+            }
+            const BallContact* contact = client_registry.try_get<BallContact>(entity.local_entity);
             rendered_balls.push_back(RenderedBall{
                 entity.client_entity_network_id,
                 entity.local_entity,
                 Vector3{position.x, position.y, position.z},
-                visual,
-                contact,
+                *visual,
+                contact != nullptr ? *contact : BallContact{},
                 entity.has_tag(client_registry, client_schema.spawn_tagged),
                 entity.has_tag(client_registry, client_schema.bounced),
             });

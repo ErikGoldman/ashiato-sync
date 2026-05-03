@@ -39,14 +39,21 @@ enum class SyncTraceEventType : std::uint8_t {
     BufferedStarved = 12,
     PredictionRollbackConflict = 13,
     FrameComponent = 14,
-    CueInvoked = 15,
-    CueRolledBack = 16,
+    CueEmitted = 15,
+    CueSent = 16,
     CueReceived = 17,
-    TagReceived = 18,
-    EntityDestroyed = 19,
-    ResimulatedFrameComponent = 20,
-    ComponentName = 21,
-    RollbackReason = 22
+    CuePlayed = 18,
+    CueRolledBack = 19,
+    CueConfirmed = 20,
+    TagReceived = 21,
+    EntityDestroyed = 22,
+    ResimulatedFrameComponent = 23,
+    ComponentName = 24,
+    CueName = 25,
+    RollbackReason = 26,
+    InputStarved = 27,
+    PacketLog = 28,
+    ClockSkew = 29
 };
 
 struct SyncTraceEvent {
@@ -87,13 +94,22 @@ struct SyncTraceCallbacks {
     std::function<void(const SyncTraceEvent&)> on_buffered_starved;
     std::function<void(const SyncTraceEvent&)> on_prediction_rollback_conflict;
     std::function<void(const SyncTraceEvent&)> on_frame_component;
-    std::function<void(const SyncTraceEvent&)> on_cue_invoked;
+    std::function<void(const SyncTraceEvent&)> on_cue_emitted;
+    std::function<void(const SyncTraceEvent&)> on_cue_sent;
     std::function<void(const SyncTraceEvent&)> on_cue_rolled_back;
     std::function<void(const SyncTraceEvent&)> on_cue_received;
+    std::function<void(const SyncTraceEvent&)> on_cue_played;
+    std::function<void(const SyncTraceEvent&)> on_cue_confirmed;
     std::function<void(const SyncTraceEvent&)> on_entity_destroyed;
     std::function<void(const SyncTraceEvent&)> on_resimulated_frame_component;
     std::function<void(const SyncTraceEvent&)> on_component_name;
+    std::function<void(const SyncTraceEvent&)> on_cue_name;
     std::function<void(const SyncTraceEvent&)> on_rollback_reason;
+    std::function<void(const SyncTraceEvent&)> on_input_starved;
+    std::function<void(const SyncTraceEvent&)> on_clock_skew;
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+    std::function<void(const SyncTraceEvent&)> on_packet_log;
+#endif
 };
 
 class SyncTracer {
@@ -102,11 +118,15 @@ public:
 
     bool enabled() const noexcept { return enabled_; }
     bool frame_data_enabled() const noexcept { return frame_data_enabled_; }
-    bool cue_data_enabled() const noexcept { return cue_data_enabled_; }
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+    bool packet_logs_enabled() const noexcept { return packet_logs_enabled_; }
+#endif
 
     void set_enabled(bool enabled) noexcept { enabled_ = enabled; }
     void set_frame_data_enabled(bool enabled) noexcept { frame_data_enabled_ = enabled; }
-    void set_cue_data_enabled(bool enabled) noexcept { cue_data_enabled_ = enabled; }
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+    void set_packet_logs_enabled(bool enabled) noexcept { packet_logs_enabled_ = enabled; }
+#endif
     void set_callbacks(SyncTraceCallbacks callbacks);
     const SyncTraceCallbacks& callbacks() const noexcept { return callbacks_; }
 
@@ -115,7 +135,9 @@ public:
 private:
     bool enabled_ = true;
     bool frame_data_enabled_ = false;
-    bool cue_data_enabled_ = false;
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+    bool packet_logs_enabled_ = false;
+#endif
     SyncTraceCallbacks callbacks_;
 };
 
@@ -145,6 +167,7 @@ private:
         std::vector<std::uint8_t> pending;
         std::vector<std::uint8_t> writing;
         std::unordered_set<std::uint64_t> named_components;
+        std::unordered_set<std::uint64_t> named_cues;
         std::mutex mutex;
         std::condition_variable cv;
         std::thread thread;
@@ -164,8 +187,9 @@ private:
     SyncTracer tracer_;
 };
 
-inline constexpr std::uint16_t ktrace_format_version = 5;
+inline constexpr std::uint16_t ktrace_format_version = 6;
 inline constexpr ClientId ktrace_server_source_id = invalid_client_id;
+inline constexpr std::uint32_t ktrace_flag_packet_logs = 1U << 0U;
 
 struct KTraceDirectoryWriterOptions {
     std::string directory;
@@ -185,11 +209,13 @@ struct KTraceFile {
     ClientId client = invalid_client_id;
     std::uint64_t recorded_unix_ns = 0;
     std::uint16_t version = 0;
+    std::uint32_t flags = 0;
     std::vector<KTraceRecord> records;
     std::unordered_map<std::uint64_t, std::string> component_names;
+    std::unordered_map<std::uint64_t, std::string> cue_names;
 };
 
-enum class KTraceCellState : std::uint16_t {
+enum class KTraceCellState : std::uint32_t {
     SentToClient = 1U << 0U,
     ReceivedFromServer = 1U << 1U,
     Applied = 1U << 2U,
@@ -200,12 +226,19 @@ enum class KTraceCellState : std::uint16_t {
     Starved = 1U << 7U,
     Removed = 1U << 8U,
     EntityDestroyed = 1U << 9U,
-    Resimulated = 1U << 10U
+    Resimulated = 1U << 10U,
+    InputReceived = 1U << 11U,
+    CueEmitted = 1U << 12U,
+    CueSent = 1U << 13U,
+    CueReceived = 1U << 14U,
+    CuePlayed = 1U << 15U,
+    CueConfirmed = 1U << 16U,
+    CueRolledBack = 1U << 17U
 };
 
 struct KTraceFrameCell {
     SyncFrame frame = 0;
-    std::uint16_t state_mask = 0;
+    std::uint32_t state_mask = 0;
     std::vector<std::uint32_t> event_indices;
 };
 
@@ -236,9 +269,11 @@ struct KTraceSourceHistory {
     ClientId client = invalid_client_id;
     std::string path;
     std::uint64_t recorded_unix_ns = 0;
+    std::uint32_t flags = 0;
     std::vector<KTraceRecord> records;
     std::vector<KTraceEntityRow> entities;
     std::unordered_map<std::uint64_t, std::string> component_names;
+    std::unordered_map<std::uint64_t, std::string> cue_names;
 };
 
 struct SyncTraceHistory {
@@ -269,6 +304,7 @@ private:
         std::uint64_t start_steady_us = 0;
         std::deque<std::vector<std::uint8_t>> queue;
         std::unordered_set<std::uint64_t> named_components;
+        std::unordered_set<std::uint64_t> named_cues;
         std::size_t queued_bytes = 0;
         std::mutex mutex;
         std::condition_variable cv;
@@ -294,8 +330,6 @@ class KTraceReader {
 public:
     KTraceFile read_file(const std::string& path) const;
     SyncTraceHistory read_directory(const std::string& directory) const;
-
-private:
     static KTraceSourceHistory build_source_history(KTraceFile file);
 };
 

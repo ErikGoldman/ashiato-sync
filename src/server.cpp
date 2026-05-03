@@ -12,7 +12,9 @@
 #include <exception>
 #include <limits>
 #include <mutex>
+#include <sstream>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <utility>
 
@@ -28,7 +30,11 @@ std::size_t configured_packet_id_bits(const ReplicationServerOptions& options) n
 }
 
 std::size_t server_update_header_bits(const ReplicationServerOptions& options) noexcept {
-    return 8U + 32U + configured_packet_id_bits(options) + 16U;
+    return 8U + 32U + configured_packet_id_bits(options) + 32U + 16U;
+}
+
+bool is_power_of_two(std::size_t value) noexcept {
+    return value != 0U && (value & (value - 1U)) == 0U;
 }
 
 std::size_t destroy_record_bits(std::uint32_t network_id, std::size_t tier0_bits) noexcept {
@@ -131,14 +137,35 @@ void append_trace_component_data(
 #endif
 }
 
+void append_trace_input_component_data(
+    const SyncTracer* tracer,
+    const SyncComponentOps& ops,
+    const std::uint8_t* bytes,
+    SyncTraceEvent& event) {
+    event.component_name = ops.name;
+#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+    if (tracer == nullptr || !tracer->frame_data_enabled() || bytes == nullptr || ops.trace == nullptr) {
+        return;
+    }
+    SyncTraceStringBuilder builder;
+    ops.trace(bytes, builder);
+    event.data = std::move(builder.value);
+#else
+    (void)tracer;
+    (void)ops;
+    (void)bytes;
+    (void)event;
+#endif
+}
+
 void append_trace_cue_data(
     const SyncTracer* tracer,
     const SyncSettings& settings,
     SyncCueTypeId cue_type,
     const BitBuffer& payload,
     SyncTraceEvent& event) {
-#ifdef KAGE_SYNC_TRACE_CUE_DATA
-    if (tracer == nullptr || !tracer->cue_data_enabled() ||
+#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+    if (tracer == nullptr || !tracer->frame_data_enabled() ||
         cue_type >= settings.cue_ops.size() || settings.cue_ops[cue_type].trace == nullptr) {
         return;
     }
@@ -154,6 +181,39 @@ void append_trace_cue_data(
     (void)event;
 #endif
 }
+
+void append_trace_data_field(SyncTraceEvent& event, const char* key, const char* value) {
+    if (key == nullptr || value == nullptr || value[0] == '\0') {
+        return;
+    }
+    if (!event.data.empty()) {
+        event.data += ",";
+    }
+    event.data += key;
+    event.data += "=";
+    event.data += value;
+}
+
+void append_trace_cue_name(const SyncSettings& settings, SyncCueTypeId cue_type, SyncTraceEvent& event) {
+    if (cue_type < settings.cue_ops.size()) {
+        event.component_name = settings.cue_ops[cue_type].name;
+    }
+}
+
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+std::string packet_ack_list(const std::vector<std::uint32_t>& acks) {
+    std::ostringstream out;
+    out << "[";
+    for (std::size_t index = 0; index < acks.size(); ++index) {
+        if (index != 0U) {
+            out << ",";
+        }
+        out << acks[index];
+    }
+    out << "]";
+    return out.str();
+}
+#endif
 
 #endif
 
@@ -217,6 +277,7 @@ BitBuffer make_server_packet(
     std::size_t packet_id_bits,
     SyncFrame frame,
     std::uint32_t packet_id,
+    SyncFrame input_ack_frame,
     std::uint16_t entity_count,
     const BitBuffer& records) {
     BitBuffer packet;
@@ -224,6 +285,7 @@ BitBuffer make_server_packet(
     packet.push_bits(protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
     packet.push_bits(packet_id, packet_id_bits);
+    packet.push_bits(input_ack_frame, 32U);
     packet.push_bits(entity_count, 16U);
     packet.push_buffer_bits(records);
     return packet;
@@ -247,10 +309,17 @@ ReplicationServer::ReplicationServer(ReplicationServerOptions options)
         !std::isfinite(options_.idle_client_timeout_seconds)) {
         throw std::invalid_argument("idle client timeout seconds must be finite and non-negative");
     }
+    if (!is_power_of_two(options_.input_buffer_capacity_frames)) {
+        throw std::invalid_argument("input buffer capacity must be a nonzero power of two");
+    }
 }
 
 void ReplicationServer::set_transport(TransportFn transport) {
     options_.transport = std::move(transport);
+}
+
+void ReplicationServer::set_packet_sender(TransportFn sender) {
+    set_transport(std::move(sender));
 }
 
 #ifdef KAGE_SYNC_ENABLE_TRACING
@@ -331,6 +400,187 @@ void ReplicationServer::trace_frame_components(const ecs::Registry& registry, co
         }
     }
 }
+
+void ReplicationServer::trace_input_component(
+    ecs::Entity entity,
+    ClientState& client,
+    SyncFrame frame,
+    ecs::Entity component,
+    const SyncComponentOps& ops,
+    const std::uint8_t* quantized) {
+    if (tracer_ == nullptr || !tracer_->enabled() || quantized == nullptr || !component) {
+        return;
+    }
+    SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::FrameComponent, client.id, frame);
+    event.server_entity = entity;
+    event.component = component;
+    const auto found_slot = entity_to_slot_.find(entity.value);
+    if (found_slot != entity_to_slot_.end() && found_slot->second < client.entity_states.size()) {
+        (void)network_id_for_slot(client, found_slot->second);
+        const ClientEntityState& state = client.entity_states[found_slot->second];
+        if (state.has_network_id) {
+            event.wire_network_id = state.network_id;
+            event.network_version = state.network_version;
+            event.client_network_id = make_client_entity_network_id(client.id, state.network_id, state.network_version);
+            if (found_slot->second < replicated_.size()) {
+                event.archetype = replicated_[found_slot->second].archetype;
+            }
+        }
+    }
+    append_trace_input_component_data(tracer_, ops, quantized, event);
+    tracer_->trace(event);
+}
+
+void ReplicationServer::trace_input_starved(
+    ecs::Entity entity,
+    ClientState& client,
+    SyncFrame due_frame,
+    SyncFrame input_frame,
+    ecs::Entity component,
+    const SyncComponentOps& ops) {
+    if (tracer_ == nullptr || !tracer_->enabled() || !component) {
+        return;
+    }
+    SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::InputStarved, client.id, due_frame);
+    event.server_entity = entity;
+    event.component = component;
+    event.component_name = ops.name;
+    const auto found_slot = entity_to_slot_.find(entity.value);
+    if (found_slot != entity_to_slot_.end() && found_slot->second < client.entity_states.size()) {
+        (void)network_id_for_slot(client, found_slot->second);
+        const ClientEntityState& state = client.entity_states[found_slot->second];
+        if (state.has_network_id) {
+            event.wire_network_id = state.network_id;
+            event.network_version = state.network_version;
+            event.client_network_id = make_client_entity_network_id(client.id, state.network_id, state.network_version);
+            if (found_slot->second < replicated_.size()) {
+                event.archetype = replicated_[found_slot->second].archetype;
+            }
+        }
+    }
+    event.data = "input_frame=" + std::to_string(input_frame);
+    tracer_->trace(event);
+}
+
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+void ReplicationServer::trace_incoming_ack_packet(ClientState& client, const std::vector<std::uint32_t>& acks) const {
+    if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->packet_logs_enabled()) {
+        return;
+    }
+    SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::PacketLog, client.id, frame_);
+    event.data = "direction=in,message=client_ack,client=" + std::to_string(client.id) +
+        ",acks=" + packet_ack_list(acks);
+    tracer_->trace(event);
+}
+
+void ReplicationServer::trace_incoming_input_packet(
+    ClientState& client,
+    const std::vector<std::uint32_t>& acks,
+    SyncFrame baseline_frame,
+    SyncFrame first_input_frame,
+    SyncFrame last_input_frame) const {
+    if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->packet_logs_enabled()) {
+        return;
+    }
+    SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::PacketLog, client.id, frame_);
+    std::ostringstream out;
+    out << "direction=in,message=client_input,client=" << client.id
+        << ",acks=" << packet_ack_list(acks)
+        << ",input_frames=";
+    if (first_input_frame != 0U && last_input_frame >= first_input_frame) {
+        out << first_input_frame << "-" << last_input_frame;
+    } else {
+        out << "none";
+    }
+    out << ",baseline=" << baseline_frame;
+    event.data = out.str();
+    tracer_->trace(event);
+}
+
+void ReplicationServer::trace_outgoing_update_packet(
+    ClientState& client,
+    SyncFrame frame,
+    std::uint32_t packet_id,
+    SyncFrame input_ack_frame,
+    const std::vector<PacketAckRecord>& records) const {
+    if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->packet_logs_enabled()) {
+        return;
+    }
+    SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::PacketLog, client.id, frame);
+    std::ostringstream out;
+    out << "direction=out,message=server_update,client=" << client.id
+        << ",sequence=" << packet_id
+        << ",server_frame=" << frame
+        << ",input_ack=" << input_ack_frame
+        << ",updated_server_entities=[";
+    bool first = true;
+    for (const PacketAckRecord& record : records) {
+        if (record.destroy) {
+            continue;
+        }
+        if (!first) {
+            out << ",";
+        }
+        first = false;
+        out << record.entity.value;
+    }
+    out << "]";
+#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+    const bool include_cue_data = tracer_ != nullptr && tracer_->frame_data_enabled();
+#else
+    const bool include_cue_data = false;
+#endif
+    out << ",cues=[";
+    bool first_cue = true;
+    for (const PacketAckRecord& record : records) {
+        if (record.destroy) {
+            continue;
+        }
+        for (const PacketAckRecord::CueSummary& cue : record.cues) {
+            if (!first_cue) {
+                out << ";";
+            }
+            first_cue = false;
+            out << "{entity=" << record.entity.value
+                << ",frame=" << cue.frame
+                << ",type=" << cue.type;
+            if (include_cue_data && !cue.data.empty()) {
+                out << ",data=" << cue.data;
+            }
+            out << "}";
+        }
+    }
+    out << "]";
+    event.data = out.str();
+    tracer_->trace(event);
+}
+
+void ReplicationServer::append_packet_ack_cues(
+    const SyncSettings& settings,
+    const ClientEntityState& state,
+    PacketAckRecord& record) const {
+    const std::size_t cue_count = std::min(state.pending_cues.size(), max_cues_per_entity_record);
+    record.cues.reserve(cue_count);
+    for (std::size_t index = 0; index < cue_count; ++index) {
+        const ClientEntityState::PendingCue& cue = state.pending_cues[index];
+        PacketAckRecord::CueSummary summary;
+        summary.frame = cue.frame;
+        summary.type = cue.type;
+#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+        if (tracer_ != nullptr && tracer_->frame_data_enabled() &&
+            cue.type < settings.cue_ops.size() && settings.cue_ops[cue.type].trace != nullptr) {
+            SyncTraceStringBuilder builder;
+            if (settings.cue_ops[cue.type].trace(cue.payload, builder)) {
+                summary.data = std::move(builder.value);
+            }
+        }
+#else
+        (void)settings;
+#endif
+        record.cues.push_back(std::move(summary));
+    }
+}
+#endif
 #endif
 
 bool ReplicationServer::remove_client(ClientId client) {
@@ -373,6 +623,14 @@ bool ReplicationServer::has_client(ClientId client) const {
 
 std::size_t ReplicationServer::client_count() const noexcept {
     return clients_.size();
+}
+
+ReplicationServer::ClientInputStats ReplicationServer::input_stats(ClientId client) const noexcept {
+    const auto found = client_to_index_.find(client);
+    if (found == client_to_index_.end()) {
+        return ClientInputStats{};
+    }
+    return clients_[found->second].input_stats;
 }
 
 void ReplicationServer::refresh_replicated(ecs::Registry& registry) {
@@ -468,7 +726,19 @@ bool ReplicationServer::acknowledge_entity(ClientId client, ecs::Entity entity, 
     return true;
 }
 
+void ReplicationServer::receive_packet(ClientId client, BitBuffer packet) {
+    inbound_packets_.push_back(PendingInboundPacket{client, std::move(packet)});
+}
+
 bool ReplicationServer::process_packet(ClientId client, BitBuffer packet) {
+    return process_packet_impl(nullptr, client, std::move(packet));
+}
+
+bool ReplicationServer::process_packet(ecs::Registry& registry, ClientId client, BitBuffer packet) {
+    return process_packet_impl(&registry, client, std::move(packet));
+}
+
+bool ReplicationServer::process_packet_impl(ecs::Registry* registry, ClientId client, BitBuffer packet) {
     try {
         if (packet.remaining_bits() < 8U) {
             return false;
@@ -541,8 +811,19 @@ bool ReplicationServer::process_packet(ClientId client, BitBuffer packet) {
             }
             const auto sequence = static_cast<std::uint32_t>(packet.read_bits(32U));
             const auto send_frame = static_cast<SyncFrame>(packet.read_bits(32U));
-            send_pong(state.peer, sequence, send_frame);
+            std::uint16_t send_subframe = 0;
+            if (packet.remaining_bits() >= protocol::frame_subframe_bits) {
+                send_subframe = static_cast<std::uint16_t>(packet.read_bits(protocol::frame_subframe_bits));
+            }
+            send_pong(state.peer, sequence, send_frame, send_subframe);
             return true;
+        }
+
+        if (message == protocol::client_input_message) {
+            if (registry == nullptr) {
+                return false;
+            }
+            return process_input_packet(*registry, state, packet);
         }
 
         if (message != protocol::client_ack_message) {
@@ -555,15 +836,152 @@ bool ReplicationServer::process_packet(ClientId client, BitBuffer packet) {
         }
         const auto ack_count = static_cast<std::uint16_t>(packet.read_bits(16U));
         bool all_valid = true;
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+        std::vector<std::uint32_t> acks;
+        acks.reserve(ack_count);
+#endif
         for (std::uint16_t ack = 0; ack < ack_count; ++ack) {
             const auto packet_id = static_cast<std::uint32_t>(packet.read_bits(packet_id_bits));
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+            acks.push_back(packet_id);
+#endif
             all_valid = acknowledge_packet(state, packet_id) && all_valid;
         }
         cleanup_packet_acks(state);
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+        trace_incoming_ack_packet(state, acks);
+#endif
         return all_valid;
     } catch (const std::exception&) {
         return false;
     }
+}
+
+bool ReplicationServer::process_input_packet(ecs::Registry& registry, ClientState& client, BitBuffer& packet) {
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    if (!settings.input_component) {
+        return false;
+    }
+    const auto found_ops = settings.component_ops.find(settings.input_component.value);
+    if (found_ops == settings.component_ops.end() ||
+        found_ops->second.deserialize == nullptr ||
+        found_ops->second.apply == nullptr ||
+        found_ops->second.quantized_size == 0U) {
+        return false;
+    }
+    const SyncComponentOps& ops = found_ops->second;
+
+    const std::size_t packet_id_bits = configured_packet_id_bits(options_);
+    if (packet.remaining_bits() < 16U) {
+        return false;
+    }
+    const auto ack_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+    bool all_valid = true;
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+    std::vector<std::uint32_t> acks;
+    acks.reserve(ack_count);
+#endif
+    for (std::uint16_t ack = 0; ack < ack_count; ++ack) {
+        if (packet.remaining_bits() < packet_id_bits) {
+            return false;
+        }
+        const auto packet_id = static_cast<std::uint32_t>(packet.read_bits(packet_id_bits));
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+        acks.push_back(packet_id);
+#endif
+        all_valid = acknowledge_packet(client, packet_id) && all_valid;
+    }
+    cleanup_packet_acks(client);
+
+    if (packet.remaining_bits() < 49U) {
+        return false;
+    }
+    const auto baseline_frame = static_cast<SyncFrame>(packet.read_bits(32U));
+    const auto input_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+    const bool first_input_full = packet.read_bool();
+    SyncFrame first_input_frame = input_count == 0U ? 0U : baseline_frame + 1U;
+    if (first_input_full) {
+        if (packet.remaining_bits() < 32U) {
+            return false;
+        }
+        const auto explicit_first_input_frame = static_cast<SyncFrame>(packet.read_bits(32U));
+        if (input_count != 0U) {
+            first_input_frame = explicit_first_input_frame;
+        }
+    }
+
+    std::vector<std::uint8_t> previous(ops.quantized_size, 0U);
+    if (baseline_frame > client.input_ack_frame) {
+        client.input_ack_frame = baseline_frame;
+    }
+    if (baseline_frame != 0U && !first_input_full) {
+        bool found_baseline = false;
+        if (!client.input_frames.empty()) {
+            const ClientState::InputFrame& baseline =
+                client.input_frames[baseline_frame & (client.input_frames.size() - 1U)];
+            if (baseline.valid && baseline.frame == baseline_frame &&
+                baseline.bytes.size() == ops.quantized_size) {
+                previous = baseline.bytes;
+                found_baseline = true;
+            }
+        }
+        if (!found_baseline && client.has_latest_input && baseline_frame == client.input_ack_frame &&
+            client.latest_input.size() == ops.quantized_size) {
+            previous = client.latest_input;
+            found_baseline = true;
+        }
+        if (!found_baseline) {
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+            trace_incoming_input_packet(client, acks, baseline_frame, 0, 0);
+#endif
+            return all_valid;
+        }
+    }
+    if (input_count == 0U || first_input_frame == 0U) {
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+        trace_incoming_input_packet(client, acks, baseline_frame, 0, 0);
+#endif
+        return all_valid;
+    }
+
+    if (client.input_frames.empty()) {
+        client.input_frames.resize(options_.input_buffer_capacity_frames);
+    }
+
+    std::vector<std::uint8_t> decoded(ops.quantized_size, 0U);
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+    SyncFrame trace_first_input_frame = 0;
+    SyncFrame last_input_frame = 0;
+#endif
+    for (std::uint16_t index = 0; index < input_count; ++index) {
+        const SyncFrame frame = first_input_frame + static_cast<SyncFrame>(index);
+        const std::uint8_t* previous_bytes = index == 0U && first_input_full ? nullptr : previous.data();
+        if (!ops.deserialize(packet, previous_bytes, decoded.data(), nullptr)) {
+            return false;
+        }
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+        if (index == 0U) {
+            trace_first_input_frame = frame;
+        }
+        last_input_frame = frame;
+#endif
+
+        if (frame > client.input_ack_frame) {
+            ClientState::InputFrame& stored = client.input_frames[frame & (client.input_frames.size() - 1U)];
+            stored.frame = frame;
+            stored.valid = true;
+            stored.bytes = decoded;
+            client.latest_input = decoded;
+            client.input_ack_frame = frame;
+            client.has_latest_input = true;
+            client.input_stats.latest_received_input_frame = frame;
+        }
+        previous = decoded;
+    }
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+    trace_incoming_input_packet(client, acks, baseline_frame, trace_first_input_frame, last_input_frame);
+#endif
+    return all_valid;
 }
 
 std::size_t ReplicationServer::retained_quantized_frame_count() const noexcept {
@@ -587,17 +1005,109 @@ std::size_t ReplicationServer::retained_quantized_frame_bytes() const noexcept {
     return bytes;
 }
 
+void ReplicationServer::apply_client_inputs(ecs::Registry& registry) {
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    if (!settings.input_component) {
+        return;
+    }
+    const auto found_ops = settings.component_ops.find(settings.input_component.value);
+    if (found_ops == settings.component_ops.end() || found_ops->second.apply == nullptr) {
+        return;
+    }
+    const SyncComponentOps& ops = found_ops->second;
+    const SyncFrame due_frame = frame_;
+    struct DueInput {
+        const std::vector<std::uint8_t>* bytes = nullptr;
+        SyncFrame frame = 0;
+        bool counted = false;
+    };
+    std::unordered_map<ClientId, DueInput> due_inputs;
+
+    auto select_due_input = [&](ClientState& client) -> DueInput& {
+        DueInput& due = due_inputs[client.id];
+        if (due.counted) {
+            return due;
+        }
+
+        SyncFrame best_frame = 0;
+        const std::vector<std::uint8_t>* best_bytes = nullptr;
+        if (!client.input_frames.empty()) {
+            const SyncFrame capacity_window_begin = due_frame > client.input_frames.size()
+                ? due_frame - static_cast<SyncFrame>(client.input_frames.size()) + 1U
+                : 1U;
+            const SyncFrame begin = std::max(client.latest_applied_input_frame + 1U, capacity_window_begin);
+            for (SyncFrame frame = begin; frame <= due_frame; ++frame) {
+                const ClientState::InputFrame& input = client.input_frames[frame & (client.input_frames.size() - 1U)];
+                if (input.valid && input.frame == frame && input.bytes.size() == ops.quantized_size) {
+                    best_frame = frame;
+                    best_bytes = &input.bytes;
+                }
+            }
+        }
+
+        if (best_bytes != nullptr) {
+            client.latest_applied_input = *best_bytes;
+            client.latest_applied_input_frame = best_frame;
+            client.has_latest_applied_input = true;
+            client.input_stats.latest_applied_input_frame = best_frame;
+            ++client.input_stats.input_frames_applied;
+            due.bytes = &client.latest_applied_input;
+            due.frame = best_frame;
+            if (best_frame < due_frame) {
+                ++client.input_stats.input_starvation_frames;
+            }
+        } else if (client.has_latest_applied_input && client.latest_applied_input.size() == ops.quantized_size) {
+            due.bytes = &client.latest_applied_input;
+            due.frame = client.latest_applied_input_frame;
+            ++client.input_stats.input_starvation_frames;
+            ++client.input_stats.input_reused_frames;
+        } else {
+            ++client.input_stats.input_starvation_frames;
+        }
+        due.counted = true;
+        return due;
+    };
+
+    registry.view<const NetworkOwner>().each([&](ecs::Entity entity, const NetworkOwner& owner) {
+        const auto found_client = client_to_index_.find(owner.client);
+        if (found_client == client_to_index_.end()) {
+            return;
+        }
+        ClientState& client = clients_[found_client->second];
+        DueInput& due = select_due_input(client);
+        if (due.bytes == nullptr || due.bytes->size() != ops.quantized_size) {
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            trace_input_starved(entity, client, due_frame, due.frame, settings.input_component, ops);
+#endif
+            return;
+        }
+        (void)ops.apply(registry, entity, due.bytes->data());
+#ifdef KAGE_SYNC_ENABLE_TRACING
+        trace_input_component(entity, client, due_frame, settings.input_component, ops, due.bytes->data());
+        if (due.frame < due_frame) {
+            trace_input_starved(entity, client, due_frame, due.frame, settings.input_component, ops);
+        }
+#endif
+    });
+}
+
+void ReplicationServer::begin_tick(ecs::Registry& registry) {
+    ++frame_;
+    disconnect_idle_clients();
+    apply_client_inputs(registry);
+}
+
 void ReplicationServer::tick(ecs::Registry& registry) {
+    begin_tick(registry);
+    end_tick(registry, ReplicateFn{});
+}
+
+void ReplicationServer::end_tick(ecs::Registry& registry, const ReplicateFn& replicate) {
     if (options_.transport) {
-        tick_serialized(registry);
+        end_tick(registry);
         return;
     }
 
-    tick(registry, ReplicateFn{});
-}
-
-void ReplicationServer::tick(ecs::Registry& registry, const ReplicateFn& replicate) {
-    disconnect_idle_clients();
     refresh_replicated(registry);
 
     std::vector<std::uint32_t> sent;
@@ -652,6 +1162,33 @@ void ReplicationServer::tick(ecs::Registry& registry, const ReplicateFn& replica
         next_order.insert(next_order.end(), sent.begin(), sent.end());
         client.order = std::move(next_order);
     }
+}
+
+void ReplicationServer::tick(ecs::Registry& registry, const ReplicateFn& replicate) {
+    begin_tick(registry);
+    end_tick(registry, replicate);
+}
+
+bool ReplicationServer::tick(ecs::Registry& registry, double dt_seconds) {
+    if (dt_seconds < 0.0 || !std::isfinite(dt_seconds)) {
+        return false;
+    }
+
+    tick_accumulator_seconds_ += dt_seconds;
+
+    for (PendingInboundPacket& inbound : inbound_packets_) {
+        (void)process_packet(registry, inbound.client, std::move(inbound.packet));
+    }
+    inbound_packets_.clear();
+
+    while (tick_accumulator_seconds_ >= options_.fixed_dt_seconds) {
+        tick_accumulator_seconds_ -= options_.fixed_dt_seconds;
+        begin_tick(registry);
+        registry.run_jobs();
+        end_tick(registry);
+    }
+
+    return true;
 }
 
 void ReplicationServer::disconnect_idle_clients() {
@@ -717,7 +1254,16 @@ void ReplicationServer::refresh_client_priorities(const ecs::Registry& registry,
 }
 
 void ReplicationServer::tick_serialized(ecs::Registry& registry) {
-    disconnect_idle_clients();
+    begin_tick(registry);
+    end_tick(registry);
+}
+
+void ReplicationServer::end_tick(ecs::Registry& registry) {
+    if (!options_.transport) {
+        end_tick(registry, ReplicateFn{});
+        return;
+    }
+
     if (options_.serialized_worker_threads > 1U && clients_.size() > 1U) {
         tick_serialized_parallel(registry);
         return;
@@ -727,7 +1273,7 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
 
     const SyncSettings& settings = registry.get<SyncSettings>();
     capture_dirty_components(registry, settings);
-    capture_queued_cues(settings);
+    capture_queued_cues(registry, settings);
     std::vector<SerializedCandidate> candidates;
     std::vector<SerializedCandidate> update_candidates;
     std::vector<std::size_t> destroy_order;
@@ -743,7 +1289,6 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
     update_candidates.reserve(active_replicated_count_);
     sent.reserve(active_replicated_count_);
     unsent.reserve(active_replicated_count_);
-    ++frame_;
 #ifdef KAGE_SYNC_ENABLE_TRACING
     trace_frame_components(registry, settings);
 #endif
@@ -958,7 +1503,11 @@ void ReplicationServer::tick_serialized(ecs::Registry& registry) {
 
             records.push_bool(false);
             records.push_buffer_bits(serialized.payload);
-            packet_ack_records.push_back(PacketAckRecord{replicated_[slot].entity, frame_, false});
+            PacketAckRecord ack_record{replicated_[slot].entity, frame_, false};
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+            append_packet_ack_cues(settings, client.entity_states[slot], ack_record);
+#endif
+            packet_ack_records.push_back(std::move(ack_record));
             ++packet_entities;
             client.reset_epochs[slot] = client.epoch;
             ClientEntityState& entity_state = client.entity_states[slot];
@@ -990,8 +1539,7 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
 
     const SyncSettings& settings = registry.get<SyncSettings>();
     capture_dirty_components(registry, settings);
-    capture_queued_cues(settings);
-    ++frame_;
+    capture_queued_cues(registry, settings);
 #ifdef KAGE_SYNC_ENABLE_TRACING
     trace_frame_components(registry, settings);
 #endif
@@ -1172,10 +1720,14 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
                     configured_packet_id_bits(options_),
                     frame_,
                     packet_id,
+                    client.input_ack_frame,
                     packet_entities,
                     records)});
             track_packet_ack(client, packet_id, packet_ack_records);
             enforce_pending_packet_ack_limit(client);
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+            trace_outgoing_update_packet(client, frame_, packet_id, client.input_ack_frame, packet_ack_records);
+#endif
             records.clear();
             packet_ack_records.clear();
             packet_entities = 0;
@@ -1285,7 +1837,11 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
 
             records.push_bool(false);
             records.push_buffer_bits(serialized.payload);
-            packet_ack_records.push_back(PacketAckRecord{replicated_[slot].entity, frame_, false});
+            PacketAckRecord ack_record{replicated_[slot].entity, frame_, false};
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+            append_packet_ack_cues(settings, client.entity_states[slot], ack_record);
+#endif
+            packet_ack_records.push_back(std::move(ack_record));
             ++packet_entities;
             client.reset_epochs[slot] = client.epoch;
             ClientEntityState& entity_state = client.entity_states[slot];
@@ -1402,7 +1958,7 @@ void ReplicationServer::capture_dirty_components(const ecs::Registry& registry, 
     });
 }
 
-void ReplicationServer::capture_queued_cues(const SyncSettings& settings) {
+void ReplicationServer::capture_queued_cues(const ecs::Registry& registry, const SyncSettings& settings) {
     if (!settings.cue_queue) {
         return;
     }
@@ -1413,23 +1969,51 @@ void ReplicationServer::capture_queued_cues(const SyncSettings& settings) {
         cues.swap(settings.cue_queue->cues);
     }
 
-    for (const QueuedSyncCue& cue : cues) {
+    for (QueuedSyncCue cue : cues) {
+        if (cue.frame == 0U) {
+            cue.frame = frame_;
+        }
         const auto found = entity_to_slot_.find(cue.entity.value);
         if (found == entity_to_slot_.end()) {
             continue;
         }
-        attach_cue_to_clients(found->second, cue);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+        if (tracer_ != nullptr && tracer_->enabled()) {
+            SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::CueEmitted, invalid_client_id, cue.frame);
+            event.server_entity = cue.entity;
+            if (found->second < replicated_.size()) {
+                event.archetype = replicated_[found->second].archetype;
+            }
+            event.cue_type = cue.type;
+            append_trace_cue_name(settings, cue.type, event);
+            append_trace_cue_data(tracer_, settings, cue.type, cue.payload, event);
+            append_trace_data_field(event, "source", "server");
+            tracer_->trace(event);
+        }
+#endif
+        attach_cue_to_clients(registry, settings, found->second, cue);
     }
 }
 
-void ReplicationServer::attach_cue_to_clients(std::uint32_t slot, const QueuedSyncCue& cue) {
+void ReplicationServer::attach_cue_to_clients(
+    const ecs::Registry& registry,
+    const SyncSettings& settings,
+    std::uint32_t slot,
+    const QueuedSyncCue& cue) {
     if (slot >= replicated_.size() || !replicated_[slot].active) {
+        return;
+    }
+    if (cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].serialize == nullptr) {
         return;
     }
     const SyncFrame relevance_frames = static_cast<SyncFrame>(
         std::ceil(static_cast<double>(cue.relevance_seconds) / options_.fixed_dt_seconds));
     const SyncFrame expire_frame = cue.frame + relevance_frames;
+    const NetworkOwner* owner = registry.try_get<NetworkOwner>(cue.entity);
     for (ClientState& client : clients_) {
+        if (cue.only_replicate_to_owner && (owner == nullptr || owner->client != client.id)) {
+            continue;
+        }
         if (slot >= client.entity_states.size()) {
             continue;
         }
@@ -1437,12 +2021,46 @@ void ReplicationServer::attach_cue_to_clients(std::uint32_t slot, const QueuedSy
         if (!state.priority_replicate) {
             continue;
         }
+        BitBuffer payload = cue.payload;
+        if (settings.cue_ops[cue.type].references_entities) {
+            if (!cue.value) {
+                continue;
+            }
+            struct ReferenceContextData {
+                ReplicationServer* server = nullptr;
+                ClientState* client = nullptr;
+                std::uint32_t source_slot = 0;
+            } reference_context_data{this, &client, slot};
+            EntityReferenceContext reference_context;
+            reference_context.user = &reference_context_data;
+            reference_context.network_entity_id_tier0_bits = options_.network_entity_id_tier0_bits;
+            reference_context.server_network_id_for_entity = [](void* user, ecs::Entity entity) {
+                ReferenceContextData& data = *static_cast<ReferenceContextData*>(user);
+                const auto found = data.server->entity_to_slot_.find(entity.value);
+                if (found == data.server->entity_to_slot_.end()) {
+                    return 0U;
+                }
+                const std::uint32_t reference_slot = found->second;
+                if (reference_slot >= data.server->replicated_.size() ||
+                    reference_slot >= data.client->entity_states.size() ||
+                    !data.server->replicated_[reference_slot].active ||
+                    !data.client->entity_states[reference_slot].priority_replicate) {
+                    return 0U;
+                }
+                if (reference_slot != data.source_slot) {
+                    data.client->entity_states[reference_slot].reference_priority_boost_pending = true;
+                }
+                return data.server->network_id_for_slot(*data.client, reference_slot);
+            };
+            payload.clear();
+            settings.cue_ops[cue.type].serialize(cue.value.get(), payload, &reference_context);
+        }
         state.pending_cues.push_back(ClientEntityState::PendingCue{
             cue.frame,
             expire_frame,
             cue.type,
             cue.relevance_seconds,
-            cue.payload});
+            payload});
     }
 }
 
@@ -2112,14 +2730,16 @@ void ReplicationServer::write_entity_record(
                 out.push_buffer_bits(cue.payload);
 #ifdef KAGE_SYNC_ENABLE_TRACING
                 if (tracer_ != nullptr && tracer_->enabled()) {
-                    SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::CueInvoked, client.id, cue.frame);
+                    SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::CueSent, client.id, cue.frame);
                     event.server_entity = replicated_[slot].entity;
                     event.wire_network_id = network_id;
                     event.network_version = entity_state.network_version;
                     event.client_network_id = make_client_entity_network_id(client.id, network_id, entity_state.network_version);
                     event.archetype = quantized_frame.archetype;
                     event.cue_type = cue.type;
+                    append_trace_cue_name(settings, cue.type, event);
                     append_trace_cue_data(tracer_, settings, cue.type, cue.payload, event);
+                    append_trace_data_field(event, "source", "server");
                     tracer_->trace(event);
                 }
 #endif
@@ -2221,14 +2841,16 @@ void ReplicationServer::write_entity_record(
             out.push_buffer_bits(cue.payload);
 #ifdef KAGE_SYNC_ENABLE_TRACING
             if (tracer_ != nullptr && tracer_->enabled()) {
-                SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::CueInvoked, client.id, cue.frame);
+                SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::CueSent, client.id, cue.frame);
                 event.server_entity = replicated_[slot].entity;
                 event.wire_network_id = network_id;
                 event.network_version = entity_state.network_version;
                 event.client_network_id = make_client_entity_network_id(client.id, network_id, entity_state.network_version);
                 event.archetype = quantized_frame.archetype;
                 event.cue_type = cue.type;
+                append_trace_cue_name(settings, cue.type, event);
                 append_trace_cue_data(tracer_, settings, cue.type, cue.payload, event);
+                append_trace_data_field(event, "source", "server");
                 tracer_->trace(event);
             }
 #endif
@@ -2260,9 +2882,19 @@ void ReplicationServer::send_packet(
 
     const std::uint32_t packet_id = allocate_packet_id(client);
     BitBuffer packet =
-        make_server_packet(options_.mtu_bytes, configured_packet_id_bits(options_), frame, packet_id, entity_count, records);
+        make_server_packet(
+            options_.mtu_bytes,
+            configured_packet_id_bits(options_),
+            frame,
+            packet_id,
+            client.input_ack_frame,
+            entity_count,
+            records);
     track_packet_ack(client, packet_id, ack_records);
     enforce_pending_packet_ack_limit(client);
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+    trace_outgoing_update_packet(client, frame, packet_id, client.input_ack_frame, ack_records);
+#endif
     options_.transport(client.peer, packet);
 }
 
@@ -2278,15 +2910,27 @@ void ReplicationServer::send_connect_response(ClientState& client) {
     options_.transport(client.peer, packet);
 }
 
-void ReplicationServer::send_pong(ClientId peer, std::uint32_t sequence, SyncFrame send_frame) {
+void ReplicationServer::send_pong(
+    ClientId peer,
+    std::uint32_t sequence,
+    SyncFrame send_frame,
+    std::uint16_t send_subframe) {
     if (!options_.transport) {
         return;
     }
+    const double subframe = tick_accumulator_seconds_ / options_.fixed_dt_seconds;
+    const auto server_subframe = static_cast<std::uint16_t>(std::clamp(
+        static_cast<std::uint32_t>(std::floor(subframe * static_cast<double>(protocol::frame_subframe_scale))),
+        std::uint32_t{0},
+        protocol::frame_subframe_scale - 1U));
     BitBuffer packet;
     packet.reserve_bytes(options_.mtu_bytes);
     packet.push_bits(protocol::server_pong_message, 8U);
     packet.push_bits(sequence, 32U);
     packet.push_bits(send_frame, 32U);
+    packet.push_bits(send_subframe, protocol::frame_subframe_bits);
+    packet.push_bits(frame_, 32U);
+    packet.push_bits(server_subframe, protocol::frame_subframe_bits);
     options_.transport(peer, packet);
 }
 

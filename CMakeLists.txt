@@ -15,7 +15,7 @@ option(KAGE_SYNC_ENABLE_GPROF "Build kage-sync benchmark tools with gprof instru
 option(KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS "Build kage-sync with buffered interpolation starvation diagnostics" OFF)
 option(KAGE_SYNC_ENABLE_TRACING "Build kage-sync with client/server tracing hooks" OFF)
 option(KAGE_SYNC_TRACE_COMPONENT_DATA "Build kage-sync tracing support for component data serialization" OFF)
-option(KAGE_SYNC_TRACE_CUE_DATA "Build kage-sync tracing support for cue data serialization" OFF)
+option(KAGE_SYNC_TRACE_PACKET_LOGS "Build kage-sync tracing support for packet event logging" OFF)
 set(KAGE_SYNC_BASELINE_FRAME_DELTA_BITS "5" CACHE STRING "Compile-time bit count for relative delta baseline frame numbers")
 set(KAGE_SYNC_BALL_STRESS_RUN_MODE "none" CACHE STRING "How run_kage_sync_ball_stress invokes the stress tool: none, gprof, memcheck, or massif")
 set_property(CACHE KAGE_SYNC_BALL_STRESS_RUN_MODE PROPERTY STRINGS none gprof memcheck massif)
@@ -38,6 +38,7 @@ set(BUILD_TESTING ${KAGE_SYNC_BUILD_TESTING} CACHE BOOL "" FORCE)
 
 add_library(kage_sync
     src/client.cpp
+    src/client_clock.cpp
     src/components.cpp
     src/server.cpp
     src/tracing.cpp
@@ -64,7 +65,7 @@ target_compile_definitions(kage_sync
         $<$<BOOL:${KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS}>:KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS=1>
         $<$<BOOL:${KAGE_SYNC_ENABLE_TRACING}>:KAGE_SYNC_ENABLE_TRACING=1>
         $<$<BOOL:${KAGE_SYNC_TRACE_COMPONENT_DATA}>:KAGE_SYNC_TRACE_COMPONENT_DATA=1>
-        $<$<BOOL:${KAGE_SYNC_TRACE_CUE_DATA}>:KAGE_SYNC_TRACE_CUE_DATA=1>
+        $<$<BOOL:${KAGE_SYNC_TRACE_PACKET_LOGS}>:KAGE_SYNC_TRACE_PACKET_LOGS=1>
 )
 
 if(MSVC)
@@ -90,6 +91,7 @@ if(KAGE_SYNC_BUILD_TESTING)
         tests/ball_stress.test.cpp
         tests/bit_buffer.test.cpp
         tests/client.test.cpp
+        tests/client_clock.test.cpp
         tests/components.test.cpp
         tests/server.test.cpp
         tests/tracing.test.cpp
@@ -118,6 +120,8 @@ if(KAGE_SYNC_BUILD_EXAMPLES)
     add_executable(kage_sync_balls_example
         examples/balls.cpp
     )
+
+    add_subdirectory(examples/fps)
 
     target_link_libraries(kage_sync_balls_example
         PRIVATE
