@@ -14,13 +14,51 @@
 
 namespace fps {
 
+void record_transform_history(
+    FpsTransformHistory& history,
+    kage::sync::SyncFrame frame,
+    const FpsTransform& transform) {
+    FpsTransformHistory::Sample& sample = history.samples[frame & (FpsTransformHistory::capacity - 1U)];
+    sample.frame = frame;
+    sample.transform = transform;
+    sample.valid = true;
+}
+
+bool sample_transform_history(
+    const FpsTransformHistory& history,
+    kage::sync::SyncFrame frame,
+    FpsTransform& out) {
+    const FpsTransformHistory::Sample& exact = history.samples[frame & (FpsTransformHistory::capacity - 1U)];
+    if (exact.valid && exact.frame == frame) {
+        out = exact.transform;
+        return true;
+    }
+
+    const FpsTransformHistory::Sample* earliest = nullptr;
+    for (const FpsTransformHistory::Sample& sample : history.samples) {
+        if (!sample.valid) {
+            continue;
+        }
+        if (earliest == nullptr || sample.frame < earliest->frame) {
+            earliest = &sample;
+        }
+    }
+    if (earliest == nullptr) {
+        return false;
+    }
+
+    out = earliest->transform;
+    return true;
+}
+
 template <typename View>
 void simulate_fire(
     View& view,
     kage::sync::SyncSettings& sync,
     const kage::sync::SyncAuthority& authority,
     ecs::Entity shooter,
-    const FpsTransform& transform) {
+    const FpsTransform& transform,
+    kage::sync::SyncFrame shot_interpolation_frame) {
     const Vector3 origin = eye_position(transform);
     const Vector3 dir = normalize_or_zero(forward_from_angles(transform.yaw, transform.pitch));
     float wall_t = shot_range;
@@ -34,9 +72,10 @@ void simulate_fire(
     }
 
     ecs::Entity best_entity;
+    FpsCombatState* best_combat = nullptr;
     float best_t = wall_t;
     view.each(
-        [&view, &best_entity, &best_t, shooter, origin, dir](ecs::Entity entity, const FpsTransform& target_transform, FpsVelocity&, FpsCombatState& combat, const FpsInput&, kage::sync::SyncSettings&, const kage::sync::SyncAuthority&) {
+        [&view, &best_entity, &best_combat, &best_t, shooter, origin, dir, shot_interpolation_frame](ecs::Entity entity, const FpsTransform& target_transform, FpsVelocity&, FpsCombatState& combat, const FpsInput&, kage::sync::SyncSettings&, const kage::sync::SyncAuthority&) {
             if (entity == shooter || combat.dead != 0U || combat.health <= 0) {
                 return;
             }
@@ -44,28 +83,34 @@ void simulate_fire(
             if (visual == nullptr) {
                 return;
             }
+            FpsTransform raycast_transform = target_transform;
+            if (shot_interpolation_frame != 0U) {
+                if (const FpsTransformHistory* history = view.template try_get<const FpsTransformHistory>(entity)) {
+                    (void)sample_transform_history(*history, shot_interpolation_frame, raycast_transform);
+                }
+            }
             float t = shot_range;
-            if (ray_character(origin, dir, target_transform, *visual, t) && t < best_t) {
+            if (ray_character(origin, dir, raycast_transform, *visual, t) && t < best_t) {
                 best_t = t;
                 best_entity = entity;
+                best_combat = &combat;
             }
         });
 
-    if (best_entity) {
+    if (best_entity && best_combat != nullptr) {
         if (authority.is_authoritative()) {
             (void)kage::sync::emit_cue(sync, best_entity, PlayerHitCue{kage::sync::EntityReference{shooter}}, 0.5f);
 
-            FpsCombatState& target = view.template write<FpsCombatState>(best_entity);
-            target.health = static_cast<std::int16_t>(std::max<int>(0, target.health - shot_damage));
+            best_combat->health = static_cast<std::int16_t>(std::max<int>(0, best_combat->health - shot_damage));
             (void)kage::sync::emit_cue(
                 sync,
                 shooter,
                 HitConfirmCue{kage::sync::EntityReference{best_entity}},
                 0.5f,
                 true);
-            if (target.health <= 0 && target.dead == 0U) {
-                target.dead = 1;
-                target.respawn_remaining = respawn_seconds;
+            if (best_combat->health <= 0 && best_combat->dead == 0U) {
+                best_combat->dead = 1;
+                best_combat->respawn_remaining = respawn_seconds;
             }
         }
     } else if (wall_t < shot_range) {
@@ -78,17 +123,22 @@ void simulate_fire(
 }
 
 void register_game_jobs(ecs::Registry& registry) {
+    auto frame_job = registry.job<FpsServerFrame>(-2);
+        frame_job.single_thread().each([](ecs::Entity, FpsServerFrame& frame) {
+        ++frame.frame;
+    });;
+
     auto bot_job = registry.job<FpsTransform, FpsCombatState, FpsInput>(-1);
-        bot_job.access_other_entities<BotBrain, const kage::sync::NetworkOwner>().single_thread().each([](
+        bot_job.single_thread().optional<BotBrain>().access_other_entities<const kage::sync::NetworkOwner>().each([](
         auto& view,
         ecs::Entity entity,
         FpsTransform& transform,
         FpsCombatState& combat,
         FpsInput& input) {
-        if (!view.template contains<BotBrain>(entity)) {
+        if (!view.template contains<BotBrain>()) {
             return;
         }
-        BotBrain& brain = view.template write<BotBrain>(entity);
+        BotBrain& brain = view.template write<BotBrain>();
         brain.phase += fixed_dt;
         input.move_x = 0.0f;
         input.move_y = 0.0f;
@@ -150,7 +200,7 @@ void register_game_jobs(ecs::Registry& registry) {
     });;
 
     auto character_job = registry.job<FpsTransform, FpsVelocity, FpsCombatState, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>(0);
-        character_job.access_other_entities<const FpsVisual>().single_thread().each([](
+        character_job.single_thread().access_other_entities<const FpsVisual, const FpsTransformHistory>().each([](
         auto& view,
         ecs::Entity entity,
         FpsTransform& transform,
@@ -175,24 +225,33 @@ void register_game_jobs(ecs::Registry& registry) {
             if (combat.reload_remaining <= 0.0f && combat.ammo > 0U) {
                 --combat.ammo;
                 (void)kage::sync::emit_cue(sync, entity, ShotCue{}, 0.35f);
-                simulate_fire(view, sync, authority, entity, transform);
+                simulate_fire(view, sync, authority, entity, transform, input.shot_interpolation_frame);
             }
         }
+    });;
+
+    auto history_job = registry.job<const FpsTransform, FpsTransformHistory, const FpsServerFrame>(1);
+        history_job.single_thread().each([](
+        ecs::Entity,
+        const FpsTransform& transform,
+        FpsTransformHistory& history,
+        const FpsServerFrame& frame) {
+        record_transform_history(history, frame.frame, transform);
     });;
 }
 
 void register_game_jobs(ecs::Registry& registry, kage::sync::ReplicationClient& client) {
     auto bot_job = client.simulation_job<FpsTransform, FpsCombatState, FpsInput>(registry, -1);
-        bot_job.access_other_entities<BotBrain, const kage::sync::NetworkOwner>().single_thread().each([](
+        bot_job.single_thread().optional<BotBrain>().access_other_entities<const kage::sync::NetworkOwner>().each([](
         auto& view,
         ecs::Entity entity,
         FpsTransform& transform,
         FpsCombatState& combat,
         FpsInput& input) {
-        if (!view.template contains<BotBrain>(entity)) {
+        if (!view.template contains<BotBrain>()) {
             return;
         }
-        BotBrain& brain = view.template write<BotBrain>(entity);
+        BotBrain& brain = view.template write<BotBrain>();
         brain.phase += fixed_dt;
         input.move_x = 0.0f;
         input.move_y = 0.0f;
@@ -254,7 +313,7 @@ void register_game_jobs(ecs::Registry& registry, kage::sync::ReplicationClient& 
     });;
 
     auto character_job = client.simulation_job<FpsTransform, FpsVelocity, FpsCombatState, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>(registry, 0);
-        character_job.access_other_entities<const FpsVisual>().single_thread().each([](
+        character_job.single_thread().access_other_entities<const FpsVisual, const FpsTransformHistory>().each([](
         auto& view,
         ecs::Entity entity,
         FpsTransform& transform,
@@ -279,7 +338,7 @@ void register_game_jobs(ecs::Registry& registry, kage::sync::ReplicationClient& 
             if (combat.reload_remaining <= 0.0f && combat.ammo > 0U) {
                 --combat.ammo;
                 (void)kage::sync::emit_cue(sync, entity, ShotCue{}, 0.35f);
-                simulate_fire(view, sync, authority, entity, transform);
+                simulate_fire(view, sync, authority, entity, transform, input.shot_interpolation_frame);
             }
         }
     });;

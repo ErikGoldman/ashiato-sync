@@ -18,6 +18,8 @@ SyncSchema define_schema(ecs::Registry& registry) {
     registry.register_component<FpsHitEffect>("FpsHitEffect");
     registry.register_component<FpsSurfaceHitEffect>("FpsSurfaceHitEffect");
     registry.register_component<FpsHitConfirmSuppression>("FpsHitConfirmSuppression");
+    registry.register_component<FpsTransformHistory>("FpsTransformHistory");
+    registry.register_component<FpsServerFrame>("FpsServerFrame");
     registry.register_component<BotBrain>("BotBrain");
     (void)kage::sync::set_display_interpolated(registry, transform);
     (void)kage::sync::register_sync_cue<ShotCue>(registry);
@@ -60,6 +62,9 @@ ecs::Entity spawn_character(
             color.b,
             255});
     registry.add<FpsInput>(entity, FpsInput{});
+    if (registry.get<kage::sync::SyncSettings>().role == kage::sync::SyncRole::Server) {
+        registry.add<FpsTransformHistory>(entity, FpsTransformHistory{});
+    }
     if (owner != kage::sync::invalid_client_id) {
         (void)kage::sync::set_owner(registry, entity, owner);
     }

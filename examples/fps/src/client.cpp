@@ -63,7 +63,8 @@ void run_client(const AppConfig& config) {
     EnableCursor();
     SetTargetFPS(120);
     Sound shot_sound = make_tone(180.0f, 0.09f, 0.45f);
-    Sound hit_sound = make_tone(520.0f, 0.12f, 0.35f);
+    Sound hit_confirm_sound = make_tone(720.0f, 0.08f, 0.32f);
+    Sound took_damage_sound = make_tone(260.0f, 0.16f, 0.45f);
 
     FpsInput current_input{};
     MouseLookState look;
@@ -90,7 +91,12 @@ void run_client(const AppConfig& config) {
         link_time_seconds += static_cast<double>(dt);
         packet_drop_remaining_seconds =
             std::max(0.0, packet_drop_remaining_seconds - static_cast<double>(dt));
-        current_input = read_player_input(current_input, look);
+        const double display_target = client.display_target_frame();
+        const kage::sync::SyncFrame display_target_frame =
+            display_target > 0.0 && std::isfinite(display_target)
+            ? static_cast<kage::sync::SyncFrame>(std::floor(display_target))
+            : 0U;
+        current_input = read_player_input(current_input, look, display_target_frame);
         if (IsKeyPressed(KEY_SLASH)) {
             show_latency_stats = !show_latency_stats;
         }
@@ -234,9 +240,17 @@ void run_client(const AppConfig& config) {
             }
             (void)entity;
         });
-        registry.view<FpsHitEffect>().each([&hit_sound, local_entity](ecs::Entity entity, FpsHitEffect& effect) {
-            if (entity == local_entity && effect.sound_played == 0U) {
-                PlaySound(hit_sound);
+        registry.view<FpsHitEffect>().each([&hit_confirm_sound, &took_damage_sound, local_entity](ecs::Entity entity, FpsHitEffect& effect) {
+            if (effect.sound_played != 0U) {
+                return;
+            }
+            if (effect.sound == FpsHitSound::ConfirmedHit) {
+                PlaySound(hit_confirm_sound);
+                effect.sound_played = 1;
+                return;
+            }
+            if (entity == local_entity && effect.sound == FpsHitSound::TookDamage) {
+                PlaySound(took_damage_sound);
                 effect.sound_played = 1;
             }
         });
@@ -379,7 +393,8 @@ void run_client(const AppConfig& config) {
     }
 
     UnloadSound(shot_sound);
-    UnloadSound(hit_sound);
+    UnloadSound(hit_confirm_sound);
+    UnloadSound(took_damage_sound);
     CloseAudioDevice();
     CloseWindow();
 #ifdef KAGE_SYNC_ENABLE_TRACING

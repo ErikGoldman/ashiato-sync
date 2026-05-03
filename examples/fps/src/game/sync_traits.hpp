@@ -12,6 +12,7 @@ namespace kage::sync {
 using fps::FpsCombatState;
 using fps::FpsHitConfirmSuppression;
 using fps::FpsHitEffect;
+using fps::FpsHitSound;
 using fps::FpsInput;
 using fps::FpsShotEffect;
 using fps::FpsSurfaceHitEffect;
@@ -336,6 +337,8 @@ struct SyncComponentTraits<FpsInput> {
         out.append_number(value.fire_seq);
         out.append(" reload=");
         out.append_number(value.reload_seq);
+        out.append(" shot_frame=");
+        out.append_number(value.shot_interpolation_frame);
     }
 #endif
 };
@@ -475,7 +478,9 @@ struct SyncCueTraits<PlayerHitCue> {
         if (suppressed) {
             return true;
         }
-        registry.add<FpsHitEffect>(owner, FpsHitEffect{std::max(0.04f, 0.25f - late_seconds), 0});
+        registry.add<FpsHitEffect>(
+            owner,
+            FpsHitEffect{std::max(0.04f, 0.25f - late_seconds), 0, FpsHitSound::TookDamage});
         return true;
     }
 
@@ -507,7 +512,12 @@ struct SyncCueTraits<HitConfirmCue> {
         if (!cue.victim.entity || !registry.alive(cue.victim.entity)) {
             return true;
         }
-        registry.add<FpsHitEffect>(cue.victim.entity, FpsHitEffect{std::max(0.04f, 0.25f - late_seconds), 0});
+        registry.add<FpsHitEffect>(
+            cue.victim.entity,
+            FpsHitEffect{std::max(0.04f, 0.25f - late_seconds), 0, FpsHitSound::None});
+        registry.add<FpsHitEffect>(
+            owner,
+            FpsHitEffect{std::max(0.04f, 0.12f - late_seconds), 0, FpsHitSound::ConfirmedHit});
         if (!registry.contains<FpsHitConfirmSuppression>(owner)) {
             registry.add<FpsHitConfirmSuppression>(owner);
         }
@@ -525,6 +535,7 @@ struct SyncCueTraits<HitConfirmCue> {
         if (cue.victim.entity) {
             registry.remove<FpsHitEffect>(cue.victim.entity);
         }
+        registry.remove<FpsHitEffect>(owner);
         registry.remove<FpsHitConfirmSuppression>(owner);
         return true;
     }

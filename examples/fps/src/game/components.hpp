@@ -4,7 +4,9 @@
 
 #include "kage/sync/sync.hpp"
 
+#include <array>
 #include <cstdint>
+#include <type_traits>
 #include <vector>
 
 #include <raylib.h>
@@ -54,6 +56,22 @@ struct FpsInput {
     std::uint32_t jump_seq = 0;
     std::uint32_t fire_seq = 0;
     std::uint32_t reload_seq = 0;
+    kage::sync::SyncFrame shot_interpolation_frame = 0;
+};
+
+struct FpsTransformHistory {
+    struct Sample {
+        kage::sync::SyncFrame frame = 0;
+        FpsTransform transform;
+        bool valid = false;
+    };
+
+    static constexpr std::size_t capacity = 64;
+    std::array<Sample, capacity> samples{};
+};
+
+struct FpsServerFrame {
+    kage::sync::SyncFrame frame = 0;
 };
 
 struct FpsShotEffect {
@@ -61,9 +79,16 @@ struct FpsShotEffect {
     std::uint8_t sound_played = 0;
 };
 
+enum class FpsHitSound : std::uint8_t {
+    None = 0,
+    ConfirmedHit = 1,
+    TookDamage = 2,
+};
+
 struct FpsHitEffect {
     float seconds = 0.0f;
     std::uint8_t sound_played = 0;
+    FpsHitSound sound = FpsHitSound::None;
 };
 
 struct WallParticle {
@@ -107,3 +132,10 @@ struct SyncSchema {
 };
 
 }  // namespace fps
+
+namespace ecs {
+
+template <>
+struct is_singleton_component<fps::FpsServerFrame> : std::true_type {};
+
+}  // namespace ecs

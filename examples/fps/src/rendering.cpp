@@ -166,7 +166,10 @@ void update_effects(ecs::Registry& registry, float dt) {
     }
 }
 
-FpsInput read_player_input(FpsInput previous, MouseLookState& look) {
+FpsInput read_player_input(
+    FpsInput previous,
+    MouseLookState& look,
+    kage::sync::SyncFrame display_target_frame) {
     previous.move_x = 0.0f;
     previous.move_y = 0.0f;
     if (!IsWindowFocused()) {
@@ -252,6 +255,7 @@ FpsInput read_player_input(FpsInput previous, MouseLookState& look) {
     }
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
         ++previous.fire_seq;
+        previous.shot_interpolation_frame = display_target_frame;
     }
     if (IsKeyPressed(KEY_R)) {
         ++previous.reload_seq;
