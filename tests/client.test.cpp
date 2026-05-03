@@ -979,11 +979,11 @@ TEST_CASE("predicted cue rollback tracing records server mismatch reason") {
     kage::sync::ReplicationClientOptions options;
     options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
     kage::sync::ReplicationClient client(options);
-    client.simulation_job<PredictedPosition>(registry, 0).each(
-        [&](ecs::Entity entity, PredictedPosition& position) {
+    client.simulation_job<PredictedPosition, kage::sync::SyncSettings>(registry, 0).each(
+        [&](ecs::Entity entity, PredictedPosition& position, kage::sync::SyncSettings& settings) {
             position.x += 1.0f;
             if (emit_prediction_cue) {
-                REQUIRE(kage::sync::emit_cue(registry, entity, TestCue{7}, 1.0f));
+                REQUIRE(kage::sync::emit_cue(settings, entity, TestCue{7}, 1.0f));
                 emit_prediction_cue = false;
             }
         });
@@ -1024,12 +1024,12 @@ TEST_CASE("predicted cue rollback tracing records resim omission reason") {
     options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
     options.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
     kage::sync::ReplicationClient client(options);
-    client.simulation_job<PredictedPosition>(registry, 0).each(
-        [&](ecs::Entity entity, PredictedPosition& position) {
+    client.simulation_job<PredictedPosition, kage::sync::SyncSettings>(registry, 0).each(
+        [&](ecs::Entity entity, PredictedPosition& position, kage::sync::SyncSettings& settings) {
             position.x += 1.0f;
             ++prediction_jobs;
             if (prediction_jobs == 2 || emit_during_resim) {
-                REQUIRE(kage::sync::emit_cue(registry, entity, TestCue{9}, 1.0f));
+                REQUIRE(kage::sync::emit_cue(settings, entity, TestCue{9}, 1.0f));
             }
         });
 

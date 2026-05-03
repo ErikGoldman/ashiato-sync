@@ -203,10 +203,10 @@ TEST_CASE("server transport traces job-emitted cues at authoritative snapshot fr
         kage_sync_tests::Position{1.0f, 2.0f}) != nullptr);
 
     bool fired = false;
-    server_registry.job<kage_sync_tests::Position>(0).each(
-        [&](ecs::Entity entity, kage_sync_tests::Position&) {
+    server_registry.job<kage_sync_tests::Position, kage::sync::SyncSettings>(0).each(
+        [&](ecs::Entity entity, kage_sync_tests::Position&, kage::sync::SyncSettings& settings) {
             if (entity == server_entity && !fired) {
-                REQUIRE(kage::sync::emit_cue(server_registry, entity, kage_sync_tests::TestCue{7}, 1.0f));
+                REQUIRE(kage::sync::emit_cue(settings, entity, kage_sync_tests::TestCue{7}, 1.0f));
                 fired = true;
             }
         });

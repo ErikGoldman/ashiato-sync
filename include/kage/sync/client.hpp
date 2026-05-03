@@ -227,10 +227,18 @@ public:
     }
 
     template <typename... AccessComponents>
-    auto access() const {
-        return ClientJobBuilder<decltype(builder_.template access<AccessComponents...>()), AddNoResimTag>(
+    auto access_other_entities() const {
+        return ClientJobBuilder<decltype(builder_.template access_other_entities<AccessComponents...>()), AddNoResimTag>(
             *registry_,
-            builder_.template access<AccessComponents...>(),
+            builder_.template access_other_entities<AccessComponents...>(),
+            *jobs_);
+    }
+
+    template <typename... OptionalComponents>
+    auto optional() const {
+        return ClientJobBuilder<decltype(builder_.template optional<OptionalComponents...>()), AddNoResimTag>(
+            *registry_,
+            builder_.template optional<OptionalComponents...>(),
             *jobs_);
     }
 

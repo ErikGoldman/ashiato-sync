@@ -79,7 +79,7 @@ void simulate_fire(
 
 void register_game_jobs(ecs::Registry& registry) {
     auto bot_job = registry.job<FpsTransform, FpsCombatState, FpsInput>(-1);
-        bot_job.access<BotBrain, const kage::sync::NetworkOwner>().single_thread().each([](
+        bot_job.access_other_entities<BotBrain, const kage::sync::NetworkOwner>().single_thread().each([](
         auto& view,
         ecs::Entity entity,
         FpsTransform& transform,
@@ -150,7 +150,7 @@ void register_game_jobs(ecs::Registry& registry) {
     });;
 
     auto character_job = registry.job<FpsTransform, FpsVelocity, FpsCombatState, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>(0);
-        character_job.access<const FpsVisual>().single_thread().each([](
+        character_job.access_other_entities<const FpsVisual>().single_thread().each([](
         auto& view,
         ecs::Entity entity,
         FpsTransform& transform,
@@ -183,7 +183,7 @@ void register_game_jobs(ecs::Registry& registry) {
 
 void register_game_jobs(ecs::Registry& registry, kage::sync::ReplicationClient& client) {
     auto bot_job = client.simulation_job<FpsTransform, FpsCombatState, FpsInput>(registry, -1);
-        bot_job.access<BotBrain, const kage::sync::NetworkOwner>().single_thread().each([](
+        bot_job.access_other_entities<BotBrain, const kage::sync::NetworkOwner>().single_thread().each([](
         auto& view,
         ecs::Entity entity,
         FpsTransform& transform,
@@ -254,7 +254,7 @@ void register_game_jobs(ecs::Registry& registry, kage::sync::ReplicationClient& 
     });;
 
     auto character_job = client.simulation_job<FpsTransform, FpsVelocity, FpsCombatState, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>(registry, 0);
-        character_job.access<const FpsVisual>().single_thread().each([](
+        character_job.access_other_entities<const FpsVisual>().single_thread().each([](
         auto& view,
         ecs::Entity entity,
         FpsTransform& transform,
