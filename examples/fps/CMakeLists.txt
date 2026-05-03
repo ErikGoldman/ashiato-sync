@@ -8,6 +8,7 @@ add_executable(kage_sync_fps_example
     src/game/simulation.cpp
     src/main.cpp
     src/net.cpp
+    src/replay.cpp
     src/rendering.cpp
     src/server.cpp
     src/trace.cpp

@@ -22,6 +22,7 @@ using kage_sync_tests::Position;
 using kage_sync_tests::PredictedPosition;
 using kage_sync_tests::Secret;
 using kage_sync_tests::TargetReference;
+using kage_sync_tests::TestCue;
 using kage_sync_tests::Visible;
 using kage_sync_tests::define_position_archetype;
 using kage_sync_tests::read_networked_payload;
@@ -312,6 +313,87 @@ TEST_CASE("replication server continuous tick owns the fixed-step accumulator") 
     REQUIRE(server.frame() == 2);
     REQUIRE(server.accumulator_seconds() == 0.125);
     REQUIRE(server.continuous_frame() == 2.5);
+}
+
+TEST_CASE("replication server post tick callback fires once per completed fixed step") {
+    ecs::Registry registry;
+    kage::sync::configure_server(registry);
+
+    std::vector<kage::sync::SyncFrame> frames;
+    kage::sync::ReplicationServerOptions options;
+    options.fixed_dt_seconds = 0.25;
+    options.post_tick = [&frames](
+        const ecs::Registry& callback_registry,
+        kage::sync::SyncFrame frame,
+        kage::sync::QueuedSyncCueView cues) {
+        REQUIRE(callback_registry.get<kage::sync::SyncSettings>().role == kage::sync::SyncRole::Server);
+        REQUIRE(cues.empty());
+        frames.push_back(frame);
+    };
+    kage::sync::ReplicationServer server(options);
+
+    REQUIRE(server.tick(registry, 0.125));
+    REQUIRE(frames.empty());
+
+    REQUIRE(server.tick(registry, 0.5));
+    REQUIRE(frames == std::vector<kage::sync::SyncFrame>{1, 2});
+
+    server.tick(registry);
+    REQUIRE(frames == std::vector<kage::sync::SyncFrame>{1, 2, 3});
+
+    server.tick(registry, [](kage::sync::ClientId, ecs::Entity) {});
+    REQUIRE(frames == std::vector<kage::sync::SyncFrame>{1, 2, 3, 4});
+
+    server.begin_tick(registry);
+    server.end_tick(registry);
+    REQUIRE(frames == std::vector<kage::sync::SyncFrame>{1, 2, 3, 4});
+}
+
+TEST_CASE("replication server post tick callback receives cues drained for the frame") {
+    ecs::Registry registry;
+    kage::sync::configure_server(registry);
+    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+    const kage::sync::SyncCueTypeId cue_type = kage::sync::register_sync_cue<TestCue>(registry);
+    const ecs::Entity entity = registry.create();
+    registry.add<Position>(entity, Position{1.0f, 2.0f});
+    REQUIRE(start_sync(registry, entity, archetype));
+
+    struct SeenCue {
+        ecs::Entity entity;
+        kage::sync::SyncFrame frame = 0;
+        kage::sync::SyncCueTypeId type = 0;
+        float relevance_seconds = 0.0f;
+        bool only_owner = false;
+        std::int32_t id = 0;
+    };
+    std::vector<SeenCue> seen;
+
+    kage::sync::ReplicationServerOptions options;
+    options.fixed_dt_seconds = 0.25;
+    options.post_tick = [&seen](const ecs::Registry&, kage::sync::SyncFrame, kage::sync::QueuedSyncCueView cues) {
+        for (const kage::sync::QueuedSyncCue& cue : cues) {
+            kage::sync::BitBuffer payload = cue.payload;
+            seen.push_back(SeenCue{
+                cue.entity,
+                cue.frame,
+                cue.type,
+                cue.relevance_seconds,
+                cue.only_replicate_to_owner,
+                static_cast<std::int32_t>(payload.read_bits(16U))});
+        }
+    };
+    kage::sync::ReplicationServer server(options);
+
+    REQUIRE(kage::sync::emit_cue(registry, entity, TestCue{42}, 0.5f, true));
+    server.tick(registry);
+
+    REQUIRE(seen.size() == 1U);
+    REQUIRE(seen[0].entity == entity);
+    REQUIRE(seen[0].frame == 1U);
+    REQUIRE(seen[0].type == cue_type);
+    REQUIRE(seen[0].relevance_seconds == 0.5f);
+    REQUIRE(seen[0].only_owner);
+    REQUIRE(seen[0].id == 42);
 }
 
 TEST_CASE("replication server frame is the currently simulating frame") {

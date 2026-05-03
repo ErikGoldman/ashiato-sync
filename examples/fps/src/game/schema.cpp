@@ -10,6 +10,7 @@ SyncSchema define_schema(ecs::Registry& registry) {
     const ecs::Entity transform = kage::sync::register_sync_component<FpsTransform>(registry, "FpsTransform");
     const ecs::Entity velocity = kage::sync::register_sync_component<FpsVelocity>(registry, "FpsVelocity");
     const ecs::Entity combat = kage::sync::register_sync_component<FpsCombatState>(registry, "FpsCombatState");
+    const ecs::Entity death = kage::sync::register_sync_component<FpsDeathInfo>(registry, "FpsDeathInfo");
     const ecs::Entity visual = kage::sync::register_sync_component<FpsVisual>(registry, "FpsVisual");
     const ecs::Entity owner = kage::sync::register_sync_component<kage::sync::NetworkOwner>(registry, "kage.sync.NetworkOwner");
     const ecs::Entity no_simulate = registry.component<kage::sync::NoSimulate>();
@@ -26,6 +27,7 @@ SyncSchema define_schema(ecs::Registry& registry) {
     (void)kage::sync::register_sync_cue<SurfaceHitCue>(registry);
     (void)kage::sync::register_sync_cue<PlayerHitCue>(registry);
     (void)kage::sync::register_sync_cue<HitConfirmCue>(registry);
+    (void)kage::sync::register_sync_cue<PlayerDeathCue>(registry);
     (void)kage::sync::set_client_input_component<FpsInput>(registry);
     return SyncSchema{
         kage::sync::define_archetype(
@@ -37,6 +39,7 @@ SyncSchema define_schema(ecs::Registry& registry) {
                 {transform, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate},
                 {velocity, kage::sync::ReplicationAudience::All},
                 {combat, kage::sync::ReplicationAudience::All},
+                {death, kage::sync::ReplicationAudience::All},
                 {visual, kage::sync::ReplicationAudience::All},
                 {owner, kage::sync::ReplicationAudience::All},
                 }})};
@@ -52,6 +55,7 @@ ecs::Entity spawn_character(
     registry.add<FpsTransform>(entity, FpsTransform{position.x, position.y, position.z, 0.0f, 0.0f});
     registry.add<FpsVelocity>(entity, FpsVelocity{});
     registry.add<FpsCombatState>(entity, FpsCombatState{});
+    registry.add<FpsDeathInfo>(entity, FpsDeathInfo{});
     registry.add<FpsVisual>(
         entity,
         FpsVisual{

@@ -4,3 +4,4 @@ artifacts/
 .vs/
 gmon.out
 .idea/
+fps_replay_frames/

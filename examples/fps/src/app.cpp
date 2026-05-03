@@ -51,6 +51,13 @@ void append_link_args(const AppConfig& config, std::vector<std::string>& args) {
     args.push_back(std::to_string(config.jitter_ms));
 }
 
+void append_replay_args(const AppConfig& config, std::vector<std::string>& args) {
+    args.push_back("--replay-port");
+    args.push_back(to_string_port(config.replay_port));
+    args.push_back("--replay-dir");
+    args.push_back(config.replay_dir);
+}
+
 #ifdef _WIN32
 
 std::string quote_arg(const std::string& arg) {
@@ -105,6 +112,7 @@ void run_launcher(const AppConfig& config) {
         "--bots",
         std::to_string(config.bots)};
     append_trace_args(config, server_args);
+    append_replay_args(config, server_args);
     PROCESS_INFORMATION server = spawn_process(server_args);
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
@@ -120,6 +128,7 @@ void run_launcher(const AppConfig& config) {
             to_string_port(config.port)};
         append_link_args(config, client_args);
         append_trace_args(config, client_args);
+        append_replay_args(config, client_args);
         clients.push_back(spawn_process(client_args));
         std::this_thread::sleep_for(std::chrono::milliseconds(150));
     }
@@ -164,6 +173,7 @@ void run_launcher(const AppConfig& config) {
         "--bots",
         std::to_string(config.bots)};
     append_trace_args(config, server_args);
+    append_replay_args(config, server_args);
     const pid_t server = spawn_process(server_args);
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
@@ -179,6 +189,7 @@ void run_launcher(const AppConfig& config) {
             to_string_port(config.port)};
         append_link_args(config, client_args);
         append_trace_args(config, client_args);
+        append_replay_args(config, client_args);
         clients.push_back(spawn_process(client_args));
         std::this_thread::sleep_for(std::chrono::milliseconds(150));
     }
@@ -222,6 +233,8 @@ AppConfig parse_args(int argc, char** argv) {
             config.host = require_value();
         } else if (arg == "--port") {
             config.port = static_cast<std::uint16_t>(std::stoi(require_value()));
+        } else if (arg == "--replay-port") {
+            config.replay_port = static_cast<std::uint16_t>(std::stoi(require_value()));
         } else if (arg == "--bots") {
             config.bots = std::max(0, std::stoi(require_value()));
         } else if (arg == "--latency-ms") {
@@ -235,6 +248,8 @@ AppConfig parse_args(int argc, char** argv) {
             (void)require_value();
             throw std::runtime_error("--trace-dir requires a build with KAGE_SYNC_ENABLE_TRACING=ON");
 #endif
+        } else if (arg == "--replay-dir") {
+            config.replay_dir = require_value();
         } else if (arg == "--trace-frame-data") {
             const std::string value = require_value();
             if (value == "on" || value == "true" || value == "1") {
@@ -271,6 +286,9 @@ AppConfig parse_args(int argc, char** argv) {
     }
     if (config.executable.empty()) {
         throw std::runtime_error("cannot determine executable path for launcher mode");
+    }
+    if (config.replay_port == 0U) {
+        config.replay_port = static_cast<std::uint16_t>(config.port + 1U);
     }
     return config;
 }

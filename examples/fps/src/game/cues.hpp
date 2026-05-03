@@ -21,4 +21,6 @@ struct HitConfirmCue {
     kage::sync::EntityReference victim;
 };
 
+struct PlayerDeathCue {};
+
 }  // namespace fps

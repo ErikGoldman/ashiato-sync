@@ -10,6 +10,7 @@
 namespace kage::sync {
 
 using fps::FpsCombatState;
+using fps::FpsDeathInfo;
 using fps::FpsHitConfirmSuppression;
 using fps::FpsHitEffect;
 using fps::FpsHitSound;
@@ -20,6 +21,7 @@ using fps::FpsTransform;
 using fps::FpsVelocity;
 using fps::FpsVisual;
 using fps::HitConfirmCue;
+using fps::PlayerDeathCue;
 using fps::PlayerHitCue;
 using fps::ShotCue;
 using fps::SurfaceHitCue;
@@ -247,6 +249,39 @@ struct SyncComponentTraits<FpsCombatState> {
         out.append_number(value.last_fire_seq);
         out.append(" reload_seq=");
         out.append_number(value.last_reload_seq);
+    }
+#endif
+};
+
+template <>
+struct SyncComponentTraits<FpsDeathInfo> {
+    using Quantized = FpsDeathInfo;
+
+    static Quantized quantize(const FpsDeathInfo& value) {
+        return value;
+    }
+
+    static FpsDeathInfo dequantize(const Quantized& value) {
+        return value;
+    }
+
+    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+        out.push_unsigned_bits(current.killer, 64U);
+    }
+
+    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+        out.killer = static_cast<ClientId>(in.read_unsigned_bits(64U));
+        return true;
+    }
+
+    static bool should_roll_back(const Quantized&, const Quantized&) {
+        return false;
+    }
+
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
+        out.append("killer=");
+        out.append_number(value.killer);
     }
 #endif
 };
@@ -542,6 +577,31 @@ struct SyncCueTraits<HitConfirmCue> {
 
     static bool equals_cue(const HitConfirmCue& lhs, const HitConfirmCue& rhs) {
         return lhs.victim.client_entity_network_id == rhs.victim.client_entity_network_id;
+    }
+};
+
+template <>
+struct SyncCueTraits<PlayerDeathCue> {
+    static void serialize(const PlayerDeathCue&, BitBuffer&) {}
+
+    static bool deserialize(BitBuffer&, PlayerDeathCue&) {
+        return true;
+    }
+
+    static bool play(ecs::Registry& registry, ecs::Entity owner, const PlayerDeathCue&, float late_seconds, SyncFrame) {
+        registry.add<FpsHitEffect>(
+            owner,
+            FpsHitEffect{std::max(0.04f, 0.45f - late_seconds), 0, FpsHitSound::Died});
+        return true;
+    }
+
+    static bool rollback(ecs::Registry& registry, ecs::Entity owner, const PlayerDeathCue&) {
+        registry.remove<FpsHitEffect>(owner);
+        return true;
+    }
+
+    static bool equals_cue(const PlayerDeathCue&, const PlayerDeathCue&) {
+        return true;
     }
 };
 

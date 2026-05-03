@@ -23,8 +23,10 @@ struct AppConfig {
 #endif
     std::string host = "127.0.0.1";
     std::string executable;
+    std::string replay_dir = "fps_replay_frames";
     std::string trace_dir;
     std::uint16_t port = default_port;
+    std::uint16_t replay_port = 0;
     double latency_ms = 100.0;
     double jitter_ms = 30.0;
     int bots = 0;

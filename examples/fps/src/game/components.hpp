@@ -74,6 +74,10 @@ struct FpsServerFrame {
     kage::sync::SyncFrame frame = 0;
 };
 
+struct FpsDeathInfo {
+    kage::sync::ClientId killer = kage::sync::invalid_client_id;
+};
+
 struct FpsShotEffect {
     float seconds = 0.0f;
     std::uint8_t sound_played = 0;
@@ -83,6 +87,7 @@ enum class FpsHitSound : std::uint8_t {
     None = 0,
     ConfirmedHit = 1,
     TookDamage = 2,
+    Died = 3,
 };
 
 struct FpsHitEffect {

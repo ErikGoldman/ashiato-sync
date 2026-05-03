@@ -1097,6 +1097,7 @@ void ReplicationServer::begin_tick(ecs::Registry& registry) {
 void ReplicationServer::tick(ecs::Registry& registry) {
     begin_tick(registry);
     end_tick(registry, ReplicateFn{});
+    emit_post_tick(registry);
 }
 
 void ReplicationServer::end_tick(ecs::Registry& registry, const ReplicateFn& replicate) {
@@ -1106,6 +1107,8 @@ void ReplicationServer::end_tick(ecs::Registry& registry, const ReplicateFn& rep
     }
 
     refresh_replicated(registry);
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    capture_queued_cues(registry, settings);
 
     std::vector<std::uint32_t> sent;
     std::vector<std::uint32_t> next_order;
@@ -1164,6 +1167,7 @@ void ReplicationServer::end_tick(ecs::Registry& registry, const ReplicateFn& rep
 void ReplicationServer::tick(ecs::Registry& registry, const ReplicateFn& replicate) {
     begin_tick(registry);
     end_tick(registry, replicate);
+    emit_post_tick(registry);
 }
 
 bool ReplicationServer::tick(ecs::Registry& registry, double dt_seconds) {
@@ -1183,6 +1187,7 @@ bool ReplicationServer::tick(ecs::Registry& registry, double dt_seconds) {
         begin_tick(registry);
         registry.run_jobs();
         end_tick(registry);
+        emit_post_tick(registry);
     }
 
     return true;
@@ -1253,6 +1258,17 @@ void ReplicationServer::refresh_client_priorities(const ecs::Registry& registry,
 void ReplicationServer::tick_serialized(ecs::Registry& registry) {
     begin_tick(registry);
     end_tick(registry);
+    emit_post_tick(registry);
+}
+
+void ReplicationServer::emit_post_tick(const ecs::Registry& registry) {
+    if (options_.post_tick) {
+        options_.post_tick(
+            registry,
+            frame_,
+            QueuedSyncCueView{post_tick_cues_.empty() ? nullptr : post_tick_cues_.data(), post_tick_cues_.size()});
+    }
+    post_tick_cues_.clear();
 }
 
 void ReplicationServer::end_tick(ecs::Registry& registry) {
@@ -1956,17 +1972,17 @@ void ReplicationServer::capture_dirty_components(const ecs::Registry& registry, 
 }
 
 void ReplicationServer::capture_queued_cues(const ecs::Registry& registry, const SyncSettings& settings) {
+    post_tick_cues_.clear();
     if (!settings.cue_queue) {
         return;
     }
 
-    std::vector<QueuedSyncCue> cues;
     {
         std::lock_guard<std::mutex> lock(settings.cue_queue->mutex);
-        cues.swap(settings.cue_queue->cues);
+        post_tick_cues_.swap(settings.cue_queue->cues);
     }
 
-    for (QueuedSyncCue cue : cues) {
+    for (QueuedSyncCue& cue : post_tick_cues_) {
         if (cue.frame == 0U) {
             cue.frame = frame_;
         }

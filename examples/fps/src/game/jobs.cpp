@@ -73,9 +73,10 @@ void simulate_fire(
 
     ecs::Entity best_entity;
     FpsCombatState* best_combat = nullptr;
+    FpsDeathInfo* best_death = nullptr;
     float best_t = wall_t;
     view.each(
-        [&view, &best_entity, &best_combat, &best_t, shooter, origin, dir, shot_interpolation_frame](ecs::Entity entity, const FpsTransform& target_transform, FpsVelocity&, FpsCombatState& combat, const FpsInput&, kage::sync::SyncSettings&, const kage::sync::SyncAuthority&) {
+        [&view, &best_entity, &best_combat, &best_death, &best_t, shooter, origin, dir, shot_interpolation_frame](ecs::Entity entity, const FpsTransform& target_transform, FpsVelocity&, FpsCombatState& combat, FpsDeathInfo& death, const FpsInput&, kage::sync::SyncSettings&, const kage::sync::SyncAuthority&) {
             if (entity == shooter || combat.dead != 0U || combat.health <= 0) {
                 return;
             }
@@ -94,6 +95,7 @@ void simulate_fire(
                 best_t = t;
                 best_entity = entity;
                 best_combat = &combat;
+                best_death = &death;
             }
         });
 
@@ -111,6 +113,13 @@ void simulate_fire(
             if (best_combat->health <= 0 && best_combat->dead == 0U) {
                 best_combat->dead = 1;
                 best_combat->respawn_remaining = respawn_seconds;
+                (void)kage::sync::emit_cue(sync, best_entity, PlayerDeathCue{}, 0.75f, true);
+                if (best_death != nullptr) {
+                    best_death->killer = kage::sync::invalid_client_id;
+                    if (const kage::sync::NetworkOwner* owner = view.template try_get<const kage::sync::NetworkOwner>(shooter)) {
+                        best_death->killer = owner->client;
+                    }
+                }
             }
         }
     } else if (wall_t < shot_range) {
@@ -199,16 +208,18 @@ void register_game_jobs(ecs::Registry& registry) {
         input.move_y = dot(move_dir, forward);
     });;
 
-    auto character_job = registry.job<FpsTransform, FpsVelocity, FpsCombatState, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>(0);
-        character_job.single_thread().access_other_entities<const FpsVisual, const FpsTransformHistory>().each([](
+    auto character_job = registry.job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>(0);
+        character_job.single_thread().access_other_entities<const FpsVisual, const FpsTransformHistory, const kage::sync::NetworkOwner>().each([](
         auto& view,
         ecs::Entity entity,
         FpsTransform& transform,
         FpsVelocity& velocity,
         FpsCombatState& combat,
+        FpsDeathInfo& death,
         const FpsInput& input,
         kage::sync::SyncSettings& sync,
         const kage::sync::SyncAuthority& authority) {
+        (void)death;
         if (combat.dead != 0U) {
             if (authority.is_authoritative()) {
                 combat.respawn_remaining = std::max(0.0f, combat.respawn_remaining - fixed_dt);
@@ -312,16 +323,18 @@ void register_game_jobs(ecs::Registry& registry, kage::sync::ReplicationClient& 
         input.move_y = dot(move_dir, forward);
     });;
 
-    auto character_job = client.simulation_job<FpsTransform, FpsVelocity, FpsCombatState, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>(registry, 0);
-        character_job.single_thread().access_other_entities<const FpsVisual, const FpsTransformHistory>().each([](
+    auto character_job = client.simulation_job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>(registry, 0);
+        character_job.single_thread().access_other_entities<const FpsVisual, const FpsTransformHistory, const kage::sync::NetworkOwner>().each([](
         auto& view,
         ecs::Entity entity,
         FpsTransform& transform,
         FpsVelocity& velocity,
         FpsCombatState& combat,
+        FpsDeathInfo& death,
         const FpsInput& input,
         kage::sync::SyncSettings& sync,
         const kage::sync::SyncAuthority& authority) {
+        (void)death;
         if (combat.dead != 0U) {
             if (authority.is_authoritative()) {
                 combat.respawn_remaining = std::max(0.0f, combat.respawn_remaining - fixed_dt);

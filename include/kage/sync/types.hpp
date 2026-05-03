@@ -444,6 +444,15 @@ struct SyncSettings {
     std::shared_ptr<SyncCueQueue> cue_queue = std::make_shared<SyncCueQueue>();
 };
 
+struct QueuedSyncCueView {
+    const QueuedSyncCue* data = nullptr;
+    std::size_t size = 0;
+
+    const QueuedSyncCue* begin() const noexcept { return data; }
+    const QueuedSyncCue* end() const noexcept { return data == nullptr ? nullptr : data + size; }
+    bool empty() const noexcept { return size == 0U; }
+};
+
 struct SyncAuthority {
     bool authoritative = true;
 
@@ -478,6 +487,7 @@ struct ReplicationServerOptions {
     SyncFrame prioritizer_interval_frames = 4;
     ReplicationPrioritizerFn prioritizer;
     ConnectHandlerFn connect_handler;
+    std::function<void(const ecs::Registry&, SyncFrame, QueuedSyncCueView)> post_tick;
     TransportFn transport;
 };
 

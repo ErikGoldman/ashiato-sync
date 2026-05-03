@@ -5,6 +5,7 @@
 #include "game/math.hpp"
 #include "game/schema.hpp"
 #include "net.hpp"
+#include "replay.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -21,9 +22,12 @@ void run_server(const AppConfig& config) {
     kage::sync::configure_server(registry);
     const SyncSchema schema = define_schema(registry);
     register_game_jobs(registry);
+    FpsReplayRecorder replay_recorder(registry, config.replay_dir);
+    FpsReplayServer replay_server(replay_recorder, config.replay_port);
 
     SocketHandle socket = make_udp_socket(config.port);
     std::unordered_map<kage::sync::ClientId, sockaddr_in> peers;
+    std::unordered_map<kage::sync::ClientId, std::uint8_t> previous_dead;
     std::vector<kage::sync::ClientId> pending_spawns;
     struct ServerPlayer {
         kage::sync::ClientId client = kage::sync::invalid_client_id;
@@ -35,6 +39,12 @@ void run_server(const AppConfig& config) {
     options.bandwidth_limit_bytes_per_tick = 64 * 1024;
     options.mtu_bytes = 1200;
     options.fixed_dt_seconds = fixed_dt;
+    options.post_tick = [&replay_recorder](
+        const ecs::Registry& tick_registry,
+        kage::sync::SyncFrame frame,
+        kage::sync::QueuedSyncCueView cues) {
+        replay_recorder.record(tick_registry, frame, cues);
+    };
     options.connect_handler = [&pending_spawns](const std::string&, kage::sync::ClientId& client, std::string&) {
         pending_spawns.push_back(client);
         return true;
@@ -82,6 +92,26 @@ void run_server(const AppConfig& config) {
         (void)server.tick(registry, dt);
         g_server_frame = server.frame();
 
+        for (const ServerPlayer& player : players) {
+            if (!registry.alive(player.entity)) {
+                continue;
+            }
+            const FpsCombatState* combat = registry.try_get<FpsCombatState>(player.entity);
+            if (combat == nullptr) {
+                continue;
+            }
+            const std::uint8_t was_dead = previous_dead[player.client];
+            if (combat->dead != 0U && was_dead == 0U) {
+                kage::sync::ClientId killer = kage::sync::invalid_client_id;
+                if (const FpsDeathInfo* death = registry.try_get<FpsDeathInfo>(player.entity)) {
+                    killer = death->killer;
+                }
+                replay_server.record_death(player.client, server.frame(), killer);
+            }
+            previous_dead[player.client] = combat->dead;
+        }
+        replay_server.tick(dt);
+
         for (const kage::sync::ClientId client : pending_spawns) {
             const float phase = static_cast<float>(client) * 1.31f;
             const ecs::Entity entity = spawn_character(
@@ -95,6 +125,7 @@ void run_server(const AppConfig& config) {
                     255},
                 client);
             players.push_back(ServerPlayer{client, entity});
+            previous_dead[client] = 0U;
             std::cout << "client " << client << " joined\n";
         }
         pending_spawns.clear();

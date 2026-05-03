@@ -6,6 +6,7 @@
 #include "game/math.hpp"
 #include "game/schema.hpp"
 #include "net.hpp"
+#include "replay.hpp"
 #include "rendering.hpp"
 
 #include <algorithm>
@@ -31,6 +32,22 @@ struct FpsEntityModeSelector {
         return kage::sync::ReplicationClientMode::BufferedInterpolation;
     }
 };
+
+void draw_kill_cam_overlay() {
+    const int width = GetScreenWidth();
+    const int height = GetScreenHeight();
+    const char* label = "KILL CAM";
+    constexpr int font_size = 34;
+    const int label_width = MeasureText(label, font_size);
+
+    DrawRectangle(0, 0, width, 82, Color{8, 6, 8, 215});
+    DrawRectangle(0, height - 38, width, 38, Color{8, 6, 8, 190});
+    DrawRectangle(0, 82, width, 3, Color{230, 40, 35, 230});
+    DrawRectangle(0, 0, width, height, Color{120, 22, 18, 28});
+    DrawRectangleLinesEx(Rectangle{2.0f, 2.0f, static_cast<float>(width - 4), static_cast<float>(height - 4)}, 4.0f, Color{230, 40, 35, 180});
+    DrawText(label, width / 2 - label_width / 2, 22, font_size, Color{255, 245, 235, 255});
+    DrawText("killer perspective", width / 2 - MeasureText("killer perspective", 14) / 2, 58, 14, Color{255, 185, 170, 255});
+}
 
 void run_client(const AppConfig& config) {
     ecs::Registry registry;
@@ -65,6 +82,7 @@ void run_client(const AppConfig& config) {
     Sound shot_sound = make_tone(180.0f, 0.09f, 0.45f);
     Sound hit_confirm_sound = make_tone(720.0f, 0.08f, 0.32f);
     Sound took_damage_sound = make_tone(260.0f, 0.16f, 0.45f);
+    Sound death_sound = make_tone(95.0f, 0.45f, 0.55f);
 
     FpsInput current_input{};
     MouseLookState look;
@@ -78,6 +96,8 @@ void run_client(const AppConfig& config) {
     std::vector<WallParticle> particles;
     particles.reserve(256);
     std::unordered_map<std::uint64_t, std::uint8_t> previous_dead;
+    FpsDeathCamClient death_cam;
+    bool was_local_dead = false;
     bool show_latency_stats = true;
     double packet_drop_remaining_seconds = 0.0;
     client.set_packet_sender([&packet_drop_remaining_seconds, &outgoing_link, &link_time_seconds](const kage::sync::BitBuffer& packet) {
@@ -129,15 +149,40 @@ void run_client(const AppConfig& config) {
             });
         }
 
-        ecs::Entity local_entity;
-        const kage::sync::ClientId local_client_id = registry.get<kage::sync::SyncSettings>().local_client;
-        registry.view<const kage::sync::NetworkOwner>().each([&local_entity, local_client_id](ecs::Entity entity, const kage::sync::NetworkOwner& owner) {
-            if (owner.client == local_client_id) {
-                local_entity = entity;
-            }
-        });
+        auto find_local_entity = [](ecs::Registry& source) {
+            ecs::Entity result;
+            const kage::sync::ClientId local_client_id = source.get<kage::sync::SyncSettings>().local_client;
+            source.view<const kage::sync::NetworkOwner>().each([&result, local_client_id](ecs::Entity entity, const kage::sync::NetworkOwner& owner) {
+                if (owner.client == local_client_id) {
+                    result = entity;
+                }
+            });
+            return result;
+        };
 
-        update_effects(registry, dt);
+        const ecs::Entity live_local_entity = find_local_entity(registry);
+        bool is_local_dead = false;
+        if (live_local_entity && registry.alive(live_local_entity)) {
+            if (const FpsCombatState* combat = registry.try_get<FpsCombatState>(live_local_entity)) {
+                is_local_dead = combat->dead != 0U;
+            }
+        }
+        if (is_local_dead && !was_local_dead && !death_cam.active()) {
+            death_cam.start(config.host, config.replay_port, registry.get<kage::sync::SyncSettings>().local_client);
+            previous_dead.clear();
+        }
+        was_local_dead = is_local_dead;
+        death_cam.tick(dt);
+
+        const ecs::Entity replay_local_entity = death_cam.active() ? find_local_entity(death_cam.registry()) : ecs::Entity{};
+        const bool replay_ready = replay_local_entity != ecs::Entity{};
+        ecs::Registry& render_registry = replay_ready ? death_cam.registry() : registry;
+        kage::sync::ReplicationClient& render_client = replay_ready ? death_cam.client() : client;
+        const ecs::Entity local_entity = find_local_entity(render_registry);
+        const kage::sync::DisplayInterpolationSampleBuffer& render_display =
+            render_client.display_interpolation_frame(render_registry);
+
+        update_effects(render_registry, dt);
         for (WallParticle& particle : particles) {
             particle.seconds -= dt;
             particle.position = add(particle.position, scale(particle.velocity, dt));
@@ -156,15 +201,26 @@ void run_client(const AppConfig& config) {
         FpsCombatState local_combat{};
         float local_shot_seconds = 0.0f;
         bool has_local = false;
-        if (local_entity && registry.alive(local_entity)) {
-            if (const FpsTransform* transform = registry.try_get<FpsTransform>(local_entity)) {
+        if (local_entity && render_registry.alive(local_entity)) {
+            FpsTransform sampled_transform{};
+            const FpsTransform* transform = nullptr;
+            for (const kage::sync::DisplayInterpolationSample& sample : render_display.entities) {
+                if (sample.local_entity == local_entity && sample.try_get_display_value(render_registry, sampled_transform)) {
+                    transform = &sampled_transform;
+                    break;
+                }
+            }
+            if (transform == nullptr) {
+                transform = render_registry.try_get<FpsTransform>(local_entity);
+            }
+            if (transform != nullptr) {
                 has_local = true;
                 camera.position = eye_position(*transform);
                 camera.target = add(camera.position, forward_from_angles(transform->yaw, transform->pitch));
-                if (const FpsCombatState* combat = registry.try_get<FpsCombatState>(local_entity)) {
+                if (const FpsCombatState* combat = render_registry.try_get<FpsCombatState>(local_entity)) {
                     local_combat = *combat;
                 }
-                if (const FpsShotEffect* shot = registry.try_get<FpsShotEffect>(local_entity)) {
+                if (const FpsShotEffect* shot = render_registry.try_get<FpsShotEffect>(local_entity)) {
                     local_shot_seconds = shot->seconds;
                 }
             }
@@ -178,13 +234,13 @@ void run_client(const AppConfig& config) {
         ClearBackground(Color{20, 22, 26, 255});
         BeginMode3D(camera);
         draw_arena();
-        for (const kage::sync::DisplayInterpolationSample& sample : client.display_interpolation_frame(registry).entities) {
+        for (const kage::sync::DisplayInterpolationSample& sample : render_display.entities) {
             FpsTransform transform{};
-            if (!sample.try_get_display_value(registry, transform)) {
+            if (!sample.try_get_display_value(render_registry, transform)) {
                 continue;
             }
-            const FpsVisual* visual = registry.try_get<FpsVisual>(sample.local_entity);
-            const FpsCombatState* combat = registry.try_get<FpsCombatState>(sample.local_entity);
+            const FpsVisual* visual = render_registry.try_get<FpsVisual>(sample.local_entity);
+            const FpsCombatState* combat = render_registry.try_get<FpsCombatState>(sample.local_entity);
             if (visual == nullptr || combat == nullptr) {
                 continue;
             }
@@ -203,12 +259,12 @@ void run_client(const AppConfig& config) {
                 continue;
             }
             Color color{visual->r, visual->g, visual->b, visual->a};
-            if (registry.contains<FpsHitEffect>(sample.local_entity)) {
+            if (render_registry.contains<FpsHitEffect>(sample.local_entity)) {
                 color = Color{255, 80, 80, 255};
             }
             draw_capsule(Vector3{transform.x, transform.y, transform.z}, *visual, color);
             draw_third_person_gun(transform);
-            if (registry.contains<FpsShotEffect>(sample.local_entity)) {
+            if (render_registry.contains<FpsShotEffect>(sample.local_entity)) {
                 const Vector3 muzzle = third_person_muzzle_position(transform);
                 DrawSphere(muzzle, 0.12f, Color{255, 230, 80, 220});
             }
@@ -219,7 +275,7 @@ void run_client(const AppConfig& config) {
             particle_color.a = static_cast<unsigned char>(alpha * static_cast<float>(particle.color.a));
             DrawSphere(particle.position, 0.035f, particle_color);
         }
-        registry.view<const FpsSurfaceHitEffect>().each([](ecs::Entity, const FpsSurfaceHitEffect& effect) {
+        render_registry.view<const FpsSurfaceHitEffect>().each([](ecs::Entity, const FpsSurfaceHitEffect& effect) {
             for (const WallParticle& particle : effect.particles) {
                 const float alpha = std::clamp(particle.seconds / 0.35f, 0.0f, 1.0f);
                 Color particle_color = particle.color;
@@ -233,14 +289,14 @@ void run_client(const AppConfig& config) {
         }
         rlDisableDepthTest();
 
-        registry.view<FpsShotEffect>().each([&shot_sound](ecs::Entity entity, FpsShotEffect& effect) {
+        render_registry.view<FpsShotEffect>().each([&shot_sound](ecs::Entity entity, FpsShotEffect& effect) {
             if (effect.sound_played == 0U) {
                 PlaySound(shot_sound);
                 effect.sound_played = 1;
             }
             (void)entity;
         });
-        registry.view<FpsHitEffect>().each([&hit_confirm_sound, &took_damage_sound, local_entity](ecs::Entity entity, FpsHitEffect& effect) {
+        render_registry.view<FpsHitEffect>().each([&hit_confirm_sound, &took_damage_sound, &death_sound, local_entity](ecs::Entity entity, FpsHitEffect& effect) {
             if (effect.sound_played != 0U) {
                 return;
             }
@@ -251,6 +307,11 @@ void run_client(const AppConfig& config) {
             }
             if (entity == local_entity && effect.sound == FpsHitSound::TookDamage) {
                 PlaySound(took_damage_sound);
+                effect.sound_played = 1;
+                return;
+            }
+            if (entity == local_entity && effect.sound == FpsHitSound::Died) {
+                PlaySound(death_sound);
                 effect.sound_played = 1;
             }
         });
@@ -276,106 +337,117 @@ void run_client(const AppConfig& config) {
         DrawRectangle(18, 18, 250, 86, Color{12, 14, 18, 190});
         DrawText(TextFormat("health %d", local_combat.health), 30, 30, 20, RAYWHITE);
         DrawText(TextFormat("ammo %u / %d", local_combat.ammo, magazine_size), 30, 56, 20, RAYWHITE);
-        DrawText(TextFormat("client %llu", static_cast<unsigned long long>(registry.get<kage::sync::SyncSettings>().local_client)), 30, 82, 14, Color{190, 200, 215, 255});
         DrawText(
-            look.captured
-                ? TextFormat(
-                      "mouse captured  yaw %.2f pitch %.2f  delta %.1f %.1f  Esc release",
-                      look.yaw,
-                      look.pitch,
-                      look.last_delta.x,
-                      look.last_delta.y)
-                : "click window or press Enter/C to capture mouse",
+            replay_ready
+                ? TextFormat("replay client %llu", static_cast<unsigned long long>(render_registry.get<kage::sync::SyncSettings>().local_client))
+                : TextFormat("client %llu", static_cast<unsigned long long>(render_registry.get<kage::sync::SyncSettings>().local_client)),
             30,
-            106,
+            82,
             14,
             Color{190, 200, 215, 255});
-        const kage::sync::ReplicationClientTimingStats& timing = client.timing_stats();
-        DrawRectangle(18, 132, 470, 164, Color{12, 14, 18, 170});
-        DrawText("controls", 30, 142, 16, RAYWHITE);
-        DrawText("WASD move   Mouse aim   Space jump   R reload", 30, 168, 14, Color{210, 220, 235, 255});
-        DrawText("Left mouse fire   Enter/C capture mouse   Esc release", 30, 190, 14, Color{210, 220, 235, 255});
-        DrawText("Network hotkeys", 30, 220, 14, Color{190, 210, 230, 255});
-        DrawText("1/2 in latency   3/4 in jitter", 30, 242, 14, Color{190, 210, 230, 255});
-        DrawText("5/6 out latency  7/8 out jitter   / stats", 30, 262, 14, Color{190, 210, 230, 255});
-        DrawText("0 drop all packets for 3s", 30, 282, 14, Color{190, 210, 230, 255});
-        const int stats_width = 470;
-        const int stats_x = GetScreenWidth() - stats_width - 18;
-        if (show_latency_stats) {
-            DrawRectangle(stats_x, 18, stats_width, 194, Color{12, 14, 18, 170});
-            DrawText("network stats   / hide", stats_x + 12, 28, 16, RAYWHITE);
+        if (!replay_ready) {
             DrawText(
-                TextFormat(
-                    "in latency %.0f ms [1/2]  jitter %.0f ms [3/4]  queued %zu",
-                    incoming_link.settings.latency_ms,
-                    incoming_link.settings.jitter_ms,
-                    incoming_link.size()),
-                stats_x + 12,
-                56,
+                look.captured
+                    ? TextFormat(
+                          "mouse captured  yaw %.2f pitch %.2f  delta %.1f %.1f  Esc release",
+                          look.yaw,
+                          look.pitch,
+                          look.last_delta.x,
+                          look.last_delta.y)
+                    : "click window or press Enter/C to capture mouse",
+                30,
+                106,
                 14,
-                Color{190, 210, 230, 255});
-            DrawText(
-                TextFormat(
-                    "out latency %.0f ms [5/6]  jitter %.0f ms [7/8]  queued %zu",
-                    outgoing_link.settings.latency_ms,
-                    outgoing_link.settings.jitter_ms,
-                    outgoing_link.size()),
-                stats_x + 12,
-                78,
-                14,
-                Color{190, 210, 230, 255});
-            DrawText(
-                TextFormat(
-                    "interp delay current %.2f  target %u  desired %u",
-                    client.continuous_interpolation_frames_behind(),
-                    timing.target_interpolation_buffer_frames,
-                    timing.desired_interpolation_buffer_frames),
-                stats_x + 12,
-                100,
-                14,
-                Color{210, 220, 235, 255});
-            DrawText(
-                TextFormat(
-                    "latency %.1f frames  jitter %.1f",
-                    timing.latency_frames,
-                    timing.jitter_frames),
-                stats_x + 12,
-                122,
-                14,
-                Color{210, 220, 235, 255});
-            DrawText(
-                TextFormat(
-                    "buffer current %u  capacity %zu",
-                    client.current_interpolation_buffer_frames(),
-                    client.options().interpolation_buffer_capacity_frames),
-                stats_x + 12,
-                144,
-                14,
-                Color{210, 220, 235, 255});
-            DrawText(
-                TextFormat(
-                    "prediction lead current %.2f  target %u  measured %.1f  scale %.2f",
-                    client.continuous_prediction_frames_ahead(),
-                    timing.target_prediction_lead_frames,
-                    timing.measured_prediction_lead_frames,
-                    timing.prediction_time_dilation),
-                stats_x + 12,
-                164,
-                14,
-                Color{210, 220, 235, 255});
-            DrawText(
-                packet_drop_remaining_seconds > 0.0
-                    ? TextFormat("packet drop active %.1fs remaining [0]", packet_drop_remaining_seconds)
-                    : "packet drop inactive [0]",
-                stats_x + 12,
-                186,
-                14,
-                packet_drop_remaining_seconds > 0.0
-                    ? Color{255, 170, 120, 255}
-                    : Color{190, 210, 230, 255});
+                Color{190, 200, 215, 255});
+            const kage::sync::ReplicationClientTimingStats& timing = client.timing_stats();
+            DrawRectangle(18, 132, 470, 164, Color{12, 14, 18, 170});
+            DrawText("controls", 30, 142, 16, RAYWHITE);
+            DrawText("WASD move   Mouse aim   Space jump   R reload", 30, 168, 14, Color{210, 220, 235, 255});
+            DrawText("Left mouse fire   Enter/C capture mouse   Esc release", 30, 190, 14, Color{210, 220, 235, 255});
+            DrawText("Network hotkeys", 30, 220, 14, Color{190, 210, 230, 255});
+            DrawText("1/2 in latency   3/4 in jitter", 30, 242, 14, Color{190, 210, 230, 255});
+            DrawText("5/6 out latency  7/8 out jitter   / stats", 30, 262, 14, Color{190, 210, 230, 255});
+            DrawText("0 drop all packets for 3s", 30, 282, 14, Color{190, 210, 230, 255});
+            const int stats_width = 470;
+            const int stats_x = GetScreenWidth() - stats_width - 18;
+            if (show_latency_stats) {
+                DrawRectangle(stats_x, 18, stats_width, 194, Color{12, 14, 18, 170});
+                DrawText("network stats   / hide", stats_x + 12, 28, 16, RAYWHITE);
+                DrawText(
+                    TextFormat(
+                        "in latency %.0f ms [1/2]  jitter %.0f ms [3/4]  queued %zu",
+                        incoming_link.settings.latency_ms,
+                        incoming_link.settings.jitter_ms,
+                        incoming_link.size()),
+                    stats_x + 12,
+                    56,
+                    14,
+                    Color{190, 210, 230, 255});
+                DrawText(
+                    TextFormat(
+                        "out latency %.0f ms [5/6]  jitter %.0f ms [7/8]  queued %zu",
+                        outgoing_link.settings.latency_ms,
+                        outgoing_link.settings.jitter_ms,
+                        outgoing_link.size()),
+                    stats_x + 12,
+                    78,
+                    14,
+                    Color{190, 210, 230, 255});
+                DrawText(
+                    TextFormat(
+                        "interp delay current %.2f  target %u  desired %u",
+                        client.continuous_interpolation_frames_behind(),
+                        timing.target_interpolation_buffer_frames,
+                        timing.desired_interpolation_buffer_frames),
+                    stats_x + 12,
+                    100,
+                    14,
+                    Color{210, 220, 235, 255});
+                DrawText(
+                    TextFormat(
+                        "latency %.1f frames  jitter %.1f",
+                        timing.latency_frames,
+                        timing.jitter_frames),
+                    stats_x + 12,
+                    122,
+                    14,
+                    Color{210, 220, 235, 255});
+                DrawText(
+                    TextFormat(
+                        "buffer current %u  capacity %zu",
+                        client.current_interpolation_buffer_frames(),
+                        client.options().interpolation_buffer_capacity_frames),
+                    stats_x + 12,
+                    144,
+                    14,
+                    Color{210, 220, 235, 255});
+                DrawText(
+                    TextFormat(
+                        "prediction lead current %.2f  target %u  measured %.1f  scale %.2f",
+                        client.continuous_prediction_frames_ahead(),
+                        timing.target_prediction_lead_frames,
+                        timing.measured_prediction_lead_frames,
+                        timing.prediction_time_dilation),
+                    stats_x + 12,
+                    164,
+                    14,
+                    Color{210, 220, 235, 255});
+                DrawText(
+                    packet_drop_remaining_seconds > 0.0
+                        ? TextFormat("packet drop active %.1fs remaining [0]", packet_drop_remaining_seconds)
+                        : "packet drop inactive [0]",
+                    stats_x + 12,
+                    186,
+                    14,
+                    packet_drop_remaining_seconds > 0.0
+                        ? Color{255, 170, 120, 255}
+                        : Color{190, 210, 230, 255});
+            } else {
+                DrawRectangle(stats_x, 18, 126, 28, Color{12, 14, 18, 170});
+                DrawText("/ show stats", stats_x + 12, 26, 14, Color{190, 210, 230, 255});
+            }
         } else {
-            DrawRectangle(stats_x, 18, 126, 28, Color{12, 14, 18, 170});
-            DrawText("/ show stats", stats_x + 12, 26, 14, Color{190, 210, 230, 255});
+            draw_kill_cam_overlay();
         }
         if (local_combat.dead != 0U) {
             const char* message = TextFormat("you died, respawning in %.1f", local_combat.respawn_remaining);
@@ -395,6 +467,7 @@ void run_client(const AppConfig& config) {
     UnloadSound(shot_sound);
     UnloadSound(hit_confirm_sound);
     UnloadSound(took_damage_sound);
+    UnloadSound(death_sound);
     CloseAudioDevice();
     CloseWindow();
 #ifdef KAGE_SYNC_ENABLE_TRACING

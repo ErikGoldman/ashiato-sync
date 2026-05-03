@@ -237,6 +237,7 @@ private:
     void refresh_client_priorities(const ecs::Registry& registry, ClientState& client);
     void tick_serialized(ecs::Registry& registry);
     void tick_serialized_parallel(ecs::Registry& registry);
+    void emit_post_tick(const ecs::Registry& registry);
     void disconnect_idle_clients();
     bool serialize_entity(
         const ecs::Registry& registry,
@@ -346,6 +347,7 @@ private:
     std::unordered_map<ClientId, std::size_t> client_to_index_;
     std::unordered_map<ClientId, std::size_t> peer_to_index_;
     std::vector<PendingInboundPacket> inbound_packets_;
+    std::vector<QueuedSyncCue> post_tick_cues_;
     std::size_t active_replicated_count_ = 0;
     ClientId next_connect_client_id_ = 1;
     SyncFrame frame_ = 0;
