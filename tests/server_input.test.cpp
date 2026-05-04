@@ -136,7 +136,7 @@ TEST_CASE("replication server phased tick replicates post-input simulation state
     update_header.read_bits(kage::sync::protocol::server_packet_id_bits);
     REQUIRE(static_cast<kage::sync::SyncFrame>(update_header.read_bits(32U)) == 1);
     REQUIRE(client.receive(client_registry, updates[0]));
-    const ecs::Entity local = client.local_entity(owned);
+    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(local);
     REQUIRE(client_registry.get<kage_sync_tests::Position>(local).x == 1.0f);
     REQUIRE(client_registry.get<kage_sync_tests::Position>(local).y == 1.0f);

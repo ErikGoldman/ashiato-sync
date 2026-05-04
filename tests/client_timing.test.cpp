@@ -417,7 +417,7 @@ TEST_CASE("snap mode records timing without emitting playback dilation") {
     REQUIRE(client.timing_stats().time_dilation == Catch::Approx(1.0f));
     REQUIRE(client.current_interpolation_buffer_frames() == 2);
 
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
     REQUIRE(client_registry.get<Position>(local).x == 1.0f);
 }

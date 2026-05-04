@@ -191,9 +191,9 @@ client, so bandwidth-limited clients naturally receive older unsent state first.
 - `ReplicationClientOptions::default_entity_mode` selects the fallback client
   mode for newly received entities. Set `entity_mode_selector` to choose snap,
   buffered interpolation, or prediction on the first upsert for each entity from
-  a decoded `ReplicatedEntityUpdateView`. The view exposes `server_entity`,
-  `local_entity`, `archetype`, `frame`, and typed `try_get<T>` accessors for
-  the received component data.
+  a decoded `ReplicatedEntityUpdateView`. The view exposes
+  `client_entity_network_id`, `local_entity`, `archetype`, `frame`, and typed
+  `try_get<T>` accessors for the received component data.
 - Components can serialize entity references by storing
   `kage::sync::EntityReference` and defining context-aware
   `SyncComponentTraits<T>::serialize(..., EntityReferenceContext&)` and
@@ -203,9 +203,9 @@ client, so bandwidth-limited clients naturally receive older unsent state first.
   If a referenced entity arrives later, the decoded reference keeps
   `client_entity_network_id` stable and `ReplicationClient::local_entity(id)`
   can resolve it after the entity is created.
-- Call `ReplicationClient::set_entity_mode(registry, server_entity, mode)` to
-  switch an already-known entity immediately. It returns `false` for unknown
-  server entities and does not create future overrides.
+- Call `ReplicationClient::set_entity_mode(registry, client_entity_network_id, mode)`
+  to switch an already-known replicated entity immediately. It returns `false`
+  for unknown replicated entities and does not create future overrides.
 - Set `ReplicationClientOptions::fixed_dt_seconds`, call
   `ReplicationClient::tick(registry, dt_seconds)` once per app frame, and pass
   server packets to the normal `receive(registry, packet)` overload. The client

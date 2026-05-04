@@ -39,13 +39,13 @@ TEST_CASE("buffered interpolation delays entity creation until the target frame"
         8});
     REQUIRE(client.receive(client_registry, packets.back()));
     REQUIRE(client.drain_ack_packets().size() == 1);
-    REQUIRE_FALSE(client.local_entity(server_entity));
+    REQUIRE_FALSE(client.local_entity(first_allocated_client_entity_network_id(1)));
 
     REQUIRE_FALSE(client.apply_frame(client_registry, 2));
-    REQUIRE_FALSE(client.local_entity(server_entity));
+    REQUIRE_FALSE(client.local_entity(first_allocated_client_entity_network_id(1)));
     REQUIRE(client.apply_frame(client_registry, 3));
 
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(local);
     REQUIRE(client_registry.get<Position>(local).x == 1.0f);
     REQUIRE(client_registry.get<Position>(local).y == 2.0f);
@@ -88,16 +88,16 @@ TEST_CASE("entity mode selector chooses snap or buffered from decoded component 
             })));
 
     REQUIRE(selector_calls == 2);
-    REQUIRE(client.entity_mode(snap_entity) == kage::sync::ReplicationClientMode::Snap);
-    REQUIRE(client.entity_mode(buffered_entity) == kage::sync::ReplicationClientMode::BufferedInterpolation);
+    REQUIRE(client.entity_mode(test_client_entity_network_id(1, snap_entity)) == kage::sync::ReplicationClientMode::Snap);
+    REQUIRE(client.entity_mode(test_client_entity_network_id(1, buffered_entity)) == kage::sync::ReplicationClientMode::BufferedInterpolation);
 
-    const ecs::Entity snap_local = client.local_entity(snap_entity);
+    const ecs::Entity snap_local = client.local_entity(test_client_entity_network_id(1, snap_entity));
     REQUIRE(snap_local);
     REQUIRE(client_registry.get<Position>(snap_local).x == 1.0f);
-    REQUIRE_FALSE(client.local_entity(buffered_entity));
+    REQUIRE_FALSE(client.local_entity(test_client_entity_network_id(1, buffered_entity)));
 
     REQUIRE(client.apply_frame(client_registry, 3));
-    const ecs::Entity buffered_local = client.local_entity(buffered_entity);
+    const ecs::Entity buffered_local = client.local_entity(test_client_entity_network_id(1, buffered_entity));
     REQUIRE(buffered_local);
     REQUIRE(client_registry.get<Position>(buffered_local).x == 20.0f);
 
@@ -107,8 +107,8 @@ TEST_CASE("entity mode selector chooses snap or buffered from decoded component 
 
     REQUIRE(client.receive(client_registry, make_position_packet(4, {{buffered_entity, Position{2.0f, 3.0f}}})));
     REQUIRE(selector_calls == 3);
-    REQUIRE(client.entity_mode(buffered_entity) == kage::sync::ReplicationClientMode::Snap);
-    const ecs::Entity recreated_local = client.local_entity(buffered_entity);
+    REQUIRE(client.entity_mode(test_client_entity_network_id(1, buffered_entity, 2U)) == kage::sync::ReplicationClientMode::Snap);
+    const ecs::Entity recreated_local = client.local_entity(test_client_entity_network_id(1, buffered_entity, 2U));
     REQUIRE(recreated_local);
     REQUIRE(client_registry.get<Position>(recreated_local).x == 2.0f);
 }
@@ -122,7 +122,7 @@ TEST_CASE("set entity mode rejects unknown entities") {
     kage::sync::ReplicationClient client;
     REQUIRE_FALSE(client.set_entity_mode(
         client_registry,
-        ecs::Entity{42},
+        test_client_entity_network_id(1, ecs::Entity{42}),
         kage::sync::ReplicationClientMode::BufferedInterpolation));
 }
 
@@ -140,15 +140,15 @@ TEST_CASE("set entity mode switches snap entities to buffered for future updates
     kage::sync::ReplicationClient client(options);
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
     REQUIRE(client_registry.get<Position>(local).x == 1.0f);
 
     REQUIRE(client.set_entity_mode(
         client_registry,
-        server_entity,
+        test_client_entity_network_id(1, server_entity),
         kage::sync::ReplicationClientMode::BufferedInterpolation));
-    REQUIRE(client.entity_mode(server_entity) == kage::sync::ReplicationClientMode::BufferedInterpolation);
+    REQUIRE(client.entity_mode(test_client_entity_network_id(1, server_entity)) == kage::sync::ReplicationClientMode::BufferedInterpolation);
 
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{5.0f, 2.0f}}})));
     REQUIRE(client_registry.get<Position>(local).x == 1.0f);
@@ -171,13 +171,16 @@ TEST_CASE("set entity mode switches buffered entities to snap immediately") {
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
     REQUIRE(client.apply_frame(client_registry, 2));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
     REQUIRE(client_registry.get<Position>(local).x == 1.0f);
 
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{7.0f, 2.0f}}})));
     REQUIRE(client_registry.get<Position>(local).x == 1.0f);
-    REQUIRE(client.set_entity_mode(client_registry, server_entity, kage::sync::ReplicationClientMode::Snap));
+    REQUIRE(client.set_entity_mode(
+        client_registry,
+        test_client_entity_network_id(1, server_entity),
+        kage::sync::ReplicationClientMode::Snap));
     REQUIRE(client_registry.get<Position>(local).x == 7.0f);
 }
 
@@ -204,13 +207,16 @@ TEST_CASE("set entity mode switches buffered entities to predict and seeds predi
 
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
     REQUIRE(client.apply_frame(registry, 2));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
     REQUIRE(registry.get<PredictedPosition>(local).x == 0.0f);
 
     REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{1.0f, 0.0f})));
     REQUIRE(registry.get<PredictedPosition>(local).x == 0.0f);
-    REQUIRE(client.set_entity_mode(registry, server_entity, kage::sync::ReplicationClientMode::Predict));
+    REQUIRE(client.set_entity_mode(
+        registry,
+        test_client_entity_network_id(1, server_entity),
+        kage::sync::ReplicationClientMode::Predict));
     REQUIRE(registry.get<PredictedPosition>(local).x == 1.0f);
 
     REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
@@ -236,14 +242,14 @@ TEST_CASE("set entity mode switches an entity by client network id") {
     const ecs::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f}, 1)));
 
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
-    REQUIRE(client.entity_mode(server_entity) == kage::sync::ReplicationClientMode::Snap);
+    REQUIRE(client.entity_mode(test_client_entity_network_id(1, server_entity)) == kage::sync::ReplicationClientMode::Snap);
 
     const kage::sync::ClientEntityNetworkId network_id =
         test_client_entity_network_id(1, test_network_id(server_entity));
     REQUIRE(client.set_entity_mode(registry, network_id, kage::sync::ReplicationClientMode::Predict));
-    REQUIRE(client.entity_mode(server_entity) == kage::sync::ReplicationClientMode::Predict);
+    REQUIRE(client.entity_mode(test_client_entity_network_id(1, server_entity)) == kage::sync::ReplicationClientMode::Predict);
 
     REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
     REQUIRE(registry.get<PredictedPosition>(local).x == 1.0f);
@@ -269,7 +275,7 @@ TEST_CASE("set entity mode by client network id switches buffered delayed destro
 
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{1.0f, 0.0f})));
     REQUIRE(client.apply_frame(registry, 2));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
 
     REQUIRE(client.receive(registry, make_destroy_packet(2, server_entity)));
@@ -279,7 +285,7 @@ TEST_CASE("set entity mode by client network id switches buffered delayed destro
     REQUIRE(client.set_default_entity_mode(kage::sync::ReplicationClientMode::Predict));
     REQUIRE(client.set_entity_mode(registry, network_id, kage::sync::ReplicationClientMode::Predict));
     REQUIRE_FALSE(registry.alive(local));
-    REQUIRE(client.entity_mode(server_entity) == kage::sync::ReplicationClientMode::Predict);
+    REQUIRE(client.entity_mode(test_client_entity_network_id(1, server_entity)) == kage::sync::ReplicationClientMode::Predict);
 }
 
 TEST_CASE("set entity mode switches buffered delayed destroys to snap immediately") {
@@ -297,17 +303,20 @@ TEST_CASE("set entity mode switches buffered delayed destroys to snap immediatel
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
     REQUIRE(client.apply_frame(client_registry, 2));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
 
     REQUIRE(client.receive(client_registry, make_destroy_packet(2, server_entity)));
     REQUIRE(client_registry.alive(local));
-    REQUIRE(client.set_entity_mode(client_registry, server_entity, kage::sync::ReplicationClientMode::Snap));
+    REQUIRE(client.set_entity_mode(
+        client_registry,
+        test_client_entity_network_id(1, server_entity),
+        kage::sync::ReplicationClientMode::Snap));
     REQUIRE_FALSE(client_registry.alive(local));
-    REQUIRE_FALSE(client.local_entity(server_entity));
+    REQUIRE_FALSE(client.local_entity(test_client_entity_network_id(1, server_entity)));
     REQUIRE_FALSE(client.set_entity_mode(
         client_registry,
-        server_entity,
+        test_client_entity_network_id(1, server_entity),
         kage::sync::ReplicationClientMode::BufferedInterpolation));
 }
 
@@ -329,7 +338,7 @@ TEST_CASE("snap-selected entities do not require interpolation trait hooks") {
     const ecs::Entity server_entity{42};
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
     REQUIRE(client_registry.get<Position>(local).x == 1.0f);
 }
@@ -387,7 +396,7 @@ TEST_CASE("buffered interpolation fills skipped frames with component trait inte
     REQUIRE(client.receive(client_registry, packets.back()));
 
     REQUIRE(client.apply_frame(client_registry, 4));
-    ecs::Entity local = client.local_entity(server_entity);
+    ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(client_registry.get<SmoothPosition>(local).x == 10.0f);
     REQUIRE(client.apply_frame(client_registry, 5));
     REQUIRE(client_registry.get<SmoothPosition>(local).x == 20.0f);
@@ -454,7 +463,7 @@ TEST_CASE("buffered interpolation floors synced tags") {
     REQUIRE(client.receive(client_registry, packets.back()));
 
     REQUIRE(client.apply_frame(client_registry, 2));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(client_registry.has(local, client_visible));
     REQUIRE_FALSE(client_registry.has(local, client_secret));
 
@@ -508,7 +517,7 @@ TEST_CASE("buffered interpolation delays component removal and entity destroy") 
     server.tick(server_registry);
     REQUIRE(client.receive(client_registry, packets.back()));
     REQUIRE(client.apply_frame(client_registry, 2));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(client_registry.contains<Health>(local));
     for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
         REQUIRE(server.process_packet(1, ack));
@@ -573,7 +582,7 @@ TEST_CASE("buffered interpolation rejects interpolated components without trait 
         8});
     REQUIRE_FALSE(client.receive(client_registry, packets.back()));
     REQUIRE(client.pending_ack_count() == 0);
-    REQUIRE_FALSE(client.local_entity(server_entity));
+    REQUIRE_FALSE(client.local_entity(first_allocated_client_entity_network_id(1)));
 }
 
 TEST_CASE("buffered interpolation keeps step components held between interpolated samples") {
@@ -626,7 +635,7 @@ TEST_CASE("buffered interpolation keeps step components held between interpolate
         REQUIRE(server.process_packet(1, ack));
     }
     REQUIRE(client.apply_frame(client_registry, 3));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(local);
 
     packets.clear();
@@ -691,10 +700,10 @@ TEST_CASE("buffered interpolation validates wrapped buffer samples by frame") {
     }
 
     REQUIRE_FALSE(client.apply_frame(client_registry, 3));
-    REQUIRE_FALSE(client.local_entity(server_entity));
+    REQUIRE_FALSE(client.local_entity(first_allocated_client_entity_network_id(1)));
     REQUIRE(client.apply_frame(client_registry, 7));
 
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(local);
     REQUIRE(client_registry.get<Position>(local).x == 6.0f);
 }
@@ -750,7 +759,7 @@ TEST_CASE("buffered interpolation delays component additions from full updates")
     server.tick(server_registry);
     REQUIRE(client.receive(client_registry, packets.back()));
     REQUIRE(client.apply_frame(client_registry, 2));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(local);
     REQUIRE_FALSE(client_registry.contains<Health>(local));
     for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
@@ -837,8 +846,8 @@ TEST_CASE("buffered interpolation delays owner visibility reconciliation") {
     REQUIRE(client_two.receive(client_two_registry, packet_for(packets, 2)));
     REQUIRE(client_one.apply_frame(client_one_registry, 2));
     REQUIRE(client_two.apply_frame(client_two_registry, 2));
-    const ecs::Entity client_one_local = client_one.local_entity(server_entity);
-    const ecs::Entity client_two_local = client_two.local_entity(server_entity);
+    const ecs::Entity client_one_local = client_one.local_entity(first_allocated_client_entity_network_id(1));
+    const ecs::Entity client_two_local = client_two.local_entity(first_allocated_client_entity_network_id(2));
     REQUIRE(client_one_registry.contains<Health>(client_one_local));
     REQUIRE_FALSE(client_two_registry.contains<Health>(client_two_local));
     for (const kage::sync::BitBuffer& ack : client_one.drain_ack_packets()) {
@@ -882,9 +891,9 @@ TEST_CASE("buffered interpolation applies valid entities when another target sam
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{first, Position{3.0f, 0.0f}}})));
 
     REQUIRE_FALSE(client.apply_frame(client_registry, 3));
-    REQUIRE(client.local_entity(first));
-    REQUIRE_FALSE(client.local_entity(second));
-    REQUIRE(client_registry.get<Position>(client.local_entity(first)).x == 3.0f);
+    REQUIRE(client.local_entity(test_client_entity_network_id(1, first)));
+    REQUIRE_FALSE(client.local_entity(test_client_entity_network_id(1, second)));
+    REQUIRE(client_registry.get<Position>(client.local_entity(test_client_entity_network_id(1, first))).x == 3.0f);
 }
 
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
@@ -1067,7 +1076,7 @@ TEST_CASE("buffered interpolation applies correct target frame after auto buffer
     REQUIRE(client.current_interpolation_buffer_frames() == 2);
 
     REQUIRE(client.apply_frame(client_registry, 7));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
     REQUIRE(client_registry.get<Position>(local).x == 1.0f);
     REQUIRE(client.apply_frame(client_registry, 8));
@@ -1096,7 +1105,7 @@ TEST_CASE("buffered interpolation does not recreate destroyed entities before th
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
     REQUIRE(client.apply_frame(client_registry, 3));
-    const ecs::Entity first_local = client.local_entity(server_entity);
+    const ecs::Entity first_local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(first_local);
     REQUIRE(client.drain_ack_packets().size() == 1);
 
@@ -1108,9 +1117,9 @@ TEST_CASE("buffered interpolation does not recreate destroyed entities before th
     REQUIRE(client.receive(client_registry, make_position_packet(4, {{server_entity, Position{5.0f, 6.0f}}})));
 
     REQUIRE(client.apply_frame(client_registry, 5));
-    REQUIRE_FALSE(client.local_entity(server_entity));
+    REQUIRE_FALSE(client.local_entity(test_client_entity_network_id(1, server_entity)));
     REQUIRE(client.apply_frame(client_registry, 6));
-    const ecs::Entity second_local = client.local_entity(server_entity);
+    const ecs::Entity second_local = client.local_entity(test_client_entity_network_id(1, server_entity, 2U));
     REQUIRE(second_local);
     REQUIRE(second_local != first_local);
     REQUIRE(client_registry.get<Position>(second_local).x == 5.0f);
@@ -1132,7 +1141,7 @@ TEST_CASE("buffered interpolation applies late destroys for already sampled targ
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
     REQUIRE(client.apply_frame(client_registry, 3));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
     REQUIRE(client_registry.alive(local));
     REQUIRE(client.drain_ack_packets().size() == 1);
@@ -1141,7 +1150,7 @@ TEST_CASE("buffered interpolation applies late destroys for already sampled targ
 
     REQUIRE(client.receive(client_registry, make_destroy_packet(2, server_entity)));
     REQUIRE_FALSE(client_registry.alive(local));
-    REQUIRE_FALSE(client.local_entity(server_entity));
+    REQUIRE_FALSE(client.local_entity(test_client_entity_network_id(1, server_entity)));
 
     const std::vector<kage::sync::BitBuffer> acks = client.drain_ack_packets();
     REQUIRE(acks.size() == 1);

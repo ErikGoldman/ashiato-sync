@@ -36,7 +36,6 @@ struct ReplicatedComponentUpdate {
 
 struct ReplicatedEntityUpdateView {
     ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
-    ecs::Entity server_entity;
     ecs::Entity local_entity;
     SyncArchetypeId archetype;
     SyncFrame frame = 0;
@@ -59,7 +58,6 @@ private:
 
 struct DisplayInterpolationSample {
     ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
-    ecs::Entity server_entity;
     ecs::Entity local_entity;
     SyncArchetypeId archetype;
     SyncFrame frame = 0;
@@ -322,9 +320,8 @@ public:
 #endif
 
     bool set_default_entity_mode(ReplicationClientMode mode) noexcept;
-    bool set_entity_mode(ecs::Registry& registry, ecs::Entity server_entity, ReplicationClientMode mode);
     bool set_entity_mode(ecs::Registry& registry, ClientEntityNetworkId network_id, ReplicationClientMode mode);
-    ReplicationClientMode entity_mode(ecs::Entity server_entity) const noexcept;
+    ReplicationClientMode entity_mode(ClientEntityNetworkId network_id) const noexcept;
     bool set_interpolation_buffer_frames(SyncFrame frames) noexcept;
     SyncFrame current_interpolation_buffer_frames() const noexcept;
     template <typename T>
@@ -386,7 +383,6 @@ public:
     const std::string& connect_error() const noexcept {
         return connect_error_;
     }
-    ecs::Entity local_entity(ecs::Entity server_entity) const;
     SyncFrame receive_frame() const noexcept {
         return clock_.receive_frame();
     }
@@ -434,8 +430,6 @@ private:
     using EntityBufferedFrame = client_detail::EntityBufferedFrame;
     using OriginalPredictionCapture = client_detail::OriginalPredictionCapture;
 
-    EntityState* find_entity_state(ecs::Entity server_entity) noexcept;
-    const EntityState* find_entity_state(ecs::Entity server_entity) const noexcept;
     EntityState* find_entity_state(ClientEntityNetworkId network_id) noexcept;
     const EntityState* find_entity_state(ClientEntityNetworkId network_id) const noexcept;
     EntityState* find_entity_state(std::uint32_t network_id) noexcept;

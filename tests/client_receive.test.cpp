@@ -36,7 +36,7 @@ TEST_CASE("replication client applies full updates and queues ACKs") {
     kage::sync::ReplicationClient client;
     REQUIRE(client.receive(client_registry, packets[0]));
 
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(local);
     REQUIRE(client_registry.alive(local));
     REQUIRE(client_registry.contains<Position>(local));
@@ -92,7 +92,7 @@ TEST_CASE("replication client decodes ACKed delta updates") {
     server.tick(server_registry);
     REQUIRE(client.receive(client_registry, packets.back()));
 
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(local);
     REQUIRE(client_registry.get<NetworkedPosition>(local).x == 2.0f);
     REQUIRE(client_registry.get<NetworkedPosition>(local).y == 3.0f);
@@ -144,7 +144,7 @@ TEST_CASE("replication client decodes deltas against the encoded baseline frame"
     server.tick(server_registry);
     REQUIRE(client.receive(client_registry, packets.back()));
 
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(local);
     REQUIRE(client_registry.get<NetworkedPosition>(local).x == 3.0f);
     REQUIRE(client_registry.get<NetworkedPosition>(local).y == 4.0f);
@@ -335,7 +335,7 @@ TEST_CASE("replication client applies destroy records and ACKs tombstones") {
 
     server.tick(server_registry);
     REQUIRE(client.receive(client_registry, packets.back()));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(local);
     for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
         REQUIRE(server.process_packet(1, ack));
@@ -530,8 +530,8 @@ TEST_CASE("replication clients recover independently when one misses ACK process
         REQUIRE(server.process_packet(2, ack));
     }
 
-    const ecs::Entity client_one_local = client_one.local_entity(server_entity);
-    const ecs::Entity client_two_local = client_two.local_entity(server_entity);
+    const ecs::Entity client_one_local = client_one.local_entity(first_allocated_client_entity_network_id(1));
+    const ecs::Entity client_two_local = client_two.local_entity(first_allocated_client_entity_network_id(2));
     REQUIRE(client_one_registry.get<NetworkedPosition>(client_one_local).x == 2.0f);
     REQUIRE(client_one_registry.get<NetworkedPosition>(client_one_local).y == 3.0f);
     REQUIRE(client_two_registry.get<NetworkedPosition>(client_two_local).x == 2.0f);
@@ -581,8 +581,8 @@ TEST_CASE("replication clients ACK destroy records independently") {
     REQUIRE(packets.size() == 2);
     REQUIRE(client_one.receive(client_one_registry, packet_for(packets, 1)));
     REQUIRE(client_two.receive(client_two_registry, packet_for(packets, 2)));
-    const ecs::Entity client_one_local = client_one.local_entity(server_entity);
-    const ecs::Entity client_two_local = client_two.local_entity(server_entity);
+    const ecs::Entity client_one_local = client_one.local_entity(first_allocated_client_entity_network_id(1));
+    const ecs::Entity client_two_local = client_two.local_entity(first_allocated_client_entity_network_id(2));
     REQUIRE(client_one_local);
     REQUIRE(client_two_local);
     for (const kage::sync::BitBuffer& ack : client_one.drain_ack_packets()) {
@@ -694,8 +694,8 @@ TEST_CASE("replication client reconciles components when owner visibility change
         REQUIRE(server.process_packet(2, ack));
     }
 
-    const ecs::Entity client_one_local = client_one.local_entity(server_entity);
-    const ecs::Entity client_two_local = client_two.local_entity(server_entity);
+    const ecs::Entity client_one_local = client_one.local_entity(first_allocated_client_entity_network_id(1));
+    const ecs::Entity client_two_local = client_two.local_entity(first_allocated_client_entity_network_id(2));
     REQUIRE(client_one_registry.contains<Health>(client_one_local));
     REQUIRE_FALSE(client_two_registry.contains<Health>(client_two_local));
 
@@ -782,8 +782,8 @@ TEST_CASE("replication client applies synced tags and owner-filtered tag visibil
     REQUIRE(owner_client.receive(owner_registry, packet_for(packets, 1)));
     REQUIRE(non_owner_client.receive(non_owner_registry, packet_for(packets, 2)));
 
-    const ecs::Entity owner_local = owner_client.local_entity(server_entity);
-    const ecs::Entity non_owner_local = non_owner_client.local_entity(server_entity);
+    const ecs::Entity owner_local = owner_client.local_entity(first_allocated_client_entity_network_id(1));
+    const ecs::Entity non_owner_local = non_owner_client.local_entity(first_allocated_client_entity_network_id(2));
     REQUIRE(owner_registry.has(owner_local, owner_visible));
     REQUIRE(owner_registry.has(owner_local, owner_secret));
     REQUIRE(non_owner_registry.has(non_owner_local, non_owner_visible));

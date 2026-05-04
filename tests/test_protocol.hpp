@@ -250,6 +250,19 @@ inline kage::sync::ClientEntityNetworkId test_client_entity_network_id(
     return kage::sync::make_client_entity_network_id(client, wire_network_id, version);
 }
 
+inline kage::sync::ClientEntityNetworkId test_client_entity_network_id(
+    kage::sync::ClientId client,
+    ecs::Entity entity,
+    std::uint32_t version = 1U) {
+    return test_client_entity_network_id(client, test_network_id(entity), version);
+}
+
+inline kage::sync::ClientEntityNetworkId first_allocated_client_entity_network_id(
+    kage::sync::ClientId client,
+    std::uint32_t version = 1U) {
+    return test_client_entity_network_id(client, 1U, version);
+}
+
 inline kage::sync::BitBuffer make_position_packet(
     kage::sync::SyncFrame frame,
     const std::vector<std::pair<ecs::Entity, Position>>& records,

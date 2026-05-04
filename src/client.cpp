@@ -395,46 +395,6 @@ ReplicationClient::ReplicationClient(ReplicationClient&& other) noexcept = defau
 
 ReplicationClient& ReplicationClient::operator=(ReplicationClient&& other) noexcept = default;
 
-ReplicationClient::EntityState* ReplicationClient::find_entity_state(ecs::Entity server_entity) noexcept {
-    const std::uint32_t wire_id = ecs::Registry::entity_index(server_entity) + 1U;
-    if (EntityState* state = find_entity_state(wire_id)) {
-        return state;
-    }
-
-    EntityState* unique = nullptr;
-    for (EntityState& candidate : entities_) {
-        if (candidate.client_entity_network_id == invalid_client_entity_network_id ||
-            !candidate.local) {
-            continue;
-        }
-        if (unique != nullptr) {
-            return nullptr;
-        }
-        unique = &candidate;
-    }
-    return unique;
-}
-
-const ReplicationClient::EntityState* ReplicationClient::find_entity_state(ecs::Entity server_entity) const noexcept {
-    const std::uint32_t wire_id = ecs::Registry::entity_index(server_entity) + 1U;
-    if (const EntityState* state = find_entity_state(wire_id)) {
-        return state;
-    }
-
-    const EntityState* unique = nullptr;
-    for (const EntityState& candidate : entities_) {
-        if (candidate.client_entity_network_id == invalid_client_entity_network_id ||
-            !candidate.local) {
-            continue;
-        }
-        if (unique != nullptr) {
-            return nullptr;
-        }
-        unique = &candidate;
-    }
-    return unique;
-}
-
 ReplicationClient::EntityState* ReplicationClient::find_entity_state(ClientEntityNetworkId network_id) noexcept {
     const auto found = network_entity_indices_.find(network_id);
     if (found == network_entity_indices_.end() || found->second >= entities_.size()) {
@@ -937,14 +897,6 @@ bool ReplicationClient::set_default_entity_mode(ReplicationClientMode mode) noex
 
 bool ReplicationClient::set_entity_mode(
     ecs::Registry& registry,
-    ecs::Entity server_entity,
-    ReplicationClientMode mode) {
-    EntityState* state = find_entity_state(server_entity);
-    return state != nullptr && set_entity_mode(registry, state->client_entity_network_id, mode);
-}
-
-bool ReplicationClient::set_entity_mode(
-    ecs::Registry& registry,
     ClientEntityNetworkId network_id,
     ReplicationClientMode mode) {
     EntityState* state = find_entity_state(network_id);
@@ -1253,8 +1205,8 @@ void ReplicationClient::trace_incoming_update_packet(
 #endif
 #endif
 
-ReplicationClientMode ReplicationClient::entity_mode(ecs::Entity server_entity) const noexcept {
-    const EntityState* state = find_entity_state(server_entity);
+ReplicationClientMode ReplicationClient::entity_mode(ClientEntityNetworkId network_id) const noexcept {
+    const EntityState* state = find_entity_state(network_id);
     return state != nullptr ? state->mode : options_.default_entity_mode;
 }
 
@@ -1957,26 +1909,6 @@ void ReplicationClient::acknowledge_input_frame(SyncFrame frame) {
     acked_input_frame_ = frame;
 }
 
-ecs::Entity ReplicationClient::local_entity(ecs::Entity server_entity) const {
-    const EntityState* state = find_entity_state(server_entity);
-    if (state != nullptr) {
-        return state->local;
-    }
-
-    ecs::Entity local;
-    for (const EntityState& candidate : entities_) {
-        if (candidate.client_entity_network_id == invalid_client_entity_network_id ||
-            !candidate.local) {
-            continue;
-        }
-        if (local) {
-            return ecs::Entity{};
-        }
-        local = candidate.local;
-    }
-    return local;
-}
-
 ecs::Entity ReplicationClient::local_entity(ClientEntityNetworkId network_id) const {
     const EntityState* state = find_entity_state(network_id);
     return state != nullptr ? state->local : ecs::Entity{};
@@ -2470,7 +2402,6 @@ bool ReplicationClient::apply_upsert(
         if (options_.entity_mode_selector) {
             ReplicatedEntityUpdateView update;
             update.client_entity_network_id = client_entity_network_id;
-            update.server_entity = ecs::Entity{client_entity_network_id};
             update.local_entity = state.local;
             update.archetype = archetype;
             update.frame = frame;
@@ -2810,10 +2741,7 @@ void ReplicationClient::drain_emitted_prediction_cues(
     }
 
     for (const QueuedSyncCue& emitted : cues) {
-        EntityState* state = find_entity_state(emitted.entity);
-        if (state == nullptr) {
-            state = find_entity_state_for_local(emitted.entity);
-        }
+        EntityState* state = find_entity_state_for_local(emitted.entity);
         if (state == nullptr || state->mode != ReplicationClientMode::Predict) {
             continue;
         }
@@ -4191,7 +4119,6 @@ bool ReplicationClient::write_display_samples(
                     }
                     DisplayInterpolationSample& display = out.entities[sampled_count];
                     display.client_entity_network_id = state.client_entity_network_id;
-                    display.server_entity = ecs::Entity{state.client_entity_network_id};
                     display.local_entity = state.local;
                     display.archetype = current_sample.archetype;
                     display.frame = current_sample.frame;
@@ -4264,7 +4191,6 @@ bool ReplicationClient::write_display_samples(
             }
             DisplayInterpolationSample& display = out.entities[sampled_count++];
             display.client_entity_network_id = state.client_entity_network_id;
-            display.server_entity = ecs::Entity{state.client_entity_network_id};
             display.local_entity = state.local;
             display.archetype = state.archetype;
             display.frame = state.frame;
@@ -4344,7 +4270,6 @@ bool ReplicationClient::write_display_samples(
         }
         DisplayInterpolationSample& display = out.entities[sampled_count];
         display.client_entity_network_id = state.client_entity_network_id;
-        display.server_entity = ecs::Entity{state.client_entity_network_id};
         display.local_entity = state.local;
         display.archetype = floor_sample.archetype;
         display.frame = floor_frame;

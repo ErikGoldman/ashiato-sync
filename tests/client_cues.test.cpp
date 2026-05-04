@@ -39,7 +39,7 @@ TEST_CASE("replicated snap cues play once with late time and ACK-driven resend")
     kage::sync::ReplicationClient client;
 
     REQUIRE(client.receive(client_registry, packets[0], 10));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(client_registry.contains<CuePlayback>(local));
     REQUIRE(client_registry.get<CuePlayback>(local).plays == 1);
     REQUIRE(client_registry.get<CuePlayback>(local).last_id == 7);
@@ -101,8 +101,8 @@ TEST_CASE("owner-only cues replicate only to the cue owner") {
     REQUIRE(owner_client.receive(owner_registry, packet_for(packets, 1)));
     REQUIRE(other_client.receive(other_registry, packet_for(packets, 2)));
 
-    const ecs::Entity owner_local = owner_client.local_entity(server_entity);
-    const ecs::Entity other_local = other_client.local_entity(server_entity);
+    const ecs::Entity owner_local = owner_client.local_entity(first_allocated_client_entity_network_id(1));
+    const ecs::Entity other_local = other_client.local_entity(first_allocated_client_entity_network_id(2));
     REQUIRE(owner_registry.contains<CuePlayback>(owner_local));
     REQUIRE(owner_registry.get<CuePlayback>(owner_local).last_id == 11);
     REQUIRE_FALSE(other_registry.contains<CuePlayback>(other_local));
@@ -144,8 +144,8 @@ TEST_CASE("default cues still replicate to all clients") {
     REQUIRE(first_client.receive(first_registry, packet_for(packets, 1)));
     REQUIRE(second_client.receive(second_registry, packet_for(packets, 2)));
 
-    REQUIRE(first_registry.get<CuePlayback>(first_client.local_entity(server_entity)).last_id == 12);
-    REQUIRE(second_registry.get<CuePlayback>(second_client.local_entity(server_entity)).last_id == 12);
+    REQUIRE(first_registry.get<CuePlayback>(first_client.local_entity(first_allocated_client_entity_network_id(1))).last_id == 12);
+    REQUIRE(second_registry.get<CuePlayback>(second_client.local_entity(first_allocated_client_entity_network_id(2))).last_id == 12);
 }
 
 TEST_CASE("cue entity references resolve to client-local entities") {

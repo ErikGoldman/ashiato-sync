@@ -1,4 +1,5 @@
 #include "../benchmarks/ball_stress.hpp"
+#include "test_protocol.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -134,7 +135,7 @@ TEST_CASE("ball stress schema syncs multiple tags to clients") {
     kage::sync::ReplicationClient client;
     REQUIRE(client.receive(client_registry, packets[0]));
 
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(kage_sync_tests::first_allocated_client_entity_network_id(1));
     REQUIRE(local);
     REQUIRE(client_registry.has(local, client_schema.spawn_tagged));
     REQUIRE(client_registry.has(local, client_schema.bounced));

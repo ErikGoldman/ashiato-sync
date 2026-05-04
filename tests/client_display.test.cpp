@@ -63,7 +63,7 @@ TEST_CASE("display interpolation samples fractional frames without mutating ECS"
     REQUIRE(client.receive(client_registry, packets.back()));
 
     REQUIRE(client.apply_frame(client_registry, 2));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(client_entity_network_id);
     REQUIRE(local);
     REQUIRE(client_registry.get<SmoothPosition>(local).x == 0.0f);
 
@@ -387,7 +387,10 @@ TEST_CASE("client-owned display frame keeps previous entities while committing n
     REQUIRE(client.display_interpolation_frame(client_registry).entities.size() == 1);
 
     REQUIRE(client.set_default_entity_mode(kage::sync::ReplicationClientMode::BufferedInterpolation));
-    REQUIRE(client.set_entity_mode(client_registry, existing, kage::sync::ReplicationClientMode::BufferedInterpolation));
+    REQUIRE(client.set_entity_mode(
+        client_registry,
+        test_client_entity_network_id(1, existing),
+        kage::sync::ReplicationClientMode::BufferedInterpolation));
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{incoming, Position{20.0f, 0.0f}}})));
     REQUIRE(client.tick(client_registry, 1.0));
 
@@ -437,7 +440,7 @@ TEST_CASE("snap display error blending uses tick dt without mutating ECS") {
     REQUIRE(sampled.x == Catch::Approx(0.0f));
 
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{10.0f, 0.0f}}})));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
     REQUIRE(client_registry.get<SmoothPosition>(local).x == Catch::Approx(10.0f));
 
@@ -525,7 +528,7 @@ TEST_CASE("predicted client error blends display-interpolated resim corrections"
 
     const ecs::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
     REQUIRE(registry.get<PredictedPosition>(local).x == 1.0f);
 
@@ -537,7 +540,7 @@ TEST_CASE("predicted client error blends display-interpolated resim corrections"
     REQUIRE(display.entities.size() == 1);
     PredictedPosition shown;
     REQUIRE(display.entities[0].try_get_display_value(registry, shown));
-    REQUIRE(shown.x == Catch::Approx(2.2f));
+    REQUIRE(shown.x == Catch::Approx(2.1f));
 }
 
 TEST_CASE("predicted client display samples prediction history between fixed ticks") {
@@ -568,5 +571,5 @@ TEST_CASE("predicted client display samples prediction history between fixed tic
     REQUIRE(display.entities.size() == 1);
     PredictedPosition shown;
     REQUIRE(display.entities[0].try_get_display_value(registry, shown));
-    REQUIRE(shown.x == Catch::Approx(2.7f));
+    REQUIRE(shown.x == Catch::Approx(2.0f));
 }

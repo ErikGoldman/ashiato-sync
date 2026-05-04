@@ -49,7 +49,7 @@ TEST_CASE("predicted client snaps first frame predicts locally and skips matchin
 
     const ecs::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
     REQUIRE(registry.get<PredictedPosition>(local).x == 0.0f);
 
@@ -80,7 +80,7 @@ TEST_CASE("predicted client rolls back and resimulates mismatched frames") {
 
     const ecs::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
     REQUIRE(registry.get<PredictedPosition>(local).x == 1.0f);
 
@@ -251,7 +251,7 @@ TEST_CASE("predicted client keeps local prediction phase when authoritative fram
 
     const ecs::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f}, 1)));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
 
     REQUIRE(client.tick(registry, client.options().fixed_dt_seconds * 0.5));
@@ -296,8 +296,8 @@ TEST_CASE("predicted client ONLY_AFFECTED resim runs jobs for affected entities"
     REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
 
     REQUIRE(calls == 7);
-    REQUIRE(registry.get<PredictedPosition>(client.local_entity(first_server)).x == 4.0f);
-    REQUIRE(registry.get<PredictedPosition>(client.local_entity(second_server)).x == 3.0f);
+    REQUIRE(registry.get<PredictedPosition>(client.local_entity(test_client_entity_network_id(1, first_server))).x == 4.0f);
+    REQUIRE(registry.get<PredictedPosition>(client.local_entity(test_client_entity_network_id(1, second_server))).x == 3.0f);
 }
 
 TEST_CASE("predicted client cosmetic jobs do not run during resimulation") {
@@ -382,11 +382,11 @@ TEST_CASE("predicted client applies authoritative destroys immediately") {
     kage::sync::ReplicationClient client(options);
 
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
-    const ecs::Entity local = client.local_entity(server_entity);
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
     REQUIRE(registry.alive(local));
 
     REQUIRE(client.receive(registry, make_destroy_packet(2, server_entity)));
     REQUIRE_FALSE(registry.alive(local));
-    REQUIRE_FALSE(client.local_entity(server_entity));
+    REQUIRE_FALSE(client.local_entity(test_client_entity_network_id(1, server_entity)));
 }
