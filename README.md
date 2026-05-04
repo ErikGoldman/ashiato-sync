@@ -1,5 +1,8 @@
 # Kage Sync
 
+[![CI](https://github.com/ErikGoldman/kage-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/ErikGoldman/kage-sync/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://erikgoldman.github.io/kage-sync/coverage.json)](https://erikgoldman.github.io/kage-sync/)
+
 Kage Sync is a C++17 library for fixed-tick, predictive networking on top of the
 kagesoko ECS. The project is separate from the ECS implementation in
 `../main`; sync code, tests, and benchmarks live here.

@@ -12,6 +12,7 @@ include(cmake/KageSyncDependencies.cmake)
 option(KAGE_SYNC_BUILD_BENCHMARKS "Build kage-sync Google Benchmark suites" OFF)
 option(KAGE_SYNC_BUILD_EXAMPLES "Build kage-sync examples" OFF)
 option(KAGE_SYNC_BUILD_TRACE_VIEWER "Build the Dear ImGui ktrace viewer" OFF)
+option(KAGE_SYNC_ENABLE_COVERAGE "Build kage-sync targets with coverage instrumentation" OFF)
 option(KAGE_SYNC_ENABLE_GPROF "Build kage-sync benchmark tools with gprof instrumentation" OFF)
 option(KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS "Build kage-sync with buffered interpolation starvation diagnostics" OFF)
 option(KAGE_SYNC_ENABLE_TRACING "Build kage-sync with client/server tracing hooks" OFF)
@@ -31,12 +32,44 @@ set(KAGE_SYNC_TRACE_VIEWER_GPROF_OUT "/tmp/kage_sync_trace_viewer_gprof.txt" CAC
 
 set(KAGE_SYNC_BUILD_TESTING ${BUILD_TESTING})
 
+if(KAGE_SYNC_ENABLE_COVERAGE AND NOT KAGE_SYNC_BUILD_TESTING)
+    message(FATAL_ERROR "KAGE_SYNC_ENABLE_COVERAGE requires BUILD_TESTING=ON")
+endif()
+
+if(KAGE_SYNC_ENABLE_COVERAGE)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        message(FATAL_ERROR "KAGE_SYNC_ENABLE_COVERAGE requires GCC or Clang")
+    endif()
+
+    function(kage_sync_enable_coverage target_name)
+        target_compile_options(${target_name} PRIVATE -O0 -g --coverage)
+        target_link_options(${target_name} PRIVATE --coverage)
+    endfunction()
+endif()
+
 kage_sync_add_ecs_dependency()
 
 add_subdirectory(src)
 
 if(KAGE_SYNC_BUILD_TESTING)
     add_subdirectory(tests)
+
+    if(KAGE_SYNC_ENABLE_COVERAGE)
+        find_program(KAGE_SYNC_GCOV_EXECUTABLE gcov REQUIRED)
+
+        add_custom_target(coverage
+            COMMAND ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR} --output-on-failure
+            COMMAND ${CMAKE_COMMAND}
+                -DKAGE_SYNC_SOURCE_DIR=${CMAKE_SOURCE_DIR}
+                -DKAGE_SYNC_BINARY_DIR=${CMAKE_BINARY_DIR}
+                -DKAGE_SYNC_GCOV_EXECUTABLE=${KAGE_SYNC_GCOV_EXECUTABLE}
+                -DKAGE_SYNC_COVERAGE_OUTPUT_DIR=${CMAKE_BINARY_DIR}/coverage
+                -P ${CMAKE_SOURCE_DIR}/cmake/KageSyncCoverageReport.cmake
+            DEPENDS kage_sync_tests
+            USES_TERMINAL
+            COMMENT "Running tests and generating gcov coverage stats"
+        )
+    endif()
 endif()
 
 if(KAGE_SYNC_BUILD_EXAMPLES)

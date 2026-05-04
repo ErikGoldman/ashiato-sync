@@ -48,3 +48,7 @@ if(MSVC)
 else()
     target_compile_options(kage_sync PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
+if(KAGE_SYNC_ENABLE_COVERAGE)
+    kage_sync_enable_coverage(kage_sync)
+endif()

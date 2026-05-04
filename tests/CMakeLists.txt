@@ -44,5 +44,9 @@ target_include_directories(kage_sync_tests
         ${PROJECT_SOURCE_DIR}/src
 )
 
+if(KAGE_SYNC_ENABLE_COVERAGE)
+    kage_sync_enable_coverage(kage_sync_tests)
+endif()
+
 include(Catch)
 catch_discover_tests(kage_sync_tests)

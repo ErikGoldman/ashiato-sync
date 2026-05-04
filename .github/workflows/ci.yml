@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: kage-sync
+
+    steps:
+      - name: Check out kage-sync
+        uses: actions/checkout@v4
+        with:
+          path: kage-sync
+
+      - name: Check out kagesoko ECS
+        uses: actions/checkout@v4
+        with:
+          repository: ErikGoldman/kagesoto
+          path: main
+          token: ${{ secrets.KAGESOTO_CHECKOUT_TOKEN || github.token }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DBUILD_TESTING=ON
+          -DKAGE_SYNC_BUILD_BENCHMARKS=OFF
+          -DKAGE_SYNC_BUILD_EXAMPLES=OFF
+          -DKAGE_SYNC_BUILD_TRACE_VIEWER=OFF
+
+      - name: Build tests
+        run: cmake --build build --parallel --target kage_sync_tests
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    defaults:
+      run:
+        working-directory: kage-sync
+
+    steps:
+      - name: Check out kage-sync
+        uses: actions/checkout@v4
+        with:
+          path: kage-sync
+
+      - name: Check out kagesoko ECS
+        uses: actions/checkout@v4
+        with:
+          repository: ErikGoldman/kagesoto
+          path: main
+          token: ${{ secrets.KAGESOTO_CHECKOUT_TOKEN || github.token }}
+
+      - name: Configure coverage build
+        run: >
+          cmake -S . -B build-coverage
+          -DCMAKE_BUILD_TYPE=Debug
+          -DBUILD_TESTING=ON
+          -DKAGE_SYNC_BUILD_BENCHMARKS=OFF
+          -DKAGE_SYNC_BUILD_EXAMPLES=OFF
+          -DKAGE_SYNC_BUILD_TRACE_VIEWER=OFF
+          -DKAGE_SYNC_ENABLE_COVERAGE=ON
+
+      - name: Build, test, and collect coverage
+        run: cmake --build build-coverage --parallel --target coverage
+
+      - name: Upload coverage report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: kage-sync/build-coverage/coverage
+
+      - name: Publish coverage report
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: kage-sync/build-coverage/coverage
+          keep_files: false
