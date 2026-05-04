@@ -182,6 +182,14 @@ inline SyncArchetypeId define_delta_archetype(ecs::Registry& registry, bool inte
           interpolate ? ComponentInterpolation::Interpolate : ComponentInterpolation::Step}});
 }
 
+inline SyncArchetypeId define_large_payload_archetype(ecs::Registry& registry) {
+    const ecs::Entity large = register_sync_component<LargePayload>(registry, "LargePayload");
+    return ::kage::sync::define_archetype(
+        registry,
+        "LargePayloadActor",
+        {{large, ReplicationAudience::All}});
+}
+
 inline TaggedSchema define_tagged_archetype(ecs::Registry& registry, int tag_count) {
     const ecs::Entity position = register_sync_component<Position>(registry, "Position");
     std::vector<SyncTagReplication> tags;
@@ -284,6 +292,21 @@ inline std::vector<ecs::Entity> create_delta_entities(ecs::Registry& registry, i
     for (int i = 0; i < count; ++i) {
         const ecs::Entity entity = registry.create();
         registry.add<DeltaPosition>(entity, DeltaPosition{i, i + 1});
+        entities.push_back(entity);
+    }
+    return entities;
+}
+
+inline std::vector<ecs::Entity> create_large_payload_entities(ecs::Registry& registry, int count) {
+    std::vector<ecs::Entity> entities;
+    entities.reserve(static_cast<std::size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        const ecs::Entity entity = registry.create();
+        LargePayload payload;
+        for (int value = 0; value < 8; ++value) {
+            payload.values[value] = i + value;
+        }
+        registry.add<LargePayload>(entity, payload);
         entities.push_back(entity);
     }
     return entities;
@@ -420,6 +443,43 @@ inline std::vector<BitBuffer> make_client_receive_packets(int entity_count, int 
     return packets;
 }
 
+inline std::vector<BitBuffer> make_large_payload_client_receive_packets(int entity_count, int frame_count) {
+    ecs::Registry registry;
+    const SyncArchetypeId archetype = define_large_payload_archetype(registry);
+    const std::vector<ecs::Entity> entities = create_large_payload_entities(registry, entity_count);
+
+    std::vector<std::pair<ClientId, BitBuffer>> sent;
+    sent.reserve(static_cast<std::size_t>(frame_count) * static_cast<std::size_t>(entity_count));
+
+    ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(LargePayload) * 8U;
+    options.mtu_bytes = 1200;
+    options.transport = [&](ClientId client, const BitBuffer& packet) {
+        sent.push_back({client, packet});
+    };
+
+    ReplicationServer server(options);
+    server.add_client(1);
+    add_replication_configs(registry, entities, archetype);
+    for (int frame = 0; frame < frame_count; ++frame) {
+        for (int entity_index = 0; entity_index < entity_count; ++entity_index) {
+            LargePayload& payload = registry.write<LargePayload>(entities[static_cast<std::size_t>(entity_index)]);
+            for (int value = 0; value < 8; ++value) {
+                payload.values[value] = entity_index + frame + value;
+            }
+        }
+        server.tick(registry);
+        ack_packets(server, sent);
+    }
+
+    std::vector<BitBuffer> packets;
+    packets.reserve(sent.size());
+    for (const auto& packet : sent) {
+        packets.push_back(packet.second);
+    }
+    return packets;
+}
+
 inline DestroyPackets make_destroy_packets(int entity_count) {
     ecs::Registry registry;
     const SyncArchetypeId archetype = define_delta_archetype(registry);
@@ -460,6 +520,11 @@ inline DestroyPackets make_destroy_packets(int entity_count) {
 inline void define_client_delta_schema(ecs::Registry& registry, bool interpolate) {
     configure_client(registry, 1);
     define_delta_archetype(registry, interpolate);
+}
+
+inline void define_client_large_payload_schema(ecs::Registry& registry) {
+    configure_client(registry, 1);
+    define_large_payload_archetype(registry);
 }
 
 inline void ClientArgs(benchmark::internal::Benchmark* benchmark) {

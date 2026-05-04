@@ -798,6 +798,41 @@ void BM_BitBufferAppendBits(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(bit_count));
 }
 
+void BM_QuantizedBytesAssign(benchmark::State& state) {
+    const auto byte_count = static_cast<std::size_t>(state.range(0));
+    std::vector<std::uint8_t> source(byte_count);
+    for (std::size_t index = 0; index < source.size(); ++index) {
+        source[index] = static_cast<std::uint8_t>((index * 13U + 7U) & 0xffU);
+    }
+
+    for (auto _ : state) {
+        kage::sync::QuantizedBytes bytes;
+        bytes.assign(source.data(), source.size());
+        benchmark::DoNotOptimize(bytes.data());
+        benchmark::DoNotOptimize(bytes.size());
+    }
+
+    state.SetBytesProcessed(state.iterations() * static_cast<std::int64_t>(byte_count));
+}
+
+void BM_QuantizedBytesCopy(benchmark::State& state) {
+    const auto byte_count = static_cast<std::size_t>(state.range(0));
+    std::vector<std::uint8_t> source_bytes(byte_count);
+    for (std::size_t index = 0; index < source_bytes.size(); ++index) {
+        source_bytes[index] = static_cast<std::uint8_t>((index * 13U + 7U) & 0xffU);
+    }
+    kage::sync::QuantizedBytes source;
+    source.assign(source_bytes.data(), source_bytes.size());
+
+    for (auto _ : state) {
+        kage::sync::QuantizedBytes bytes = source;
+        benchmark::DoNotOptimize(bytes.data());
+        benchmark::DoNotOptimize(bytes.size());
+    }
+
+    state.SetBytesProcessed(state.iterations() * static_cast<std::int64_t>(byte_count));
+}
+
 void BM_ServerProcessInputPacket(benchmark::State& state) {
     const int frame_count = static_cast<int>(state.range(0));
 
@@ -905,6 +940,10 @@ void PendingDestroyArgs(benchmark::internal::Benchmark* benchmark) {
     benchmark->Args({1024, 64})->Args({16384, 64})->Args({65536, 64});
 }
 
+void QuantizedBytesArgs(benchmark::internal::Benchmark* benchmark) {
+    benchmark->Arg(8)->Arg(16)->Arg(17)->Arg(32)->Arg(64)->Arg(128)->Arg(1200);
+}
+
 BENCHMARK(BM_ServerTickFullBudget)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickBudgetLimited)->Apply(LimitedTickArgs);
 BENCHMARK(BM_ServerRefreshReplicatedChanges)->Apply(ChurnArgs);
@@ -933,5 +972,7 @@ BENCHMARK(BM_ServerTickInputUpsert)->Arg(1024)->Arg(16384);
 BENCHMARK(BM_BitBufferUnalignedBytes)->Arg(64)->Arg(1024)->Arg(16384);
 BENCHMARK(BM_BitBufferUnalignedReadUnsigned)->Arg(1024)->Arg(16384);
 BENCHMARK(BM_BitBufferAppendBits)->Arg(512)->Arg(8192)->Arg(131072);
+BENCHMARK(BM_QuantizedBytesAssign)->Apply(QuantizedBytesArgs);
+BENCHMARK(BM_QuantizedBytesCopy)->Apply(QuantizedBytesArgs);
 
 }  // namespace

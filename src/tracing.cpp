@@ -52,6 +52,61 @@ std::string read_string(const std::vector<std::uint8_t>& bytes, std::size_t& off
     return value;
 }
 
+std::uint8_t read_trace_byte(std::ifstream& file) {
+    char byte = 0;
+    file.read(&byte, 1);
+    if (!file) {
+        throw std::runtime_error("ktrace header is truncated");
+    }
+    return static_cast<std::uint8_t>(byte);
+}
+
+std::uint16_t read_trace_u16(std::ifstream& file) {
+    return static_cast<std::uint16_t>(read_trace_byte(file) | (std::uint16_t{read_trace_byte(file)} << 8U));
+}
+
+std::uint32_t read_trace_u32(std::ifstream& file) {
+    std::uint32_t value = 0;
+    for (std::size_t byte = 0; byte < 4U; ++byte) {
+        value |= std::uint32_t{read_trace_byte(file)} << (byte * 8U);
+    }
+    return value;
+}
+
+std::uint64_t read_trace_u64(std::ifstream& file) {
+    std::uint64_t value = 0;
+    for (std::size_t byte = 0; byte < 8U; ++byte) {
+        value |= std::uint64_t{read_trace_byte(file)} << (byte * 8U);
+    }
+    return value;
+}
+
+KTraceFileHeader read_trace_file_header(std::ifstream& file, const std::string& path) {
+    char magic[8]{};
+    file.read(magic, sizeof(magic));
+    if (std::string(magic, sizeof(magic)) != "KTRACE03") {
+        throw std::runtime_error("unsupported ktrace magic");
+    }
+
+    KTraceFileHeader header;
+    header.path = path;
+    header.version = read_trace_u16(file);
+    if (header.version != ktrace_format_version) {
+        throw std::runtime_error("unsupported ktrace version");
+    }
+    header.role = static_cast<SyncTraceRole>(read_trace_byte(file));
+    header.recorded_unix_ns = read_trace_u64(file);
+    header.client = read_trace_u64(file);
+    header.flags = read_trace_u32(file);
+    header.data_offset = static_cast<std::uint64_t>(file.tellg());
+    std::error_code ec;
+    header.file_size = std::filesystem::file_size(path, ec);
+    if (ec) {
+        header.file_size = header.data_offset;
+    }
+    return header;
+}
+
 std::uint64_t unix_time_ns() {
     using namespace std::chrono;
     return static_cast<std::uint64_t>(
@@ -747,86 +802,69 @@ void KTraceDirectoryWriter::close() {
     }
 }
 
-KTraceFile KTraceReader::read_file(const std::string& path) const {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
+KTraceStreamReader::KTraceStreamReader(const std::string& path)
+    : file_(path, std::ios::binary) {
+    if (!file_) {
         throw std::runtime_error("failed to open ktrace file");
     }
+    header_ = read_trace_file_header(file_, path);
+    position_ = header_.data_offset;
+}
+
+bool KTraceStreamReader::read_next(KTraceRecord& out) {
+    const int type_byte = file_.get();
+    if (type_byte == std::char_traits<char>::eof()) {
+        position_ = header_.file_size;
+        return false;
+    }
+    if (!file_) {
+        position_ = header_.file_size;
+        return false;
+    }
+    const auto type = static_cast<SyncTraceEventType>(static_cast<std::uint8_t>(type_byte));
+
+    std::uint8_t record_header[12]{};
+    file_.read(reinterpret_cast<char*>(record_header), sizeof(record_header));
+    if (file_.gcount() != static_cast<std::streamsize>(sizeof(record_header))) {
+        position_ = header_.file_size;
+        return false;
+    }
+    std::uint64_t timestamp_us = 0;
+    for (std::size_t byte = 0; byte < 8U; ++byte) {
+        timestamp_us |= std::uint64_t{record_header[byte]} << (byte * 8U);
+    }
+    std::uint32_t payload_size = 0;
+    for (std::size_t byte = 0; byte < 4U; ++byte) {
+        payload_size |= std::uint32_t{record_header[8U + byte]} << (byte * 8U);
+    }
+
+    std::vector<std::uint8_t> payload(payload_size);
+    if (payload_size != 0U) {
+        file_.read(reinterpret_cast<char*>(payload.data()), payload.size());
+        if (file_.gcount() != static_cast<std::streamsize>(payload.size())) {
+            position_ = header_.file_size;
+            return false;
+        }
+    }
+    position_ = static_cast<std::uint64_t>(file_.tellg());
+    out = KTraceRecord{read_event_payload(type, payload), timestamp_us};
+    return true;
+}
+
+KTraceFile KTraceReader::read_file(const std::string& path) const {
+    KTraceStreamReader stream(path);
+    const KTraceFileHeader& header = stream.header();
     KTraceFile result;
-    result.path = path;
+    result.path = header.path;
+    result.version = header.version;
+    result.role = header.role;
+    result.recorded_unix_ns = header.recorded_unix_ns;
+    result.client = header.client;
+    result.flags = header.flags;
 
-    char magic[8]{};
-    file.read(magic, sizeof(magic));
-    if (std::string(magic, sizeof(magic)) != "KTRACE03") {
-        throw std::runtime_error("unsupported ktrace magic");
-    }
-    auto read_byte = [&]() -> std::uint8_t {
-        char byte = 0;
-        file.read(&byte, 1);
-        if (!file) {
-            throw std::runtime_error("ktrace header is truncated");
-        }
-        return static_cast<std::uint8_t>(byte);
-    };
-    auto read_u16 = [&]() {
-        return static_cast<std::uint16_t>(read_byte() | (std::uint16_t{read_byte()} << 8U));
-    };
-    auto read_u64 = [&]() {
-        std::uint64_t value = 0;
-        for (std::size_t byte = 0; byte < 8U; ++byte) {
-            value |= std::uint64_t{read_byte()} << (byte * 8U);
-        }
-        return value;
-    };
-    auto read_u32 = [&]() {
-        std::uint32_t value = 0;
-        for (std::size_t byte = 0; byte < 4U; ++byte) {
-            value |= std::uint32_t{read_byte()} << (byte * 8U);
-        }
-        return value;
-    };
-
-    result.version = read_u16();
-    if (result.version != ktrace_format_version) {
-        throw std::runtime_error("unsupported ktrace version");
-    }
-    result.role = static_cast<SyncTraceRole>(read_byte());
-    result.recorded_unix_ns = read_u64();
-    result.client = read_u64();
-    result.flags = read_u32();
-
-    while (true) {
-        const int type_byte = file.get();
-        if (type_byte == std::char_traits<char>::eof()) {
-            break;
-        }
-        if (!file) {
-            break;
-        }
-        const auto type = static_cast<SyncTraceEventType>(static_cast<std::uint8_t>(type_byte));
-
-        std::uint8_t record_header[12]{};
-        file.read(reinterpret_cast<char*>(record_header), sizeof(record_header));
-        if (file.gcount() != static_cast<std::streamsize>(sizeof(record_header))) {
-            break;
-        }
-        std::uint64_t timestamp_us = 0;
-        for (std::size_t byte = 0; byte < 8U; ++byte) {
-            timestamp_us |= std::uint64_t{record_header[byte]} << (byte * 8U);
-        }
-        std::uint32_t payload_size = 0;
-        for (std::size_t byte = 0; byte < 4U; ++byte) {
-            payload_size |= std::uint32_t{record_header[8U + byte]} << (byte * 8U);
-        }
-
-        std::vector<std::uint8_t> payload(payload_size);
-        if (payload_size != 0U) {
-            file.read(reinterpret_cast<char*>(payload.data()), payload.size());
-            if (file.gcount() != static_cast<std::streamsize>(payload.size())) {
-                break;
-            }
-        }
-        result.records.push_back(KTraceRecord{read_event_payload(type, payload), timestamp_us});
+    KTraceRecord record;
+    while (stream.read_next(record)) {
+        result.records.push_back(std::move(record));
     }
     return result;
 }

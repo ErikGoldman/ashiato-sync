@@ -1,7 +1,7 @@
 #pragma once
 
 #include "kage/sync/client_clock.hpp"
-#include "kage/sync/component_traits.hpp"
+#include "kage/sync/components.hpp"
 
 #include <array>
 #include <cstddef>
@@ -17,6 +17,17 @@ namespace kage::sync {
 
 class SyncTracer;
 enum class SyncTraceEventType : std::uint8_t;
+
+namespace client_detail {
+struct EntityState;
+struct EntityCue;
+struct EntityPlayedCue;
+struct EntityBufferedFrame;
+struct OriginalPredictionCapture;
+struct WireNetworkIdState;
+struct InputFrame;
+struct PendingPing;
+}  // namespace client_detail
 
 struct ReplicatedComponentUpdate {
     ecs::Entity component;
@@ -297,6 +308,11 @@ private:
 class ReplicationClient {
 public:
     explicit ReplicationClient(ReplicationClientOptions options = {});
+    ~ReplicationClient();
+    ReplicationClient(const ReplicationClient& other);
+    ReplicationClient& operator=(const ReplicationClient& other);
+    ReplicationClient(ReplicationClient&& other) noexcept;
+    ReplicationClient& operator=(ReplicationClient&& other) noexcept;
 
     const ReplicationClientOptions& options() const noexcept {
         return options_;
@@ -412,73 +428,11 @@ private:
     static constexpr std::size_t invalid_ack_index = std::numeric_limits<std::size_t>::max();
     static constexpr std::uint32_t invalid_entity_index = std::numeric_limits<std::uint32_t>::max();
 
-    struct EntityState {
-        struct Cue {
-            SyncFrame frame = 0;
-            SyncCueTypeId type = 0;
-            float relevance_seconds = 0.0f;
-            BitBuffer payload;
-        };
-
-        struct PlayedCue {
-            SyncFrame frame = 0;
-            SyncCueTypeId type = 0;
-            BitBuffer payload;
-            bool confirmed = false;
-            bool seen_in_resim = false;
-        };
-
-        struct FrameBaseline {
-            SyncFrame frame = 0;
-            bool valid = false;
-            QuantizedFrameData baseline;
-        };
-
-        struct ComponentError {
-            ecs::Entity component;
-            SyncComponentOps::QuantizedBytes bytes;
-        };
-
-        ecs::Entity local;
-        SyncArchetypeId archetype;
-        ReplicationClientMode mode = ReplicationClientMode::Snap;
-        SyncFrame frame = 0;
-        bool entity_present = true;
-        bool mode_selected = false;
-        QuantizedFrameData baseline;
-        std::vector<FrameBaseline> history;
-        std::size_t history_next = 0;
-
-        struct BufferedFrame {
-            SyncFrame frame = 0;
-            bool valid = false;
-            bool entity_present = false;
-            SyncArchetypeId archetype;
-            QuantizedFrameData baseline;
-            std::vector<Cue> cues;
-        };
-
-        std::vector<BufferedFrame> buffered_frames;
-        std::vector<BufferedFrame> predicted_frames;
-        std::vector<PlayedCue> played_cues;
-        std::vector<Cue> received_cues;
-        std::vector<Cue> pending_predicted_cues;
-        std::uint64_t applied_present_mask = 0;
-        std::vector<ComponentError> snap_errors;
-        ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
-        std::uint32_t wire_network_id = 0;
-        std::size_t active_index = invalid_ack_index;
-        std::size_t buffered_index = invalid_ack_index;
-        std::size_t snap_error_index = invalid_ack_index;
-        std::size_t prediction_rollback_index = invalid_ack_index;
-        bool prediction_rollback_pending = false;
-        SyncFrame prediction_rollback_frame = 0;
-    };
-
-    struct OriginalPredictionCapture {
-        std::uint32_t entity_index = invalid_entity_index;
-        QuantizedFrameData baseline;
-    };
+    using EntityState = client_detail::EntityState;
+    using EntityCue = client_detail::EntityCue;
+    using EntityPlayedCue = client_detail::EntityPlayedCue;
+    using EntityBufferedFrame = client_detail::EntityBufferedFrame;
+    using OriginalPredictionCapture = client_detail::OriginalPredictionCapture;
 
     EntityState* find_entity_state(ecs::Entity server_entity) noexcept;
     const EntityState* find_entity_state(ecs::Entity server_entity) const noexcept;
@@ -511,31 +465,31 @@ private:
         SyncFrame frame,
         std::uint32_t network_id,
         BitBuffer& packet);
-    bool read_cues(BitBuffer& packet, std::vector<EntityState::Cue>& out);
+    bool read_cues(BitBuffer& packet, std::vector<EntityCue>& out);
     bool play_cue(
         ecs::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
-        const EntityState::Cue& cue,
+        const EntityCue& cue,
         float late_seconds,
         bool confirmed);
     bool rollback_played_cue(
         ecs::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
-        const EntityState::PlayedCue& cue,
+        const EntityPlayedCue& cue,
         const char* rollback_reason);
     void play_snap_cues(
         ecs::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
-        const std::vector<EntityState::Cue>& cues);
-    void store_buffered_cues(EntityState& state, SyncFrame frame, const std::vector<EntityState::Cue>& cues);
+        const std::vector<EntityCue>& cues);
+    void store_buffered_cues(EntityState& state, SyncFrame frame, const std::vector<EntityCue>& cues);
     void reconcile_authoritative_predicted_cues(
         ecs::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
-        const std::vector<EntityState::Cue>& cues,
+        const std::vector<EntityCue>& cues,
         SyncFrame frame);
     void drain_emitted_prediction_cues(
         ecs::Registry& registry,
@@ -573,7 +527,7 @@ private:
         ecs::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
-        const EntityState::BufferedFrame& sample);
+        const EntityBufferedFrame& sample);
     bool apply_frame_data(
         ecs::Registry& registry,
         const SyncSettings& settings,
@@ -690,14 +644,14 @@ private:
         SyncTraceEventType type,
         const SyncSettings& settings,
         const EntityState& state,
-        const EntityState::Cue& cue,
+        const EntityCue& cue,
         const char* rollback_reason = nullptr,
         const char* cue_source = nullptr) const;
     void trace_cue_event(
         SyncTraceEventType type,
         const SyncSettings& settings,
         const EntityState& state,
-        const EntityState::PlayedCue& cue,
+        const EntityPlayedCue& cue,
         const char* rollback_reason = nullptr,
         const char* cue_source = nullptr) const;
 #ifdef KAGE_SYNC_TRACE_PACKET_LOGS
@@ -722,17 +676,8 @@ private:
     void apply_input_to_owned_entities(ecs::Registry& registry, ecs::Entity component, const std::uint8_t* quantized);
     void acknowledge_input_frame(SyncFrame frame);
 
-    struct WireNetworkIdState {
-        std::uint32_t version = 0;
-        std::uint32_t entity_index = invalid_entity_index;
-        bool alive = false;
-    };
-
-    struct InputFrame {
-        SyncFrame frame = 0;
-        bool valid = false;
-        std::vector<std::uint8_t> bytes;
-    };
+    using WireNetworkIdState = client_detail::WireNetworkIdState;
+    using InputFrame = client_detail::InputFrame;
 
     ReplicationClientOptions options_;
     ReplicationClientClock clock_;
@@ -768,10 +713,7 @@ private:
     bool has_acked_input_baseline_ = true;
     bool input_history_discontinuous_ = false;
     bool has_received_server_update_ = false;
-    struct PendingPing {
-        SyncFrame frame = 0;
-        std::uint16_t subframe = 0;
-    };
+    using PendingPing = client_detail::PendingPing;
 
     std::unordered_map<std::uint32_t, PendingPing> pending_pings_;
     std::unordered_map<std::uint32_t, SyncFrame> destroy_tombstones_;

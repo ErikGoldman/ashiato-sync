@@ -198,6 +198,40 @@ void BM_ClientSampleDisplayInterpolation(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(frame_count - 1));
 }
 
+void BM_ClientSampleDisplayLargePayload(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int frame_count = static_cast<int>(state.range(1));
+    const std::vector<kage::sync::BitBuffer> packets =
+        make_large_payload_client_receive_packets(entity_count, frame_count);
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        ecs::Registry registry;
+        define_client_large_payload_schema(registry);
+        kage::sync::set_display_interpolated<LargePayload>(registry);
+        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+            1200,
+            kage::sync::ReplicationClientMode::BufferedInterpolation,
+            2,
+            64});
+        for (const kage::sync::BitBuffer& packet : packets) {
+            benchmark::DoNotOptimize(client.receive(registry, packet));
+        }
+        kage::sync::DisplayInterpolationSampleBuffer display;
+        state.ResumeTiming();
+
+        for (int frame = 1; frame < frame_count; ++frame) {
+            benchmark::DoNotOptimize(client.sample_display_interpolation_target_frame(
+                registry,
+                static_cast<double>(frame) + 0.5,
+                display));
+            benchmark::DoNotOptimize(display.entities.data());
+        }
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(frame_count - 1));
+}
+
 void BM_ClientDrainAckPackets(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
@@ -373,6 +407,7 @@ BENCHMARK(BM_ClientReceiveMixedEntityModes)->Apply(ClientArgs);
 BENCHMARK(BM_ClientApplyBufferedInterpolation)->Apply(ClientArgs);
 BENCHMARK(BM_ClientPredictTickQuantize)->Apply(ClientArgs);
 BENCHMARK(BM_ClientSampleDisplayInterpolation)->Apply(ClientArgs);
+BENCHMARK(BM_ClientSampleDisplayLargePayload)->Apply(ClientArgs);
 BENCHMARK(BM_ClientDrainAckPackets)->Apply(ClientArgs);
 BENCHMARK(BM_ClientDrainDuplicateHeavyAckPackets)->Args({1024, 64})->Args({4096, 64});
 BENCHMARK(BM_ClientReceiveDestroySnap)->Apply(DestroyArgs);

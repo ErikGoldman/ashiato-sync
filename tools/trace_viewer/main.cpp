@@ -18,7 +18,6 @@
 #include <deque>
 #include <exception>
 #include <filesystem>
-#include <fstream>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -27,7 +26,6 @@
 #include <sstream>
 #include <string>
 #include <thread>
-#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -192,16 +190,6 @@ struct BenchmarkState {
     bool report_written = false;
 };
 
-struct TraceSourceHeader {
-    std::string path;
-    SyncTraceRole role = SyncTraceRole::Server;
-    ClientId client = invalid_client_id;
-    std::uint64_t recorded_unix_ns = 0;
-    std::uint32_t flags = 0;
-    std::uint64_t data_offset = 0;
-    std::uint64_t file_size = 0;
-};
-
 struct TraceLoadMessage {
     enum class Type {
         SourceBegin,
@@ -212,7 +200,7 @@ struct TraceLoadMessage {
 
     Type type = Type::Records;
     int source_index = -1;
-    TraceSourceHeader source;
+    KTraceFileHeader source;
     std::vector<KTraceRecord> records;
     std::uint64_t bytes_read = 0;
     std::uint64_t total_bytes = 0;
@@ -2377,119 +2365,6 @@ std::vector<TimelineNavCell> collect_timeline_nav_cells(
 SourceMetrics compute_source_metrics(const KTraceSourceHistory& source, const ViewerState& state, int source_index);
 void rebuild_source_metrics(ViewerState& state);
 
-template <typename T>
-T read_trace_pod(const std::vector<std::uint8_t>& bytes, std::size_t& offset) {
-    if (offset + sizeof(T) > bytes.size()) {
-        throw std::runtime_error("ktrace record is truncated");
-    }
-    typename std::make_unsigned<T>::type raw = 0;
-    for (std::size_t byte = 0; byte < sizeof(T); ++byte) {
-        raw |= static_cast<typename std::make_unsigned<T>::type>(bytes[offset + byte]) << (byte * 8U);
-    }
-    offset += sizeof(T);
-    return static_cast<T>(raw);
-}
-
-std::string read_trace_string(const std::vector<std::uint8_t>& bytes, std::size_t& offset) {
-    const std::uint32_t size = read_trace_pod<std::uint32_t>(bytes, offset);
-    if (offset + size > bytes.size()) {
-        throw std::runtime_error("ktrace string is truncated");
-    }
-    std::string value(reinterpret_cast<const char*>(bytes.data() + offset), size);
-    offset += size;
-    return value;
-}
-
-SyncTraceEvent read_trace_event_payload_viewer(
-    SyncTraceEventType type,
-    const std::vector<std::uint8_t>& payload) {
-    std::size_t offset = 0;
-    SyncTraceEvent event;
-    event.type = type;
-    event.role = static_cast<SyncTraceRole>(read_trace_pod<std::uint8_t>(payload, offset));
-    event.client = read_trace_pod<std::uint64_t>(payload, offset);
-    event.frame = read_trace_pod<std::uint32_t>(payload, offset);
-    event.server_entity = ecs::Entity{read_trace_pod<std::uint64_t>(payload, offset)};
-    event.local_entity = ecs::Entity{read_trace_pod<std::uint64_t>(payload, offset)};
-    event.client_network_id = read_trace_pod<std::uint64_t>(payload, offset);
-    event.wire_network_id = read_trace_pod<std::uint32_t>(payload, offset);
-    event.network_version = read_trace_pod<std::uint32_t>(payload, offset);
-    event.archetype = SyncArchetypeId{read_trace_pod<std::uint32_t>(payload, offset)};
-    event.component = ecs::Entity{read_trace_pod<std::uint64_t>(payload, offset)};
-    event.tag = ecs::Entity{read_trace_pod<std::uint64_t>(payload, offset)};
-    event.cue_type = read_trace_pod<std::uint16_t>(payload, offset);
-    event.previous_mode = static_cast<ReplicationClientMode>(read_trace_pod<std::uint8_t>(payload, offset));
-    event.mode = static_cast<ReplicationClientMode>(read_trace_pod<std::uint8_t>(payload, offset));
-    event.remove = read_trace_pod<std::uint8_t>(payload, offset) != 0U;
-    event.data = read_trace_string(payload, offset);
-    event.component_name = read_trace_string(payload, offset);
-    if (offset != payload.size()) {
-        throw std::runtime_error("ktrace record has trailing bytes");
-    }
-    return event;
-}
-
-std::uint8_t read_trace_byte(std::ifstream& file) {
-    char byte = 0;
-    file.read(&byte, 1);
-    if (!file) {
-        throw std::runtime_error("ktrace header is truncated");
-    }
-    return static_cast<std::uint8_t>(byte);
-}
-
-std::uint16_t read_trace_u16(std::ifstream& file) {
-    return static_cast<std::uint16_t>(read_trace_byte(file) | (std::uint16_t{read_trace_byte(file)} << 8U));
-}
-
-std::uint32_t read_trace_u32(std::ifstream& file) {
-    std::uint32_t value = 0;
-    for (std::size_t byte = 0; byte < 4U; ++byte) {
-        value |= std::uint32_t{read_trace_byte(file)} << (byte * 8U);
-    }
-    return value;
-}
-
-std::uint64_t read_trace_u64(std::ifstream& file) {
-    std::uint64_t value = 0;
-    for (std::size_t byte = 0; byte < 8U; ++byte) {
-        value |= std::uint64_t{read_trace_byte(file)} << (byte * 8U);
-    }
-    return value;
-}
-
-TraceSourceHeader read_trace_source_header(const std::filesystem::path& path) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        throw std::runtime_error("failed to open ktrace file: " + path.string());
-    }
-
-    char magic[8]{};
-    file.read(magic, sizeof(magic));
-    if (std::string(magic, sizeof(magic)) != "KTRACE03") {
-        throw std::runtime_error("unsupported ktrace magic in " + path.string());
-    }
-
-    const std::uint16_t version = read_trace_u16(file);
-    if (version != ktrace_format_version) {
-        throw std::runtime_error("unsupported ktrace version in " + path.string());
-    }
-
-    TraceSourceHeader header;
-    header.path = path.string();
-    header.role = static_cast<SyncTraceRole>(read_trace_byte(file));
-    header.recorded_unix_ns = read_trace_u64(file);
-    header.client = read_trace_u64(file);
-    header.flags = read_trace_u32(file);
-    header.data_offset = static_cast<std::uint64_t>(file.tellg());
-    std::error_code ec;
-    header.file_size = std::filesystem::file_size(path, ec);
-    if (ec) {
-        header.file_size = header.data_offset;
-    }
-    return header;
-}
-
 void apply_server_entity_links(SyncTraceHistory& history) {
     std::unordered_map<ClientEntityNetworkId, ecs::Entity> server_entities_by_network_id;
     for (const KTraceSourceHistory& source : history.sources) {
@@ -2663,7 +2538,7 @@ void stream_trace_directory(
     constexpr std::size_t records_per_chunk = 2048;
     const auto start = Clock::now();
     try {
-        std::vector<TraceSourceHeader> sources;
+        std::vector<KTraceFileHeader> sources;
         for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(directory)) {
             if (cancel->load()) {
                 return;
@@ -2671,9 +2546,9 @@ void stream_trace_directory(
             if (!entry.is_regular_file() || entry.path().extension() != ".ktrace") {
                 continue;
             }
-            sources.push_back(read_trace_source_header(entry.path()));
+            sources.push_back(KTraceStreamReader(entry.path().string()).header());
         }
-        std::sort(sources.begin(), sources.end(), [](const TraceSourceHeader& lhs, const TraceSourceHeader& rhs) {
+        std::sort(sources.begin(), sources.end(), [](const KTraceFileHeader& lhs, const KTraceFileHeader& rhs) {
             if (lhs.role != rhs.role) {
                 return rhs.role == SyncTraceRole::Server;
             }
@@ -2684,7 +2559,7 @@ void stream_trace_directory(
         });
 
         std::uint64_t total_bytes = 0;
-        for (const TraceSourceHeader& source : sources) {
+        for (const KTraceFileHeader& source : sources) {
             total_bytes += source.file_size;
         }
 
@@ -2693,7 +2568,7 @@ void stream_trace_directory(
             if (cancel->load()) {
                 return;
             }
-            const TraceSourceHeader& source = sources[static_cast<std::size_t>(source_index)];
+            const KTraceFileHeader& source = sources[static_cast<std::size_t>(source_index)];
             push_loader_message(loader, TraceLoadMessage{
                 TraceLoadMessage::Type::SourceBegin,
                 source_index,
@@ -2704,54 +2579,19 @@ void stream_trace_directory(
                 0.0,
                 {}});
 
-            std::ifstream file(source.path, std::ios::binary);
-            if (!file) {
-                throw std::runtime_error("failed to open ktrace file: " + source.path);
-            }
-            file.seekg(static_cast<std::streamoff>(source.data_offset), std::ios::beg);
-
+            KTraceStreamReader reader(source.path);
             std::vector<KTraceRecord> chunk;
             chunk.reserve(records_per_chunk);
-            while (!cancel->load()) {
-                const int type_byte = file.get();
-                if (type_byte == std::char_traits<char>::eof()) {
-                    break;
-                }
-                if (!file) {
-                    break;
-                }
-                const auto type = static_cast<SyncTraceEventType>(static_cast<std::uint8_t>(type_byte));
-
-                std::uint8_t record_header[12]{};
-                file.read(reinterpret_cast<char*>(record_header), sizeof(record_header));
-                if (file.gcount() != static_cast<std::streamsize>(sizeof(record_header))) {
-                    break;
-                }
-                std::uint64_t timestamp_us = 0;
-                for (std::size_t byte = 0; byte < 8U; ++byte) {
-                    timestamp_us |= std::uint64_t{record_header[byte]} << (byte * 8U);
-                }
-                std::uint32_t payload_size = 0;
-                for (std::size_t byte = 0; byte < 4U; ++byte) {
-                    payload_size |= std::uint32_t{record_header[8U + byte]} << (byte * 8U);
-                }
-
-                std::vector<std::uint8_t> payload(payload_size);
-                if (payload_size != 0U) {
-                    file.read(reinterpret_cast<char*>(payload.data()), payload.size());
-                    if (file.gcount() != static_cast<std::streamsize>(payload.size())) {
-                        break;
-                    }
-                }
-                chunk.push_back(KTraceRecord{read_trace_event_payload_viewer(type, payload), timestamp_us});
+            KTraceRecord record;
+            while (!cancel->load() && reader.read_next(record)) {
+                chunk.push_back(std::move(record));
                 if (chunk.size() >= records_per_chunk) {
-                    const std::uint64_t offset = static_cast<std::uint64_t>(file.tellg());
                     push_loader_message(loader, TraceLoadMessage{
                         TraceLoadMessage::Type::Records,
                         source_index,
                         {},
                         std::move(chunk),
-                        completed_file_bytes + std::min(offset, source.file_size),
+                        completed_file_bytes + std::min(reader.position(), source.file_size),
                         total_bytes,
                         0.0,
                         {}});
@@ -2760,13 +2600,12 @@ void stream_trace_directory(
                 }
             }
             if (!chunk.empty() && !cancel->load()) {
-                const std::uint64_t offset = file ? static_cast<std::uint64_t>(file.tellg()) : source.file_size;
                 push_loader_message(loader, TraceLoadMessage{
                     TraceLoadMessage::Type::Records,
                     source_index,
                     {},
                     std::move(chunk),
-                    completed_file_bytes + std::min(offset, source.file_size),
+                    completed_file_bytes + std::min(reader.position(), source.file_size),
                     total_bytes,
                     0.0,
                     {}});

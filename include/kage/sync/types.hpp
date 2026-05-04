@@ -16,8 +16,10 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <typeindex>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace kage::sync {
@@ -154,34 +156,32 @@ struct SyncArchetypeDesc {
 
 class QuantizedBytes {
 public:
-    static constexpr std::size_t inline_capacity = 16;
+    static constexpr std::size_t inline_capacity = 64;
     static constexpr std::size_t max_size = 1200;
 
     QuantizedBytes() = default;
 
-    QuantizedBytes(const QuantizedBytes& other)
-        : size_(other.size_),
-          inline_(other.inline_) {
-        if (other.overflow_) {
-            overflow_ = std::make_unique<Overflow>(*other.overflow_);
-        }
+    QuantizedBytes(const QuantizedBytes& other) {
+        assign(other.data(), other.size_);
     }
 
     QuantizedBytes& operator=(const QuantizedBytes& other) {
         if (this != &other) {
-            size_ = other.size_;
-            inline_ = other.inline_;
-            if (other.overflow_) {
-                overflow_ = std::make_unique<Overflow>(*other.overflow_);
-            } else {
-                overflow_.reset();
-            }
+            assign(other.data(), other.size_);
         }
         return *this;
     }
 
-    QuantizedBytes(QuantizedBytes&&) noexcept = default;
-    QuantizedBytes& operator=(QuantizedBytes&&) noexcept = default;
+    QuantizedBytes(QuantizedBytes&& other) noexcept {
+        move_from(std::move(other));
+    }
+
+    QuantizedBytes& operator=(QuantizedBytes&& other) noexcept {
+        if (this != &other) {
+            move_from(std::move(other));
+        }
+        return *this;
+    }
 
     std::size_t size() const noexcept {
         return size_;
@@ -192,11 +192,11 @@ public:
     }
 
     std::uint8_t* data() noexcept {
-        return overflow_ == nullptr ? inline_.data() : overflow_->data();
+        return overflow_ == nullptr ? inline_.data() : overflow_.get();
     }
 
     const std::uint8_t* data() const noexcept {
-        return overflow_ == nullptr ? inline_.data() : overflow_->data();
+        return overflow_ == nullptr ? inline_.data() : overflow_.get();
     }
 
     std::uint8_t* begin() noexcept {
@@ -223,14 +223,29 @@ public:
         if (size > max_size) {
             throw std::length_error("sync quantized component payload exceeds maximum size");
         }
-        size_ = size;
         if (size <= inline_capacity) {
-            overflow_.reset();
+            if (overflow_ != nullptr) {
+                const std::size_t copy_size = std::min(size_, size);
+                if (copy_size != 0U) {
+                    std::memcpy(inline_.data(), overflow_.get(), copy_size);
+                }
+                overflow_.reset();
+                overflow_capacity_ = 0;
+            }
+            size_ = size;
             return;
         }
-        if (overflow_ == nullptr) {
-            overflow_ = std::make_unique<Overflow>();
+
+        if (overflow_ == nullptr || overflow_capacity_ < size) {
+            std::unique_ptr<std::uint8_t[]> next = std::make_unique<std::uint8_t[]>(size);
+            const std::size_t copy_size = std::min(size_, size);
+            if (copy_size != 0U) {
+                std::memcpy(next.get(), data(), copy_size);
+            }
+            overflow_ = std::move(next);
+            overflow_capacity_ = size;
         }
+        size_ = size;
     }
 
     void assign(const void* data, std::size_t size) {
@@ -249,11 +264,19 @@ public:
     }
 
 private:
-    using Overflow = std::array<std::uint8_t, max_size>;
+    void move_from(QuantizedBytes&& other) noexcept {
+        size_ = other.size_;
+        inline_ = other.inline_;
+        overflow_ = std::move(other.overflow_);
+        overflow_capacity_ = other.overflow_capacity_;
+        other.size_ = 0;
+        other.overflow_capacity_ = 0;
+    }
 
     std::size_t size_ = 0;
     std::array<std::uint8_t, inline_capacity> inline_{};
-    std::unique_ptr<Overflow> overflow_;
+    std::unique_ptr<std::uint8_t[]> overflow_;
+    std::size_t overflow_capacity_ = 0;
 };
 
 struct EntityReference {
@@ -492,3 +515,13 @@ struct ReplicationServerOptions {
 };
 
 }  // namespace kage::sync
+
+namespace ecs {
+
+template <>
+struct is_singleton_component<kage::sync::SyncSettings> : std::true_type {};
+
+template <>
+struct is_singleton_component<kage::sync::SyncAuthority> : std::true_type {};
+
+}  // namespace ecs

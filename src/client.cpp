@@ -1,5 +1,10 @@
 #include "kage/sync/client.hpp"
 
+#include "client/frame_data.hpp"
+#include "client/packet_window.hpp"
+#include "client/state.hpp"
+#include "detail/options_validation.hpp"
+
 #include "kage/sync/protocol.hpp"
 #include "kage/sync/tracing.hpp"
 
@@ -18,14 +23,22 @@ namespace {
 
 constexpr std::size_t max_baseline_history_per_entity = 64;
 constexpr std::size_t max_destroy_tombstones = 65536;
-constexpr std::uint32_t server_update_packet_loss_window = 64;
+
+using client_detail::apply_archetype_tags;
+using client_detail::frame_component_data;
+using client_detail::frame_has_component;
+using client_detail::has_tag_slot;
+using client_detail::init_frame_data;
+using client_detail::mutable_frame_component_data;
+using client_detail::remove_archetype_tags;
+using client_detail::sync_slot_bit;
+using client_detail::sync_slot_count;
+using client_detail::tag_bit_set;
+using client_detail::unchecked_frame_component_data;
+using client_detail::unchecked_mutable_frame_component_data;
 
 std::size_t configured_packet_id_bits(const ReplicationClientOptions& options) noexcept {
     return protocol::packet_id_bits_for_max_pending(options.max_pending_packet_acks_per_client);
-}
-
-bool is_power_of_two(std::size_t value) {
-    return value != 0U && (value & (value - 1U)) == 0U;
 }
 
 ReplicationClientClockConfig make_clock_config(const ReplicationClientOptions& options) noexcept {
@@ -55,120 +68,10 @@ ReplicationClientClockConfig make_clock_config(const ReplicationClientOptions& o
     return config;
 }
 
-std::uint32_t count_bits(std::uint64_t value) noexcept {
-    std::uint32_t count = 0;
-    while (value != 0U) {
-        value &= value - 1U;
-        ++count;
-    }
-    return count;
-}
-
-std::uint32_t packet_id_forward_distance(
-    std::uint32_t from,
-    std::uint32_t to,
-    std::uint32_t max_packet_id) noexcept {
-    return to >= from ? to - from : max_packet_id - from + to;
-}
-
-std::uint32_t packet_id_window_size(std::uint32_t max_packet_id) noexcept {
-    if (max_packet_id <= 1U) {
-        return 1U;
-    }
-    return std::min(server_update_packet_loss_window, max_packet_id / 2U);
-}
-
-std::uint64_t low_bit_mask(std::uint32_t bit_count) noexcept {
-    return bit_count >= 64U ? std::numeric_limits<std::uint64_t>::max() : ((std::uint64_t{1} << bit_count) - 1U);
-}
-
 bool all_zero(const SyncComponentOps::QuantizedBytes& bytes) {
     return std::all_of(bytes.begin(), bytes.end(), [](std::uint8_t byte) {
         return byte == 0U;
     });
-}
-
-bool init_frame_data(const SyncArchetype& archetype, QuantizedFrameData& frame) {
-    if (archetype.tags.size() > 64U ||
-        archetype.components.size() > 63U ||
-        archetype.component_offsets.size() != archetype.components.size() ||
-        archetype.component_ops.size() != archetype.components.size()) {
-        return false;
-    }
-    frame.tag_mask = 0;
-    frame.present_mask = 0;
-    frame.bytes.assign(archetype.total_quantized_bytes, 0U);
-    return true;
-}
-
-std::size_t sync_slot_count(const SyncArchetype& archetype) noexcept {
-    return archetype.components.size() + 1U;
-}
-
-bool has_tag_slot(const SyncArchetype& archetype) noexcept {
-    return !archetype.tags.empty();
-}
-
-std::uint64_t sync_slot_bit(std::size_t slot) noexcept {
-    return std::uint64_t{1} << slot;
-}
-
-bool frame_has_component(const QuantizedFrameData& frame, std::size_t component_index) {
-    return component_index < 64U && (frame.present_mask & (std::uint64_t{1} << component_index)) != 0U;
-}
-
-const std::uint8_t* frame_component_data(
-    const SyncArchetype& archetype,
-    const QuantizedFrameData& frame,
-    std::size_t component_index) {
-    if (!frame_has_component(frame, component_index) ||
-        component_index >= archetype.component_offsets.size() ||
-        component_index >= archetype.component_ops.size()) {
-        return nullptr;
-    }
-    const std::size_t offset = archetype.component_offsets[component_index];
-    const std::size_t size = archetype.component_ops[component_index].quantized_size;
-    if (offset + size > frame.bytes.size()) {
-        return nullptr;
-    }
-    return frame.bytes.data() + offset;
-}
-
-const std::uint8_t* unchecked_frame_component_data(
-    const SyncArchetype& archetype,
-    const QuantizedFrameData& frame,
-    std::size_t component_index) noexcept {
-    return frame.bytes.data() + archetype.component_offsets[component_index];
-}
-
-std::uint8_t* mutable_frame_component_data(
-    const SyncArchetype& archetype,
-    QuantizedFrameData& frame,
-    std::size_t component_index) {
-    if (component_index >= 64U ||
-        component_index >= archetype.component_offsets.size() ||
-        component_index >= archetype.component_ops.size()) {
-        return nullptr;
-    }
-    const std::size_t offset = archetype.component_offsets[component_index];
-    const std::size_t size = archetype.component_ops[component_index].quantized_size;
-    if (offset + size > frame.bytes.size()) {
-        return nullptr;
-    }
-    frame.present_mask |= (std::uint64_t{1} << component_index);
-    return frame.bytes.data() + offset;
-}
-
-std::uint8_t* unchecked_mutable_frame_component_data(
-    const SyncArchetype& archetype,
-    QuantizedFrameData& frame,
-    std::size_t component_index) noexcept {
-    frame.present_mask |= (std::uint64_t{1} << component_index);
-    return frame.bytes.data() + archetype.component_offsets[component_index];
-}
-
-bool tag_bit_set(std::uint64_t tag_mask, std::size_t tag_index) noexcept {
-    return tag_index < 64U && (tag_mask & (std::uint64_t{1} << tag_index)) != 0U;
 }
 
 std::uint16_t encode_subframe(double subframe) noexcept {
@@ -377,30 +280,6 @@ std::string packet_ack_list(const std::vector<std::uint32_t>& acks) {
 #endif
 #endif
 
-bool apply_archetype_tags(
-    ecs::Registry& registry,
-    ecs::Entity entity,
-    const SyncArchetype& archetype,
-    std::uint64_t tag_mask) {
-    for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
-        const ecs::Entity tag = archetype.tags[tag_index].tag;
-        if (tag_bit_set(tag_mask, tag_index)) {
-            if (!registry.add_tag(entity, tag)) {
-                return false;
-            }
-        } else {
-            registry.remove_tag(entity, tag);
-        }
-    }
-    return true;
-}
-
-void remove_archetype_tags(ecs::Registry& registry, ecs::Entity entity, const SyncArchetype& archetype) {
-    for (const SyncTagReplication& replication : archetype.tags) {
-        registry.remove_tag(entity, replication.tag);
-    }
-}
-
 }  // namespace
 
 bool ReplicatedEntityUpdateView::try_get(
@@ -497,95 +376,24 @@ bool DisplayInterpolationSample::has_tag(const ecs::Registry& registry, ecs::Ent
 }
 
 ReplicationClient::ReplicationClient(ReplicationClientOptions options)
-    : options_(options),
+    : options_(detail::validate_client_options(std::move(options))),
       clock_(make_clock_config(options_)) {
-    if (!protocol::valid_network_entity_id_tier0_bits(options_.network_entity_id_tier0_bits)) {
-        throw std::invalid_argument("network entity id tier0 bits must be in [1, 22]");
-    }
-    if (!is_power_of_two(options_.interpolation_buffer_capacity_frames)) {
-        throw std::invalid_argument("interpolation buffer capacity must be a nonzero power of two");
-    }
-    if (!is_power_of_two(options_.prediction_buffer_capacity_frames)) {
-        throw std::invalid_argument("prediction buffer capacity must be a nonzero power of two");
-    }
-    if (!is_power_of_two(options_.input_buffer_capacity_frames)) {
-        throw std::invalid_argument("input buffer capacity must be a nonzero power of two");
-    }
-    if (options_.interpolation_buffer_frames >= options_.interpolation_buffer_capacity_frames) {
-        throw std::invalid_argument("interpolation buffer amount must be smaller than capacity");
-    }
-    if (options_.auto_interpolation_min_frames >= options_.interpolation_buffer_capacity_frames) {
-        throw std::invalid_argument("auto interpolation buffer minimum must be smaller than capacity");
-    }
-    if (options_.auto_interpolation_jitter_multiplier < 0.0f) {
-        throw std::invalid_argument("auto interpolation jitter multiplier must be non-negative");
-    }
-    if (options_.auto_interpolation_smoothing <= 0.0f || options_.auto_interpolation_smoothing > 1.0f) {
-        throw std::invalid_argument("auto interpolation smoothing must be in the range (0, 1]");
-    }
-    if (options_.auto_interpolation_time_dilation_min <= 0.0f ||
-        options_.auto_interpolation_time_dilation_min > 1.0f) {
-        throw std::invalid_argument("auto interpolation time dilation minimum must be in the range (0, 1]");
-    }
-    if (options_.auto_interpolation_time_dilation_max < 1.0f) {
-        throw std::invalid_argument("auto interpolation time dilation maximum must be at least 1");
-    }
-    if (options_.auto_interpolation_time_dilation_gain < 0.0f) {
-        throw std::invalid_argument("auto interpolation time dilation gain must be non-negative");
-    }
-    if (options_.prediction_lead_frames >= options_.input_buffer_capacity_frames) {
-        throw std::invalid_argument("prediction lead frames must be smaller than input buffer capacity");
-    }
-    if (options_.auto_prediction_min_frames >= options_.input_buffer_capacity_frames) {
-        throw std::invalid_argument("auto prediction lead minimum must be smaller than input buffer capacity");
-    }
-    if (options_.auto_prediction_jitter_multiplier < 0.0f) {
-        throw std::invalid_argument("auto prediction jitter multiplier must be non-negative");
-    }
-    if (options_.auto_prediction_time_dilation_min <= 0.0f ||
-        options_.auto_prediction_time_dilation_min > 1.0f) {
-        throw std::invalid_argument("auto prediction time dilation minimum must be in the range (0, 1]");
-    }
-    if (options_.auto_prediction_time_dilation_max < 1.0f) {
-        throw std::invalid_argument("auto prediction time dilation maximum must be at least 1");
-    }
-    if (options_.auto_prediction_time_dilation_gain < 0.0f) {
-        throw std::invalid_argument("auto prediction time dilation gain must be non-negative");
-    }
-    if (options_.auto_timing_fast_recovery_min_frame_gap == 0U) {
-        throw std::invalid_argument("auto timing fast recovery min frame gap must be greater than zero");
-    }
-    if (options_.fixed_dt_seconds <= 0.0 || !std::isfinite(options_.fixed_dt_seconds)) {
-        throw std::invalid_argument("fixed dt seconds must be finite and positive");
-    }
-    if (options_.connect_resend_interval_seconds <= 0.0 ||
-        !std::isfinite(options_.connect_resend_interval_seconds)) {
-        throw std::invalid_argument("connect resend interval seconds must be finite and positive");
-    }
-    if (options_.ping_interval_seconds <= 0.0 || !std::isfinite(options_.ping_interval_seconds)) {
-        throw std::invalid_argument("ping interval seconds must be finite and positive");
-    }
-    if (options_.adaptive_ping_interval_seconds <= 0.0 ||
-        !std::isfinite(options_.adaptive_ping_interval_seconds)) {
-        throw std::invalid_argument("adaptive ping interval seconds must be finite and positive");
-    }
-    if (options_.adaptive_ping_stable_samples == 0U) {
-        throw std::invalid_argument("adaptive ping stable samples must be greater than zero");
-    }
-    if (options_.adaptive_ping_stable_threshold_frames < 0.0f ||
-        !std::isfinite(options_.adaptive_ping_stable_threshold_frames)) {
-        throw std::invalid_argument("adaptive ping stable threshold frames must be finite and non-negative");
-    }
-    if (options_.adaptive_ping_jump_threshold_frames < 0.0f ||
-        !std::isfinite(options_.adaptive_ping_jump_threshold_frames)) {
-        throw std::invalid_argument("adaptive ping jump threshold frames must be finite and non-negative");
-    }
     adaptive_ping_active_ = options_.adaptive_ping_interval;
     if (options_.connect_token.empty()) {
         connection_state_ = ReplicationClientConnectionState::Ready;
         (void)clock_.bootstrap_from_server_update(0, false, true);
     }
 }
+
+ReplicationClient::~ReplicationClient() = default;
+
+ReplicationClient::ReplicationClient(const ReplicationClient& other) = default;
+
+ReplicationClient& ReplicationClient::operator=(const ReplicationClient& other) = default;
+
+ReplicationClient::ReplicationClient(ReplicationClient&& other) noexcept = default;
+
+ReplicationClient& ReplicationClient::operator=(ReplicationClient&& other) noexcept = default;
 
 ReplicationClient::EntityState* ReplicationClient::find_entity_state(ecs::Entity server_entity) noexcept {
     const std::uint32_t wire_id = ecs::Registry::entity_index(server_entity) + 1U;
@@ -872,14 +680,14 @@ const QuantizedFrameData* ReplicationClient::find_baseline(
 
     const std::size_t count = state.history.size();
     if (count == max_baseline_history_per_entity) {
-        const EntityState::FrameBaseline& baseline =
+        const client_detail::EntityFrameBaseline& baseline =
             state.history[frame & (max_baseline_history_per_entity - 1U)];
         return baseline.valid && baseline.frame == frame ? &baseline.baseline : nullptr;
     }
 
     for (std::size_t offset = 0; offset < count; ++offset) {
         const std::size_t index = (state.history_next + count - 1U - offset) % count;
-        const EntityState::FrameBaseline& baseline = state.history[index];
+        const client_detail::EntityFrameBaseline& baseline = state.history[index];
         if (baseline.valid && baseline.frame == frame) {
             return &baseline.baseline;
         }
@@ -1337,7 +1145,7 @@ void ReplicationClient::trace_cue_event(
     SyncTraceEventType type,
     const SyncSettings& settings,
     const EntityState& state,
-    const EntityState::Cue& cue,
+    const EntityCue& cue,
     const char* rollback_reason,
     const char* cue_source) const {
     if (tracer_ == nullptr || !tracer_->enabled()) {
@@ -1362,7 +1170,7 @@ void ReplicationClient::trace_cue_event(
     SyncTraceEventType type,
     const SyncSettings& settings,
     const EntityState& state,
-    const EntityState::PlayedCue& cue,
+    const EntityPlayedCue& cue,
     const char* rollback_reason,
     const char* cue_source) const {
     if (tracer_ == nullptr || !tracer_->enabled()) {
@@ -1675,7 +1483,7 @@ bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame client_fr
         }
 
         const std::size_t mask = state.buffered_frames.size() - 1U;
-        const EntityState::BufferedFrame& sample = state.buffered_frames[target_frame & mask];
+        const EntityBufferedFrame& sample = state.buffered_frames[target_frame & mask];
         if (!sample.valid || sample.frame != target_frame) {
             const bool reused_future_entity =
                 state.entity_present &&
@@ -1713,7 +1521,7 @@ bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame client_fr
             all_valid = false;
             continue;
         }
-        for (const EntityState::Cue& cue : sample.cues) {
+        for (const EntityCue& cue : sample.cues) {
             const SyncFrame late_frames = target_frame > cue.frame ? target_frame - cue.frame : 0U;
             (void)play_cue(
                 registry,
@@ -2592,14 +2400,14 @@ bool ReplicationClient::apply_upsert(
     }
 #endif
 
-    std::vector<EntityState::Cue> received_cues;
+    std::vector<EntityCue> received_cues;
     if (!read_cues(packet, received_cues)) {
         return false;
     }
 #if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
     if (!received_cues.empty()) {
         current_packet_cue_summaries_.reserve(current_packet_cue_summaries_.size() + received_cues.size());
-        for (const EntityState::Cue& cue : received_cues) {
+        for (const EntityCue& cue : received_cues) {
             std::ostringstream out;
             out << "{entity=" << client_entity_network_id
                 << ",frame=" << cue.frame
@@ -2620,7 +2428,7 @@ bool ReplicationClient::apply_upsert(
 #endif
 #ifdef KAGE_SYNC_ENABLE_TRACING
     if (tracer_ != nullptr && tracer_->enabled()) {
-        for (const EntityState::Cue& cue : received_cues) {
+        for (const EntityCue& cue : received_cues) {
             SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::CueReceived, client_id_, cue.frame);
             event.server_entity = ecs::Entity{client_entity_network_id};
             event.client_network_id = client_entity_network_id;
@@ -2707,7 +2515,7 @@ bool ReplicationClient::apply_upsert(
         if (applied) {
             store_buffered_cues(state, frame, received_cues);
             if (has_applied_buffered_frame_) {
-                for (const EntityState::Cue& cue : received_cues) {
+                for (const EntityCue& cue : received_cues) {
                     if (cue.frame > last_applied_buffered_frame_) {
                         continue;
                     }
@@ -2761,7 +2569,7 @@ bool ReplicationClient::apply_upsert(
     return true;
 }
 
-bool ReplicationClient::read_cues(BitBuffer& packet, std::vector<EntityState::Cue>& out) {
+bool ReplicationClient::read_cues(BitBuffer& packet, std::vector<EntityCue>& out) {
     out.clear();
     const bool has_cues = packet.read_bool();
     if (!has_cues) {
@@ -2770,7 +2578,7 @@ bool ReplicationClient::read_cues(BitBuffer& packet, std::vector<EntityState::Cu
     const auto cue_count = static_cast<std::uint16_t>(packet.read_bits(16U));
     out.reserve(cue_count);
     for (std::uint16_t index = 0; index < cue_count; ++index) {
-        EntityState::Cue cue;
+        EntityCue cue;
         cue.frame = static_cast<SyncFrame>(packet.read_bits(32U));
         cue.type = static_cast<SyncCueTypeId>(packet.read_bits(16U));
         packet.read_bytes(reinterpret_cast<char*>(&cue.relevance_seconds), sizeof(cue.relevance_seconds));
@@ -2785,7 +2593,7 @@ bool ReplicationClient::play_cue(
     ecs::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
-    const EntityState::Cue& cue,
+    const EntityCue& cue,
     float late_seconds,
     bool confirmed) {
     if (cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].play == nullptr) {
@@ -2804,7 +2612,7 @@ bool ReplicationClient::play_cue(
     auto existing = std::find_if(
         state.played_cues.begin(),
         state.played_cues.end(),
-        [&](const EntityState::PlayedCue& played) {
+        [&](const EntityPlayedCue& played) {
             if (played.frame != cue.frame || played.type != cue.type ||
                 settings.cue_ops[cue.type].equals == nullptr) {
                 return false;
@@ -2839,7 +2647,7 @@ bool ReplicationClient::play_cue(
         nullptr,
         confirmed ? "server" : "local_prediction");
 #endif
-    state.played_cues.push_back(EntityState::PlayedCue{
+    state.played_cues.push_back(EntityPlayedCue{
         cue.frame,
         cue.type,
         cue.payload,
@@ -2852,7 +2660,7 @@ bool ReplicationClient::rollback_played_cue(
     ecs::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
-    const EntityState::PlayedCue& cue,
+    const EntityPlayedCue& cue,
     const char* rollback_reason) {
 #ifndef KAGE_SYNC_ENABLE_TRACING
     (void)rollback_reason;
@@ -2886,8 +2694,8 @@ void ReplicationClient::play_snap_cues(
     ecs::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
-    const std::vector<EntityState::Cue>& cues) {
-    for (const EntityState::Cue& cue : cues) {
+    const std::vector<EntityCue>& cues) {
+    for (const EntityCue& cue : cues) {
         const SyncFrame receive_frame = clock_.receive_frame();
         const SyncFrame late_frames = receive_frame > cue.frame ? receive_frame - cue.frame : 0U;
         (void)play_cue(
@@ -2903,11 +2711,11 @@ void ReplicationClient::play_snap_cues(
 void ReplicationClient::store_buffered_cues(
     EntityState& state,
     SyncFrame frame,
-    const std::vector<EntityState::Cue>& cues) {
+    const std::vector<EntityCue>& cues) {
     if (state.buffered_frames.empty() || cues.empty()) {
         return;
     }
-    EntityState::BufferedFrame& sample = state.buffered_frames[frame & (state.buffered_frames.size() - 1U)];
+    EntityBufferedFrame& sample = state.buffered_frames[frame & (state.buffered_frames.size() - 1U)];
     if (!sample.valid || sample.frame != frame) {
         return;
     }
@@ -2918,13 +2726,13 @@ void ReplicationClient::reconcile_authoritative_predicted_cues(
     ecs::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
-    const std::vector<EntityState::Cue>& cues,
+    const std::vector<EntityCue>& cues,
     SyncFrame frame) {
-    for (const EntityState::Cue& cue : cues) {
+    for (const EntityCue& cue : cues) {
         auto found = std::find_if(
             state.played_cues.begin(),
             state.played_cues.end(),
-            [&](const EntityState::PlayedCue& played) {
+            [&](const EntityPlayedCue& played) {
                 if (played.frame != cue.frame || played.type != cue.type ||
                     cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].equals == nullptr) {
                     return false;
@@ -2962,7 +2770,7 @@ void ReplicationClient::reconcile_authoritative_predicted_cues(
         const bool authoritative_match = std::any_of(
             cues.begin(),
             cues.end(),
-            [&](const EntityState::Cue& cue) {
+            [&](const EntityCue& cue) {
                 if (cue.frame != played->frame || cue.type != played->type ||
                     cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].equals == nullptr) {
                     return false;
@@ -3009,7 +2817,7 @@ void ReplicationClient::drain_emitted_prediction_cues(
         if (state == nullptr || state->mode != ReplicationClientMode::Predict) {
             continue;
         }
-        EntityState::Cue cue;
+        EntityCue cue;
         cue.frame = emitted.frame != 0 ? emitted.frame : frame;
         cue.type = emitted.type;
         cue.relevance_seconds = emitted.relevance_seconds;
@@ -3021,7 +2829,7 @@ void ReplicationClient::drain_emitted_prediction_cues(
         auto found = std::find_if(
             state->played_cues.begin(),
             state->played_cues.end(),
-            [&](const EntityState::PlayedCue& played) {
+            [&](const EntityPlayedCue& played) {
                 if (played.frame != cue.frame || played.type != cue.type ||
                     cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].equals == nullptr) {
                     return false;
@@ -3048,7 +2856,7 @@ void ReplicationClient::drain_emitted_prediction_cues(
 
 void ReplicationClient::begin_cue_resimulation() {
     for (EntityState& state : entities_) {
-        for (EntityState::PlayedCue& cue : state.played_cues) {
+        for (EntityPlayedCue& cue : state.played_cues) {
             cue.seen_in_resim = false;
         }
     }
@@ -3206,7 +3014,7 @@ bool ReplicationClient::apply_buffered_destroy(
     remember_baseline(state);
     if (has_applied_buffered_frame_ && frame <= last_applied_buffered_frame_) {
         const std::size_t mask = state.buffered_frames.size() - 1U;
-        const EntityState::BufferedFrame& sample = state.buffered_frames[frame & mask];
+        const EntityBufferedFrame& sample = state.buffered_frames[frame & mask];
         if (!sample.valid || sample.frame != frame || !apply_buffered_sample(registry, settings, state, sample)) {
             return false;
         }
@@ -3369,7 +3177,7 @@ bool ReplicationClient::write_buffered_frame(
     SyncFrame from_frame,
     SyncFrame to_frame) {
     const std::size_t mask = state.buffered_frames.size() - 1U;
-    EntityState::BufferedFrame& sample = state.buffered_frames[frame & mask];
+    EntityBufferedFrame& sample = state.buffered_frames[frame & mask];
     sample.frame = frame;
     sample.valid = true;
     sample.entity_present = entity_present;
@@ -3432,7 +3240,7 @@ bool ReplicationClient::apply_buffered_sample(
     ecs::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
-    const EntityState::BufferedFrame& sample) {
+    const EntityBufferedFrame& sample) {
     if (!sample.entity_present) {
         if (state.local && registry.alive(state.local)) {
             registry.destroy(state.local);
@@ -3534,7 +3342,7 @@ bool ReplicationClient::apply_frame_data(
     SyncFrame frame,
     bool entity_present,
     const QuantizedFrameData& baseline) {
-    EntityState::BufferedFrame sample;
+    EntityBufferedFrame sample;
     sample.frame = frame;
     sample.valid = true;
     sample.entity_present = entity_present;
@@ -3556,7 +3364,7 @@ bool ReplicationClient::quantize_predicted_entity(
     }
 
     const SyncArchetype& archetype = settings.archetypes[state.archetype.value];
-    EntityState::BufferedFrame& sample = state.predicted_frames[frame & (state.predicted_frames.size() - 1U)];
+    EntityBufferedFrame& sample = state.predicted_frames[frame & (state.predicted_frames.size() - 1U)];
     sample.frame = frame;
     sample.valid = true;
     sample.entity_present = state.local && registry.alive(state.local);
@@ -3637,7 +3445,7 @@ bool ReplicationClient::compare_predicted_frame(
     if (state.archetype.value >= settings.archetypes.size() || state.predicted_frames.empty()) {
         return false;
     }
-    const EntityState::BufferedFrame& predicted =
+    const EntityBufferedFrame& predicted =
         state.predicted_frames[frame & (state.predicted_frames.size() - 1U)];
     if (!predicted.valid || predicted.frame != frame) {
         return false;
@@ -3752,7 +3560,7 @@ void ReplicationClient::capture_original_current_predictions(
         if (state.mode != ReplicationClientMode::Predict || state.predicted_frames.empty()) {
             continue;
         }
-        const EntityState::BufferedFrame& sample =
+        const EntityBufferedFrame& sample =
             state.predicted_frames[current_frame & (state.predicted_frames.size() - 1U)];
         if (sample.valid && sample.frame == current_frame && sample.entity_present) {
             out.push_back(OriginalPredictionCapture{entity_index, sample.baseline});
@@ -3775,7 +3583,7 @@ bool ReplicationClient::blend_resim_errors(
             state.archetype.value >= settings.archetypes.size()) {
             continue;
         }
-        const EntityState::BufferedFrame& resimmed =
+        const EntityBufferedFrame& resimmed =
             state.predicted_frames[current_frame & (state.predicted_frames.size() - 1U)];
         if (!resimmed.valid || resimmed.frame != current_frame || !resimmed.entity_present ||
             capture.baseline.bytes.empty()) {
@@ -3812,7 +3620,7 @@ bool ReplicationClient::blend_resim_errors(
                 return false;
             }
             if (!all_zero(error)) {
-                state.snap_errors.push_back(EntityState::ComponentError{replication.component, std::move(error)});
+                state.snap_errors.push_back(client_detail::EntityComponentError{replication.component, std::move(error)});
             }
         }
         sync_entity_memberships(state);
@@ -3896,7 +3704,7 @@ bool ReplicationClient::apply_snap_sample(
             std::remove_if(
                 state.snap_errors.begin(),
                 state.snap_errors.end(),
-                [&](const EntityState::ComponentError& existing) {
+                [&](const client_detail::EntityComponentError& existing) {
                     const auto found_component = std::find_if(
                         archetype.components.begin(),
                         archetype.components.end(),
@@ -3941,7 +3749,7 @@ bool ReplicationClient::apply_snap_sample(
             auto found_error = std::find_if(
                 state.snap_errors.begin(),
                 state.snap_errors.end(),
-                [&](const EntityState::ComponentError& existing) {
+                [&](const client_detail::EntityComponentError& existing) {
                     return existing.component == replication.component;
                 });
             if (all_zero(error)) {
@@ -3949,7 +3757,7 @@ bool ReplicationClient::apply_snap_sample(
                     state.snap_errors.erase(found_error);
                 }
             } else if (found_error == state.snap_errors.end()) {
-                state.snap_errors.push_back(EntityState::ComponentError{replication.component, std::move(error)});
+                state.snap_errors.push_back(client_detail::EntityComponentError{replication.component, std::move(error)});
             } else {
                 found_error->bytes = std::move(error);
             }
@@ -4036,7 +3844,7 @@ bool ReplicationClient::switch_entity_mode(
             if (!apply_frame_data(registry, settings, state, state.frame, state.entity_present, state.baseline)) {
                 return false;
             }
-            EntityState::BufferedFrame& sample =
+            EntityBufferedFrame& sample =
                 state.predicted_frames[state.frame & (state.predicted_frames.size() - 1U)];
             sample.frame = state.frame;
             sample.valid = true;
@@ -4287,7 +4095,7 @@ void ReplicationClient::blend_snap_errors(const SyncSettings& settings, float dt
         }
         EntityState& state = entities_[entity_index];
 
-        for (EntityState::ComponentError& error : state.snap_errors) {
+        for (client_detail::EntityComponentError& error : state.snap_errors) {
             const auto found_ops = settings.component_ops.find(error.component.value);
             if (found_ops == settings.component_ops.end() || found_ops->second.blend_out_error == nullptr ||
                 !found_ops->second.blend_out_error(error.bytes, dt_seconds, error.bytes)) {
@@ -4299,7 +4107,7 @@ void ReplicationClient::blend_snap_errors(const SyncSettings& settings, float dt
             std::remove_if(
                 state.snap_errors.begin(),
                 state.snap_errors.end(),
-                [](const EntityState::ComponentError& error) {
+                [](const client_detail::EntityComponentError& error) {
                     return error.bytes.empty() || all_zero(error.bytes);
                 }),
             state.snap_errors.end());
@@ -4365,20 +4173,19 @@ bool ReplicationClient::write_display_samples(
 
             if (state.mode == ReplicationClientMode::Predict && has_predicted_frame_ && !state.predicted_frames.empty()) {
                 const std::size_t mask = state.predicted_frames.size() - 1U;
-                const EntityState::BufferedFrame& current_sample = state.predicted_frames[last_predicted_frame_ & mask];
+                const EntityBufferedFrame& current_sample = state.predicted_frames[last_predicted_frame_ & mask];
                 if (current_sample.valid && current_sample.frame == last_predicted_frame_ && current_sample.entity_present) {
-                    const EntityState::BufferedFrame* previous_sample = nullptr;
+                    const EntityBufferedFrame* previous_sample = nullptr;
                     float predicted_alpha = 0.0f;
                     if (last_predicted_frame_ != 0U) {
                         const SyncFrame previous_frame = last_predicted_frame_ - 1U;
-                        const EntityState::BufferedFrame& candidate = state.predicted_frames[previous_frame & mask];
+                        const EntityBufferedFrame& candidate = state.predicted_frames[previous_frame & mask];
                         if (candidate.valid && candidate.frame == previous_frame && candidate.entity_present) {
                             previous_sample = &candidate;
                             predicted_alpha = 1.0f + static_cast<float>(
                                 clock_.input_accumulator_seconds() / options_.fixed_dt_seconds);
                         }
                     }
-
                     if (sampled_count == out.entities.size()) {
                         out.entities.emplace_back();
                     }
@@ -4431,7 +4238,7 @@ bool ReplicationClient::write_display_samples(
                         auto found_error = std::find_if(
                             state.snap_errors.begin(),
                             state.snap_errors.end(),
-                            [component](const EntityState::ComponentError& error) {
+                            [component](const client_detail::EntityComponentError& error) {
                                 return error.component == component;
                             });
                         if (found_error != state.snap_errors.end()) {
@@ -4490,7 +4297,7 @@ bool ReplicationClient::write_display_samples(
                 const auto found_error = std::find_if(
                     state.snap_errors.begin(),
                     state.snap_errors.end(),
-                    [component](const EntityState::ComponentError& error) {
+                    [component](const client_detail::EntityComponentError& error) {
                         return error.component == component;
                     });
                 if (found_error != state.snap_errors.end()) {
@@ -4512,7 +4319,7 @@ bool ReplicationClient::write_display_samples(
         }
 
         const std::size_t mask = state.buffered_frames.size() - 1U;
-        const EntityState::BufferedFrame& floor_sample = state.buffered_frames[floor_frame & mask];
+        const EntityBufferedFrame& floor_sample = state.buffered_frames[floor_frame & mask];
         if (!floor_sample.valid || floor_sample.frame != floor_frame) {
             if (!include_empty_buffered || !append_previous_display(state.client_entity_network_id)) {
                 all_valid = false;
@@ -4523,10 +4330,10 @@ bool ReplicationClient::write_display_samples(
             continue;
         }
 
-        const EntityState::BufferedFrame* next_sample = nullptr;
+        const EntityBufferedFrame* next_sample = nullptr;
         if (alpha > 0.0f && floor_frame != std::numeric_limits<SyncFrame>::max()) {
             const SyncFrame next_frame = floor_frame + 1U;
-            const EntityState::BufferedFrame& candidate = state.buffered_frames[next_frame & mask];
+            const EntityBufferedFrame& candidate = state.buffered_frames[next_frame & mask];
             if (candidate.valid && candidate.frame == next_frame && candidate.entity_present) {
                 next_sample = &candidate;
             }
@@ -4615,7 +4422,7 @@ void ReplicationClient::remember_baseline(EntityState& state) {
         state.history_next = 0;
     }
 
-    EntityState::FrameBaseline& baseline = state.history[state.frame & (max_baseline_history_per_entity - 1U)];
+    client_detail::EntityFrameBaseline& baseline = state.history[state.frame & (max_baseline_history_per_entity - 1U)];
     baseline.frame = state.frame;
     baseline.valid = true;
     baseline.baseline = state.baseline;
@@ -4626,66 +4433,14 @@ void ReplicationClient::queue_ack(std::uint32_t packet_id) {
 }
 
 void ReplicationClient::record_server_packet_sequence(std::uint32_t packet_id) noexcept {
-    const std::size_t packet_id_bits = configured_packet_id_bits(options_);
-    const std::uint32_t max_packet_id = protocol::packet_id_mask(packet_id_bits);
-    if (packet_id == 0U || packet_id > max_packet_id) {
-        return;
-    }
-
-    ReplicationClientTimingStats& timing_stats = clock_.mutable_stats();
-    ++timing_stats.server_update_packets_received;
-
-    const std::uint32_t window_size = packet_id_window_size(max_packet_id);
-    if (!has_server_update_packet_window_) {
-        highest_server_update_packet_id_ = packet_id;
-        server_update_packet_window_mask_ = 1U;
-        server_update_packet_window_span_ = 1U;
-        has_server_update_packet_window_ = true;
-    } else {
-        const std::uint32_t forward_distance =
-            packet_id_forward_distance(highest_server_update_packet_id_, packet_id, max_packet_id);
-        const std::uint32_t backward_distance =
-            packet_id_forward_distance(packet_id, highest_server_update_packet_id_, max_packet_id);
-
-        if (forward_distance != 0U && forward_distance <= backward_distance) {
-            const std::uint32_t new_span =
-                std::min(window_size, server_update_packet_window_span_ + forward_distance);
-            const std::uint32_t finalized_count =
-                server_update_packet_window_span_ + forward_distance - new_span;
-
-            if (finalized_count != 0U) {
-                std::uint32_t finalized_received = 0;
-                if (forward_distance < 64U) {
-                    const std::uint32_t retained_old_count =
-                        new_span > forward_distance ? new_span - forward_distance : 0U;
-                    const std::uint64_t retained_old_mask = low_bit_mask(retained_old_count);
-                    finalized_received =
-                        count_bits(server_update_packet_window_mask_ & ~retained_old_mask);
-                } else {
-                    finalized_received = count_bits(server_update_packet_window_mask_);
-                }
-                timing_stats.server_update_packets_missing += finalized_count - finalized_received;
-            }
-
-            server_update_packet_window_mask_ =
-                forward_distance >= 64U ? 0U : (server_update_packet_window_mask_ << forward_distance);
-            server_update_packet_window_mask_ |= 1U;
-            server_update_packet_window_mask_ &= low_bit_mask(window_size);
-            server_update_packet_window_span_ = new_span;
-            highest_server_update_packet_id_ = packet_id;
-        } else {
-            ++timing_stats.server_update_packets_reordered_or_duplicate;
-            if (backward_distance < server_update_packet_window_span_ && backward_distance < 64U) {
-                server_update_packet_window_mask_ |= std::uint64_t{1} << backward_distance;
-            }
-        }
-    }
-
-    const std::uint64_t total =
-        timing_stats.server_update_packets_received + timing_stats.server_update_packets_missing;
-    timing_stats.server_update_packet_loss = total == 0U
-        ? 0.0f
-        : static_cast<float>(timing_stats.server_update_packets_missing) / static_cast<float>(total);
+    client_detail::record_packet_window(
+        packet_id,
+        options_.max_pending_packet_acks_per_client,
+        clock_.mutable_stats(),
+        highest_server_update_packet_id_,
+        server_update_packet_window_mask_,
+        server_update_packet_window_span_,
+        has_server_update_packet_window_);
 }
 
 bool ReplicationClient::receive_connect_response(ecs::Registry& registry, BitBuffer& packet) {

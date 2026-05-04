@@ -203,6 +203,17 @@ struct KTraceRecord {
     std::uint64_t timestamp_us = 0;
 };
 
+struct KTraceFileHeader {
+    std::string path;
+    SyncTraceRole role = SyncTraceRole::Server;
+    ClientId client = invalid_client_id;
+    std::uint64_t recorded_unix_ns = 0;
+    std::uint16_t version = 0;
+    std::uint32_t flags = 0;
+    std::uint64_t data_offset = 0;
+    std::uint64_t file_size = 0;
+};
+
 struct KTraceFile {
     std::string path;
     SyncTraceRole role = SyncTraceRole::Server;
@@ -213,6 +224,20 @@ struct KTraceFile {
     std::vector<KTraceRecord> records;
     std::unordered_map<std::uint64_t, std::string> component_names;
     std::unordered_map<std::uint64_t, std::string> cue_names;
+};
+
+class KTraceStreamReader {
+public:
+    explicit KTraceStreamReader(const std::string& path);
+
+    const KTraceFileHeader& header() const noexcept { return header_; }
+    std::uint64_t position() const noexcept { return position_; }
+    bool read_next(KTraceRecord& out);
+
+private:
+    std::ifstream file_;
+    KTraceFileHeader header_;
+    std::uint64_t position_ = 0;
 };
 
 enum class KTraceCellState : std::uint32_t {

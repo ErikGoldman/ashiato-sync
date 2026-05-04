@@ -1,4 +1,4 @@
-#include "kage/sync/component_traits.hpp"
+#include "kage/sync/components.hpp"
 
 #include <cstdint>
 #include <stdexcept>

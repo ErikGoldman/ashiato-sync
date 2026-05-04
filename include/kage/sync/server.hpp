@@ -1,6 +1,6 @@
 #pragma once
 
-#include "kage/sync/component_traits.hpp"
+#include "kage/sync/types.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -28,6 +28,11 @@ public:
     };
 
     explicit ReplicationServer(ReplicationServerOptions options = {});
+    ~ReplicationServer();
+    ReplicationServer(const ReplicationServer& other);
+    ReplicationServer& operator=(const ReplicationServer& other);
+    ReplicationServer(ReplicationServer&& other) noexcept;
+    ReplicationServer& operator=(ReplicationServer&& other) noexcept;
 
     const ReplicationServerOptions& options() const noexcept {
         return options_;
@@ -77,142 +82,19 @@ public:
 private:
     static constexpr std::uint32_t invalid_quantized_frame_id = std::numeric_limits<std::uint32_t>::max();
 
-    struct ReplicatedSlot {
-        ecs::Entity entity;
-        SyncArchetypeId archetype;
-        std::vector<std::uint32_t> quantized_frames;
-        std::vector<std::uint64_t> component_dirty_generations;
-        std::uint32_t same_frame_quantized_frame = invalid_quantized_frame_id;
-        SyncFrame same_frame_quantized_frame_frame = 0;
-        bool same_frame_cacheable = false;
-        bool active = false;
-    };
-
-    struct QuantizedFrame {
-        std::uint32_t slot = 0;
-        SyncFrame frame = 0;
-        SyncArchetypeId archetype;
-        std::uint32_t ref_count = 0;
-        bool active = false;
-        QuantizedFrameData data;
-        std::vector<std::uint64_t> dirty_generations;
-    };
-
-    struct ClientEntityState {
-        struct PendingQuantizedFrame {
-            std::uint32_t quantized_frame = invalid_quantized_frame_id;
-            SyncFrame frame = 0;
-        };
-
-        struct PendingCue {
-            SyncFrame frame = 0;
-            SyncFrame expire_frame = 0;
-            SyncCueTypeId type = 0;
-            float relevance_seconds = 0.0f;
-            BitBuffer payload;
-        };
-
-        std::uint32_t baseline = invalid_quantized_frame_id;
-        std::uint32_t network_id = 0;
-        std::uint32_t network_version = 0;
-        std::uint64_t priority = 0;
-        std::uint64_t component_mask = std::numeric_limits<std::uint64_t>::max();
-        SyncFrame priority_frame = 0;
-        bool priority_replicate = true;
-        bool reference_priority_boost_pending = false;
-        bool has_network_id = false;
-        std::vector<PendingQuantizedFrame> pending;
-        std::vector<PendingCue> pending_cues;
-    };
-
-    struct ClientDestroyState {
-        ecs::Entity entity;
-        SyncFrame frame = 0;
-        std::uint64_t reset_epoch = 0;
-        std::uint32_t network_id = 0;
-        std::uint32_t network_version = 0;
-    };
-
-    struct PacketAckRecord {
-        struct CueSummary {
-            SyncFrame frame = 0;
-            SyncCueTypeId type = 0;
-            std::string data;
-        };
-
-        ecs::Entity entity;
-        SyncFrame frame = 0;
-        bool destroy = false;
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
-        std::vector<CueSummary> cues{};
-#endif
-    };
-
-    struct PendingPacketAck {
-        std::uint32_t packet_id = 0;
-        std::vector<PacketAckRecord> records;
-    };
-
-    struct ClientState {
-        ClientId id = invalid_client_id;
-        ClientId peer = invalid_client_id;
-        std::uint64_t epoch = 0;
-        std::uint32_t next_packet_id = 1;
-        bool ready_for_updates = true;
-        double connect_resend_accumulator_seconds = 0.0;
-        double idle_seconds = 0.0;
-        std::vector<std::uint32_t> order;
-        std::vector<std::uint64_t> reset_epochs;
-        std::vector<ClientEntityState> entity_states;
-        std::vector<ClientDestroyState> pending_destroys;
-        std::vector<PendingPacketAck> pending_packet_acks;
-        struct InputFrame {
-            SyncFrame frame = 0;
-            bool valid = false;
-            std::vector<std::uint8_t> bytes;
-        };
-        std::vector<InputFrame> input_frames;
-        std::vector<std::uint8_t> latest_input;
-        std::vector<std::uint8_t> latest_applied_input;
-        SyncFrame input_ack_frame = 0;
-        SyncFrame latest_applied_input_frame = 0;
-        bool has_latest_input = false;
-        bool has_latest_applied_input = false;
-        ClientInputStats input_stats;
-        struct NetworkIdEntry {
-            std::uint32_t slot_or_next_free = 0;
-            std::uint32_t version = 0;
-            bool active = false;
-            bool pending_destroy = false;
-        };
-        std::vector<NetworkIdEntry> network_ids;
-        std::uint32_t free_network_id = 0;
-    };
-
-    struct PendingInboundPacket {
-        ClientId client = invalid_client_id;
-        BitBuffer packet;
-    };
+    struct ReplicatedSlot;
+    struct QuantizedFrame;
+    struct ClientEntityState;
+    struct ClientDestroyState;
+    struct PacketAckRecord;
+    struct PendingPacketAck;
+    struct ClientState;
+    struct PendingInboundPacket;
 
     using EntityKey = std::uint64_t;
 
-    struct SerializedEntity {
-        std::uint32_t quantized_frame = invalid_quantized_frame_id;
-        BitBuffer payload;
-    };
-
-    struct SerializedCandidate {
-        enum class Kind {
-            Update,
-            Destroy
-        };
-
-        Kind kind = Kind::Update;
-        std::uint32_t slot = 0;
-        std::size_t destroy_index = 0;
-        std::uint64_t priority = 0;
-        std::uint64_t component_mask = std::numeric_limits<std::uint64_t>::max();
-    };
+    struct SerializedEntity;
+    struct SerializedCandidate;
 
     bool valid_archetype(const ecs::Registry& registry, SyncArchetypeId archetype) const;
     bool upsert_replicated(ecs::Registry& registry, ecs::Entity entity, SyncArchetypeId archetype);

@@ -1,0 +1,45 @@
+kage_sync_fetch_catch2()
+
+add_executable(kage_sync_tests
+    ball_stress.test.cpp
+    bit_buffer.test.cpp
+    client_buffered_interpolation.test.cpp
+    client_clock.test.cpp
+    client_cues.test.cpp
+    client_display.test.cpp
+    client_frame_data.test.cpp
+    client_input.test.cpp
+    client_packet_window.test.cpp
+    client_prediction.test.cpp
+    client_receive.test.cpp
+    client_timing.test.cpp
+    client_transport.test.cpp
+    components.test.cpp
+    options_validation.test.cpp
+    quantized_bytes.test.cpp
+    server_connection.test.cpp
+    server_destroy_ack.test.cpp
+    server_input.test.cpp
+    server_lifecycle.test.cpp
+    server_packet.test.cpp
+    server_prioritization.test.cpp
+    server_transport.test.cpp
+    tracing_component_rows.test.cpp
+    tracing_events.test.cpp
+    tracing_packet_log.test.cpp
+    tracing_reader.test.cpp
+)
+
+target_link_libraries(kage_sync_tests
+    PRIVATE
+        kage::sync
+        Catch2::Catch2WithMain
+)
+
+target_include_directories(kage_sync_tests
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+)
+
+include(Catch)
+catch_discover_tests(kage_sync_tests)

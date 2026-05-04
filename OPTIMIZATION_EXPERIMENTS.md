@@ -1,5 +1,43 @@
 # Optimization Experiments
 
+## Header Encapsulation Refactor: Move Private State Out of Public Headers
+
+Rationale: `ReplicationClient` and `ReplicationServer` exposed large private
+state records in public headers. A pimpl would hide more of the object layout,
+but would also add allocation and pointer indirection to a high-performance
+library. This refactor keeps state stored inline and moves private record
+definitions into internal source headers.
+
+Result:
+
+- Object sizes unchanged on this toolchain:
+  `ReplicationClient=1496`, `ReplicationServer=648`,
+  `ReplicationClientOptions=256`, `ReplicationServerOptions=216`
+- Public client/server preprocessed line count: `77104` before, `76928` after
+- Focused benchmark pass 1:
+  `BM_ClientReceiveSnap/1024/16=2035138 ns`,
+  `BM_ClientPredictTickQuantize/1024/16=839062 ns`,
+  `BM_ServerTickSerializedFullBudget/16384/8=39017415 ns`,
+  `BM_ServerProcessAckPacket/1024=151512 ns`
+- Focused benchmark pass 2:
+  `BM_ClientReceiveSnap/1024/16=2291686 ns`,
+  `BM_ClientPredictTickQuantize/1024/16=984840 ns`,
+  `BM_ServerTickSerializedFullBudget/16384/8=42396840 ns`,
+  `BM_ServerProcessAckPacket/1024=167315 ns`
+
+Command:
+
+```sh
+./build-bench/kage_sync_benchmark --benchmark_filter='BM_(ClientReceiveSnap/1024/16|ClientPredictTickQuantize/1024/16|ServerTickSerializedFullBudget/16384/8|ServerProcessAckPacket/1024)$' --benchmark_min_time=0.1s
+```
+
+Artifact: `build-bench/kage_sync_benchmark`
+
+Conclusion: accepted. Runtime remains in the same noise band as the pre-refactor
+focused baseline while avoiding pimpl's allocation and indirection costs. The
+main benefit is API hygiene: large client/server state records are no longer
+defined in public headers, though full ABI hiding would still require pimpl.
+
 Benchmark scenario unless noted:
 
 ```sh

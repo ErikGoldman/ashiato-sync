@@ -1,16 +1,13 @@
 #include "kage/sync/client_clock.hpp"
 
+#include "detail/options_validation.hpp"
+
 #include <algorithm>
 #include <cmath>
-#include <stdexcept>
 
 namespace kage::sync {
 
 namespace {
-
-bool is_power_of_two(std::size_t value) noexcept {
-    return value != 0U && (value & (value - 1U)) == 0U;
-}
 
 float dilation_from_error(float error, float gain, float min_dilation, float max_dilation) noexcept {
     constexpr float deadband_frames = 0.25f;
@@ -31,62 +28,8 @@ SyncFrame rounded_frame_count(double frames) noexcept {
 }  // namespace
 
 ReplicationClientClock::ReplicationClientClock(ReplicationClientClockConfig config)
-    : config_(config),
+    : config_(detail::validate_client_clock_config(config)),
       interpolation_buffer_frames_(config.interpolation_buffer_frames) {
-    if (config_.fixed_dt_seconds <= 0.0 || !std::isfinite(config_.fixed_dt_seconds)) {
-        throw std::invalid_argument("fixed dt seconds must be finite and positive");
-    }
-    if (!is_power_of_two(config_.interpolation_buffer_capacity_frames)) {
-        throw std::invalid_argument("interpolation buffer capacity must be a nonzero power of two");
-    }
-    if (!is_power_of_two(config_.input_buffer_capacity_frames)) {
-        throw std::invalid_argument("input buffer capacity must be a nonzero power of two");
-    }
-    if (config_.interpolation_buffer_frames >= config_.interpolation_buffer_capacity_frames) {
-        throw std::invalid_argument("interpolation buffer amount must be smaller than capacity");
-    }
-    if (config_.auto_interpolation_min_frames >= config_.interpolation_buffer_capacity_frames) {
-        throw std::invalid_argument("auto interpolation buffer minimum must be smaller than capacity");
-    }
-    if (config_.auto_interpolation_jitter_multiplier < 0.0f) {
-        throw std::invalid_argument("auto interpolation jitter multiplier must be non-negative");
-    }
-    if (config_.auto_interpolation_smoothing <= 0.0f || config_.auto_interpolation_smoothing > 1.0f) {
-        throw std::invalid_argument("auto interpolation smoothing must be in the range (0, 1]");
-    }
-    if (config_.auto_interpolation_time_dilation_min <= 0.0f ||
-        config_.auto_interpolation_time_dilation_min > 1.0f) {
-        throw std::invalid_argument("auto interpolation time dilation minimum must be in the range (0, 1]");
-    }
-    if (config_.auto_interpolation_time_dilation_max < 1.0f) {
-        throw std::invalid_argument("auto interpolation time dilation maximum must be at least 1");
-    }
-    if (config_.auto_interpolation_time_dilation_gain < 0.0f) {
-        throw std::invalid_argument("auto interpolation time dilation gain must be non-negative");
-    }
-    if (config_.prediction_lead_frames >= config_.input_buffer_capacity_frames) {
-        throw std::invalid_argument("prediction lead frames must be smaller than input buffer capacity");
-    }
-    if (config_.auto_prediction_min_frames >= config_.input_buffer_capacity_frames) {
-        throw std::invalid_argument("auto prediction lead minimum must be smaller than input buffer capacity");
-    }
-    if (config_.auto_prediction_jitter_multiplier < 0.0f) {
-        throw std::invalid_argument("auto prediction jitter multiplier must be non-negative");
-    }
-    if (config_.auto_prediction_time_dilation_min <= 0.0f ||
-        config_.auto_prediction_time_dilation_min > 1.0f) {
-        throw std::invalid_argument("auto prediction time dilation minimum must be in the range (0, 1]");
-    }
-    if (config_.auto_prediction_time_dilation_max < 1.0f) {
-        throw std::invalid_argument("auto prediction time dilation maximum must be at least 1");
-    }
-    if (config_.auto_prediction_time_dilation_gain < 0.0f) {
-        throw std::invalid_argument("auto prediction time dilation gain must be non-negative");
-    }
-    if (config_.auto_timing_fast_recovery_min_frame_gap == 0U) {
-        throw std::invalid_argument("auto timing fast recovery min frame gap must be greater than zero");
-    }
-
     stats_.desired_interpolation_buffer_frames = config_.interpolation_buffer_frames;
     stats_.target_interpolation_buffer_frames = config_.interpolation_buffer_frames;
     stats_.current_interpolation_buffer_frames = config_.interpolation_buffer_frames;

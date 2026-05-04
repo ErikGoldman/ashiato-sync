@@ -1,5 +1,11 @@
 #include "kage/sync/server.hpp"
 
+#include "detail/frame_data.hpp"
+#include "detail/options_validation.hpp"
+#include "server/detail.hpp"
+#include "server/packet.hpp"
+#include "server/state.hpp"
+
 #include "kage/sync/protocol.hpp"
 #include "kage/sync/tracing.hpp"
 
@@ -22,90 +28,29 @@ namespace kage::sync {
 namespace {
 
 constexpr std::size_t max_pending_quantized_frames_per_entity = 64;
-constexpr std::size_t max_cues_per_entity_record = 255;
-constexpr std::uint64_t reference_priority_boost = std::numeric_limits<std::uint64_t>::max() / 2U;
+constexpr std::size_t max_cues_per_entity_record = server_detail::max_cues_per_entity_record;
 
-std::size_t configured_packet_id_bits(const ReplicationServerOptions& options) noexcept {
-    return protocol::packet_id_bits_for_max_pending(options.max_pending_packet_acks_per_client);
-}
-
-std::size_t server_update_header_bits(const ReplicationServerOptions& options) noexcept {
-    return 8U + 32U + configured_packet_id_bits(options) + 32U + 16U;
-}
-
-bool is_power_of_two(std::size_t value) noexcept {
-    return value != 0U && (value & (value - 1U)) == 0U;
-}
-
-std::size_t destroy_record_bits(std::uint32_t network_id, std::size_t tier0_bits) noexcept {
-    return 1U + protocol::network_entity_id_encoded_bits(network_id, tier0_bits);
-}
-
-std::uint64_t boosted_candidate_priority(
-    std::uint64_t age,
-    std::uint64_t priority,
-    bool reference_boost_pending) noexcept {
-    const std::uint64_t max = std::numeric_limits<std::uint64_t>::max();
-    if (max - age < priority) {
-        age = max;
-    } else {
-        age += priority;
-    }
-    if (reference_boost_pending) {
-        if (max - age < reference_priority_boost) {
-            age = max;
-        } else {
-            age += reference_priority_boost;
-        }
-    }
-    return age;
-}
-
-constexpr std::uint32_t invalid_slot_or_free = std::numeric_limits<std::uint32_t>::max();
+using detail::frame_component_data;
+using detail::frame_has_component;
+using detail::has_tag_slot;
+using detail::init_frame_data;
+using detail::mutable_frame_component_data;
+using detail::sync_slot_bit;
+using detail::sync_slot_count;
+using server_detail::boosted_candidate_priority;
+using server_detail::configured_packet_id_bits;
+using server_detail::destroy_record_bits;
+using server_detail::invalid_slot_or_free;
+using server_detail::make_server_packet;
+using server_detail::server_update_header_bits;
 
 struct OutboundPacket {
     ClientId client = invalid_client_id;
     BitBuffer packet;
 };
 
-bool init_frame_data(const SyncArchetype& archetype, QuantizedFrameData& frame) {
-    if (archetype.tags.size() > 64U ||
-        archetype.components.size() > 63U ||
-        archetype.component_offsets.size() != archetype.components.size() ||
-        archetype.component_ops.size() != archetype.components.size()) {
-        return false;
-    }
-    frame.tag_mask = 0;
-    frame.present_mask = 0;
-    frame.bytes.assign(archetype.total_quantized_bytes, 0U);
-    return true;
-}
-
-std::size_t sync_slot_count(const SyncArchetype& archetype) noexcept {
-    return archetype.components.size() + 1U;
-}
-
-bool has_tag_slot(const SyncArchetype& archetype) noexcept {
-    return !archetype.tags.empty();
-}
-
-std::uint64_t sync_slot_bit(std::size_t slot) noexcept {
-    return std::uint64_t{1} << slot;
-}
-
-bool frame_has_component(const QuantizedFrameData& frame, std::size_t component_index) {
-    return component_index < 64U && (frame.present_mask & (std::uint64_t{1} << component_index)) != 0U;
-}
-
 #ifdef KAGE_SYNC_ENABLE_TRACING
-SyncTraceEvent make_server_trace_event(SyncTraceEventType type, ClientId client, SyncFrame frame) {
-    SyncTraceEvent event;
-    event.type = type;
-    event.role = SyncTraceRole::Server;
-    event.client = client;
-    event.frame = frame;
-    return event;
-}
+using server_detail::make_server_trace_event;
 
 void append_trace_component_data(
     const SyncTracer* tracer,
@@ -217,41 +162,6 @@ std::string packet_ack_list(const std::vector<std::uint32_t>& acks) {
 
 #endif
 
-const std::uint8_t* frame_component_data(
-    const SyncArchetype& archetype,
-    const QuantizedFrameData& frame,
-    std::size_t component_index) {
-    if (!frame_has_component(frame, component_index) ||
-        component_index >= archetype.component_offsets.size() ||
-        component_index >= archetype.component_ops.size()) {
-        return nullptr;
-    }
-    const std::size_t offset = archetype.component_offsets[component_index];
-    const std::size_t size = archetype.component_ops[component_index].quantized_size;
-    if (offset + size > frame.bytes.size()) {
-        return nullptr;
-    }
-    return frame.bytes.data() + offset;
-}
-
-std::uint8_t* mutable_frame_component_data(
-    const SyncArchetype& archetype,
-    QuantizedFrameData& frame,
-    std::size_t component_index) {
-    if (component_index >= 64U ||
-        component_index >= archetype.component_offsets.size() ||
-        component_index >= archetype.component_ops.size()) {
-        return nullptr;
-    }
-    const std::size_t offset = archetype.component_offsets[component_index];
-    const std::size_t size = archetype.component_ops[component_index].quantized_size;
-    if (offset + size > frame.bytes.size()) {
-        return nullptr;
-    }
-    frame.present_mask |= (std::uint64_t{1} << component_index);
-    return frame.bytes.data() + offset;
-}
-
 std::uint64_t visible_tag_mask(
     const ecs::Registry& registry,
     const SyncArchetype& archetype,
@@ -272,47 +182,20 @@ std::uint64_t visible_tag_mask(
     return mask;
 }
 
-BitBuffer make_server_packet(
-    std::size_t mtu_bytes,
-    std::size_t packet_id_bits,
-    SyncFrame frame,
-    std::uint32_t packet_id,
-    SyncFrame input_ack_frame,
-    std::uint16_t entity_count,
-    const BitBuffer& records) {
-    BitBuffer packet;
-    packet.reserve_bytes(mtu_bytes);
-    packet.push_bits(protocol::server_update_message, 8U);
-    packet.push_bits(frame, 32U);
-    packet.push_bits(packet_id, packet_id_bits);
-    packet.push_bits(input_ack_frame, 32U);
-    packet.push_bits(entity_count, 16U);
-    packet.push_buffer_bits(records);
-    return packet;
-}
-
 }  // namespace
 
 ReplicationServer::ReplicationServer(ReplicationServerOptions options)
-    : options_(options) {
-    if (!protocol::valid_network_entity_id_tier0_bits(options_.network_entity_id_tier0_bits)) {
-        throw std::invalid_argument("network entity id tier0 bits must be in [1, 22]");
-    }
-    if (options_.fixed_dt_seconds <= 0.0 || !std::isfinite(options_.fixed_dt_seconds)) {
-        throw std::invalid_argument("fixed dt seconds must be finite and positive");
-    }
-    if (options_.connect_resend_interval_seconds <= 0.0 ||
-        !std::isfinite(options_.connect_resend_interval_seconds)) {
-        throw std::invalid_argument("connect resend interval seconds must be finite and positive");
-    }
-    if (options_.idle_client_timeout_seconds < 0.0 ||
-        !std::isfinite(options_.idle_client_timeout_seconds)) {
-        throw std::invalid_argument("idle client timeout seconds must be finite and non-negative");
-    }
-    if (!is_power_of_two(options_.input_buffer_capacity_frames)) {
-        throw std::invalid_argument("input buffer capacity must be a nonzero power of two");
-    }
-}
+    : options_(detail::validate_server_options(std::move(options))) {}
+
+ReplicationServer::~ReplicationServer() = default;
+
+ReplicationServer::ReplicationServer(const ReplicationServer& other) = default;
+
+ReplicationServer& ReplicationServer::operator=(const ReplicationServer& other) = default;
+
+ReplicationServer::ReplicationServer(ReplicationServer&& other) noexcept = default;
+
+ReplicationServer& ReplicationServer::operator=(ReplicationServer&& other) noexcept = default;
 
 void ReplicationServer::set_transport(TransportFn transport) {
     options_.transport = std::move(transport);
@@ -2380,206 +2263,6 @@ std::uint32_t ReplicationServer::find_or_create_quantized_frame(
     return index;
 }
 
-void ReplicationServer::retain_quantized_frame(std::uint32_t quantized_frame) {
-    if (quantized_frame != invalid_quantized_frame_id &&
-        quantized_frame < quantized_frames_.size() &&
-        quantized_frames_[quantized_frame].active) {
-        ++quantized_frames_[quantized_frame].ref_count;
-    }
-}
-
-void ReplicationServer::release_quantized_frame(std::uint32_t quantized_frame) {
-    if (quantized_frame == invalid_quantized_frame_id ||
-        quantized_frame >= quantized_frames_.size() ||
-        !quantized_frames_[quantized_frame].active) {
-        return;
-    }
-
-    QuantizedFrame& current = quantized_frames_[quantized_frame];
-    if (current.ref_count == 0) {
-        if (current.slot < replicated_.size()) {
-            std::vector<std::uint32_t>& slot_quantized_frames = replicated_[current.slot].quantized_frames;
-            slot_quantized_frames.erase(
-                std::remove(slot_quantized_frames.begin(), slot_quantized_frames.end(), quantized_frame),
-                slot_quantized_frames.end());
-        }
-        current.active = false;
-        current.data.clear();
-        current.dirty_generations.clear();
-        free_quantized_frames_.push_back(quantized_frame);
-        return;
-    }
-
-    --current.ref_count;
-    if (current.ref_count == 0) {
-        if (current.slot < replicated_.size()) {
-            std::vector<std::uint32_t>& slot_quantized_frames = replicated_[current.slot].quantized_frames;
-            slot_quantized_frames.erase(
-                std::remove(slot_quantized_frames.begin(), slot_quantized_frames.end(), quantized_frame),
-                slot_quantized_frames.end());
-        }
-        current.active = false;
-        current.data.clear();
-        current.dirty_generations.clear();
-        free_quantized_frames_.push_back(quantized_frame);
-    }
-}
-
-void ReplicationServer::clear_client_entity_state(ClientEntityState& state) {
-    release_quantized_frame(state.baseline);
-    for (const ClientEntityState::PendingQuantizedFrame& pending : state.pending) {
-        release_quantized_frame(pending.quantized_frame);
-    }
-    state.baseline = invalid_quantized_frame_id;
-    state.pending.clear();
-    state.network_id = 0;
-    state.network_version = 0;
-    state.priority = 0;
-    state.component_mask = std::numeric_limits<std::uint64_t>::max();
-    state.priority_frame = 0;
-    state.priority_replicate = true;
-    state.reference_priority_boost_pending = false;
-    state.has_network_id = false;
-    state.pending_cues.clear();
-}
-
-void ReplicationServer::acknowledge_cues(ClientEntityState& state, SyncFrame frame) {
-    state.pending_cues.erase(
-        std::remove_if(
-            state.pending_cues.begin(),
-            state.pending_cues.end(),
-            [frame](const ClientEntityState::PendingCue& cue) {
-                return cue.frame <= frame;
-            }),
-        state.pending_cues.end());
-}
-
-bool ReplicationServer::acknowledge_destroy(ClientState& client, ecs::Entity entity, SyncFrame frame) {
-    const auto found = std::find_if(
-        client.pending_destroys.begin(),
-        client.pending_destroys.end(),
-        [entity, frame](const ClientDestroyState& pending) {
-            return pending.entity == entity && frame <= pending.frame;
-        });
-    if (found == client.pending_destroys.end()) {
-        return false;
-    }
-
-    const std::uint32_t network_id = found->network_id;
-    client.pending_destroys.erase(found);
-    free_network_id(client, network_id);
-    return true;
-}
-
-bool ReplicationServer::acknowledge_packet(ClientState& client, std::uint32_t packet_id) {
-    const auto found = std::find_if(
-        client.pending_packet_acks.begin(),
-        client.pending_packet_acks.end(),
-        [packet_id](const PendingPacketAck& pending) {
-            return pending.packet_id == packet_id;
-        });
-    if (found == client.pending_packet_acks.end()) {
-        return false;
-    }
-
-    bool all_valid = true;
-    for (const PacketAckRecord& record : found->records) {
-        const bool accepted = record.destroy
-            ? acknowledge_destroy(client, record.entity, record.frame)
-            : acknowledge_entity(client.id, record.entity, record.frame);
-        all_valid = accepted && all_valid;
-    }
-    client.pending_packet_acks.erase(found);
-    return all_valid;
-}
-
-bool ReplicationServer::packet_ack_record_pending(const ClientState& client, const PacketAckRecord& record) const {
-    if (record.destroy) {
-        return std::any_of(
-            client.pending_destroys.begin(),
-            client.pending_destroys.end(),
-            [&](const ClientDestroyState& pending) {
-                return pending.entity == record.entity && record.frame <= pending.frame;
-            });
-    }
-
-    const auto found_slot = entity_to_slot_.find(record.entity.value);
-    if (found_slot == entity_to_slot_.end()) {
-        return false;
-    }
-    const std::uint32_t slot = found_slot->second;
-    if (slot >= client.entity_states.size()) {
-        return false;
-    }
-    const ClientEntityState& state = client.entity_states[slot];
-    return std::any_of(
-        state.pending.begin(),
-        state.pending.end(),
-        [&](const ClientEntityState::PendingQuantizedFrame& pending) {
-            return pending.frame == record.frame;
-        });
-}
-
-void ReplicationServer::cleanup_packet_acks(ClientState& client) {
-    client.pending_packet_acks.erase(
-        std::remove_if(
-            client.pending_packet_acks.begin(),
-            client.pending_packet_acks.end(),
-            [&](const PendingPacketAck& pending_packet) {
-                return std::none_of(
-                    pending_packet.records.begin(),
-                    pending_packet.records.end(),
-                    [&](const PacketAckRecord& record) {
-                        return packet_ack_record_pending(client, record);
-                    });
-            }),
-        client.pending_packet_acks.end());
-}
-
-std::uint32_t ReplicationServer::allocate_packet_id(ClientState& client) {
-    const std::size_t packet_id_bits = configured_packet_id_bits(options_);
-    const std::uint32_t max_packet_id = protocol::packet_id_mask(packet_id_bits);
-    if (client.next_packet_id == 0U || client.next_packet_id > max_packet_id) {
-        client.next_packet_id = 1U;
-    }
-
-    const std::uint32_t packet_id = client.next_packet_id;
-    client.next_packet_id = packet_id == max_packet_id ? 1U : packet_id + 1U;
-    client.pending_packet_acks.erase(
-        std::remove_if(
-            client.pending_packet_acks.begin(),
-            client.pending_packet_acks.end(),
-            [packet_id](const PendingPacketAck& pending) {
-                return pending.packet_id == packet_id;
-            }),
-        client.pending_packet_acks.end());
-    return packet_id;
-}
-
-void ReplicationServer::enforce_pending_packet_ack_limit(ClientState& client) {
-    while (client.pending_packet_acks.size() > options_.max_pending_packet_acks_per_client) {
-        client.pending_packet_acks.erase(client.pending_packet_acks.begin());
-    }
-}
-
-bool ReplicationServer::same_quantized_frame_components(
-    const QuantizedFrame& quantized_frame,
-    const QuantizedFrameData& data,
-    const std::vector<std::uint64_t>& dirty_generations) const {
-    if (quantized_frame.data.tag_mask != data.tag_mask ||
-        quantized_frame.data.present_mask != data.present_mask ||
-        quantized_frame.data.bytes != data.bytes ||
-        quantized_frame.dirty_generations.size() != dirty_generations.size()) {
-        return false;
-    }
-    for (std::size_t index = 0; index < dirty_generations.size(); ++index) {
-        if (quantized_frame.dirty_generations[index] != dirty_generations[index]) {
-            return false;
-        }
-    }
-    return true;
-}
-
 void ReplicationServer::write_entity_record(
     const ecs::Registry& registry,
     const SyncSettings& settings,
@@ -2871,80 +2554,6 @@ void ReplicationServer::write_entity_record(
     }
 
     (void)registry;
-}
-
-void ReplicationServer::track_packet_ack(
-    ClientState& client,
-    std::uint32_t packet_id,
-    const std::vector<PacketAckRecord>& records) {
-    if (records.empty()) {
-        return;
-    }
-    client.pending_packet_acks.push_back(PendingPacketAck{packet_id, records});
-}
-
-void ReplicationServer::send_packet(
-    ClientState& client,
-    SyncFrame frame,
-    std::uint16_t entity_count,
-    const BitBuffer& records,
-    const std::vector<PacketAckRecord>& ack_records) {
-    if (!options_.transport || entity_count == 0) {
-        return;
-    }
-
-    const std::uint32_t packet_id = allocate_packet_id(client);
-    BitBuffer packet =
-        make_server_packet(
-            options_.mtu_bytes,
-            configured_packet_id_bits(options_),
-            frame,
-            packet_id,
-            client.input_ack_frame,
-            entity_count,
-            records);
-    track_packet_ack(client, packet_id, ack_records);
-    enforce_pending_packet_ack_limit(client);
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
-    trace_outgoing_update_packet(client, frame, packet_id, client.input_ack_frame, ack_records);
-#endif
-    options_.transport(client.peer, packet);
-}
-
-void ReplicationServer::send_connect_response(ClientState& client) {
-    if (!options_.transport) {
-        return;
-    }
-    BitBuffer packet;
-    packet.reserve_bytes(options_.mtu_bytes);
-    packet.push_bits(protocol::server_connect_response_message, 8U);
-    packet.push_bool(true);
-    packet.push_unsigned_bits(client.id, 64U);
-    options_.transport(client.peer, packet);
-}
-
-void ReplicationServer::send_pong(
-    ClientId peer,
-    std::uint32_t sequence,
-    SyncFrame send_frame,
-    std::uint16_t send_subframe) {
-    if (!options_.transport) {
-        return;
-    }
-    const double subframe = tick_accumulator_seconds_ / options_.fixed_dt_seconds;
-    const auto server_subframe = static_cast<std::uint16_t>(std::clamp(
-        static_cast<std::uint32_t>(std::floor(subframe * static_cast<double>(protocol::frame_subframe_scale))),
-        std::uint32_t{0},
-        protocol::frame_subframe_scale - 1U));
-    BitBuffer packet;
-    packet.reserve_bytes(options_.mtu_bytes);
-    packet.push_bits(protocol::server_pong_message, 8U);
-    packet.push_bits(sequence, 32U);
-    packet.push_bits(send_frame, 32U);
-    packet.push_bits(send_subframe, protocol::frame_subframe_bits);
-    packet.push_bits(frame_, 32U);
-    packet.push_bits(server_subframe, protocol::frame_subframe_bits);
-    options_.transport(peer, packet);
 }
 
 bool ReplicationServer::valid_archetype(const ecs::Registry& registry, SyncArchetypeId archetype) const {
