@@ -159,6 +159,21 @@ TEST_CASE("sync archetypes reject unregistered component ids") {
         std::invalid_argument);
 }
 
+TEST_CASE("sync archetypes reject duplicate component declarations") {
+    ecs::Registry registry;
+    const ecs::Entity position_component = kage::sync::register_sync_component<Position>(registry, "Position");
+
+    REQUIRE_THROWS_AS(
+        kage::sync::define_archetype(
+            registry,
+            "Duplicate",
+            {
+                {position_component, kage::sync::ReplicationAudience::All},
+                {position_component, kage::sync::ReplicationAudience::Owner},
+            }),
+        std::invalid_argument);
+}
+
 TEST_CASE("sync archetypes reject components without sync traits") {
     ecs::Registry registry;
     const ecs::Entity position_component = registry.register_component<Position>("Position");

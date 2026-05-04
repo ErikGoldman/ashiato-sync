@@ -123,6 +123,13 @@ SyncArchetypeId define_archetype(ecs::Registry& registry, SyncArchetypeDesc desc
     for (const ComponentReplication& replication : desc.components) {
         validate_component_replication(registry, replication);
     }
+    for (std::size_t lhs = 0; lhs < desc.components.size(); ++lhs) {
+        for (std::size_t rhs = lhs + 1U; rhs < desc.components.size(); ++rhs) {
+            if (desc.components[lhs].component == desc.components[rhs].component) {
+                throw std::invalid_argument("sync archetype contains duplicate components");
+            }
+        }
+    }
 
     SyncSettings& settings = registry.write<SyncSettings>();
     std::vector<SyncComponentOps> component_ops;
