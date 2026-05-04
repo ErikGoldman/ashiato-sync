@@ -147,7 +147,7 @@ bool parse_replay_token(const std::string& token, kage::sync::ClientId& out) {
 }
 
 void send_replay_done(SocketHandle socket, const sockaddr_in& target) {
-    kage::sync::BitBuffer packet;
+    ecs::BitBuffer packet;
     packet.push_bits(replay_done_message, 8U);
     send_packet(socket, target, packet);
 }
@@ -430,7 +430,7 @@ void emit_replay_cues(ecs::Registry& registry, const std::vector<ReplayCueRecord
                 cue.only_replicate_to_owner);
         } else if (cue.type == surface_type) {
             SurfaceHitCue value;
-            kage::sync::BitBuffer payload;
+            ecs::BitBuffer payload;
             payload.push_bytes(cue.payload.data(), cue.payload.size());
             if (kage::sync::SyncCueTraits<SurfaceHitCue>::deserialize(payload, value)) {
                 (void)kage::sync::emit_cue(
@@ -494,7 +494,7 @@ struct FpsReplayServer::Session {
         kage::sync::ClientId victim_client,
         kage::sync::SyncFrame death_frame,
         std::uint64_t recorded_killer_entity_value,
-        const kage::sync::BitBuffer& connect_packet)
+        const ecs::BitBuffer& connect_packet)
         : end_frame(death_frame + replay_tail_frames),
           address(peer_address),
           killer_entity_value(recorded_killer_entity_value) {
@@ -534,7 +534,7 @@ struct FpsReplayServer::Session {
             accepted = victim_client;
             return true;
         };
-        options.transport = [socket, peer_address](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+        options.transport = [socket, peer_address](kage::sync::ClientId, const ecs::BitBuffer& packet) {
             send_packet(socket, peer_address, packet);
         };
         server = std::make_unique<kage::sync::ReplicationServer>(options);
@@ -542,8 +542,8 @@ struct FpsReplayServer::Session {
         next_entry = start;
     }
 
-    void receive(kage::sync::ClientId peer, kage::sync::BitBuffer packet) {
-        kage::sync::BitBuffer copy = packet;
+    void receive(kage::sync::ClientId peer, ecs::BitBuffer packet) {
+        ecs::BitBuffer copy = packet;
         std::uint8_t message = 0U;
         if (copy.remaining_bits() >= 8U) {
             message = static_cast<std::uint8_t>(copy.read_bits(8U));
@@ -685,8 +685,8 @@ void FpsReplayServer::record_death(
 bool FpsReplayServer::begin_session(
     kage::sync::ClientId peer,
     const sockaddr_in& address,
-    const kage::sync::BitBuffer& packet) {
-    kage::sync::BitBuffer copy = packet;
+    const ecs::BitBuffer& packet) {
+    ecs::BitBuffer copy = packet;
     if (copy.remaining_bits() < 8U ||
         static_cast<std::uint8_t>(copy.read_bits(8U)) != kage::sync::protocol::client_connect_request_message) {
         return false;
@@ -720,7 +720,7 @@ bool FpsReplayServer::begin_session(
 }
 
 void FpsReplayServer::tick(double dt_seconds) {
-    kage::sync::BitBuffer packet;
+    ecs::BitBuffer packet;
     sockaddr_in sender{};
     while (receive_packet(socket_, packet, &sender)) {
         const kage::sync::ClientId peer = peer_id(sender);
@@ -771,7 +771,7 @@ void FpsDeathCamClient::start(const std::string& host, std::uint16_t replay_port
     options.interpolation_buffer_capacity_frames = 64;
     options.auto_interpolation_buffer_frames = false;
     client_ = std::make_unique<kage::sync::ReplicationClient>(options);
-    client_->set_packet_sender([this](const kage::sync::BitBuffer& packet) {
+    client_->set_packet_sender([this](const ecs::BitBuffer& packet) {
         send_packet(socket_, server_address_, packet);
     });
     active_seconds_ = 0.0f;
@@ -785,7 +785,7 @@ void FpsDeathCamClient::tick(float dt_seconds) {
         return;
     }
     active_seconds_ += dt_seconds;
-    kage::sync::BitBuffer packet;
+    ecs::BitBuffer packet;
     while (receive_packet(socket_, packet)) {
         if (is_replay_done_packet(packet)) {
             replay_done_received_ = true;
@@ -819,7 +819,7 @@ void FpsDeathCamClient::stop() {
     replay_done_drain_seconds_ = 0.0f;
 }
 
-bool is_replay_done_packet(kage::sync::BitBuffer packet) {
+bool is_replay_done_packet(ecs::BitBuffer packet) {
     return packet.remaining_bits() >= 8U &&
         static_cast<std::uint8_t>(packet.read_bits(8U)) == replay_done_message;
 }

@@ -33,9 +33,9 @@ TEST_CASE("sync tracing records server send client receive and apply events") {
         server_entity,
         kage_sync_tests::NetworkedPosition{1.0f, 2.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -85,9 +85,9 @@ TEST_CASE("cue tracing records lifecycle events and uses frame data gating") {
             server_entity,
             kage_sync_tests::Position{1.0f, 2.0f}) != nullptr);
 
-        std::vector<kage::sync::BitBuffer> packets;
+        std::vector<ecs::BitBuffer> packets;
         kage::sync::ReplicationServerOptions server_options;
-        server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+        server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
             packets.push_back(packet);
         };
         kage::sync::ReplicationServer server(server_options);
@@ -165,9 +165,9 @@ TEST_CASE("server transport traces job-emitted cues at authoritative snapshot fr
             }
         });
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -211,9 +211,9 @@ TEST_CASE("client tracing records clock skew timing decisions") {
         server_entity,
         kage_sync_tests::NetworkedPosition{1.0f, 2.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -301,8 +301,8 @@ TEST_CASE("packet log tracing records client input baseline and server received 
     client.set_tracer(&client_tracer);
     REQUIRE(client.set_input(client_registry, kage_sync_tests::NetworkedPosition{5.0f, 6.0f}));
     REQUIRE(client.tick(client_registry, client.options().fixed_dt_seconds));
-    std::vector<kage::sync::BitBuffer> input_packets = client.drain_packets();
-    auto input_packet = std::find_if(input_packets.begin(), input_packets.end(), [](kage::sync::BitBuffer packet) {
+    std::vector<ecs::BitBuffer> input_packets = client.drain_packets();
+    auto input_packet = std::find_if(input_packets.begin(), input_packets.end(), [](ecs::BitBuffer packet) {
         return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
     });
     REQUIRE(input_packet != input_packets.end());
@@ -326,7 +326,7 @@ TEST_CASE("packet log tracing records client input baseline and server received 
     server_tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
         [&](const kage::sync::SyncTraceEvent& event) { server_events.push_back(event); }});
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
+    server_options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
     kage::sync::ReplicationServer server(server_options);
     server.set_tracer(&server_tracer);
     REQUIRE(server.add_client(1));
@@ -358,7 +358,7 @@ TEST_CASE("server input tracing records input components and stale input starvat
         [&](const kage::sync::SyncTraceEvent& event) { server_events.push_back(event); }});
 
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
+    server_options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
     kage::sync::ReplicationServer server(server_options);
     server.set_tracer(&server_tracer);
     REQUIRE(server.add_client(1));
@@ -371,8 +371,8 @@ TEST_CASE("server input tracing records input components and stale input starvat
     kage::sync::ReplicationClient client;
     REQUIRE(client.set_input(client_registry, kage_sync_tests::NetworkedPosition{5.0f, 6.0f}));
     REQUIRE(client.tick(client_registry, client.options().fixed_dt_seconds));
-    std::vector<kage::sync::BitBuffer> input_packets = client.drain_packets();
-    auto input_packet = std::find_if(input_packets.begin(), input_packets.end(), [](kage::sync::BitBuffer packet) {
+    std::vector<ecs::BitBuffer> input_packets = client.drain_packets();
+    auto input_packet = std::find_if(input_packets.begin(), input_packets.end(), [](ecs::BitBuffer packet) {
         return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
     });
     REQUIRE(input_packet != input_packets.end());
@@ -442,7 +442,7 @@ TEST_CASE("server input tracing records starvation before any input arrives") {
         [&](const kage::sync::SyncTraceEvent& event) { server_events.push_back(event); }});
 
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
+    server_options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
     kage::sync::ReplicationServer server(server_options);
     server.set_tracer(&server_tracer);
     REQUIRE(server.add_client(1));
@@ -475,7 +475,7 @@ TEST_CASE("token client bootstraps input packets that server traces after first 
     REQUIRE(kage::sync::set_owner(server_registry, owned, 1));
     REQUIRE(start_sync(server_registry, owned, server_archetype));
 
-    std::vector<kage::sync::BitBuffer> server_packets;
+    std::vector<ecs::BitBuffer> server_packets;
     std::vector<kage::sync::SyncTraceEvent> server_events;
     kage::sync::SyncTracer server_tracer;
     server_tracer.set_frame_data_enabled(true);
@@ -483,7 +483,7 @@ TEST_CASE("token client bootstraps input packets that server traces after first 
         [&](const kage::sync::SyncTraceEvent& event) { server_events.push_back(event); }});
 
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         server_packets.push_back(packet);
     };
     server_options.connect_handler = [](const std::string&, kage::sync::ClientId&, std::string&) {
@@ -503,7 +503,7 @@ TEST_CASE("token client bootstraps input packets that server traces after first 
     kage::sync::ReplicationClient client(client_options);
     REQUIRE(client.set_input(client_registry, kage_sync_tests::NetworkedPosition{5.0f, 6.0f}));
 
-    std::vector<kage::sync::BitBuffer> client_packets = client.drain_packets();
+    std::vector<ecs::BitBuffer> client_packets = client.drain_packets();
     REQUIRE(client_packets.size() == 1);
     REQUIRE(server.process_packet(server_registry, 1, client_packets[0]));
     REQUIRE_FALSE(server_packets.empty());
@@ -511,22 +511,22 @@ TEST_CASE("token client bootstraps input packets that server traces after first 
     server_packets.clear();
 
     client_packets = client.drain_packets();
-    REQUIRE(std::any_of(client_packets.begin(), client_packets.end(), [](kage::sync::BitBuffer packet) {
+    REQUIRE(std::any_of(client_packets.begin(), client_packets.end(), [](ecs::BitBuffer packet) {
         return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_connect_ack_message;
     }));
-    for (const kage::sync::BitBuffer& packet : client_packets) {
+    for (const ecs::BitBuffer& packet : client_packets) {
         REQUIRE(server.process_packet(server_registry, 1, packet));
     }
 
     server.tick(server_registry);
     REQUIRE_FALSE(server_packets.empty());
-    for (const kage::sync::BitBuffer& packet : server_packets) {
+    for (const ecs::BitBuffer& packet : server_packets) {
         (void)client.receive(client_registry, packet);
     }
     server_packets.clear();
 
     client_packets = client.drain_packets();
-    const auto input_packet = std::find_if(client_packets.begin(), client_packets.end(), [](kage::sync::BitBuffer packet) {
+    const auto input_packet = std::find_if(client_packets.begin(), client_packets.end(), [](ecs::BitBuffer packet) {
         return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
     });
     REQUIRE(input_packet != client_packets.end());

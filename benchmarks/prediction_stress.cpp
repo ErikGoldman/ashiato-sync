@@ -105,11 +105,11 @@ struct SyncComponentTraits<prediction_stress::PredPosition> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -153,11 +153,11 @@ struct SyncComponentTraits<prediction_stress::PredVelocity> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -181,11 +181,11 @@ struct SyncComponentTraits<prediction_stress::PredAcceleration> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -209,11 +209,11 @@ struct SyncComponentTraits<prediction_stress::PredEnergy> {
         return prediction_stress::PredEnergy{value};
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bits(current, 32U);
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         out = static_cast<std::int32_t>(in.read_bits(32U));
         return true;
     }
@@ -235,11 +235,11 @@ struct SyncComponentTraits<prediction_stress::PredFlags> {
         return prediction_stress::PredFlags{value};
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_unsigned_bits(current, 32U);
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         out = static_cast<std::uint32_t>(in.read_unsigned_bits(32U));
         return true;
     }
@@ -458,13 +458,13 @@ Report run(const Config& config) {
     configure_client(client_registry, 1);
     (void)define_schema(client_registry);
 
-    std::vector<std::vector<BitBuffer>> downstream(static_cast<std::size_t>(config.latency_frames) + 1U);
+    std::vector<std::vector<ecs::BitBuffer>> downstream(static_cast<std::size_t>(config.latency_frames) + 1U);
     std::uint32_t current_tick = 0;
     ReplicationServerOptions server_options;
     server_options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(config.entities) * 512U;
     server_options.mtu_bytes = 1200;
     server_options.fixed_dt_seconds = 1.0 / 60.0;
-    server_options.transport = [&](ClientId, const BitBuffer& packet) {
+    server_options.transport = [&](ClientId, const ecs::BitBuffer& packet) {
         const std::uint32_t due_tick = current_tick + config.latency_frames;
         downstream[due_tick % downstream.size()].push_back(packet);
         ++report.server_packets;
@@ -488,8 +488,8 @@ Report run(const Config& config) {
     for (current_tick = 0; current_tick < total_ticks; ++current_tick) {
         {
             ScopedTimer timer(report.timing.client_receive_seconds);
-            std::vector<BitBuffer>& due = downstream[current_tick % downstream.size()];
-            for (const BitBuffer& packet : due) {
+            std::vector<ecs::BitBuffer>& due = downstream[current_tick % downstream.size()];
+            for (const ecs::BitBuffer& packet : due) {
                 if (client.receive(client_registry, packet)) {
                     ++report.delivered_server_packets;
                 }
@@ -504,7 +504,7 @@ Report run(const Config& config) {
 
         {
             ScopedTimer timer(report.timing.ack_processing_seconds);
-            for (const BitBuffer& packet : client.drain_packets()) {
+            for (const ecs::BitBuffer& packet : client.drain_packets()) {
                 ++report.client_packets;
                 report.client_bytes += packet.byte_size();
                 server.process_packet(1, packet);

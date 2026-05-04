@@ -57,7 +57,7 @@ kage::sync::ClientId peer_id(const sockaddr_in& address) {
         static_cast<kage::sync::ClientId>(ntohl(address.sin_addr.s_addr));
 }
 
-bool receive_packet(SocketHandle socket, kage::sync::BitBuffer& packet, sockaddr_in* sender) {
+bool receive_packet(SocketHandle socket, ecs::BitBuffer& packet, sockaddr_in* sender) {
     std::array<char, 2048> bytes{};
     sockaddr_in source{};
 #ifdef _WIN32
@@ -83,7 +83,7 @@ bool receive_packet(SocketHandle socket, kage::sync::BitBuffer& packet, sockaddr
     return true;
 }
 
-void send_packet(SocketHandle socket, const sockaddr_in& target, const kage::sync::BitBuffer& packet) {
+void send_packet(SocketHandle socket, const sockaddr_in& target, const ecs::BitBuffer& packet) {
     const auto* data = reinterpret_cast<const char*>(packet.data());
     sendto(socket, data, static_cast<int>(packet.byte_size()), 0, reinterpret_cast<const sockaddr*>(&target), sizeof(target));
 }

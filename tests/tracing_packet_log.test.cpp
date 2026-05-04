@@ -37,14 +37,14 @@ TEST_CASE("packet log tracing is opt-in and records client and server packet det
         server_entity,
         kage_sync_tests::NetworkedPosition{1.0f, 2.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> server_packets;
+    std::vector<ecs::BitBuffer> server_packets;
     std::vector<kage::sync::SyncTraceEvent> server_events;
     kage::sync::SyncTracer server_tracer;
     server_tracer.set_packet_logs_enabled(true);
     server_tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
         [&](const kage::sync::SyncTraceEvent& event) { server_events.push_back(event); }});
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         server_packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -79,7 +79,7 @@ TEST_CASE("packet log tracing is opt-in and records client and server packet det
             event.data.find("message=server_update") != std::string::npos &&
             event.data.find("sequence=1") != std::string::npos;
     }));
-    std::vector<kage::sync::BitBuffer> ack_packets = client.drain_ack_packets();
+    std::vector<ecs::BitBuffer> ack_packets = client.drain_ack_packets();
     REQUIRE(ack_packets.size() == 1);
     REQUIRE(std::any_of(client_events.begin(), client_events.end(), [](const kage::sync::SyncTraceEvent& event) {
         return event.type == kage::sync::SyncTraceEventType::PacketLog &&
@@ -104,9 +104,9 @@ TEST_CASE("packet log tracing records ACK-only traffic as client ACK packets") {
         server_entity,
         kage_sync_tests::NetworkedPosition{1.0f, 2.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> server_packets;
+    std::vector<ecs::BitBuffer> server_packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         server_packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -130,11 +130,11 @@ TEST_CASE("packet log tracing records ACK-only traffic as client ACK packets") {
     client.set_tracer(&client_tracer);
     REQUIRE(client.receive(client_registry, server_packets[0]));
 
-    std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
-    REQUIRE(std::any_of(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+    std::vector<ecs::BitBuffer> packets = client.drain_packets();
+    REQUIRE(std::any_of(packets.begin(), packets.end(), [](ecs::BitBuffer packet) {
         return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_ack_message;
     }));
-    REQUIRE(std::none_of(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+    REQUIRE(std::none_of(packets.begin(), packets.end(), [](ecs::BitBuffer packet) {
         return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
     }));
     REQUIRE(std::any_of(client_events.begin(), client_events.end(), [](const kage::sync::SyncTraceEvent& event) {
@@ -160,7 +160,7 @@ TEST_CASE("packet log tracing records cue summaries and cue payload data") {
         server_entity,
         kage_sync_tests::Position{1.0f, 2.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     std::vector<kage::sync::SyncTraceEvent> server_events;
     kage::sync::SyncTracer server_tracer;
     server_tracer.set_packet_logs_enabled(true);
@@ -168,7 +168,7 @@ TEST_CASE("packet log tracing records cue summaries and cue payload data") {
     server_tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
         [&](const kage::sync::SyncTraceEvent& event) { server_events.push_back(event); }});
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);

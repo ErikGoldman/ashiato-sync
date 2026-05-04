@@ -73,7 +73,7 @@ struct CuePlayback {
     float last_late_seconds = 0.0f;
 };
 
-inline NetworkedPayload read_networked_payload(kage::sync::BitBuffer payload) {
+inline NetworkedPayload read_networked_payload(ecs::BitBuffer payload) {
     return NetworkedPayload{
         payload.read_bool(),
         payload.read_bits(8U),
@@ -96,11 +96,11 @@ namespace kage::sync {
 
 template <>
 struct SyncCueTraits<kage_sync_tests::TestCue> {
-    static void serialize(const kage_sync_tests::TestCue& cue, BitBuffer& out) {
+    static void serialize(const kage_sync_tests::TestCue& cue, ecs::BitBuffer& out) {
         out.push_bits(cue.id, 16U);
     }
 
-    static bool deserialize(BitBuffer& in, kage_sync_tests::TestCue& out) {
+    static bool deserialize(ecs::BitBuffer& in, kage_sync_tests::TestCue& out) {
         out.id = static_cast<std::int32_t>(in.read_bits(16U));
         return true;
     }
@@ -150,13 +150,13 @@ template <>
 struct SyncCueTraits<kage_sync_tests::ReferenceCue> {
     static void serialize(
         const kage_sync_tests::ReferenceCue& cue,
-        BitBuffer& out,
+        ecs::BitBuffer& out,
         EntityReferenceContext& references) {
         (void)write_entity_reference(out, cue.target, references);
     }
 
     static bool deserialize(
-        BitBuffer& in,
+        ecs::BitBuffer& in,
         kage_sync_tests::ReferenceCue& out,
         EntityReferenceContext& references) {
         return read_entity_reference(in, references, out.target);
@@ -217,12 +217,12 @@ struct SyncComponentTraits<kage_sync_tests::PredictedPosition> {
         };
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bits(current.x, 16U);
         out.push_bits(current.y, 16U);
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         out.x = static_cast<std::int32_t>(in.read_bits(16U));
         out.y = static_cast<std::int32_t>(in.read_bits(16U));
         return true;
@@ -291,7 +291,7 @@ struct SyncComponentTraits<kage_sync_tests::NetworkedPosition> {
         };
     }
 
-    static void serialize(const Quantized* previous, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized* previous, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bool(previous != nullptr);
         const std::int32_t x = previous == nullptr ? current.x : current.x - previous->x;
         const std::int32_t y = previous == nullptr ? current.y : current.y - previous->y;
@@ -299,7 +299,7 @@ struct SyncComponentTraits<kage_sync_tests::NetworkedPosition> {
         out.push_bits(y, 8U);
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized* previous, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized* previous, Quantized& out) {
         const bool delta = in.read_bool();
         const auto x = static_cast<std::int32_t>(in.read_bits(8U));
         const auto y = static_cast<std::int32_t>(in.read_bits(8U));
@@ -337,11 +337,11 @@ struct SyncComponentTraits<kage_sync_tests::SmoothPosition> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -397,13 +397,13 @@ struct SyncComponentTraits<kage_sync_tests::TargetReference> {
     static void serialize(
         const Quantized*,
         const Quantized& current,
-        BitBuffer& out,
+        ecs::BitBuffer& out,
         EntityReferenceContext& references) {
         (void)write_entity_reference(out, current.target, references);
     }
 
     static bool deserialize(
-        BitBuffer& in,
+        ecs::BitBuffer& in,
         const Quantized*,
         Quantized& out,
         EntityReferenceContext& references) {
@@ -423,7 +423,7 @@ struct SyncComponentTraits<kage_sync_tests::BandwidthProbe> {
         return kage_sync_tests::BandwidthProbe{value};
     }
 
-    static void serialize(const Quantized* previous, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized* previous, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bool(previous != nullptr);
         if (previous == nullptr) {
             out.push_bits(current, 32U);
@@ -432,7 +432,7 @@ struct SyncComponentTraits<kage_sync_tests::BandwidthProbe> {
         out.push_bits(current - *previous, 8U);
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized* previous, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized* previous, Quantized& out) {
         const bool delta = in.read_bool();
         if (!delta) {
             out = static_cast<std::int32_t>(in.read_bits(32U));

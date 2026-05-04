@@ -37,7 +37,7 @@ struct ReplicationServer::ClientEntityState {
         SyncFrame expire_frame = 0;
         SyncCueTypeId type = 0;
         float relevance_seconds = 0.0f;
-        BitBuffer payload;
+        ecs::BitBuffer payload;
     };
 
     std::uint32_t baseline = invalid_quantized_frame_id;
@@ -107,12 +107,12 @@ struct ReplicationServer::ClientState {
 
 struct ReplicationServer::PendingInboundPacket {
     ClientId client = invalid_client_id;
-    BitBuffer packet;
+    ecs::BitBuffer packet;
 };
 
 struct ReplicationServer::SerializedEntity {
     std::uint32_t quantized_frame = invalid_quantized_frame_id;
-    BitBuffer payload;
+    ecs::BitBuffer payload;
 };
 
 struct ReplicationServer::SerializedCandidate {

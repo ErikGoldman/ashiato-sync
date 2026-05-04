@@ -56,7 +56,7 @@ struct ClientInputPacket {
     bool first_input_full = false;
 };
 
-inline std::vector<AckRecord> read_acks(kage::sync::BitBuffer packet) {
+inline std::vector<AckRecord> read_acks(ecs::BitBuffer packet) {
     REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_ack_message);
     const auto count = static_cast<std::uint16_t>(packet.read_bits(16U));
     std::vector<AckRecord> records;
@@ -69,7 +69,7 @@ inline std::vector<AckRecord> read_acks(kage::sync::BitBuffer packet) {
     return records;
 }
 
-inline ClientInputPacket read_client_input_header(kage::sync::BitBuffer packet) {
+inline ClientInputPacket read_client_input_header(ecs::BitBuffer packet) {
     REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message);
     ClientInputPacket input;
     input.ack_count = static_cast<std::uint16_t>(packet.read_bits(16U));
@@ -93,12 +93,12 @@ inline bool record_ping_sample(
     kage::sync::ReplicationClient& client,
     ecs::Registry& registry,
     kage::sync::SyncFrame receive_frame) {
-    std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
+    std::vector<ecs::BitBuffer> packets = client.drain_packets();
     if (packets.empty()) {
         REQUIRE(client.tick(registry, client.options().ping_interval_seconds));
         packets = client.drain_packets();
     }
-    for (kage::sync::BitBuffer packet : packets) {
+    for (ecs::BitBuffer packet : packets) {
         if (packet.remaining_bits() < 8U) {
             continue;
         }
@@ -108,7 +108,7 @@ inline bool record_ping_sample(
         }
         const auto sequence = static_cast<std::uint32_t>(packet.read_bits(32U));
         const auto send_frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
-        kage::sync::BitBuffer pong;
+        ecs::BitBuffer pong;
         pong.push_bits(kage::sync::protocol::server_pong_message, 8U);
         pong.push_bits(sequence, 32U);
         pong.push_bits(send_frame, 32U);
@@ -122,7 +122,7 @@ struct PingPacket {
     kage::sync::SyncFrame send_frame = 0;
 };
 
-inline bool read_ping_packet(kage::sync::BitBuffer packet, PingPacket& out) {
+inline bool read_ping_packet(ecs::BitBuffer packet, PingPacket& out) {
     if (packet.remaining_bits() < 8U) {
         return false;
     }
@@ -143,7 +143,7 @@ inline bool drain_ping(
     if (dt_seconds > 0.0) {
         REQUIRE(client.tick(registry, dt_seconds));
     }
-    for (kage::sync::BitBuffer packet : client.drain_packets()) {
+    for (ecs::BitBuffer packet : client.drain_packets()) {
         if (read_ping_packet(packet, out)) {
             return true;
         }
@@ -156,14 +156,14 @@ inline bool receive_pong(
     ecs::Registry& registry,
     const PingPacket& ping,
     kage::sync::SyncFrame receive_frame) {
-    kage::sync::BitBuffer pong;
+    ecs::BitBuffer pong;
     pong.push_bits(kage::sync::protocol::server_pong_message, 8U);
     pong.push_bits(ping.sequence, 32U);
     pong.push_bits(ping.send_frame, 32U);
     return client.receive(registry, pong, receive_frame);
 }
 
-inline ClientUpdatePacket read_update(kage::sync::BitBuffer packet, std::size_t sync_slot_count = 2U) {
+inline ClientUpdatePacket read_update(ecs::BitBuffer packet, std::size_t sync_slot_count = 2U) {
     REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::server_update_message);
     ClientUpdatePacket update;
     update.frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
@@ -229,8 +229,8 @@ inline ClientUpdatePacket read_update(kage::sync::BitBuffer packet, std::size_t 
     return update;
 }
 
-inline const kage::sync::BitBuffer& packet_for(
-    const std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>>& packets,
+inline const ecs::BitBuffer& packet_for(
+    const std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>>& packets,
     kage::sync::ClientId client) {
     const auto found = std::find_if(packets.begin(), packets.end(), [&](const auto& sent) {
         return sent.first == client;
@@ -263,12 +263,12 @@ inline kage::sync::ClientEntityNetworkId first_allocated_client_entity_network_i
     return test_client_entity_network_id(client, 1U, version);
 }
 
-inline kage::sync::BitBuffer make_position_packet(
+inline ecs::BitBuffer make_position_packet(
     kage::sync::SyncFrame frame,
     const std::vector<std::pair<ecs::Entity, Position>>& records,
     std::size_t sync_slot_count = 2U,
     std::uint32_t packet_id = 0U) {
-    kage::sync::BitBuffer packet;
+    ecs::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
     packet.push_bits(packet_id == 0U ? frame : packet_id, kage::sync::protocol::server_packet_id_bits);
@@ -289,12 +289,12 @@ inline kage::sync::BitBuffer make_position_packet(
     return packet;
 }
 
-inline kage::sync::BitBuffer make_predicted_position_packet(
+inline ecs::BitBuffer make_predicted_position_packet(
     kage::sync::SyncFrame frame,
     ecs::Entity server_entity,
     PredictedPosition position,
     std::uint32_t packet_id = 0U) {
-    kage::sync::BitBuffer packet;
+    ecs::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
     packet.push_bits(packet_id == 0U ? frame : packet_id, kage::sync::protocol::server_packet_id_bits);
@@ -313,8 +313,8 @@ inline kage::sync::BitBuffer make_predicted_position_packet(
     return packet;
 }
 
-inline kage::sync::BitBuffer make_destroy_packet(kage::sync::SyncFrame frame, ecs::Entity server_entity) {
-    kage::sync::BitBuffer packet;
+inline ecs::BitBuffer make_destroy_packet(kage::sync::SyncFrame frame, ecs::Entity server_entity) {
+    ecs::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
     packet.push_bits(frame, kage::sync::protocol::server_packet_id_bits);
@@ -327,7 +327,7 @@ inline kage::sync::BitBuffer make_destroy_packet(kage::sync::SyncFrame frame, ec
 
 struct ComponentRecord {
     std::uint16_t component_index = 0;
-    kage::sync::BitBuffer payload;
+    ecs::BitBuffer payload;
 };
 
 struct EntityRecord {
@@ -348,15 +348,15 @@ struct ServerUpdatePacket {
     std::vector<EntityRecord> entities;
 };
 
-inline kage::sync::BitBuffer make_connect_request(const std::string& token) {
-    kage::sync::BitBuffer packet;
+inline ecs::BitBuffer make_connect_request(const std::string& token) {
+    ecs::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::client_connect_request_message, 8U);
     kage::sync::protocol::write_string(packet, token);
     return packet;
 }
 
 inline ServerUpdatePacket read_server_update(
-    kage::sync::BitBuffer packet,
+    ecs::BitBuffer packet,
     std::size_t sync_slot_count = 2U,
     std::size_t component_one_payload_bits = 17U,
     std::size_t network_entity_id_tier0_bits =
@@ -445,7 +445,7 @@ inline ServerUpdatePacket read_server_update(
     return update;
 }
 
-inline NetworkedPayload read_first_networked_payload(const kage::sync::BitBuffer& packet) {
+inline NetworkedPayload read_first_networked_payload(const ecs::BitBuffer& packet) {
     const ServerUpdatePacket update = read_server_update(packet);
     REQUIRE(update.message == 1);
     REQUIRE(update.entities.size() == 1);
@@ -453,8 +453,8 @@ inline NetworkedPayload read_first_networked_payload(const kage::sync::BitBuffer
     return read_networked_payload(update.entities[0].components[0].payload);
 }
 
-inline kage::sync::BitBuffer write_ack_packet(std::uint32_t packet_id) {
-    kage::sync::BitBuffer packet;
+inline ecs::BitBuffer write_ack_packet(std::uint32_t packet_id) {
+    ecs::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::client_ack_message, 8U);
     packet.push_bits(1, 16U);
     packet.push_bits(packet_id, kage::sync::protocol::server_packet_id_bits);

@@ -73,11 +73,11 @@ struct SyncComponentTraits<BallPosition> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -152,11 +152,11 @@ struct SyncComponentTraits<BallVelocity> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -212,12 +212,12 @@ namespace kage::sync {
 
 template <>
 struct SyncCueTraits<BallBounceCue> {
-    static void serialize(const BallBounceCue& cue, BitBuffer& out) {
+    static void serialize(const BallBounceCue& cue, ecs::BitBuffer& out) {
         out.push_bits(cue.sequence, 32U);
         out.push_bytes(reinterpret_cast<const char*>(&cue.strength), sizeof(cue.strength));
     }
 
-    static bool deserialize(BitBuffer& in, BallBounceCue& out) {
+    static bool deserialize(ecs::BitBuffer& in, BallBounceCue& out) {
         out.sequence = static_cast<std::uint32_t>(in.read_bits(32U));
         in.read_bytes(reinterpret_cast<char*>(&out.strength), sizeof(out.strength));
         return true;
@@ -260,11 +260,11 @@ struct SyncComponentTraits<BallVisual> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -309,13 +309,13 @@ struct SyncComponentTraits<BallContact> {
     static void serialize(
         const Quantized*,
         const Quantized& current,
-        BitBuffer& out,
+        ecs::BitBuffer& out,
         EntityReferenceContext& references) {
         (void)write_entity_reference(out, current.target, references);
     }
 
     static bool deserialize(
-        BitBuffer& in,
+        ecs::BitBuffer& in,
         const Quantized*,
         Quantized& out,
         EntityReferenceContext& references) {
@@ -351,7 +351,7 @@ struct SyncSchema {
 };
 
 using LinkSettings = kage::sync::SimulatedLinkSettings;
-using LinkSimulator = kage::sync::SimulatedLink<kage::sync::BitBuffer, sockaddr_in>;
+using LinkSimulator = kage::sync::SimulatedLink<ecs::BitBuffer, sockaddr_in>;
 
 struct SampleHistory {
     static constexpr std::size_t capacity = 180;
@@ -453,7 +453,7 @@ sockaddr_in loopback_address(std::uint16_t port) {
     return address;
 }
 
-void send_packet(SocketHandle socket, const sockaddr_in& target, const kage::sync::BitBuffer& packet) {
+void send_packet(SocketHandle socket, const sockaddr_in& target, const ecs::BitBuffer& packet) {
     const auto* data = reinterpret_cast<const char*>(packet.data());
     sendto(socket, data, static_cast<int>(packet.byte_size()), 0, reinterpret_cast<const sockaddr*>(&target), sizeof(target));
 }
@@ -462,7 +462,7 @@ void queue_packet(
     LinkSimulator& link,
     SocketHandle socket,
     const sockaddr_in& target,
-    const kage::sync::BitBuffer& packet,
+    const ecs::BitBuffer& packet,
     RuntimeStats& stats,
     bool downstream) {
     const double now = GetTime();
@@ -477,19 +477,19 @@ void queue_packet(
         stats.up_bytes_window += static_cast<float>(packet.byte_size());
     }
 
-    link.deliver_ready(now, [&](const sockaddr_in& packet_target, const kage::sync::BitBuffer& queued_packet) {
+    link.deliver_ready(now, [&](const sockaddr_in& packet_target, const ecs::BitBuffer& queued_packet) {
         send_packet(socket, packet_target, queued_packet);
     });
 }
 
 void flush_link(LinkSimulator& link, SocketHandle socket) {
     const double now = GetTime();
-    link.deliver_ready(now, [&](const sockaddr_in& target, const kage::sync::BitBuffer& packet) {
+    link.deliver_ready(now, [&](const sockaddr_in& target, const ecs::BitBuffer& packet) {
         send_packet(socket, target, packet);
     });
 }
 
-bool receive_packet(SocketHandle socket, kage::sync::BitBuffer& packet, sockaddr_in* sender = nullptr) {
+bool receive_packet(SocketHandle socket, ecs::BitBuffer& packet, sockaddr_in* sender = nullptr) {
     std::array<char, 2048> bytes{};
     sockaddr_in source{};
 #ifdef _WIN32
@@ -761,7 +761,7 @@ void update_server_world(
 }
 
 void send_hello(SocketHandle client_socket, const sockaddr_in& server_address) {
-    kage::sync::BitBuffer hello;
+    ecs::BitBuffer hello;
     hello.push_bits(example_client_hello_message, 8U);
     hello.push_unsigned_bits(client_id, 64U);
     send_packet(client_socket, server_address, hello);
@@ -1194,7 +1194,7 @@ int main(int argc, char** argv) {
     server_options.bandwidth_limit_bytes_per_tick = 32 * 1024;
     server_options.mtu_bytes = 1200;
     server_options.prioritizer = make_sphere_prioritizer(server_registry);
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         if (client_connected) {
             ++stats.server_packets;
             queue_packet(downstream_link, server_socket, client_address, packet, stats, true);
@@ -1251,7 +1251,7 @@ int main(int argc, char** argv) {
     float server_accumulator = 0.0f;
     kage::sync::SyncFrame server_frame = 0;
     send_hello(client_socket, server_address);
-    client.set_packet_sender([&](const kage::sync::BitBuffer& packet) {
+    client.set_packet_sender([&](const ecs::BitBuffer& packet) {
         ++stats.client_packets;
         queue_packet(upstream_link, client_socket, server_address, packet, stats, false);
     });
@@ -1268,10 +1268,10 @@ int main(int argc, char** argv) {
         flush_link(upstream_link, client_socket);
         update_bandwidth_samples(stats, dt);
 
-        kage::sync::BitBuffer received;
+        ecs::BitBuffer received;
         sockaddr_in sender{};
         while (receive_packet(server_socket, received, &sender)) {
-            kage::sync::BitBuffer read = received;
+            ecs::BitBuffer read = received;
             const auto message = static_cast<std::uint8_t>(read.read_bits(8U));
             if (message == example_client_hello_message) {
                 const auto id = static_cast<kage::sync::ClientId>(read.read_unsigned_bits(64U));
@@ -1301,7 +1301,7 @@ int main(int argc, char** argv) {
         stats.server_entities = static_cast<int>(balls.size());
 
         while (receive_packet(client_socket, received)) {
-            kage::sync::BitBuffer read = received;
+            ecs::BitBuffer read = received;
             if (read.remaining_bits() >= 40U &&
                 static_cast<std::uint8_t>(read.read_bits(8U)) == kage::sync::protocol::server_update_message) {
                 stats.frame = static_cast<kage::sync::SyncFrame>(read.read_bits(32U));

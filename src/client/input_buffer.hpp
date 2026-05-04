@@ -2,7 +2,7 @@
 
 #include "client/state.hpp"
 
-#include "kage/sync/bit_buffer.hpp"
+#include "ecs/bit_buffer.hpp"
 #include "kage/sync/components.hpp"
 
 #include <cstdint>
@@ -52,7 +52,7 @@ public:
         std::size_t mtu_bytes,
         std::size_t packet_id_bits,
         std::vector<std::uint32_t>& pending_acks,
-        std::vector<BitBuffer>& packets,
+        std::vector<ecs::BitBuffer>& packets,
         ClientInputPacketTrace* trace);
 
     SyncFrame last_recorded_frame() const noexcept {

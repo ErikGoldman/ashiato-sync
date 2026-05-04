@@ -18,9 +18,9 @@ TEST_CASE("replicated snap cues play once with late time and ACK-driven resend")
     const ecs::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -52,9 +52,9 @@ TEST_CASE("replicated snap cues play once with late time and ACK-driven resend")
     REQUIRE(client.receive(client_registry, packets.back(), 11));
     REQUIRE(client_registry.get<CuePlayback>(local).plays == 1);
 
-    std::vector<kage::sync::BitBuffer> acks = client.drain_ack_packets();
+    std::vector<ecs::BitBuffer> acks = client.drain_ack_packets();
     REQUIRE_FALSE(acks.empty());
-    for (const kage::sync::BitBuffer& ack : acks) {
+    for (const ecs::BitBuffer& ack : acks) {
         REQUIRE(server.process_packet(1, ack));
     }
     packets.clear();
@@ -72,9 +72,9 @@ TEST_CASE("owner-only cues replicate only to the cue owner") {
     REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
     REQUIRE(kage::sync::set_owner(server_registry, server_entity, 1));
 
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
         packets.push_back({client, packet});
     };
     kage::sync::ReplicationServer server(server_options);
@@ -115,9 +115,9 @@ TEST_CASE("default cues still replicate to all clients") {
     const ecs::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
 
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
         packets.push_back({client, packet});
     };
     kage::sync::ReplicationServer server(server_options);
@@ -158,9 +158,9 @@ TEST_CASE("cue entity references resolve to client-local entities") {
     REQUIRE(server_registry.add<Position>(source, Position{3.0f, 4.0f}) != nullptr);
     REQUIRE(kage::sync::set_owner(server_registry, source, 1));
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -231,9 +231,9 @@ TEST_CASE("entity references serialize as client-local network ids") {
     REQUIRE(start_sync(server_registry, target, position_archetype));
     REQUIRE(start_sync(server_registry, source, reference_archetype));
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -310,9 +310,9 @@ TEST_CASE("entity references remain resolvable when the referenced entity arrive
     REQUIRE(start_sync(server_registry, source, reference_archetype));
     REQUIRE(start_sync(server_registry, target, position_archetype));
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);

@@ -25,7 +25,7 @@ TEST_CASE("replication prioritizer reuses cached decisions until the configured 
 
     bool allow_replication = false;
     std::size_t prioritizer_calls = 0;
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.prioritizer_interval_frames = 3;
     options.prioritizer = [&](kage::sync::ClientId,
@@ -35,7 +35,7 @@ TEST_CASE("replication prioritizer reuses cached decisions until the configured 
         REQUIRE(objects.size() == 1);
         decisions[0].replicate = allow_replication;
     };
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
@@ -71,7 +71,7 @@ TEST_CASE("replication prioritizer filtering destroys an already visible entity 
     REQUIRE(start_sync(registry, entity, archetype));
 
     bool allow_replication = true;
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
     options.prioritizer_interval_frames = 1;
@@ -80,7 +80,7 @@ TEST_CASE("replication prioritizer filtering destroys an already visible entity 
                               std::vector<kage::sync::ReplicationPriorityDecision>& decisions) {
         decisions[0].replicate = allow_replication;
     };
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
@@ -135,7 +135,7 @@ TEST_CASE("replication prioritizer priority affects serialized send order") {
     REQUIRE(start_sync(registry, middle, archetype));
     REQUIRE(start_sync(registry, high, archetype));
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
     options.mtu_bytes = 21;
@@ -151,7 +151,7 @@ TEST_CASE("replication prioritizer priority affects serialized send order") {
             }
         }
     };
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
@@ -193,7 +193,7 @@ TEST_CASE("entity references boost visible low priority targets on the next tick
     REQUIRE(start_sync(registry, target, position_archetype));
     REQUIRE(start_sync(registry, medium, position_archetype));
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 21;
     options.mtu_bytes = 21;
@@ -209,7 +209,7 @@ TEST_CASE("entity references boost visible low priority targets on the next tick
             }
         }
     };
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
@@ -269,7 +269,7 @@ TEST_CASE("entity reference priority boost respects prioritizer visibility filte
     REQUIRE(start_sync(registry, target, position_archetype));
     REQUIRE(start_sync(registry, medium, position_archetype));
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 21;
     options.mtu_bytes = 21;
@@ -288,7 +288,7 @@ TEST_CASE("entity reference priority boost respects prioritizer visibility filte
             }
         }
     };
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
@@ -336,7 +336,7 @@ TEST_CASE("replication prioritizer component masks apply to delta updates") {
     REQUIRE(start_sync(registry, entity, archetype));
 
     std::uint64_t component_mask = std::numeric_limits<std::uint64_t>::max();
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
     options.prioritizer_interval_frames = 1;
@@ -347,7 +347,7 @@ TEST_CASE("replication prioritizer component masks apply to delta updates") {
             decision.component_mask = component_mask;
         }
     };
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
@@ -391,7 +391,7 @@ TEST_CASE("replication prioritizer can emit an entity record with an all-zero co
     REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
     REQUIRE(start_sync(registry, entity, archetype));
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
     options.prioritizer_interval_frames = 1;
@@ -400,7 +400,7 @@ TEST_CASE("replication prioritizer can emit an entity record with an all-zero co
                               std::vector<kage::sync::ReplicationPriorityDecision>& decisions) {
         decisions[0].component_mask = 0;
     };
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
@@ -429,7 +429,7 @@ TEST_CASE("replication prioritizer rejects callbacks that return the wrong decis
                              std::vector<kage::sync::ReplicationPriorityDecision>& decisions) {
         decisions.clear();
     };
-    options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
+    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
 
     kage::sync::ReplicationServer server(options);
     REQUIRE(server.add_client(1));
@@ -451,7 +451,7 @@ TEST_CASE("replication prioritizer applies independent decisions per client") {
     REQUIRE(start_sync(registry, first, archetype));
     REQUIRE(start_sync(registry, second, archetype));
 
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> payloads;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
     options.prioritizer_interval_frames = 1;
@@ -462,7 +462,7 @@ TEST_CASE("replication prioritizer applies independent decisions per client") {
             decisions[index].replicate = client == 1 ? objects[index].entity == first : objects[index].entity == second;
         }
     };
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         payloads.push_back({client, payload});
     };
 
@@ -499,7 +499,7 @@ TEST_CASE("replication prioritizer decisions are honored by the parallel seriali
     REQUIRE(start_sync(registry, first, archetype));
     REQUIRE(start_sync(registry, second, archetype));
 
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> payloads;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
     options.serialized_worker_threads = 2;
@@ -511,7 +511,7 @@ TEST_CASE("replication prioritizer decisions are honored by the parallel seriali
             decisions[index].replicate = client == 1 ? objects[index].entity == first : objects[index].entity == second;
         }
     };
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         payloads.push_back({client, payload});
     };
 

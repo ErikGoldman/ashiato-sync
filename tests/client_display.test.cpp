@@ -22,9 +22,9 @@ TEST_CASE("display interpolation samples fractional frames without mutating ECS"
     const ecs::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<SmoothPosition>(server_entity, SmoothPosition{0.0f, 0.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -49,7 +49,7 @@ TEST_CASE("display interpolation samples fractional frames without mutating ECS"
         8});
     server.tick(server_registry);
     REQUIRE(client.receive(client_registry, packets.back()));
-    for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
+    for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
         REQUIRE(server.process_packet(1, ack));
     }
 
@@ -158,9 +158,9 @@ TEST_CASE("display interpolation samples expose synced tag masks") {
     REQUIRE(server_registry.add<SmoothPosition>(server_entity, SmoothPosition{2.0f, 4.0f}) != nullptr);
     REQUIRE(server_registry.add_tag(server_entity, server_visible));
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -222,9 +222,9 @@ TEST_CASE("display samples throw for non-display components instead of falling t
     REQUIRE(server_registry.add<SmoothPosition>(server_entity, SmoothPosition{0.0f, 0.0f}) != nullptr);
     REQUIRE(server_registry.add<Health>(server_entity, Health{100}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);

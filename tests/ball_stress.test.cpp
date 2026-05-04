@@ -117,9 +117,9 @@ TEST_CASE("ball stress schema syncs multiple tags to clients") {
             server_entity, kage::sync::Replicated{server_schema.ball})
         != nullptr);
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -222,7 +222,7 @@ TEST_CASE("ball stress simulated transport applies latency and loss") {
     link.settings.latency_ms = 100.0;
     link.settings.loss_percent = 0.0;
 
-    kage::sync::BitBuffer packet;
+    ecs::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::client_ack_message, 8U);
     packet.push_bits(0, 16U);
 
@@ -232,12 +232,12 @@ TEST_CASE("ball stress simulated transport applies latency and loss") {
     REQUIRE(stats.dropped_packets == 0);
 
     bool delivered = false;
-    stress::deliver_ready(link, stats, 1.05, [&](kage::sync::ClientId, const kage::sync::BitBuffer&) {
+    stress::deliver_ready(link, stats, 1.05, [&](kage::sync::ClientId, const ecs::BitBuffer&) {
         delivered = true;
     });
     REQUIRE_FALSE(delivered);
 
-    stress::deliver_ready(link, stats, 1.10, [&](kage::sync::ClientId, const kage::sync::BitBuffer&) {
+    stress::deliver_ready(link, stats, 1.10, [&](kage::sync::ClientId, const ecs::BitBuffer&) {
         delivered = true;
     });
     REQUIRE(delivered);
@@ -259,7 +259,7 @@ TEST_CASE("ball stress simulated transport applies bounded uniform jitter") {
     link.settings.loss_percent = 0.0;
     link.random_engine().seed(123);
 
-    kage::sync::BitBuffer packet;
+    ecs::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::client_ack_message, 8U);
     packet.push_bits(0, 16U);
 
@@ -286,10 +286,10 @@ TEST_CASE("ball stress simulated transport delivers by scheduled time under jitt
     link.settings.jitter_ms = 50.0;
     link.random_engine().seed(2);
 
-    kage::sync::BitBuffer first;
+    ecs::BitBuffer first;
     first.push_bits(kage::sync::protocol::client_ack_message, 8U);
     first.push_bits(1, 16U);
-    kage::sync::BitBuffer second;
+    ecs::BitBuffer second;
     second.push_bits(kage::sync::protocol::client_ack_message, 8U);
     second.push_bits(2, 16U);
 
@@ -301,7 +301,7 @@ TEST_CASE("ball stress simulated transport delivers by scheduled time under jitt
 }
 
 TEST_CASE("ball stress packet classifier counts update record kinds") {
-    kage::sync::BitBuffer packet;
+    ecs::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
     packet.push_bits(7, 32U);
     packet.push_bits(99, kage::sync::protocol::server_packet_id_bits);
@@ -366,7 +366,7 @@ TEST_CASE("ball stress packet classifier counts update record kinds") {
 }
 
 TEST_CASE("ball stress packet classifier records ACK wire diagnostics") {
-    kage::sync::BitBuffer packet;
+    ecs::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::client_ack_message, 8U);
     packet.push_bits(2, 16U);
     packet.push_bits(7, kage::sync::protocol::server_packet_id_bits);
@@ -385,7 +385,7 @@ TEST_CASE("ball stress packet classifier records ACK wire diagnostics") {
 }
 
 TEST_CASE("ball stress packet classifier honors custom network id tier width") {
-    kage::sync::BitBuffer packet;
+    ecs::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
     packet.push_bits(1, 32U);
     packet.push_bits(1, kage::sync::protocol::server_packet_id_bits);

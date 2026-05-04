@@ -1,6 +1,6 @@
 #pragma once
 
-#include "kage/sync/bit_buffer.hpp"
+#include "ecs/bit_buffer.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -120,7 +120,7 @@ inline constexpr std::size_t network_entity_id_encoded_bits(
 }
 
 inline void write_network_entity_id(
-    BitBuffer& out,
+    ecs::BitBuffer& out,
     std::uint32_t network_id,
     std::size_t tier0_bits = default_network_entity_id_tier0_bits) {
     const std::uint32_t tier0_max = network_entity_id_tier0_max(tier0_bits);
@@ -143,7 +143,7 @@ inline void write_network_entity_id(
 }
 
 inline bool read_network_entity_id(
-    BitBuffer& in,
+    ecs::BitBuffer& in,
     std::uint32_t& network_id,
     std::size_t tier0_bits = default_network_entity_id_tier0_bits) {
     network_id = static_cast<std::uint32_t>(in.read_bits(tier0_bits));
@@ -159,7 +159,7 @@ inline bool read_network_entity_id(
     return true;
 }
 
-inline void write_string(BitBuffer& out, const std::string& value) {
+inline void write_string(ecs::BitBuffer& out, const std::string& value) {
     const std::size_t length = value.size() > std::numeric_limits<std::uint16_t>::max()
         ? std::numeric_limits<std::uint16_t>::max()
         : value.size();
@@ -167,7 +167,7 @@ inline void write_string(BitBuffer& out, const std::string& value) {
     out.push_bytes(value.data(), length);
 }
 
-inline bool read_string(BitBuffer& in, std::string& value) {
+inline bool read_string(ecs::BitBuffer& in, std::string& value) {
     if (in.remaining_bits() < 16U) {
         return false;
     }
@@ -182,7 +182,7 @@ inline bool read_string(BitBuffer& in, std::string& value) {
     return true;
 }
 
-inline void write_baseline_frame(BitBuffer& out, std::uint32_t current_frame, std::uint32_t baseline_frame) {
+inline void write_baseline_frame(ecs::BitBuffer& out, std::uint32_t current_frame, std::uint32_t baseline_frame) {
     const bool can_use_delta = current_frame >= baseline_frame &&
         current_frame - baseline_frame <= max_baseline_frame_delta;
     out.push_bool(can_use_delta);
@@ -193,7 +193,7 @@ inline void write_baseline_frame(BitBuffer& out, std::uint32_t current_frame, st
     }
 }
 
-inline bool read_baseline_frame(BitBuffer& in, std::uint32_t current_frame, std::uint32_t& baseline_frame) {
+inline bool read_baseline_frame(ecs::BitBuffer& in, std::uint32_t current_frame, std::uint32_t& baseline_frame) {
     const bool uses_delta = in.read_bool();
     if (!uses_delta) {
         baseline_frame = static_cast<std::uint32_t>(in.read_bits(32U));

@@ -23,7 +23,7 @@ void BM_ServerTickFullBudget(benchmark::State& state) {
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * 128U;
     options.fixed_entity_replication_cost_bytes = 128U;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& packet) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
         sent += client ^ packet.byte_size();
         benchmark::DoNotOptimize(sent);
     };
@@ -53,7 +53,7 @@ void BM_ServerTickBudgetLimited(benchmark::State& state) {
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(sends_per_client) * 128U;
     options.fixed_entity_replication_cost_bytes = 128U;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& packet) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
         sent += client + packet.byte_size();
         benchmark::DoNotOptimize(sent);
     };
@@ -77,7 +77,7 @@ void BM_ServerRefreshReplicatedChanges(benchmark::State& state) {
     const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
     const std::vector<ecs::Entity> entities = create_entities(registry, entity_count);
     kage::sync::ReplicationServerOptions options;
-    options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
+    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
     kage::sync::ReplicationServer server(options);
     add_clients(server, 4);
 
@@ -132,7 +132,7 @@ void BM_ServerTickSerializedFullBudget(benchmark::State& state) {
     std::uint64_t sent = 0;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(Position);
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
@@ -162,7 +162,7 @@ void BM_ServerTickTracingRuntimeDisabled(benchmark::State& state) {
     std::uint64_t sent = 0;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(Position);
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
@@ -195,7 +195,7 @@ void BM_ServerTickTracingCallbacks(benchmark::State& state) {
     std::uint64_t sent = 0;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(Position);
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
@@ -233,7 +233,7 @@ void BM_ServerTickTracingFrameData(benchmark::State& state) {
     std::uint64_t sent = 0;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(Position);
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
@@ -273,7 +273,7 @@ void BM_ServerTickSerializedDelta(benchmark::State& state) {
     std::uint64_t sent = 0;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition);
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
@@ -303,7 +303,7 @@ void BM_ServerTickSerializedBudgetLimited(benchmark::State& state) {
     std::uint64_t sent = 0;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(sends_per_client) * sizeof(Position);
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
@@ -333,7 +333,7 @@ void BM_ServerTickPackedFullBudget(benchmark::State& state) {
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(Position) * 4U;
     options.mtu_bytes = 1200;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
@@ -359,14 +359,14 @@ void BM_ServerTickPackedAckedDeltaShared(benchmark::State& state) {
     const kage::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
     const std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
 
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
     packets.reserve(static_cast<std::size_t>(entity_count) * static_cast<std::size_t>(client_count));
 
     std::uint64_t sent = 0;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition) * 4U;
     options.mtu_bytes = 1200;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         packets.push_back({client, payload});
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
@@ -400,7 +400,7 @@ void BM_ServerTickPackedMtuLimited(benchmark::State& state) {
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition) * 4U;
     options.mtu_bytes = 256;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
@@ -428,12 +428,12 @@ void BM_ServerProcessAckPacket(benchmark::State& state) {
         const kage::sync::SyncArchetypeId archetype = define_delta_archetype(server_registry);
         const std::vector<ecs::Entity> entities = create_delta_entities(server_registry, entity_count);
 
-        std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> sent;
+        std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> sent;
         kage::sync::ReplicationServerOptions server_options;
         server_options.bandwidth_limit_bytes_per_tick =
             static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition) * 16U;
         server_options.mtu_bytes = 1200;
-        server_options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& packet) {
+        server_options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
             sent.push_back({client, packet});
         };
 
@@ -452,10 +452,10 @@ void BM_ServerProcessAckPacket(benchmark::State& state) {
         for (const auto& packet : sent) {
             benchmark::DoNotOptimize(client.receive(client_registry, packet.second));
         }
-        std::vector<kage::sync::BitBuffer> acks = client.drain_ack_packets();
+        std::vector<ecs::BitBuffer> acks = client.drain_ack_packets();
         state.ResumeTiming();
 
-        for (const kage::sync::BitBuffer& ack : acks) {
+        for (const ecs::BitBuffer& ack : acks) {
             processed += server.process_packet(1, ack) ? 1 : 0;
         }
         benchmark::DoNotOptimize(processed);
@@ -474,11 +474,11 @@ void BM_ServerTickDestroyBurst(benchmark::State& state) {
         const kage::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
         const std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
 
-        std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+        std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
         kage::sync::ReplicationServerOptions options;
         options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * 32U;
         options.mtu_bytes = 1200;
-        options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
             packets.push_back({client, payload});
             sent += client + payload.byte_size();
         };
@@ -513,7 +513,7 @@ void BM_ServerTickPendingDestroysBudgetLimited(benchmark::State& state) {
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(destroys_per_tick) * 16U;
     options.mtu_bytes = 1200;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
@@ -542,14 +542,14 @@ void BM_ServerTickMutatingAckedDelta(benchmark::State& state) {
     const kage::sync::SyncArchetypeId archetype = define_delta_archetype(server_registry);
     const std::vector<ecs::Entity> entities = create_delta_entities(server_registry, entity_count);
 
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
     packets.reserve(static_cast<std::size_t>(entity_count) * static_cast<std::size_t>(client_count));
 
     kage::sync::ReplicationServerOptions server_options;
     server_options.bandwidth_limit_bytes_per_tick =
         static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition) * 16U;
     server_options.mtu_bytes = 1200;
-    server_options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
         packets.push_back({client, packet});
     };
     kage::sync::ReplicationServer server(server_options);
@@ -586,7 +586,7 @@ void BM_ServerTickMutatingAckedDelta(benchmark::State& state) {
         }
         for (int client_index = 0; client_index < client_count; ++client_index) {
             const auto id = static_cast<kage::sync::ClientId>(client_index + 1);
-            for (const kage::sync::BitBuffer& ack :
+            for (const ecs::BitBuffer& ack :
                  clients[static_cast<std::size_t>(client_index)].drain_ack_packets()) {
                 benchmark::DoNotOptimize(server.process_packet(id, ack));
             }
@@ -610,7 +610,7 @@ void BM_ServerTickOwnerAudienceMixed(benchmark::State& state) {
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * 64U;
     options.mtu_bytes = 1200;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
@@ -638,13 +638,13 @@ void BM_ServerTickTaggedOwnerMixed(benchmark::State& state) {
     const std::vector<ecs::Entity> entities =
         create_tagged_entities(registry, entity_count, client_count, schema.tags);
 
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
     packets.reserve(static_cast<std::size_t>(entity_count) * static_cast<std::size_t>(client_count));
     std::uint64_t sent = 0;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * 96U;
     options.mtu_bytes = 1200;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         packets.push_back({client, payload});
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
@@ -693,7 +693,7 @@ void BM_ServerTickArchetypeDiversity(benchmark::State& state) {
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * 96U;
     options.mtu_bytes = 1200;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
@@ -725,7 +725,7 @@ void BM_ServerTickStressScheduler(benchmark::State& state) {
     options.bandwidth_limit_bytes_per_tick = 1024U * 1024U;
     options.mtu_bytes = 1200;
     options.serialized_worker_threads = static_cast<std::size_t>(worker_threads);
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
@@ -752,7 +752,7 @@ void BM_BitBufferUnalignedBytes(benchmark::State& state) {
     std::vector<char> bytes(static_cast<std::size_t>(byte_count), 'x');
 
     for (auto _ : state) {
-        kage::sync::BitBuffer buffer;
+        ecs::BitBuffer buffer;
         buffer.reserve_bytes(static_cast<std::size_t>(byte_count) + 1U);
         buffer.push_bool(true);
         buffer.push_bytes(bytes.data(), bytes.size());
@@ -764,7 +764,7 @@ void BM_BitBufferUnalignedBytes(benchmark::State& state) {
 
 void BM_BitBufferUnalignedReadUnsigned(benchmark::State& state) {
     const int bit_count = static_cast<int>(state.range(0));
-    kage::sync::BitBuffer source;
+    ecs::BitBuffer source;
     source.reserve_bytes(static_cast<std::size_t>(bit_count + 8));
     source.push_bool(true);
     for (int index = 0; index < bit_count; ++index) {
@@ -773,7 +773,7 @@ void BM_BitBufferUnalignedReadUnsigned(benchmark::State& state) {
 
     std::uint64_t sum = 0;
     for (auto _ : state) {
-        kage::sync::BitBuffer input = source;
+        ecs::BitBuffer input = source;
         benchmark::DoNotOptimize(input.read_bool());
         for (int index = 0; index < bit_count; ++index) {
             sum += input.read_unsigned_bits(64U);
@@ -786,14 +786,14 @@ void BM_BitBufferUnalignedReadUnsigned(benchmark::State& state) {
 
 void BM_BitBufferAppendBits(benchmark::State& state) {
     const int bit_count = static_cast<int>(state.range(0));
-    kage::sync::BitBuffer source;
+    ecs::BitBuffer source;
     source.reserve_bytes(kage::sync::protocol::bytes_for_bits(static_cast<std::size_t>(bit_count)));
     for (int bit = 0; bit < bit_count; ++bit) {
         source.push_bool((bit & 1) != 0);
     }
 
     for (auto _ : state) {
-        kage::sync::BitBuffer destination;
+        ecs::BitBuffer destination;
         destination.reserve_bytes(source.byte_size());
         destination.push_buffer_bits(source);
         benchmark::DoNotOptimize(destination.byte_size());
@@ -851,8 +851,8 @@ void BM_ServerProcessInputPacket(benchmark::State& state) {
         client.set_input(client_registry, DeltaPosition{frame, frame + 1});
         client.tick(client_registry, client.options().fixed_dt_seconds);
     }
-    std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
-    auto input_packet = std::find_if(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+    std::vector<ecs::BitBuffer> packets = client.drain_packets();
+    auto input_packet = std::find_if(packets.begin(), packets.end(), [](ecs::BitBuffer packet) {
         return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
     });
     if (input_packet == packets.end()) {
@@ -868,7 +868,7 @@ void BM_ServerProcessInputPacket(benchmark::State& state) {
         kage::sync::set_client_input_component<DeltaPosition>(registry);
         kage::sync::ReplicationServer server;
         server.add_client(1);
-        kage::sync::BitBuffer packet = *input_packet;
+        ecs::BitBuffer packet = *input_packet;
         state.ResumeTiming();
 
         benchmark::DoNotOptimize(server.process_packet(registry, 1, packet));
@@ -898,14 +898,14 @@ void BM_ServerTickInputUpsert(benchmark::State& state) {
     kage::sync::ReplicationClient client;
     client.set_input(client_registry, DeltaPosition{10, 20});
     client.tick(client_registry, client.options().fixed_dt_seconds);
-    std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
+    std::vector<ecs::BitBuffer> packets = client.drain_packets();
 
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
+    server_options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
     kage::sync::ReplicationServer server(server_options);
     server.add_client(1);
-    for (const kage::sync::BitBuffer& packet : packets) {
-        kage::sync::BitBuffer copy = packet;
+    for (const ecs::BitBuffer& packet : packets) {
+        ecs::BitBuffer copy = packet;
         if (static_cast<std::uint8_t>(copy.read_bits(8U)) == kage::sync::protocol::client_input_message) {
             benchmark::DoNotOptimize(server.process_packet(registry, 1, packet));
         }

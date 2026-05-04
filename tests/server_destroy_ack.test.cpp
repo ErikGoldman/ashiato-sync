@@ -29,11 +29,11 @@ TEST_CASE("replication server interleaves pending destroys with bandwidth-limite
     REQUIRE(registry.add<NetworkedPosition>(destroyed, NetworkedPosition{1.0f, 1.0f}) != nullptr);
     REQUIRE(registry.add<NetworkedPosition>(live, NetworkedPosition{2.0f, 2.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 21;
     options.mtu_bytes = 21;
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
@@ -67,11 +67,11 @@ TEST_CASE("replication server resends pending destroys until ACKed") {
     const ecs::Entity entity = registry.create();
     REQUIRE(registry.add<kage_sync_tests::Position>(entity, kage_sync_tests::Position{1.0f, 2.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 30;
     options.mtu_bytes = 30;
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
@@ -107,9 +107,9 @@ TEST_CASE("replication server does not reuse client-local network ids before des
     ecs::Registry registry;
     const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
@@ -162,9 +162,9 @@ TEST_CASE("replication server reuses client-local network ids after each client'
     ecs::Registry registry;
     const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
 
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> payloads;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> payloads;
     kage::sync::ReplicationServerOptions options;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         payloads.push_back({client, payload});
     };
 
@@ -208,7 +208,7 @@ TEST_CASE("replication server reuses client-local network ids after each client'
         }
         return ServerUpdatePacket{};
     };
-    auto packet_id = [](kage::sync::BitBuffer packet) {
+    auto packet_id = [](ecs::BitBuffer packet) {
         packet.read_bits(8U);
         packet.read_bits(32U);
         return static_cast<std::uint32_t>(packet.read_bits(kage::sync::protocol::server_packet_id_bits));
@@ -274,9 +274,9 @@ TEST_CASE("replication server reuses network ids immediately when no clients hav
     ecs::Registry registry;
     const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
@@ -311,10 +311,10 @@ TEST_CASE("replication server accepts delayed entity ACKs for retained quantized
     const ecs::Entity entity = registry.create();
     REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
@@ -350,10 +350,10 @@ TEST_CASE("replication server shares ACKed quantized frames across clients and f
     const ecs::Entity entity = registry.create();
     REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
 
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> payloads;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         payloads.push_back({client, payload});
     };
 
@@ -390,10 +390,10 @@ TEST_CASE("replication server trims unacked pending quantized frames per entity"
     const ecs::Entity entity = registry.create();
     REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{0.0f, 0.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
     kage::sync::ReplicationServer server(options);
@@ -422,10 +422,10 @@ TEST_CASE("replication server keeps swapped clients addressable after removal") 
     const ecs::Entity entity = registry.create();
     REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
 
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> payloads;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         payloads.push_back({client, payload});
     };
 
@@ -461,10 +461,10 @@ TEST_CASE("replication server records bandwidth savings for ACKed delta updates"
     const ecs::Entity entity = registry.create();
     REQUIRE(registry.add<BandwidthProbe>(entity, BandwidthProbe{100}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 

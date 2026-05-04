@@ -13,7 +13,7 @@ using namespace kage::sync::benchmarks;
 void BM_ClientReceiveSnap(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     for (auto _ : state) {
         state.PauseTiming();
@@ -26,7 +26,7 @@ void BM_ClientReceiveSnap(benchmark::State& state) {
             64});
         state.ResumeTiming();
 
-        for (const kage::sync::BitBuffer& packet : packets) {
+        for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
     }
@@ -37,7 +37,7 @@ void BM_ClientReceiveSnap(benchmark::State& state) {
 void BM_ClientReceiveBufferedInterpolation(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     for (auto _ : state) {
         state.PauseTiming();
@@ -50,7 +50,7 @@ void BM_ClientReceiveBufferedInterpolation(benchmark::State& state) {
             64});
         state.ResumeTiming();
 
-        for (const kage::sync::BitBuffer& packet : packets) {
+        for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
     }
@@ -61,7 +61,7 @@ void BM_ClientReceiveBufferedInterpolation(benchmark::State& state) {
 void BM_ClientReceivePredict(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     for (auto _ : state) {
         state.PauseTiming();
@@ -74,7 +74,7 @@ void BM_ClientReceivePredict(benchmark::State& state) {
         kage::sync::ReplicationClient client(options);
         state.ResumeTiming();
 
-        for (const kage::sync::BitBuffer& packet : packets) {
+        for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
     }
@@ -85,7 +85,7 @@ void BM_ClientReceivePredict(benchmark::State& state) {
 void BM_ClientReceiveMixedEntityModes(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     for (auto _ : state) {
         state.PauseTiming();
@@ -104,7 +104,7 @@ void BM_ClientReceiveMixedEntityModes(benchmark::State& state) {
         kage::sync::ReplicationClient client(std::move(options));
         state.ResumeTiming();
 
-        for (const kage::sync::BitBuffer& packet : packets) {
+        for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
     }
@@ -115,7 +115,7 @@ void BM_ClientReceiveMixedEntityModes(benchmark::State& state) {
 void BM_ClientApplyBufferedInterpolation(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     for (auto _ : state) {
         state.PauseTiming();
@@ -126,7 +126,7 @@ void BM_ClientApplyBufferedInterpolation(benchmark::State& state) {
             kage::sync::ReplicationClientMode::BufferedInterpolation,
             2,
             64});
-        for (const kage::sync::BitBuffer& packet : packets) {
+        for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
         state.ResumeTiming();
@@ -142,7 +142,7 @@ void BM_ClientApplyBufferedInterpolation(benchmark::State& state) {
 void BM_ClientPredictTickQuantize(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, 1);
+    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, 1);
 
     for (auto _ : state) {
         state.PauseTiming();
@@ -151,7 +151,7 @@ void BM_ClientPredictTickQuantize(benchmark::State& state) {
         kage::sync::ReplicationClientOptions options;
         options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
         kage::sync::ReplicationClient client(options);
-        for (const kage::sync::BitBuffer& packet : packets) {
+        for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
         state.ResumeTiming();
@@ -168,7 +168,7 @@ void BM_ClientPredictTickQuantize(benchmark::State& state) {
 void BM_ClientSampleDisplayInterpolation(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     for (auto _ : state) {
         state.PauseTiming();
@@ -180,7 +180,7 @@ void BM_ClientSampleDisplayInterpolation(benchmark::State& state) {
             kage::sync::ReplicationClientMode::BufferedInterpolation,
             2,
             64});
-        for (const kage::sync::BitBuffer& packet : packets) {
+        for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
         kage::sync::DisplayInterpolationSampleBuffer display;
@@ -201,7 +201,7 @@ void BM_ClientSampleDisplayInterpolation(benchmark::State& state) {
 void BM_ClientSampleDisplayLargePayload(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<kage::sync::BitBuffer> packets =
+    const std::vector<ecs::BitBuffer> packets =
         make_large_payload_client_receive_packets(entity_count, frame_count);
 
     for (auto _ : state) {
@@ -214,7 +214,7 @@ void BM_ClientSampleDisplayLargePayload(benchmark::State& state) {
             kage::sync::ReplicationClientMode::BufferedInterpolation,
             2,
             64});
-        for (const kage::sync::BitBuffer& packet : packets) {
+        for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
         kage::sync::DisplayInterpolationSampleBuffer display;
@@ -235,7 +235,7 @@ void BM_ClientSampleDisplayLargePayload(benchmark::State& state) {
 void BM_ClientDrainAckPackets(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     std::int64_t drained = 0;
     for (auto _ : state) {
@@ -247,12 +247,12 @@ void BM_ClientDrainAckPackets(benchmark::State& state) {
             kage::sync::ReplicationClientMode::Snap,
             2,
             64});
-        for (const kage::sync::BitBuffer& packet : packets) {
+        for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
         state.ResumeTiming();
 
-        const std::vector<kage::sync::BitBuffer> acks = client.drain_ack_packets();
+        const std::vector<ecs::BitBuffer> acks = client.drain_ack_packets();
         drained += static_cast<std::int64_t>(acks.size());
         benchmark::DoNotOptimize(drained);
     }
@@ -263,7 +263,7 @@ void BM_ClientDrainAckPackets(benchmark::State& state) {
 void BM_ClientDrainDuplicateHeavyAckPackets(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     std::int64_t drained = 0;
     for (auto _ : state) {
@@ -275,13 +275,13 @@ void BM_ClientDrainDuplicateHeavyAckPackets(benchmark::State& state) {
             kage::sync::ReplicationClientMode::Snap,
             2,
             64});
-        for (const kage::sync::BitBuffer& packet : packets) {
+        for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
         state.ResumeTiming();
 
-        const std::vector<kage::sync::BitBuffer> acks = client.drain_ack_packets();
-        for (const kage::sync::BitBuffer& ack : acks) {
+        const std::vector<ecs::BitBuffer> acks = client.drain_ack_packets();
+        for (const ecs::BitBuffer& ack : acks) {
             drained += static_cast<std::int64_t>(ack.byte_size());
         }
         benchmark::DoNotOptimize(drained);
@@ -304,12 +304,12 @@ void BM_ClientReceiveDestroySnap(benchmark::State& state) {
             kage::sync::ReplicationClientMode::Snap,
             2,
             64});
-        for (const kage::sync::BitBuffer& packet : packets.initial) {
+        for (const ecs::BitBuffer& packet : packets.initial) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
         state.ResumeTiming();
 
-        for (const kage::sync::BitBuffer& packet : packets.destroys) {
+        for (const ecs::BitBuffer& packet : packets.destroys) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
     }
@@ -330,12 +330,12 @@ void BM_ClientReceiveDestroyBuffered(benchmark::State& state) {
             kage::sync::ReplicationClientMode::BufferedInterpolation,
             2,
             64});
-        for (const kage::sync::BitBuffer& packet : packets.initial) {
+        for (const ecs::BitBuffer& packet : packets.initial) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
         state.ResumeTiming();
 
-        for (const kage::sync::BitBuffer& packet : packets.destroys) {
+        for (const ecs::BitBuffer& packet : packets.destroys) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
     }
@@ -356,15 +356,15 @@ void BM_ClientReceiveSpawnDestroyChurn(benchmark::State& state) {
             kage::sync::ReplicationClientMode::Snap,
             2,
             64});
-        for (const kage::sync::BitBuffer& packet : packets.initial) {
+        for (const ecs::BitBuffer& packet : packets.initial) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
         state.ResumeTiming();
 
-        for (const kage::sync::BitBuffer& packet : packets.destroys) {
+        for (const ecs::BitBuffer& packet : packets.destroys) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
-        for (const kage::sync::BitBuffer& packet : packets.respawns) {
+        for (const ecs::BitBuffer& packet : packets.respawns) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
     }
@@ -375,7 +375,7 @@ void BM_ClientReceiveSpawnDestroyChurn(benchmark::State& state) {
 void BM_ClientTickBufferedAutoInterpolation(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<kage::sync::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     for (auto _ : state) {
         state.PauseTiming();
@@ -422,7 +422,7 @@ void BM_ClientInputRecordAndDrain(benchmark::State& state) {
             benchmark::DoNotOptimize(client.set_input(registry, DeltaPosition{frame, frame + 1}));
             benchmark::DoNotOptimize(client.tick(registry, client.options().fixed_dt_seconds));
         }
-        std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
+        std::vector<ecs::BitBuffer> packets = client.drain_packets();
         benchmark::DoNotOptimize(packets.size());
     }
 

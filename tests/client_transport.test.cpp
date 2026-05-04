@@ -15,9 +15,9 @@ TEST_CASE("replication client tick emits packets through configured sender") {
     ecs::Registry registry;
     kage::sync::configure_client(registry, 1);
 
-    std::vector<kage::sync::BitBuffer> sent;
+    std::vector<ecs::BitBuffer> sent;
     kage::sync::ReplicationClient client;
-    client.set_packet_sender([&](const kage::sync::BitBuffer& packet) {
+    client.set_packet_sender([&](const ecs::BitBuffer& packet) {
         sent.push_back(packet);
     });
 
@@ -30,7 +30,7 @@ TEST_CASE("replication client queued receive packets are processed during tick")
     kage::sync::configure_client(registry, 1);
 
     kage::sync::ReplicationClient client;
-    kage::sync::BitBuffer response;
+    ecs::BitBuffer response;
     response.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
     response.push_bits(1U, 1U);
     response.push_unsigned_bits(1U, 64U);
@@ -50,14 +50,14 @@ TEST_CASE("replication client rejects malformed connect responses") {
     kage::sync::ReplicationClient client(options);
     REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Connecting);
 
-    kage::sync::BitBuffer truncated_accept;
+    ecs::BitBuffer truncated_accept;
     truncated_accept.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
     truncated_accept.push_bool(true);
     truncated_accept.push_bits(1, 8U);
     REQUIRE_FALSE(client.receive(registry, truncated_accept));
     REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Connecting);
 
-    kage::sync::BitBuffer truncated_reject;
+    ecs::BitBuffer truncated_reject;
     truncated_reject.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
     truncated_reject.push_bool(false);
     truncated_reject.push_bits(5, 16U);
@@ -73,7 +73,7 @@ TEST_CASE("replication client stores rejected connect response errors") {
     options.connect_token = "token";
     kage::sync::ReplicationClient client(options);
 
-    kage::sync::BitBuffer rejected;
+    ecs::BitBuffer rejected;
     rejected.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
     rejected.push_bool(false);
     kage::sync::protocol::write_string(rejected, "bad token");
@@ -91,7 +91,7 @@ TEST_CASE("replication client queued stale receive packets do not fail tick") {
 
     kage::sync::ReplicationClient client;
     const ecs::Entity server_entity{42};
-    const kage::sync::BitBuffer packet =
+    const ecs::BitBuffer packet =
         make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}});
     REQUIRE(client.receive(registry, packet, 1));
     REQUIRE(client.drain_ack_packets().size() == 1);
@@ -288,7 +288,7 @@ TEST_CASE("client connect handshake ACKs accepted id until first update") {
     options.connect_token = "token";
     kage::sync::ReplicationClient client(options);
 
-    std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
+    std::vector<ecs::BitBuffer> packets = client.drain_packets();
     REQUIRE(packets.size() == 1);
     REQUIRE(static_cast<std::uint8_t>(packets[0].read_bits(8U)) ==
             kage::sync::protocol::client_connect_request_message);
@@ -296,7 +296,7 @@ TEST_CASE("client connect handshake ACKs accepted id until first update") {
     REQUIRE(kage::sync::protocol::read_string(packets[0], token));
     REQUIRE(token == "token");
 
-    kage::sync::BitBuffer accepted;
+    ecs::BitBuffer accepted;
     accepted.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
     accepted.push_bool(true);
     accepted.push_unsigned_bits(7, 64U);
@@ -308,7 +308,7 @@ TEST_CASE("client connect handshake ACKs accepted id until first update") {
     packets = client.drain_packets();
     REQUIRE_FALSE(packets.empty());
     bool saw_connect_ack = false;
-    for (kage::sync::BitBuffer packet : packets) {
+    for (ecs::BitBuffer packet : packets) {
         const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
         if (message == kage::sync::protocol::client_connect_ack_message) {
             saw_connect_ack = true;
@@ -323,7 +323,7 @@ TEST_CASE("client connect handshake ACKs accepted id until first update") {
 
     REQUIRE(client.tick(client_registry, client.options().connect_resend_interval_seconds));
     packets = client.drain_packets();
-    for (kage::sync::BitBuffer packet : packets) {
+    for (ecs::BitBuffer packet : packets) {
         REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) !=
                 kage::sync::protocol::client_connect_ack_message);
     }

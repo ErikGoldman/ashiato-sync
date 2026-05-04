@@ -5,7 +5,7 @@
 namespace kage::sync::server_detail {
 
 bool ServerInputBuffer::process_packet_payload(
-    BitBuffer& packet,
+    ecs::BitBuffer& packet,
     const SyncComponentOps& ops,
     std::size_t capacity_frames,
     ServerInputPacketTrace* trace) {

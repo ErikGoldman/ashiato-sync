@@ -46,7 +46,7 @@ using server_detail::server_update_header_bits;
 
 struct OutboundPacket {
     ClientId client = invalid_client_id;
-    BitBuffer packet;
+    ecs::BitBuffer packet;
 };
 
 #ifdef KAGE_SYNC_ENABLE_TRACING
@@ -107,7 +107,7 @@ void append_trace_cue_data(
     const SyncTracer* tracer,
     const SyncSettings& settings,
     SyncCueTypeId cue_type,
-    const BitBuffer& payload,
+    const ecs::BitBuffer& payload,
     SyncTraceEvent& event) {
 #ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
     if (tracer == nullptr || !tracer->frame_data_enabled() ||
@@ -602,19 +602,19 @@ bool ReplicationServer::acknowledge_entity(ClientId client, ecs::Entity entity, 
     return true;
 }
 
-void ReplicationServer::receive_packet(ClientId client, BitBuffer packet) {
+void ReplicationServer::receive_packet(ClientId client, ecs::BitBuffer packet) {
     inbound_packets_.push_back(PendingInboundPacket{client, std::move(packet)});
 }
 
-bool ReplicationServer::process_packet(ClientId client, BitBuffer packet) {
+bool ReplicationServer::process_packet(ClientId client, ecs::BitBuffer packet) {
     return process_packet_impl(nullptr, client, std::move(packet));
 }
 
-bool ReplicationServer::process_packet(ecs::Registry& registry, ClientId client, BitBuffer packet) {
+bool ReplicationServer::process_packet(ecs::Registry& registry, ClientId client, ecs::BitBuffer packet) {
     return process_packet_impl(&registry, client, std::move(packet));
 }
 
-bool ReplicationServer::process_packet_impl(ecs::Registry* registry, ClientId client, BitBuffer packet) {
+bool ReplicationServer::process_packet_impl(ecs::Registry* registry, ClientId client, ecs::BitBuffer packet) {
     try {
         if (packet.remaining_bits() < 8U) {
             return false;
@@ -644,7 +644,7 @@ bool ReplicationServer::process_packet_impl(ecs::Registry* registry, ClientId cl
                 if (accepted && error.empty() && accepted_client > max_client_entity_network_id_client) {
                     error = "client id out of range";
                 }
-                BitBuffer response;
+                ecs::BitBuffer response;
                 response.reserve_bytes(options_.mtu_bytes);
                 response.push_bits(protocol::server_connect_response_message, 8U);
                 response.push_bool(false);
@@ -733,7 +733,7 @@ bool ReplicationServer::process_packet_impl(ecs::Registry* registry, ClientId cl
     }
 }
 
-bool ReplicationServer::process_input_packet(ecs::Registry& registry, ClientState& client, BitBuffer& packet) {
+bool ReplicationServer::process_input_packet(ecs::Registry& registry, ClientState& client, ecs::BitBuffer& packet) {
     const SyncSettings& settings = registry.get<SyncSettings>();
     if (!settings.input_component) {
         return false;
@@ -978,7 +978,7 @@ void ReplicationServer::end_tick(ecs::Registry& registry) {
     std::vector<std::size_t> destroy_order;
     std::vector<std::uint32_t> sent;
     std::vector<std::uint32_t> unsent;
-    BitBuffer records;
+    ecs::BitBuffer records;
     std::vector<PacketAckRecord> packet_ack_records;
     SerializedEntity serialized;
     QuantizedFrameData quantized_frame_scratch;
@@ -1395,7 +1395,7 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
         const PreparedClient& prepared_client = prepared[client_index];
         std::vector<std::uint32_t> sent;
         std::vector<std::uint32_t> unsent;
-        BitBuffer records;
+        ecs::BitBuffer records;
         std::vector<PacketAckRecord> packet_ack_records;
         SerializedEntity serialized;
 
@@ -1720,7 +1720,7 @@ void ReplicationServer::attach_cue_to_clients(
         if (!state.priority_replicate) {
             continue;
         }
-        BitBuffer payload = cue.payload;
+        ecs::BitBuffer payload = cue.payload;
         if (settings.cue_ops[cue.type].references_entities) {
             if (!cue.value) {
                 continue;
@@ -2073,7 +2073,7 @@ void ReplicationServer::write_entity_record(
     std::uint32_t slot,
     const QuantizedFrame& quantized_frame,
     std::uint64_t component_mask,
-    BitBuffer& out) {
+    ecs::BitBuffer& out) {
     const ClientEntityState& entity_state = client.entity_states[slot];
     bool delta = entity_state.baseline != invalid_quantized_frame_id &&
         entity_state.baseline < quantized_frames_.size() &&

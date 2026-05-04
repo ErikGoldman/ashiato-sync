@@ -71,7 +71,7 @@ void run_server(const AppConfig& config) {
         pending_spawns.push_back(client);
         return true;
     };
-    options.transport = [&peers, socket](kage::sync::ClientId peer, const kage::sync::BitBuffer& packet) {
+    options.transport = [&peers, socket](kage::sync::ClientId peer, const ecs::BitBuffer& packet) {
         const auto found = peers.find(peer);
         if (found != peers.end()) {
             send_packet(socket, found->second, packet);
@@ -118,7 +118,7 @@ void run_server(const AppConfig& config) {
         const double dt = std::chrono::duration<double>(now - previous).count();
         previous = now;
 
-        kage::sync::BitBuffer packet;
+        ecs::BitBuffer packet;
         sockaddr_in sender{};
         while (receive_packet(socket, packet, &sender)) {
             const kage::sync::ClientId peer = peer_id(sender);

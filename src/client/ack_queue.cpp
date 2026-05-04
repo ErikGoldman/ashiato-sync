@@ -20,7 +20,7 @@ std::vector<std::uint32_t>& ClientAckQueue::pending() noexcept {
 void ClientAckQueue::drain_ack_packets(
     std::size_t mtu_bytes,
     std::size_t packet_id_bits,
-    std::vector<BitBuffer>& packets,
+    std::vector<ecs::BitBuffer>& packets,
     std::vector<ClientAckPacketTrace>* traces) {
     if (pending_.empty()) {
         pending_.clear();
@@ -42,7 +42,7 @@ void ClientAckQueue::drain_ack_packets(
     }
 
     packets.reserve(packets.size() + (pending_.size() + max_acks_per_packet - 1U) / max_acks_per_packet);
-    BitBuffer packet;
+    ecs::BitBuffer packet;
     std::uint16_t packet_ack_count = 0;
     std::size_t packet_count_offset = 0;
     ClientAckPacketTrace trace;
@@ -64,7 +64,7 @@ void ClientAckQueue::drain_ack_packets(
             traces->push_back(trace);
         }
         packets.push_back(std::move(packet));
-        packet = BitBuffer{};
+        packet = ecs::BitBuffer{};
     };
 
     begin_packet();

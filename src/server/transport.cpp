@@ -12,14 +12,14 @@ void ReplicationServer::send_packet(
     ClientState& client,
     SyncFrame frame,
     std::uint16_t entity_count,
-    const BitBuffer& records,
+    const ecs::BitBuffer& records,
     const std::vector<PacketAckRecord>& ack_records) {
     if (!options_.transport || entity_count == 0) {
         return;
     }
 
     const std::uint32_t packet_id = allocate_packet_id(client);
-    BitBuffer packet =
+    ecs::BitBuffer packet =
         server_detail::make_server_packet(
             options_.mtu_bytes,
             server_detail::configured_packet_id_bits(options_),
@@ -40,7 +40,7 @@ void ReplicationServer::send_connect_response(ClientState& client) {
     if (!options_.transport) {
         return;
     }
-    BitBuffer packet;
+    ecs::BitBuffer packet;
     packet.reserve_bytes(options_.mtu_bytes);
     packet.push_bits(protocol::server_connect_response_message, 8U);
     packet.push_bool(true);
@@ -61,7 +61,7 @@ void ReplicationServer::send_pong(
         static_cast<std::uint32_t>(std::floor(subframe * static_cast<double>(protocol::frame_subframe_scale))),
         std::uint32_t{0},
         protocol::frame_subframe_scale - 1U));
-    BitBuffer packet;
+    ecs::BitBuffer packet;
     packet.reserve_bytes(options_.mtu_bytes);
     packet.push_bits(protocol::server_pong_message, 8U);
     packet.push_bits(sequence, 32U);

@@ -107,8 +107,8 @@ TEST_CASE("server update lag fast recovery pre-fills future input frames") {
     REQUIRE(client.timing_stats().target_prediction_lead_frames == 15);
     REQUIRE(client.timing_stats().current_prediction_lead_frames == 15);
     REQUIRE(client.timing_stats().measured_prediction_lead_frames == Catch::Approx(15.0f));
-    std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
-    auto input_packet = std::find_if(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+    std::vector<ecs::BitBuffer> packets = client.drain_packets();
+    auto input_packet = std::find_if(packets.begin(), packets.end(), [](ecs::BitBuffer packet) {
         return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
     });
     REQUIRE(input_packet != packets.end());
@@ -145,8 +145,8 @@ TEST_CASE("ping-derived prediction target jump pre-fills future input frames") {
 
     REQUIRE(client.timing_stats().target_prediction_lead_frames == 15);
     REQUIRE(client.timing_stats().current_prediction_lead_frames == 15);
-    std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
-    auto input_packet = std::find_if(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+    std::vector<ecs::BitBuffer> packets = client.drain_packets();
+    auto input_packet = std::find_if(packets.begin(), packets.end(), [](ecs::BitBuffer packet) {
         return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
     });
     REQUIRE(input_packet != packets.end());
@@ -353,11 +353,11 @@ TEST_CASE("frame-aware receive failures do not update timing stats") {
         0.90f,
         1.10f,
         0.10f});
-    const kage::sync::BitBuffer valid = make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}});
+    const ecs::BitBuffer valid = make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}});
     REQUIRE(client.receive(client_registry, valid, 3));
     const kage::sync::ReplicationClientTimingStats baseline = client.timing_stats();
 
-    kage::sync::BitBuffer truncated_header;
+    ecs::BitBuffer truncated_header;
     truncated_header.push_bits(kage::sync::protocol::server_update_message, 8U);
     truncated_header.push_bits(2, 32U);
     REQUIRE_FALSE(client.receive(client_registry, truncated_header, 4));

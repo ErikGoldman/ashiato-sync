@@ -35,8 +35,8 @@ TEST_CASE("replication client input applies to locally owned entities and drains
     REQUIRE(client.receive(registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
     REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
 
-    const std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
-    auto input_packet = std::find_if(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+    const std::vector<ecs::BitBuffer> packets = client.drain_packets();
+    auto input_packet = std::find_if(packets.begin(), packets.end(), [](ecs::BitBuffer packet) {
         return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
     });
     REQUIRE(input_packet != packets.end());
@@ -62,8 +62,8 @@ TEST_CASE("replication client sends full first input frame after unacked input b
         REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
     }
 
-    const std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
-    auto input_packet = std::find_if(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+    const std::vector<ecs::BitBuffer> packets = client.drain_packets();
+    auto input_packet = std::find_if(packets.begin(), packets.end(), [](ecs::BitBuffer packet) {
         return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
     });
     REQUIRE(input_packet != packets.end());
@@ -86,8 +86,8 @@ TEST_CASE("client input frames are immutable samples from the input clock") {
     REQUIRE(client.set_input(registry, NetworkedPosition{3.0f, 4.0f}));
     REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
 
-    std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
-    auto input_packet = std::find_if(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+    std::vector<ecs::BitBuffer> packets = client.drain_packets();
+    auto input_packet = std::find_if(packets.begin(), packets.end(), [](ecs::BitBuffer packet) {
         return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
     });
     REQUIRE(input_packet != packets.end());
@@ -110,7 +110,7 @@ TEST_CASE("client does not send input packets before first server update") {
     options.connect_token = "token";
     kage::sync::ReplicationClient client(options);
 
-    kage::sync::BitBuffer accepted;
+    ecs::BitBuffer accepted;
     accepted.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
     accepted.push_bool(true);
     accepted.push_unsigned_bits(1, 64U);
@@ -119,8 +119,8 @@ TEST_CASE("client does not send input packets before first server update") {
 
     REQUIRE(client.set_input(client_registry, NetworkedPosition{5.0f, 6.0f}));
     REQUIRE(client.tick(client_registry, client.options().fixed_dt_seconds));
-    std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
-    REQUIRE(std::none_of(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+    std::vector<ecs::BitBuffer> packets = client.drain_packets();
+    REQUIRE(std::none_of(packets.begin(), packets.end(), [](ecs::BitBuffer packet) {
         return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
     }));
 
@@ -130,7 +130,7 @@ TEST_CASE("client does not send input packets before first server update") {
 
     REQUIRE(client.tick(client_registry, client.options().fixed_dt_seconds));
     packets = client.drain_packets();
-    REQUIRE(std::any_of(packets.begin(), packets.end(), [](kage::sync::BitBuffer packet) {
+    REQUIRE(std::any_of(packets.begin(), packets.end(), [](ecs::BitBuffer packet) {
         return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
     }));
 }

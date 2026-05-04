@@ -25,13 +25,13 @@ private:
     std::uint32_t max_packet_id_ = 1;
 };
 
-BitBuffer make_server_packet(
+ecs::BitBuffer make_server_packet(
     std::size_t mtu_bytes,
     std::size_t packet_id_bits,
     SyncFrame frame,
     std::uint32_t packet_id,
     SyncFrame input_ack_frame,
     std::uint16_t entity_count,
-    const BitBuffer& records);
+    const ecs::BitBuffer& records);
 
 }  // namespace kage::sync::server_detail

@@ -102,7 +102,7 @@ void run_client(const AppConfig& config) {
     bool was_local_dead = false;
     bool show_latency_stats = true;
     double packet_drop_remaining_seconds = 0.0;
-    client.set_packet_sender([&packet_drop_remaining_seconds, &outgoing_link, &link_time_seconds](const kage::sync::BitBuffer& packet) {
+    client.set_packet_sender([&packet_drop_remaining_seconds, &outgoing_link, &link_time_seconds](const ecs::BitBuffer& packet) {
         if (packet_drop_remaining_seconds <= 0.0) {
             (void)outgoing_link.enqueue(0, packet, link_time_seconds);
         }
@@ -129,24 +129,24 @@ void run_client(const AppConfig& config) {
         (void)client.set_input(registry, current_input);
 
         const bool dropping_packets = packet_drop_remaining_seconds > 0.0;
-        kage::sync::BitBuffer received;
+        ecs::BitBuffer received;
         while (receive_packet(socket, received)) {
             if (!dropping_packets) {
                 (void)incoming_link.enqueue(0, received, link_time_seconds);
             }
         }
         if (dropping_packets) {
-            incoming_link.deliver_ready(link_time_seconds, [](int, const kage::sync::BitBuffer&) {});
+            incoming_link.deliver_ready(link_time_seconds, [](int, const ecs::BitBuffer&) {});
         } else {
-            incoming_link.deliver_ready(link_time_seconds, [&client](int, const kage::sync::BitBuffer& packet) {
+            incoming_link.deliver_ready(link_time_seconds, [&client](int, const ecs::BitBuffer& packet) {
                 client.receive_packet(packet);
             });
         }
         (void)client.tick(registry, dt);
         if (dropping_packets) {
-            outgoing_link.deliver_ready(link_time_seconds, [](int, const kage::sync::BitBuffer&) {});
+            outgoing_link.deliver_ready(link_time_seconds, [](int, const ecs::BitBuffer&) {});
         } else {
-            outgoing_link.deliver_ready(link_time_seconds, [socket, server_address](int, const kage::sync::BitBuffer& packet) {
+            outgoing_link.deliver_ready(link_time_seconds, [socket, server_address](int, const ecs::BitBuffer& packet) {
                 send_packet(socket, server_address, packet);
             });
         }

@@ -32,7 +32,7 @@ void set_nonblocking(SocketHandle socket);
 SocketHandle make_udp_socket(std::uint16_t port);
 sockaddr_in make_address(const std::string& host, std::uint16_t port);
 kage::sync::ClientId peer_id(const sockaddr_in& address);
-bool receive_packet(SocketHandle socket, kage::sync::BitBuffer& packet, sockaddr_in* sender = nullptr);
-void send_packet(SocketHandle socket, const sockaddr_in& target, const kage::sync::BitBuffer& packet);
+bool receive_packet(SocketHandle socket, ecs::BitBuffer& packet, sockaddr_in* sender = nullptr);
+void send_packet(SocketHandle socket, const sockaddr_in& target, const ecs::BitBuffer& packet);
 
 }  // namespace fps

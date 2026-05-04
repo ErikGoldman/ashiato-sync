@@ -40,14 +40,14 @@ inline float decode_fps_signed_fixed_16(std::uint64_t bits, float scale) {
     return static_cast<float>(quantized) / scale;
 }
 
-inline void serialize_fps_cue_position(Vector3 value, BitBuffer& out) {
+inline void serialize_fps_cue_position(Vector3 value, ecs::BitBuffer& out) {
     constexpr float scale = 256.0f;
     out.push_unsigned_bits(encode_fps_signed_fixed_16(value.x, scale, -32768, 32767), 16U);
     out.push_unsigned_bits(encode_fps_signed_fixed_16(value.y, scale, -32768, 32767), 16U);
     out.push_unsigned_bits(encode_fps_signed_fixed_16(value.z, scale, -32768, 32767), 16U);
 }
 
-inline Vector3 deserialize_fps_cue_position(BitBuffer& in) {
+inline Vector3 deserialize_fps_cue_position(ecs::BitBuffer& in) {
     constexpr float scale = 256.0f;
     return Vector3{
         decode_fps_signed_fixed_16(in.read_unsigned_bits(16U), scale),
@@ -55,14 +55,14 @@ inline Vector3 deserialize_fps_cue_position(BitBuffer& in) {
         decode_fps_signed_fixed_16(in.read_unsigned_bits(16U), scale)};
 }
 
-inline void serialize_fps_cue_normal(Vector3 value, BitBuffer& out) {
+inline void serialize_fps_cue_normal(Vector3 value, ecs::BitBuffer& out) {
     constexpr float scale = 32767.0f;
     out.push_unsigned_bits(encode_fps_signed_fixed_16(value.x, scale, -32767, 32767), 16U);
     out.push_unsigned_bits(encode_fps_signed_fixed_16(value.y, scale, -32767, 32767), 16U);
     out.push_unsigned_bits(encode_fps_signed_fixed_16(value.z, scale, -32767, 32767), 16U);
 }
 
-inline Vector3 deserialize_fps_cue_normal(BitBuffer& in) {
+inline Vector3 deserialize_fps_cue_normal(ecs::BitBuffer& in) {
     constexpr float scale = 32767.0f;
     return Vector3{
         std::clamp(decode_fps_signed_fixed_16(in.read_unsigned_bits(16U), scale), -1.0f, 1.0f),
@@ -84,11 +84,11 @@ struct SyncComponentTraits<NetworkOwner> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_unsigned_bits(current.client, 64U);
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         out.client = static_cast<ClientId>(in.read_unsigned_bits(64U));
         return true;
     }
@@ -112,11 +112,11 @@ struct SyncComponentTraits<FpsTransform> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(out));
         return true;
     }
@@ -205,11 +205,11 @@ struct SyncComponentTraits<FpsVelocity> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(out));
         return true;
     }
@@ -249,11 +249,11 @@ struct SyncComponentTraits<FpsCombatState> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(out));
         return true;
     }
@@ -310,11 +310,11 @@ struct SyncComponentTraits<FpsDeathInfo> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_unsigned_bits(current.killer, 64U);
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         out.killer = static_cast<ClientId>(in.read_unsigned_bits(64U));
         return true;
     }
@@ -343,11 +343,11 @@ struct SyncComponentTraits<FpsVisual> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(out));
         return true;
     }
@@ -392,11 +392,11 @@ struct SyncComponentTraits<FpsInput> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(out));
         return true;
     }
@@ -425,10 +425,10 @@ struct SyncComponentTraits<FpsInput> {
 
 template <>
 struct SyncCueTraits<ShotCue> {
-    static void serialize(const ShotCue&, BitBuffer&) {
+    static void serialize(const ShotCue&, ecs::BitBuffer&) {
     }
 
-    static bool deserialize(BitBuffer&, ShotCue&) {
+    static bool deserialize(ecs::BitBuffer&, ShotCue&) {
         return true;
     }
 
@@ -455,12 +455,12 @@ struct SyncCueTraits<ShotCue> {
 
 template <>
 struct SyncCueTraits<SurfaceHitCue> {
-    static void serialize(const SurfaceHitCue& cue, BitBuffer& out) {
+    static void serialize(const SurfaceHitCue& cue, ecs::BitBuffer& out) {
         detail::serialize_fps_cue_position(cue.position, out);
         detail::serialize_fps_cue_normal(cue.normal, out);
     }
 
-    static bool deserialize(BitBuffer& in, SurfaceHitCue& out) {
+    static bool deserialize(ecs::BitBuffer& in, SurfaceHitCue& out) {
         out.position = detail::deserialize_fps_cue_position(in);
         out.normal = detail::deserialize_fps_cue_normal(in);
         return true;
@@ -525,11 +525,11 @@ struct SyncCueTraits<SurfaceHitCue> {
 
 template <>
 struct SyncCueTraits<PlayerHitCue> {
-    static void serialize(const PlayerHitCue& cue, BitBuffer& out, EntityReferenceContext& references) {
+    static void serialize(const PlayerHitCue& cue, ecs::BitBuffer& out, EntityReferenceContext& references) {
         (void)write_entity_reference(out, cue.shooter, references);
     }
 
-    static bool deserialize(BitBuffer& in, PlayerHitCue& out, EntityReferenceContext& references) {
+    static bool deserialize(ecs::BitBuffer& in, PlayerHitCue& out, EntityReferenceContext& references) {
         return read_entity_reference(in, references, out.shooter);
     }
 
@@ -580,11 +580,11 @@ struct SyncCueTraits<PlayerHitCue> {
 
 template <>
 struct SyncCueTraits<HitConfirmCue> {
-    static void serialize(const HitConfirmCue& cue, BitBuffer& out, EntityReferenceContext& references) {
+    static void serialize(const HitConfirmCue& cue, ecs::BitBuffer& out, EntityReferenceContext& references) {
         (void)write_entity_reference(out, cue.victim, references);
     }
 
-    static bool deserialize(BitBuffer& in, HitConfirmCue& out, EntityReferenceContext& references) {
+    static bool deserialize(ecs::BitBuffer& in, HitConfirmCue& out, EntityReferenceContext& references) {
         return read_entity_reference(in, references, out.victim);
     }
 
@@ -627,11 +627,11 @@ struct SyncCueTraits<HitConfirmCue> {
 
 template <>
 struct SyncCueTraits<PlayerDeathCue> {
-    static void serialize(const PlayerDeathCue& cue, BitBuffer& out, EntityReferenceContext& references) {
+    static void serialize(const PlayerDeathCue& cue, ecs::BitBuffer& out, EntityReferenceContext& references) {
         (void)write_entity_reference(out, cue.shooter, references);
     }
 
-    static bool deserialize(BitBuffer& in, PlayerDeathCue& out, EntityReferenceContext& references) {
+    static bool deserialize(ecs::BitBuffer& in, PlayerDeathCue& out, EntityReferenceContext& references) {
         return read_entity_reference(in, references, out.shooter);
     }
 

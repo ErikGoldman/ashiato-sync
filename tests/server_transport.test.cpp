@@ -29,15 +29,15 @@ TEST_CASE("replication server rejects malformed ACK packets") {
     kage::sync::ReplicationServer server;
     REQUIRE(server.add_client(1));
 
-    kage::sync::BitBuffer empty;
+    ecs::BitBuffer empty;
     REQUIRE_FALSE(server.process_packet(1, empty));
 
-    kage::sync::BitBuffer wrong_message;
+    ecs::BitBuffer wrong_message;
     wrong_message.push_bits(kage::sync::protocol::server_update_message, 8U);
     wrong_message.push_bits(0, 16U);
     REQUIRE_FALSE(server.process_packet(1, wrong_message));
 
-    kage::sync::BitBuffer truncated_record;
+    ecs::BitBuffer truncated_record;
     truncated_record.push_bits(kage::sync::protocol::client_ack_message, 8U);
     truncated_record.push_bits(1, 16U);
     truncated_record.push_bool(false);
@@ -53,27 +53,27 @@ TEST_CASE("replication server rejects malformed connect ack and input packets") 
 
     kage::sync::ReplicationServer server;
 
-    kage::sync::BitBuffer malformed_connect;
+    ecs::BitBuffer malformed_connect;
     malformed_connect.push_bits(kage::sync::protocol::client_connect_request_message, 8U);
     REQUIRE_FALSE(server.process_packet(registry, 10, malformed_connect));
 
     REQUIRE(server.add_client(1));
 
-    kage::sync::BitBuffer truncated_connect_ack;
+    ecs::BitBuffer truncated_connect_ack;
     truncated_connect_ack.push_bits(kage::sync::protocol::client_connect_ack_message, 8U);
     truncated_connect_ack.push_bits(1, 8U);
     REQUIRE_FALSE(server.process_packet(registry, 1, truncated_connect_ack));
 
-    kage::sync::BitBuffer wrong_connect_ack;
+    ecs::BitBuffer wrong_connect_ack;
     wrong_connect_ack.push_bits(kage::sync::protocol::client_connect_ack_message, 8U);
     wrong_connect_ack.push_unsigned_bits(2, 64U);
     REQUIRE_FALSE(server.process_packet(registry, 1, wrong_connect_ack));
 
-    kage::sync::BitBuffer input_without_registry;
+    ecs::BitBuffer input_without_registry;
     input_without_registry.push_bits(kage::sync::protocol::client_input_message, 8U);
     REQUIRE_FALSE(server.process_packet(1, input_without_registry));
 
-    kage::sync::BitBuffer truncated_input;
+    ecs::BitBuffer truncated_input;
     truncated_input.push_bits(kage::sync::protocol::client_input_message, 8U);
     truncated_input.push_bits(0, 16U);
     REQUIRE_FALSE(server.process_packet(registry, 1, truncated_input));
@@ -89,10 +89,10 @@ TEST_CASE("replication server respects per-client bandwidth limits") {
         entities.push_back(entity);
     }
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 21;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         REQUIRE(client == 1);
         payloads.push_back(payload);
     };
@@ -136,11 +136,11 @@ TEST_CASE("replication server parallel path applies bandwidth limits independent
         entities.push_back(entity);
     }
 
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 21;
     options.serialized_worker_threads = 2;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         packets.emplace_back(client, payload);
     };
     kage::sync::ReplicationServer server(options);
@@ -174,11 +174,11 @@ TEST_CASE("replication server parallel path batches records when budget allows")
         REQUIRE(start_sync(registry, entity, archetype));
     }
 
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
     options.serialized_worker_threads = 2;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         packets.emplace_back(client, payload);
     };
     kage::sync::ReplicationServer server(options);
@@ -204,10 +204,10 @@ TEST_CASE("replication server rotates budget-limited sends by priority") {
         entities.push_back(entity);
     }
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 21;
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
     kage::sync::ReplicationServer server(options);
@@ -239,10 +239,10 @@ TEST_CASE("replication server keeps per-client priorities independent") {
     REQUIRE(registry.add<NetworkedPosition>(first, NetworkedPosition{}) != nullptr);
     REQUIRE(registry.add<NetworkedPosition>(second, NetworkedPosition{}) != nullptr);
 
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> payloads;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 21;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         payloads.push_back({client, payload});
     };
     kage::sync::ReplicationServer server(options);
@@ -275,10 +275,10 @@ TEST_CASE("replication server skips destroyed and externally unmarked entities")
     REQUIRE(registry.add<NetworkedPosition>(unmarked, NetworkedPosition{}) != nullptr);
     REQUIRE(registry.add<NetworkedPosition>(live, NetworkedPosition{}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 512;
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
     kage::sync::ReplicationServer server(options);
@@ -311,7 +311,7 @@ TEST_CASE("replication server sends nothing when bandwidth cannot cover a serial
     int sends = 0;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 20;
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer&) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer&) {
         ++sends;
     };
     kage::sync::ReplicationServer server(options);
@@ -331,11 +331,11 @@ TEST_CASE("replication server parallel path releases quantized frames for unsent
     REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{}) != nullptr);
     REQUIRE(start_sync(registry, entity, archetype));
 
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 20;
     options.serialized_worker_threads = 2;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         packets.emplace_back(client, payload);
     };
     kage::sync::ReplicationServer server(options);
@@ -360,10 +360,10 @@ TEST_CASE("replication server serializes full and delta component payloads throu
     const ecs::Entity entity = registry.create();
     REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         REQUIRE(client == 1);
         payloads.push_back(payload);
     };
@@ -418,10 +418,10 @@ TEST_CASE("replication server sends a full update after archetype replacement") 
     REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
     REQUIRE(registry.add<Health>(entity, Health{50}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
@@ -459,10 +459,10 @@ TEST_CASE("replication server applies bandwidth limits to actual serialized byte
     REQUIRE(registry.add<NetworkedPosition>(first, NetworkedPosition{1.0f, 1.0f}) != nullptr);
     REQUIRE(registry.add<NetworkedPosition>(second, NetworkedPosition{2.0f, 2.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 21;
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
@@ -512,7 +512,7 @@ TEST_CASE("replication server filters owner-only serialized components") {
     std::vector<std::pair<kage::sync::ClientId, std::size_t>> sends;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         sends.push_back({client, payload.byte_size()});
     };
 
@@ -548,10 +548,10 @@ TEST_CASE("replication server serializes compact synced tag masks per client") {
     REQUIRE(registry.add_tag(entity, secret));
     REQUIRE(kage::sync::set_owner(registry, entity, 1));
 
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> payloads;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         payloads.push_back({client, payload});
     };
 
@@ -563,7 +563,7 @@ TEST_CASE("replication server serializes compact synced tag masks per client") {
     server.tick(registry);
     REQUIRE(payloads.size() == 2);
     for (auto sent : payloads) {
-        kage::sync::BitBuffer packet = sent.second;
+        ecs::BitBuffer packet = sent.second;
         REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::server_update_message);
         const auto frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
         packet.read_bits(kage::sync::protocol::server_packet_id_bits);
@@ -591,7 +591,7 @@ TEST_CASE("replication server serializes compact synced tag masks per client") {
     server.tick(registry);
     REQUIRE(payloads.size() == 2);
     for (auto sent : payloads) {
-        kage::sync::BitBuffer packet = sent.second;
+        ecs::BitBuffer packet = sent.second;
         packet.read_bits(8U);
         const auto frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
         packet.read_bits(kage::sync::protocol::server_packet_id_bits);
@@ -632,7 +632,7 @@ TEST_CASE("replication server batches sphere filtering and component LOD masks")
     REQUIRE(registry.add<NetworkedPosition>(far, NetworkedPosition{10.0f, 0.0f}) != nullptr);
     REQUIRE(start_sync(registry, far, archetype));
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     std::size_t prioritizer_calls = 0;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
@@ -650,7 +650,7 @@ TEST_CASE("replication server batches sphere filtering and component LOD masks")
             decisions[index].component_mask = std::uint64_t{1} << 0U;
         }
     };
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
@@ -680,11 +680,11 @@ TEST_CASE("replication server packs entity records up to the configured mtu") {
     REQUIRE(registry.add<NetworkedPosition>(first, NetworkedPosition{1.0f, 1.0f}) != nullptr);
     REQUIRE(registry.add<NetworkedPosition>(second, NetworkedPosition{2.0f, 2.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
     options.mtu_bytes = 56;
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
@@ -714,11 +714,11 @@ TEST_CASE("replication server splits packed updates at the mtu boundary") {
     REQUIRE(registry.add<NetworkedPosition>(first, NetworkedPosition{1.0f, 1.0f}) != nullptr);
     REQUIRE(registry.add<NetworkedPosition>(second, NetworkedPosition{2.0f, 2.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
     options.mtu_bytes = 21;
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
@@ -730,7 +730,7 @@ TEST_CASE("replication server splits packed updates at the mtu boundary") {
     server.tick(registry);
 
     REQUIRE(payloads.size() == 2);
-    for (const kage::sync::BitBuffer& payload : payloads) {
+    for (const ecs::BitBuffer& payload : payloads) {
         REQUIRE(payload.byte_size() <= options.mtu_bytes);
         REQUIRE(payload.byte_size() == 21);
         REQUIRE(read_server_update(payload).entities.size() == 1);

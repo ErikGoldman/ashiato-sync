@@ -230,7 +230,7 @@ void append_trace_cue_data(
     const SyncTracer* tracer,
     const SyncSettings& settings,
     SyncCueTypeId cue_type,
-    const BitBuffer& payload,
+    const ecs::BitBuffer& payload,
     SyncTraceEvent& event) {
 #ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
     if (tracer == nullptr || !tracer->frame_data_enabled() ||
@@ -715,7 +715,7 @@ const QuantizedFrameData* ReplicationClient::find_baseline(
     return nullptr;
 }
 
-bool ReplicationClient::receive(ecs::Registry& registry, BitBuffer packet) {
+bool ReplicationClient::receive(ecs::Registry& registry, ecs::BitBuffer packet) {
     try {
         if (packet.remaining_bits() < 8U) {
             return false;
@@ -821,13 +821,13 @@ bool ReplicationClient::receive(ecs::Registry& registry, BitBuffer packet) {
     }
 }
 
-bool ReplicationClient::receive(ecs::Registry& registry, BitBuffer packet, SyncFrame client_frame) {
+bool ReplicationClient::receive(ecs::Registry& registry, ecs::BitBuffer packet, SyncFrame client_frame) {
     return receive(registry, std::move(packet), client_frame, client_frame);
 }
 
 bool ReplicationClient::receive(
     ecs::Registry& registry,
-    BitBuffer packet,
+    ecs::BitBuffer packet,
     SyncFrame receive_frame,
     SyncFrame playback_frame) {
     try {
@@ -1302,11 +1302,11 @@ bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds) {
     return tick(registry, dt_seconds, {});
 }
 
-void ReplicationClient::set_packet_sender(std::function<void(const BitBuffer&)> sender) {
+void ReplicationClient::set_packet_sender(std::function<void(const ecs::BitBuffer&)> sender) {
     packet_sender_ = std::move(sender);
 }
 
-void ReplicationClient::receive_packet(BitBuffer packet) {
+void ReplicationClient::receive_packet(ecs::BitBuffer packet) {
     inbound_packets_.push_back(std::move(packet));
 }
 
@@ -1586,8 +1586,8 @@ const DisplayInterpolationSampleBuffer& ReplicationClient::display_interpolation
     return display_frame_;
 }
 
-std::vector<BitBuffer> ReplicationClient::drain_packets() {
-    std::vector<BitBuffer> packets;
+std::vector<ecs::BitBuffer> ReplicationClient::drain_packets() {
+    std::vector<ecs::BitBuffer> packets;
     drain_connect_packets(packets);
     drain_ping_packets(packets);
     drain_input_packets_into(packets);
@@ -1595,14 +1595,14 @@ std::vector<BitBuffer> ReplicationClient::drain_packets() {
     return packets;
 }
 
-std::vector<BitBuffer> ReplicationClient::drain_ack_packets() {
-    std::vector<BitBuffer> packets;
+std::vector<ecs::BitBuffer> ReplicationClient::drain_ack_packets() {
+    std::vector<ecs::BitBuffer> packets;
     drain_ack_packets_into(packets);
     return packets;
 }
 
 bool ReplicationClient::process_inbound_packets(ecs::Registry& registry) {
-    for (BitBuffer& packet : inbound_packets_) {
+    for (ecs::BitBuffer& packet : inbound_packets_) {
         (void)receive(registry, std::move(packet));
     }
     inbound_packets_.clear();
@@ -1613,12 +1613,12 @@ void ReplicationClient::send_pending_packets() {
     if (!packet_sender_) {
         return;
     }
-    for (const BitBuffer& packet : drain_packets()) {
+    for (const ecs::BitBuffer& packet : drain_packets()) {
         packet_sender_(packet);
     }
 }
 
-void ReplicationClient::drain_ack_packets_into(std::vector<BitBuffer>& packets) {
+void ReplicationClient::drain_ack_packets_into(std::vector<ecs::BitBuffer>& packets) {
 #if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
     std::vector<client_detail::ClientAckPacketTrace> traces;
     ack_queue_->drain_ack_packets(options_.mtu_bytes, configured_packet_id_bits(options_), packets, &traces);
@@ -1630,7 +1630,7 @@ void ReplicationClient::drain_ack_packets_into(std::vector<BitBuffer>& packets) 
 #endif
 }
 
-void ReplicationClient::drain_input_packets_into(std::vector<BitBuffer>& packets) {
+void ReplicationClient::drain_input_packets_into(std::vector<ecs::BitBuffer>& packets) {
     if (connection_state_ != ReplicationClientConnectionState::Ready || !clock_.bootstrapped()) {
         return;
     }
@@ -1793,7 +1793,7 @@ void ReplicationClient::advance_wire_network_id_version(std::uint32_t wire_netwo
 
 bool ReplicationClient::apply_update(
     ecs::Registry& registry,
-    BitBuffer& packet,
+    ecs::BitBuffer& packet,
     std::uint32_t packet_id,
     SyncFrame frame,
     std::uint16_t record_count) {
@@ -1833,7 +1833,7 @@ bool ReplicationClient::apply_upsert(
     const SyncSettings& settings,
     SyncFrame frame,
     std::uint32_t network_id,
-    BitBuffer& packet) {
+    ecs::BitBuffer& packet) {
     const bool full = packet.read_bool();
     const ClientEntityNetworkId client_entity_network_id = client_entity_network_id_for_wire(network_id);
     if (client_entity_network_id == invalid_client_entity_network_id) {
@@ -2301,7 +2301,7 @@ bool ReplicationClient::apply_upsert(
     return true;
 }
 
-bool ReplicationClient::read_cues(BitBuffer& packet, std::vector<EntityCue>& out) {
+bool ReplicationClient::read_cues(ecs::BitBuffer& packet, std::vector<EntityCue>& out) {
     out.clear();
     const bool has_cues = packet.read_bool();
     if (!has_cues) {
@@ -4200,7 +4200,7 @@ void ReplicationClient::record_server_packet_sequence(std::uint32_t packet_id) n
         has_server_update_packet_window_);
 }
 
-bool ReplicationClient::receive_connect_response(ecs::Registry& registry, BitBuffer& packet) {
+bool ReplicationClient::receive_connect_response(ecs::Registry& registry, ecs::BitBuffer& packet) {
     if (packet.remaining_bits() < 1U) {
         return false;
     }
@@ -4243,7 +4243,7 @@ bool ReplicationClient::receive_connect_response(ecs::Registry& registry, BitBuf
     return true;
 }
 
-bool ReplicationClient::receive_pong(ecs::Registry& registry, BitBuffer& packet, SyncFrame receive_frame) {
+bool ReplicationClient::receive_pong(ecs::Registry& registry, ecs::BitBuffer& packet, SyncFrame receive_frame) {
     if (packet.remaining_bits() < 64U) {
         return false;
     }
@@ -4339,14 +4339,14 @@ bool ReplicationClient::receive_pong(ecs::Registry& registry, BitBuffer& packet,
     return true;
 }
 
-void ReplicationClient::drain_connect_packets(std::vector<BitBuffer>& packets) {
+void ReplicationClient::drain_connect_packets(std::vector<ecs::BitBuffer>& packets) {
     if (connection_state_ == ReplicationClientConnectionState::Connecting) {
         if (sent_initial_connect_request_ &&
             connect_resend_accumulator_seconds_ < options_.connect_resend_interval_seconds) {
             return;
         }
 
-        BitBuffer packet;
+        ecs::BitBuffer packet;
         packet.reserve_bytes(options_.mtu_bytes);
         packet.push_bits(protocol::client_connect_request_message, 8U);
         protocol::write_string(packet, options_.connect_token);
@@ -4363,7 +4363,7 @@ void ReplicationClient::drain_connect_packets(std::vector<BitBuffer>& packets) {
             return;
         }
 
-        BitBuffer packet;
+        ecs::BitBuffer packet;
         packet.reserve_bytes(options_.mtu_bytes);
         packet.push_bits(protocol::client_connect_ack_message, 8U);
         packet.push_unsigned_bits(client_id_, 64U);
@@ -4372,7 +4372,7 @@ void ReplicationClient::drain_connect_packets(std::vector<BitBuffer>& packets) {
     }
 }
 
-void ReplicationClient::drain_ping_packets(std::vector<BitBuffer>& packets) {
+void ReplicationClient::drain_ping_packets(std::vector<ecs::BitBuffer>& packets) {
     if (connection_state_ != ReplicationClientConnectionState::Accepted &&
         connection_state_ != ReplicationClientConnectionState::Ready) {
         return;
@@ -4390,7 +4390,7 @@ void ReplicationClient::drain_ping_packets(std::vector<BitBuffer>& packets) {
     const std::uint16_t send_subframe = encode_subframe(clock_.receive_subframe());
     pending_pings_[sequence] = PendingPing{send_frame, send_subframe};
 
-    BitBuffer packet;
+    ecs::BitBuffer packet;
     packet.reserve_bytes(options_.mtu_bytes);
     packet.push_bits(protocol::client_ping_message, 8U);
     packet.push_bits(sequence, 32U);

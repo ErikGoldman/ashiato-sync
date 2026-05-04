@@ -1,4 +1,4 @@
-#include "kage/sync/bit_buffer.hpp"
+#include "ecs/bit_buffer.hpp"
 #include "kage/sync/delta.hpp"
 #include "kage/sync/protocol.hpp"
 
@@ -12,7 +12,7 @@
 #include <vector>
 
 TEST_CASE("bit buffer pushes and reads bits, bytes, and bools") {
-    kage::sync::BitBuffer buffer;
+    ecs::BitBuffer buffer;
     buffer.push_bool(true);
     buffer.push_bits(0b101, 3U);
     buffer.push_bytes("AZ", 2U);
@@ -30,7 +30,7 @@ TEST_CASE("bit buffer pushes and reads bits, bytes, and bools") {
 }
 
 TEST_CASE("bit buffer handles unaligned byte payloads") {
-    kage::sync::BitBuffer buffer;
+    ecs::BitBuffer buffer;
     buffer.push_bits(0b11, 2U);
     buffer.push_bytes("BC", 2U);
 
@@ -45,7 +45,7 @@ TEST_CASE("bit buffer handles unaligned byte payloads") {
 }
 
 TEST_CASE("bit buffer handles unaligned 64-bit integer payloads") {
-    kage::sync::BitBuffer buffer;
+    ecs::BitBuffer buffer;
     buffer.push_bits(0b101, 3U);
     buffer.push_unsigned_bits(0xfedcba9876543210ULL, 64U);
     buffer.push_unsigned_bits(0x0123456789abcdefULL, 64U);
@@ -59,7 +59,7 @@ TEST_CASE("bit buffer handles unaligned 64-bit integer payloads") {
 }
 
 TEST_CASE("bit buffer reset and clear preserve expected offsets") {
-    kage::sync::BitBuffer buffer;
+    ecs::BitBuffer buffer;
     buffer.push_unsigned_bits(0xfeedfaceULL, 32U);
     REQUIRE(buffer.read_unsigned_bits(16U) == 0xfaceU);
     REQUIRE(buffer.read_offset_bits() == 16);
@@ -74,7 +74,7 @@ TEST_CASE("bit buffer reset and clear preserve expected offsets") {
 }
 
 TEST_CASE("bit buffer validates invalid read and write requests") {
-    kage::sync::BitBuffer buffer;
+    ecs::BitBuffer buffer;
 
     REQUIRE_NOTHROW(buffer.push_bytes(nullptr, 0U));
     REQUIRE_THROWS_AS(buffer.push_bytes(nullptr, 1U), std::invalid_argument);
@@ -90,12 +90,12 @@ TEST_CASE("bit buffer validates invalid read and write requests") {
 }
 
 TEST_CASE("bit buffer overwrites existing aligned and unaligned bit ranges") {
-    kage::sync::BitBuffer aligned;
+    ecs::BitBuffer aligned;
     aligned.push_bits(0, 32U);
     aligned.overwrite_unsigned_bits(0, 0xfeedfaceU, 32U);
     REQUIRE(aligned.read_unsigned_bits(32U) == 0xfeedfaceU);
 
-    kage::sync::BitBuffer unaligned;
+    ecs::BitBuffer unaligned;
     unaligned.push_bits(0b101, 3U);
     const std::size_t patch_offset = unaligned.bit_size();
     unaligned.push_bits(0, 32U);
@@ -114,11 +114,11 @@ TEST_CASE("bit buffer overwrites existing aligned and unaligned bit ranges") {
 }
 
 TEST_CASE("bit buffer appends source buffers bit-exactly") {
-    kage::sync::BitBuffer source;
+    ecs::BitBuffer source;
     source.push_bool(true);
     source.push_bits(0b010011, 6U);
 
-    kage::sync::BitBuffer combined;
+    ecs::BitBuffer combined;
     combined.push_bool(false);
     combined.push_buffer_bits(source);
 
@@ -131,7 +131,7 @@ TEST_CASE("bit buffer appends source buffers bit-exactly") {
 TEST_CASE("bit buffer round-trips deterministic randomized unaligned integer fields") {
     std::mt19937 rng(12345);
     std::vector<std::pair<std::uint64_t, std::size_t>> fields;
-    kage::sync::BitBuffer buffer;
+    ecs::BitBuffer buffer;
     buffer.push_bits(0b101, 3U);
 
     for (int field = 0; field < 128; ++field) {
@@ -151,7 +151,7 @@ TEST_CASE("bit buffer round-trips deterministic randomized unaligned integer fie
 }
 
 TEST_CASE("protocol baseline frame encoding uses relative deltas when possible") {
-    kage::sync::BitBuffer relative;
+    ecs::BitBuffer relative;
     kage::sync::protocol::write_baseline_frame(relative, 40U, 35U);
     REQUIRE(relative.bit_size() == 1U + kage::sync::protocol::baseline_frame_delta_bits);
 
@@ -160,7 +160,7 @@ TEST_CASE("protocol baseline frame encoding uses relative deltas when possible")
     REQUIRE(decoded == 35U);
     REQUIRE(relative.remaining_bits() == 0U);
 
-    kage::sync::BitBuffer full;
+    ecs::BitBuffer full;
     kage::sync::protocol::write_baseline_frame(
         full,
         40U,
@@ -182,7 +182,7 @@ TEST_CASE("protocol baseline frame encoding round-trips sampled frame pairs") {
                  current > kage::sync::protocol::max_baseline_frame_delta + 2U
                      ? current - kage::sync::protocol::max_baseline_frame_delta - 2U
                      : 0U}) {
-            kage::sync::BitBuffer buffer;
+            ecs::BitBuffer buffer;
             kage::sync::protocol::write_baseline_frame(buffer, current, baseline);
             std::uint32_t decoded = 0;
             REQUIRE(kage::sync::protocol::read_baseline_frame(buffer, current, decoded));
@@ -205,7 +205,7 @@ TEST_CASE("protocol network entity id encoding uses compact tiers") {
         };
 
         for (const std::uint32_t id : ids) {
-            kage::sync::BitBuffer buffer;
+            ecs::BitBuffer buffer;
             kage::sync::protocol::write_network_entity_id(buffer, id, tier0_bits);
             REQUIRE(buffer.bit_size() ==
                     kage::sync::protocol::network_entity_id_encoded_bits(id, tier0_bits));
@@ -223,7 +223,7 @@ TEST_CASE("protocol network entity id encoding round-trips sampled ids across ti
     for (const std::size_t tier0_bits : {1U, 4U, 8U, 11U, 22U}) {
         for (int sample = 0; sample < 128; ++sample) {
             const std::uint32_t id = rng();
-            kage::sync::BitBuffer buffer;
+            ecs::BitBuffer buffer;
             kage::sync::protocol::write_network_entity_id(buffer, id, tier0_bits);
             REQUIRE(buffer.bit_size() ==
                     kage::sync::protocol::network_entity_id_encoded_bits(id, tier0_bits));
@@ -239,7 +239,7 @@ TEST_CASE("protocol network entity id encoding round-trips sampled ids across ti
 TEST_CASE("protocol strings round-trip and reject truncated payloads") {
     const std::vector<std::string> values = {"", "a", "hello", std::string(32, 'x')};
     for (const std::string& value : values) {
-        kage::sync::BitBuffer buffer;
+        ecs::BitBuffer buffer;
         kage::sync::protocol::write_string(buffer, value);
         std::string decoded;
         REQUIRE(kage::sync::protocol::read_string(buffer, decoded));
@@ -247,12 +247,12 @@ TEST_CASE("protocol strings round-trip and reject truncated payloads") {
         REQUIRE(buffer.remaining_bits() == 0U);
     }
 
-    kage::sync::BitBuffer truncated_length;
+    ecs::BitBuffer truncated_length;
     truncated_length.push_bits(1, 8U);
     std::string decoded;
     REQUIRE_FALSE(kage::sync::protocol::read_string(truncated_length, decoded));
 
-    kage::sync::BitBuffer truncated_payload;
+    ecs::BitBuffer truncated_payload;
     truncated_payload.push_bits(4, 16U);
     truncated_payload.push_bytes("xy", 2U);
     REQUIRE_FALSE(kage::sync::protocol::read_string(truncated_payload, decoded));
@@ -261,14 +261,14 @@ TEST_CASE("protocol strings round-trip and reject truncated payloads") {
 TEST_CASE("delta helpers quantize floats and vectors with changed-value masks") {
     const kage::sync::delta::FloatConfig config{-10.0f, 10.0f, 0.25f};
 
-    kage::sync::BitBuffer scalar;
+    ecs::BitBuffer scalar;
     kage::sync::delta::write_float(scalar, 1.12f, config);
     REQUIRE(scalar.bit_size() == kage::sync::delta::float_bits(config));
     float scalar_out = 0.0f;
     REQUIRE(kage::sync::delta::read_float(scalar, config, scalar_out));
     REQUIRE(scalar_out == Catch::Approx(1.0f));
 
-    kage::sync::BitBuffer delta;
+    ecs::BitBuffer delta;
     kage::sync::delta::write_delta_vec3(
         delta,
         kage::sync::delta::Vec3{1.0f, 2.0f, 3.0f},
@@ -288,14 +288,14 @@ TEST_CASE("delta helpers quantize floats and vectors with changed-value masks") 
 }
 
 TEST_CASE("delta helpers encode integer and quaternion deltas") {
-    kage::sync::BitBuffer ints;
+    ecs::BitBuffer ints;
     kage::sync::delta::write_delta_int(ints, 100, 93, 8U);
     std::int64_t int_out = 0;
     REQUIRE(kage::sync::delta::read_delta_int(ints, 100, 8U, int_out));
     REQUIRE(int_out == 93);
 
     const kage::sync::delta::FloatConfig quat_config{-1.0f, 1.0f, 0.01f};
-    kage::sync::BitBuffer quaternion;
+    ecs::BitBuffer quaternion;
     kage::sync::delta::write_delta_quaternion(
         quaternion,
         kage::sync::delta::Quaternion{0.0f, 0.0f, 0.0f, 1.0f},

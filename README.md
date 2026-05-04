@@ -161,7 +161,7 @@ int main() {
     kage::sync::ReplicationServerOptions server_options;
     server_options.bandwidth_limit_bytes_per_tick = 1024;
     server_options.transport =
-        [](kage::sync::ClientId client, const kage::sync::BitBuffer& packet) {
+        [](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
             // Enqueue `packet` for `client` on your UDP/socket transport here.
         };
     kage::sync::ReplicationServer server(server_options);

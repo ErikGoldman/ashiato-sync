@@ -8,7 +8,7 @@ TEST_CASE("ClientAckQueue chunks pending acks by mtu") {
         queue.push(packet_id);
     }
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     std::vector<kage::sync::client_detail::ClientAckPacketTrace> traces;
     queue.drain_ack_packets(
         5,
@@ -45,7 +45,7 @@ TEST_CASE("ClientAckQueue leaves pending acks when mtu cannot fit one ack") {
     kage::sync::client_detail::ClientAckQueue queue;
     queue.push(7);
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     queue.drain_ack_packets(
         3,
         8,

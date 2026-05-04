@@ -22,7 +22,7 @@ TEST_CASE("replication server tracks clients and replicated component changes") 
     const ecs::Entity entity = registry.create();
 
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
+    server_options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
     kage::sync::ReplicationServer server(server_options);
 
     REQUIRE(server.add_client(7));
@@ -59,7 +59,7 @@ TEST_CASE("replication server disconnects clients after configured idle timeout"
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 1.0;
     options.idle_client_timeout_seconds = 2.0;
-    options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
+    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
     kage::sync::ReplicationServer server(options);
     REQUIRE(server.add_client(1));
 
@@ -76,14 +76,14 @@ TEST_CASE("replication server resets idle timeout when a client sends packets") 
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 1.0;
     options.idle_client_timeout_seconds = 2.0;
-    options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
+    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
     kage::sync::ReplicationServer server(options);
     REQUIRE(server.add_client(1));
 
     server.tick(registry);
     REQUIRE(server.has_client(1));
 
-    kage::sync::BitBuffer ack;
+    ecs::BitBuffer ack;
     ack.push_bits(kage::sync::protocol::client_ack_message, 8U);
     ack.push_bits(0, 16U);
     REQUIRE(server.process_packet(1, ack));
@@ -119,7 +119,7 @@ TEST_CASE("replication server continuous tick owns the fixed-step accumulator") 
 
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 0.25;
-    options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
+    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
     kage::sync::ReplicationServer server(options);
 
     REQUIRE(server.tick(registry, 0.125));
@@ -142,7 +142,7 @@ TEST_CASE("replication server post tick callback fires once per completed fixed 
     std::vector<kage::sync::SyncFrame> frames;
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 0.25;
-    options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
+    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
     options.post_tick = [&frames](
         const ecs::Registry& callback_registry,
         kage::sync::SyncFrame frame,
@@ -191,10 +191,10 @@ TEST_CASE("replication server post tick callback receives cues drained for the f
 
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 0.25;
-    options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
+    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
     options.post_tick = [&seen](const ecs::Registry&, kage::sync::SyncFrame, kage::sync::QueuedSyncCueView cues) {
         for (const kage::sync::QueuedSyncCue& cue : cues) {
-            kage::sync::BitBuffer payload = cue.payload;
+            ecs::BitBuffer payload = cue.payload;
             seen.push_back(SeenCue{
                 cue.entity,
                 cue.frame,
@@ -223,7 +223,7 @@ TEST_CASE("replication server frame is the currently simulating frame") {
     kage::sync::configure_server(registry);
 
     kage::sync::ReplicationServerOptions options;
-    options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
+    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
     kage::sync::ReplicationServer server(options);
     REQUIRE(server.frame() == 0);
 
@@ -242,16 +242,16 @@ TEST_CASE("replication server queued receive packets are processed after clock a
     ecs::Registry registry;
     kage::sync::configure_server(registry);
 
-    std::vector<kage::sync::BitBuffer> sent;
+    std::vector<ecs::BitBuffer> sent;
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 1.0;
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         sent.push_back(packet);
     };
     kage::sync::ReplicationServer server(options);
     REQUIRE(server.add_client(1));
 
-    kage::sync::BitBuffer ping;
+    ecs::BitBuffer ping;
     ping.push_bits(kage::sync::protocol::client_ping_message, 8U);
     ping.push_bits(7U, 32U);
     ping.push_bits(3U, 32U);
@@ -260,7 +260,7 @@ TEST_CASE("replication server queued receive packets are processed after clock a
 
     REQUIRE(server.tick(registry, 0.5));
     REQUIRE(sent.size() == 1);
-    kage::sync::BitBuffer pong = sent[0];
+    ecs::BitBuffer pong = sent[0];
     REQUIRE(static_cast<std::uint8_t>(pong.read_bits(8U)) == kage::sync::protocol::server_pong_message);
     REQUIRE(static_cast<std::uint32_t>(pong.read_bits(32U)) == 7U);
     REQUIRE(static_cast<kage::sync::SyncFrame>(pong.read_bits(32U)) == 3U);

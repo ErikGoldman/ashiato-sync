@@ -17,9 +17,9 @@ TEST_CASE("buffered interpolation delays entity creation until the target frame"
     const ecs::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -131,9 +131,9 @@ TEST_CASE("entity mode selector can inspect synced tag masks") {
     REQUIRE(server_registry.add<Position>(server_entity, Position{4.0f, 8.0f}) != nullptr);
     REQUIRE(server_registry.add_tag(server_entity, server_visible));
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -422,9 +422,9 @@ TEST_CASE("buffered interpolation fills skipped frames with component trait inte
     const ecs::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<SmoothPosition>(server_entity, SmoothPosition{0.0f, 0.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -448,7 +448,7 @@ TEST_CASE("buffered interpolation fills skipped frames with component trait inte
         8});
     server.tick(server_registry);
     REQUIRE(client.receive(client_registry, packets.back()));
-    for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
+    for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
         REQUIRE(server.process_packet(1, ack));
     }
 
@@ -490,9 +490,9 @@ TEST_CASE("buffered interpolation floors synced tags") {
     REQUIRE(server_registry.add<NetworkedPosition>(server_entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
     REQUIRE(server_registry.add_tag(server_entity, server_visible));
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -521,7 +521,7 @@ TEST_CASE("buffered interpolation floors synced tags") {
         8});
     server.tick(server_registry);
     REQUIRE(client.receive(client_registry, packets.back()));
-    for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
+    for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
         REQUIRE(server.process_packet(1, ack));
     }
 
@@ -555,9 +555,9 @@ TEST_CASE("buffered interpolation delays component removal and entity destroy") 
     REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
     REQUIRE(server_registry.add<Health>(server_entity, Health{7}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -587,7 +587,7 @@ TEST_CASE("buffered interpolation delays component removal and entity destroy") 
     REQUIRE(client.apply_frame(client_registry, 2));
     const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(client_registry.contains<Health>(local));
-    for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
+    for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
         REQUIRE(server.process_packet(1, ack));
     }
 
@@ -599,7 +599,7 @@ TEST_CASE("buffered interpolation delays component removal and entity destroy") 
     REQUIRE(client_registry.contains<Health>(local));
     REQUIRE(client.apply_frame(client_registry, 3));
     REQUIRE_FALSE(client_registry.contains<Health>(local));
-    for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
+    for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
         REQUIRE(server.process_packet(1, ack));
     }
 
@@ -624,9 +624,9 @@ TEST_CASE("buffered interpolation rejects interpolated components without trait 
     const ecs::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -669,9 +669,9 @@ TEST_CASE("buffered interpolation keeps step components held between interpolate
     REQUIRE(server_registry.add<SmoothPosition>(server_entity, SmoothPosition{0.0f, 0.0f}) != nullptr);
     REQUIRE(server_registry.add<Health>(server_entity, Health{10}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -699,7 +699,7 @@ TEST_CASE("buffered interpolation keeps step components held between interpolate
         8});
     server.tick(server_registry);
     REQUIRE(client.receive(client_registry, packets.back()));
-    for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
+    for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
         REQUIRE(server.process_packet(1, ack));
     }
     REQUIRE(client.apply_frame(client_registry, 3));
@@ -737,9 +737,9 @@ TEST_CASE("buffered interpolation validates wrapped buffer samples by frame") {
     const ecs::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 0.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -762,7 +762,7 @@ TEST_CASE("buffered interpolation validates wrapped buffer samples by frame") {
         server_registry.write<Position>(server_entity) = Position{static_cast<float>(frame), 0.0f};
         server.tick(server_registry);
         REQUIRE(client.receive(client_registry, packets.back()));
-        for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
+        for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
             REQUIRE(server.process_packet(1, ack));
         }
     }
@@ -794,9 +794,9 @@ TEST_CASE("buffered interpolation delays component additions from full updates")
     const ecs::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
 
-    std::vector<kage::sync::BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
     kage::sync::ReplicationServer server(server_options);
@@ -830,7 +830,7 @@ TEST_CASE("buffered interpolation delays component additions from full updates")
     const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(local);
     REQUIRE_FALSE(client_registry.contains<Health>(local));
-    for (const kage::sync::BitBuffer& ack : client.drain_ack_packets()) {
+    for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
         REQUIRE(server.process_packet(1, ack));
     }
 
@@ -862,9 +862,9 @@ TEST_CASE("buffered interpolation delays owner visibility reconciliation") {
     REQUIRE(server_registry.add<Health>(server_entity, Health{42}) != nullptr);
     REQUIRE(kage::sync::set_owner(server_registry, server_entity, 1));
 
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
     kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId client_id, const kage::sync::BitBuffer& packet) {
+    server_options.transport = [&](kage::sync::ClientId client_id, const ecs::BitBuffer& packet) {
         packets.push_back({client_id, packet});
     };
     kage::sync::ReplicationServer server(server_options);
@@ -918,10 +918,10 @@ TEST_CASE("buffered interpolation delays owner visibility reconciliation") {
     const ecs::Entity client_two_local = client_two.local_entity(first_allocated_client_entity_network_id(2));
     REQUIRE(client_one_registry.contains<Health>(client_one_local));
     REQUIRE_FALSE(client_two_registry.contains<Health>(client_two_local));
-    for (const kage::sync::BitBuffer& ack : client_one.drain_ack_packets()) {
+    for (const ecs::BitBuffer& ack : client_one.drain_ack_packets()) {
         REQUIRE(server.process_packet(1, ack));
     }
-    for (const kage::sync::BitBuffer& ack : client_two.drain_ack_packets()) {
+    for (const ecs::BitBuffer& ack : client_two.drain_ack_packets()) {
         REQUIRE(server.process_packet(2, ack));
     }
 
@@ -1220,7 +1220,7 @@ TEST_CASE("buffered interpolation applies late destroys for already sampled targ
     REQUIRE_FALSE(client_registry.alive(local));
     REQUIRE_FALSE(client.local_entity(test_client_entity_network_id(1, server_entity)));
 
-    const std::vector<kage::sync::BitBuffer> acks = client.drain_ack_packets();
+    const std::vector<ecs::BitBuffer> acks = client.drain_ack_packets();
     REQUIRE(acks.size() == 1);
     const std::vector<AckRecord> records = read_acks(acks[0]);
     REQUIRE(records.size() == 1);

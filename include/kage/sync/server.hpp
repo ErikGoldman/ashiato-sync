@@ -52,9 +52,9 @@ public:
 
     std::uint64_t priority(ClientId client, ecs::Entity entity) const;
     bool acknowledge_entity(ClientId client, ecs::Entity entity, SyncFrame frame);
-    void receive_packet(ClientId client, BitBuffer packet);
-    bool process_packet(ClientId client, BitBuffer packet);
-    bool process_packet(ecs::Registry& registry, ClientId client, BitBuffer packet);
+    void receive_packet(ClientId client, ecs::BitBuffer packet);
+    bool process_packet(ClientId client, ecs::BitBuffer packet);
+    bool process_packet(ecs::Registry& registry, ClientId client, ecs::BitBuffer packet);
     ClientInputStats input_stats(ClientId client) const noexcept;
     std::size_t retained_quantized_frame_count() const noexcept;
     std::size_t retained_quantized_frame_bytes() const noexcept;
@@ -138,8 +138,8 @@ private:
     void release_quantized_frame(std::uint32_t quantized_frame);
     void clear_client_entity_state(ClientEntityState& state);
     bool acknowledge_packet(ClientState& client, std::uint32_t packet_id);
-    bool process_packet_impl(ecs::Registry* registry, ClientId client, BitBuffer packet);
-    bool process_input_packet(ecs::Registry& registry, ClientState& client, BitBuffer& packet);
+    bool process_packet_impl(ecs::Registry* registry, ClientId client, ecs::BitBuffer packet);
+    bool process_input_packet(ecs::Registry& registry, ClientState& client, ecs::BitBuffer& packet);
     void apply_client_inputs(ecs::Registry& registry);
     bool packet_ack_record_pending(const ClientState& client, const PacketAckRecord& record) const;
     void cleanup_packet_acks(ClientState& client);
@@ -158,12 +158,12 @@ private:
         std::uint32_t slot,
         const QuantizedFrame& quantized_frame,
         std::uint64_t component_mask,
-        BitBuffer& out);
+        ecs::BitBuffer& out);
     void send_packet(
         ClientState& client,
         SyncFrame frame,
         std::uint16_t entity_count,
-        const BitBuffer& records,
+        const ecs::BitBuffer& records,
         const std::vector<PacketAckRecord>& ack_records);
     bool add_client_for_peer(ClientId peer, ClientId client, bool ready_for_updates);
     void send_connect_response(ClientState& client);

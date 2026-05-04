@@ -37,11 +37,11 @@ struct SyncComponentTraits<HeaderApiDefaultNamedComponent> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         if (in.remaining_bits() < sizeof(out) * 8U) {
             return false;
         }
@@ -52,11 +52,11 @@ struct SyncComponentTraits<HeaderApiDefaultNamedComponent> {
 
 template <>
 struct SyncCueTraits<HeaderApiDefaultNamedCue> {
-    static void serialize(const HeaderApiDefaultNamedCue& cue, BitBuffer& out) {
+    static void serialize(const HeaderApiDefaultNamedCue& cue, ecs::BitBuffer& out) {
         out.push_bits(cue.value, 8U);
     }
 
-    static bool deserialize(BitBuffer& in, HeaderApiDefaultNamedCue& out) {
+    static bool deserialize(ecs::BitBuffer& in, HeaderApiDefaultNamedCue& out) {
         out.value = static_cast<int>(in.read_bits(8U));
         return true;
     }

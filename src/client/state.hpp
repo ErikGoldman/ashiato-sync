@@ -8,13 +8,13 @@ struct EntityCue {
     SyncFrame frame = 0;
     SyncCueTypeId type = 0;
     float relevance_seconds = 0.0f;
-    BitBuffer payload;
+    ecs::BitBuffer payload;
 };
 
 struct EntityPlayedCue {
     SyncFrame frame = 0;
     SyncCueTypeId type = 0;
-    BitBuffer payload;
+    ecs::BitBuffer payload;
     bool confirmed = false;
     bool seen_in_resim = false;
 };

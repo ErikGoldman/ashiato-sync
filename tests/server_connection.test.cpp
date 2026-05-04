@@ -20,7 +20,7 @@ TEST_CASE("server connect response resends until client id is ACKed") {
     ecs::Registry registry;
     define_position_archetype(registry);
 
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> sent;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> sent;
     kage::sync::ReplicationServerOptions options;
     options.connect_handler = [](const std::string& token, kage::sync::ClientId& client, std::string& error) {
         if (token != "token") {
@@ -30,7 +30,7 @@ TEST_CASE("server connect response resends until client id is ACKed") {
         client = 7;
         return true;
     };
-    options.transport = [&](kage::sync::ClientId peer, const kage::sync::BitBuffer& packet) {
+    options.transport = [&](kage::sync::ClientId peer, const ecs::BitBuffer& packet) {
         sent.push_back({peer, packet});
     };
     kage::sync::ReplicationServer server(options);
@@ -52,7 +52,7 @@ TEST_CASE("server connect response resends until client id is ACKed") {
     REQUIRE(static_cast<std::uint8_t>(sent.back().second.read_bits(8U)) ==
             kage::sync::protocol::server_connect_response_message);
 
-    kage::sync::BitBuffer ack;
+    ecs::BitBuffer ack;
     ack.push_bits(kage::sync::protocol::client_connect_ack_message, 8U);
     ack.push_unsigned_bits(7, 64U);
     REQUIRE(server.process_packet(99, ack));
@@ -72,13 +72,13 @@ TEST_CASE("server connect response resends until client id is ACKed") {
 }
 
 TEST_CASE("server duplicate connect request from same peer resends existing accepted id") {
-    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> sent;
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> sent;
     kage::sync::ReplicationServerOptions options;
     options.connect_handler = [](const std::string&, kage::sync::ClientId& client, std::string&) {
         client = 5;
         return true;
     };
-    options.transport = [&](kage::sync::ClientId peer, const kage::sync::BitBuffer& packet) {
+    options.transport = [&](kage::sync::ClientId peer, const ecs::BitBuffer& packet) {
         sent.push_back({peer, packet});
     };
     kage::sync::ReplicationServer server(options);
@@ -129,10 +129,10 @@ TEST_CASE("replication client and server interoperate with custom network id tie
                 kage_sync_tests::Position{1.0f, 2.0f}) != nullptr);
     REQUIRE(start_sync(server_registry, entity, server_archetype));
 
-    std::vector<kage::sync::BitBuffer> payloads;
+    std::vector<ecs::BitBuffer> payloads;
     kage::sync::ReplicationServerOptions server_options;
     server_options.bandwidth_limit_bytes_per_tick = 1024;
-    server_options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+    server_options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         REQUIRE(client == 1);
         payloads.push_back(payload);
     };
@@ -175,9 +175,9 @@ TEST_CASE("replication rejects client ids that cannot fit in client entity netwo
         kage::sync::configure_client(registry, kage::sync::max_client_entity_network_id_client + 1U),
         std::invalid_argument);
 
-    std::vector<kage::sync::BitBuffer> responses;
+    std::vector<ecs::BitBuffer> responses;
     kage::sync::ReplicationServerOptions options;
-    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         responses.push_back(payload);
     };
     options.connect_handler = [](const std::string&, kage::sync::ClientId& accepted, std::string&) {

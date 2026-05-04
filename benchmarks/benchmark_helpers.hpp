@@ -35,14 +35,14 @@ struct TinyFlags {
 };
 
 struct DestroyPackets {
-    std::vector<BitBuffer> initial;
-    std::vector<BitBuffer> destroys;
+    std::vector<ecs::BitBuffer> initial;
+    std::vector<ecs::BitBuffer> destroys;
 };
 
 struct ChurnPackets {
-    std::vector<BitBuffer> initial;
-    std::vector<BitBuffer> destroys;
-    std::vector<BitBuffer> respawns;
+    std::vector<ecs::BitBuffer> initial;
+    std::vector<ecs::BitBuffer> destroys;
+    std::vector<ecs::BitBuffer> respawns;
 };
 
 struct TaggedSchema {
@@ -66,7 +66,7 @@ struct SyncComponentTraits<benchmarks::DeltaPosition> {
         return value;
     }
 
-    static void serialize(const Quantized* previous, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized* previous, const Quantized& current, ecs::BitBuffer& out) {
         if (previous == nullptr) {
             out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
             return;
@@ -76,7 +76,7 @@ struct SyncComponentTraits<benchmarks::DeltaPosition> {
         out.push_bits(current.y - previous->y, 8U);
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized* previous, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized* previous, Quantized& out) {
         if (previous == nullptr) {
             in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
             return true;
@@ -113,7 +113,7 @@ struct SyncComponentTraits<benchmarks::LargePayload> {
         return value;
     }
 
-    static void serialize(const Quantized* previous, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized* previous, const Quantized& current, ecs::BitBuffer& out) {
         if (previous == nullptr) {
             out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
             return;
@@ -124,7 +124,7 @@ struct SyncComponentTraits<benchmarks::LargePayload> {
         }
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized* previous, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized* previous, Quantized& out) {
         if (previous == nullptr) {
             in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
             return true;
@@ -150,12 +150,12 @@ struct SyncComponentTraits<benchmarks::TinyFlags> {
         return value;
     }
 
-    static void serialize(const Quantized* previous, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized* previous, const Quantized& current, ecs::BitBuffer& out) {
         const std::uint8_t base = previous == nullptr ? 0U : previous->bits;
         out.push_bits(static_cast<std::int32_t>(current.bits ^ base), 4U);
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized* previous, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized* previous, Quantized& out) {
         const std::uint8_t base = previous == nullptr ? 0U : previous->bits;
         out.bits = static_cast<std::uint8_t>(base ^ static_cast<std::uint8_t>(in.read_bits(4U)));
         return true;
@@ -392,13 +392,13 @@ inline void add_diverse_replication_configs(
 
 inline void ack_packets(
     ReplicationServer& server,
-    const std::vector<std::pair<ClientId, BitBuffer>>& packets) {
+    const std::vector<std::pair<ClientId, ecs::BitBuffer>>& packets) {
     for (const auto& sent : packets) {
-        BitBuffer packet = sent.second;
+        ecs::BitBuffer packet = sent.second;
         benchmark::DoNotOptimize(packet.read_bits(8U));
         benchmark::DoNotOptimize(packet.read_bits(32U));
         const auto packet_id = static_cast<std::uint32_t>(packet.read_bits(protocol::server_packet_id_bits));
-        BitBuffer ack;
+        ecs::BitBuffer ack;
         ack.push_bits(protocol::client_ack_message, 8U);
         ack.push_bits(1, 16U);
         ack.push_bits(packet_id, protocol::server_packet_id_bits);
@@ -406,7 +406,7 @@ inline void ack_packets(
     }
 }
 
-inline std::uint64_t consume_packets(const std::vector<std::pair<ClientId, BitBuffer>>& packets) {
+inline std::uint64_t consume_packets(const std::vector<std::pair<ClientId, ecs::BitBuffer>>& packets) {
     std::uint64_t consumed = 0;
     for (const auto& packet : packets) {
         consumed += packet.first + packet.second.byte_size();
@@ -414,18 +414,18 @@ inline std::uint64_t consume_packets(const std::vector<std::pair<ClientId, BitBu
     return consumed;
 }
 
-inline std::vector<BitBuffer> make_client_receive_packets(int entity_count, int frame_count) {
+inline std::vector<ecs::BitBuffer> make_client_receive_packets(int entity_count, int frame_count) {
     ecs::Registry registry;
     const SyncArchetypeId archetype = define_delta_archetype(registry);
     const std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
 
-    std::vector<std::pair<ClientId, BitBuffer>> sent;
+    std::vector<std::pair<ClientId, ecs::BitBuffer>> sent;
     sent.reserve(static_cast<std::size_t>(frame_count) * static_cast<std::size_t>(entity_count));
 
     ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition) * 8U;
     options.mtu_bytes = 1200;
-    options.transport = [&](ClientId client, const BitBuffer& packet) {
+    options.transport = [&](ClientId client, const ecs::BitBuffer& packet) {
         sent.push_back({client, packet});
     };
 
@@ -441,7 +441,7 @@ inline std::vector<BitBuffer> make_client_receive_packets(int entity_count, int 
         ack_packets(server, sent);
     }
 
-    std::vector<BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     packets.reserve(sent.size());
     for (const auto& packet : sent) {
         packets.push_back(packet.second);
@@ -449,18 +449,18 @@ inline std::vector<BitBuffer> make_client_receive_packets(int entity_count, int 
     return packets;
 }
 
-inline std::vector<BitBuffer> make_large_payload_client_receive_packets(int entity_count, int frame_count) {
+inline std::vector<ecs::BitBuffer> make_large_payload_client_receive_packets(int entity_count, int frame_count) {
     ecs::Registry registry;
     const SyncArchetypeId archetype = define_large_payload_archetype(registry);
     const std::vector<ecs::Entity> entities = create_large_payload_entities(registry, entity_count);
 
-    std::vector<std::pair<ClientId, BitBuffer>> sent;
+    std::vector<std::pair<ClientId, ecs::BitBuffer>> sent;
     sent.reserve(static_cast<std::size_t>(frame_count) * static_cast<std::size_t>(entity_count));
 
     ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(LargePayload) * 8U;
     options.mtu_bytes = 1200;
-    options.transport = [&](ClientId client, const BitBuffer& packet) {
+    options.transport = [&](ClientId client, const ecs::BitBuffer& packet) {
         sent.push_back({client, packet});
     };
 
@@ -478,7 +478,7 @@ inline std::vector<BitBuffer> make_large_payload_client_receive_packets(int enti
         ack_packets(server, sent);
     }
 
-    std::vector<BitBuffer> packets;
+    std::vector<ecs::BitBuffer> packets;
     packets.reserve(sent.size());
     for (const auto& packet : sent) {
         packets.push_back(packet.second);
@@ -491,11 +491,11 @@ inline DestroyPackets make_destroy_packets(int entity_count) {
     const SyncArchetypeId archetype = define_delta_archetype(registry);
     const std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
 
-    std::vector<std::pair<ClientId, BitBuffer>> sent;
+    std::vector<std::pair<ClientId, ecs::BitBuffer>> sent;
     ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition) * 16U;
     options.mtu_bytes = 1200;
-    options.transport = [&](ClientId client, const BitBuffer& packet) {
+    options.transport = [&](ClientId client, const ecs::BitBuffer& packet) {
         sent.push_back({client, packet});
     };
 
@@ -528,11 +528,11 @@ inline ChurnPackets make_churn_packets(int entity_count) {
     const SyncArchetypeId archetype = define_delta_archetype(registry);
     std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
 
-    std::vector<std::pair<ClientId, BitBuffer>> sent;
+    std::vector<std::pair<ClientId, ecs::BitBuffer>> sent;
     ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition) * 16U;
     options.mtu_bytes = 1200;
-    options.transport = [&](ClientId client, const BitBuffer& packet) {
+    options.transport = [&](ClientId client, const ecs::BitBuffer& packet) {
         sent.push_back({client, packet});
     };
 

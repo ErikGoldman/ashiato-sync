@@ -1,6 +1,6 @@
 #pragma once
 
-#include "kage/sync/bit_buffer.hpp"
+#include "ecs/bit_buffer.hpp"
 #include "kage/sync/protocol.hpp"
 
 #include <cstddef>
@@ -22,7 +22,7 @@ public:
     void drain_ack_packets(
         std::size_t mtu_bytes,
         std::size_t packet_id_bits,
-        std::vector<BitBuffer>& packets,
+        std::vector<ecs::BitBuffer>& packets,
         std::vector<ClientAckPacketTrace>* traces);
 
 private:

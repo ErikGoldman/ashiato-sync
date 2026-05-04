@@ -8,7 +8,7 @@ kage::sync::SyncComponentOps byte_input_ops() {
     kage::sync::SyncComponentOps ops;
     ops.quantized_size = 1;
     ops.deserialize = [](
-        kage::sync::BitBuffer& packet,
+        ecs::BitBuffer& packet,
         const std::uint8_t*,
         std::uint8_t* out,
         kage::sync::EntityReferenceContext*) {
@@ -25,7 +25,7 @@ kage::sync::SyncComponentOps byte_input_ops() {
 
 TEST_CASE("ServerInputBuffer decodes full input frames and selects due inputs") {
     kage::sync::server_detail::ServerInputBuffer buffer;
-    kage::sync::BitBuffer packet;
+    ecs::BitBuffer packet;
     packet.push_bits(0, 32U);
     packet.push_bits(2, 16U);
     packet.push_bool(true);
@@ -65,7 +65,7 @@ TEST_CASE("ServerInputBuffer decodes full input frames and selects due inputs") 
 
 TEST_CASE("ServerInputBuffer accepts missing delta baseline without consuming input frames") {
     kage::sync::server_detail::ServerInputBuffer buffer;
-    kage::sync::BitBuffer packet;
+    ecs::BitBuffer packet;
     packet.push_bits(7, 32U);
     packet.push_bits(1, 16U);
     packet.push_bool(false);

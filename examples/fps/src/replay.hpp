@@ -82,7 +82,7 @@ private:
     std::unordered_map<kage::sync::ClientId, DeathInfo> deaths_;
     std::vector<std::unique_ptr<Session>> sessions_;
 
-    bool begin_session(kage::sync::ClientId peer, const sockaddr_in& address, const kage::sync::BitBuffer& packet);
+    bool begin_session(kage::sync::ClientId peer, const sockaddr_in& address, const ecs::BitBuffer& packet);
 };
 
 class FpsDeathCamClient {
@@ -112,6 +112,6 @@ private:
     std::unique_ptr<kage::sync::ReplicationClient> client_;
 };
 
-bool is_replay_done_packet(kage::sync::BitBuffer packet);
+bool is_replay_done_packet(ecs::BitBuffer packet);
 
 }  // namespace fps

@@ -28,15 +28,15 @@ std::uint32_t ServerPacketIdAllocator::allocate(std::uint32_t& next_packet_id) c
     return packet_id;
 }
 
-BitBuffer make_server_packet(
+ecs::BitBuffer make_server_packet(
     std::size_t mtu_bytes,
     std::size_t packet_id_bits,
     SyncFrame frame,
     std::uint32_t packet_id,
     SyncFrame input_ack_frame,
     std::uint16_t entity_count,
-    const BitBuffer& records) {
-    BitBuffer packet;
+    const ecs::BitBuffer& records) {
+    ecs::BitBuffer packet;
     packet.reserve_bytes(mtu_bytes);
     packet.push_bits(protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);

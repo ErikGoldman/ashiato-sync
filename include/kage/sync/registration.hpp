@@ -52,7 +52,7 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
     ops.serialize = [](
         const std::uint8_t* previous_bytes,
         const std::uint8_t* current_bytes,
-        BitBuffer& out,
+        ecs::BitBuffer& out,
         EntityReferenceContext* references) {
         Quantized current{};
         std::memcpy(&current, current_bytes, sizeof(Quantized));
@@ -67,7 +67,7 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
         detail::serialize_quantized<Traits, Quantized>(previous_ptr, current, out, references);
     };
     ops.deserialize = [](
-        BitBuffer& in,
+        ecs::BitBuffer& in,
         const std::uint8_t* previous_bytes,
         std::uint8_t* out,
         EntityReferenceContext* references) {
@@ -132,7 +132,7 @@ SyncCueTypeId register_sync_cue(ecs::Registry& registry, std::string name = {}) 
     const SyncCueTypeId id = static_cast<SyncCueTypeId>(settings.cue_ops.size());
     SyncCueOps ops;
     ops.name = name.empty() ? detail::default_type_name<T>() : std::move(name);
-    ops.serialize = [](const void* value, BitBuffer& out, EntityReferenceContext* references) {
+    ops.serialize = [](const void* value, ecs::BitBuffer& out, EntityReferenceContext* references) {
         detail::serialize_cue_payload<T>(*static_cast<const T*>(value), out, references);
     };
     ops.play = &detail::play_cue_payload<T>;

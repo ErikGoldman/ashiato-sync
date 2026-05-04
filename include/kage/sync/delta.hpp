@@ -1,6 +1,6 @@
 #pragma once
 
-#include "kage/sync/bit_buffer.hpp"
+#include "ecs/bit_buffer.hpp"
 #include "kage/sync/protocol.hpp"
 
 #include <algorithm>
@@ -76,11 +76,11 @@ inline float dequantize_float(std::uint32_t quantized, FloatConfig config) {
     return config.min + static_cast<float>(clamped) * config.precision;
 }
 
-inline void write_float(BitBuffer& out, float value, FloatConfig config) {
+inline void write_float(ecs::BitBuffer& out, float value, FloatConfig config) {
     out.push_unsigned_bits(quantize_float(value, config), float_bits(config));
 }
 
-inline bool read_float(BitBuffer& in, FloatConfig config, float& out) {
+inline bool read_float(ecs::BitBuffer& in, FloatConfig config, float& out) {
     const std::size_t bits = float_bits(config);
     if (in.remaining_bits() < bits) {
         return false;
@@ -89,7 +89,7 @@ inline bool read_float(BitBuffer& in, FloatConfig config, float& out) {
     return true;
 }
 
-inline void write_delta_float(BitBuffer& out, float previous, float current, FloatConfig config) {
+inline void write_delta_float(ecs::BitBuffer& out, float previous, float current, FloatConfig config) {
     const std::uint32_t previous_quantized = quantize_float(previous, config);
     const std::uint32_t current_quantized = quantize_float(current, config);
     const bool changed = previous_quantized != current_quantized;
@@ -99,7 +99,7 @@ inline void write_delta_float(BitBuffer& out, float previous, float current, Flo
     }
 }
 
-inline bool read_delta_float(BitBuffer& in, float previous, FloatConfig config, float& out) {
+inline bool read_delta_float(ecs::BitBuffer& in, float previous, FloatConfig config, float& out) {
     if (in.remaining_bits() < 1U) {
         return false;
     }
@@ -119,7 +119,7 @@ inline std::int64_t zigzag_decode(std::uint64_t value) noexcept {
     return static_cast<std::int64_t>((value >> 1U) ^ (~(value & 1U) + 1U));
 }
 
-inline void write_delta_int(BitBuffer& out, std::int64_t previous, std::int64_t current, std::size_t bits) {
+inline void write_delta_int(ecs::BitBuffer& out, std::int64_t previous, std::int64_t current, std::size_t bits) {
     if (bits == 0U || bits > 64U) {
         throw std::invalid_argument("delta integer bits must be in [1, 64]");
     }
@@ -130,7 +130,7 @@ inline void write_delta_int(BitBuffer& out, std::int64_t previous, std::int64_t 
     }
 }
 
-inline bool read_delta_int(BitBuffer& in, std::int64_t previous, std::size_t bits, std::int64_t& out) {
+inline bool read_delta_int(ecs::BitBuffer& in, std::int64_t previous, std::size_t bits, std::int64_t& out) {
     if (bits == 0U || bits > 64U) {
         throw std::invalid_argument("delta integer bits must be in [1, 64]");
     }
@@ -148,71 +148,71 @@ inline bool read_delta_int(BitBuffer& in, std::int64_t previous, std::size_t bit
     return true;
 }
 
-inline void write_vec2(BitBuffer& out, Vec2 value, FloatConfig config) {
+inline void write_vec2(ecs::BitBuffer& out, Vec2 value, FloatConfig config) {
     write_float(out, value.x, config);
     write_float(out, value.y, config);
 }
 
-inline bool read_vec2(BitBuffer& in, FloatConfig config, Vec2& out) {
+inline bool read_vec2(ecs::BitBuffer& in, FloatConfig config, Vec2& out) {
     return read_float(in, config, out.x) && read_float(in, config, out.y);
 }
 
-inline void write_delta_vec2(BitBuffer& out, Vec2 previous, Vec2 current, FloatConfig config) {
+inline void write_delta_vec2(ecs::BitBuffer& out, Vec2 previous, Vec2 current, FloatConfig config) {
     write_delta_float(out, previous.x, current.x, config);
     write_delta_float(out, previous.y, current.y, config);
 }
 
-inline bool read_delta_vec2(BitBuffer& in, Vec2 previous, FloatConfig config, Vec2& out) {
+inline bool read_delta_vec2(ecs::BitBuffer& in, Vec2 previous, FloatConfig config, Vec2& out) {
     return read_delta_float(in, previous.x, config, out.x) &&
         read_delta_float(in, previous.y, config, out.y);
 }
 
-inline void write_vec3(BitBuffer& out, Vec3 value, FloatConfig config) {
+inline void write_vec3(ecs::BitBuffer& out, Vec3 value, FloatConfig config) {
     write_float(out, value.x, config);
     write_float(out, value.y, config);
     write_float(out, value.z, config);
 }
 
-inline bool read_vec3(BitBuffer& in, FloatConfig config, Vec3& out) {
+inline bool read_vec3(ecs::BitBuffer& in, FloatConfig config, Vec3& out) {
     return read_float(in, config, out.x) &&
         read_float(in, config, out.y) &&
         read_float(in, config, out.z);
 }
 
-inline void write_delta_vec3(BitBuffer& out, Vec3 previous, Vec3 current, FloatConfig config) {
+inline void write_delta_vec3(ecs::BitBuffer& out, Vec3 previous, Vec3 current, FloatConfig config) {
     write_delta_float(out, previous.x, current.x, config);
     write_delta_float(out, previous.y, current.y, config);
     write_delta_float(out, previous.z, current.z, config);
 }
 
-inline bool read_delta_vec3(BitBuffer& in, Vec3 previous, FloatConfig config, Vec3& out) {
+inline bool read_delta_vec3(ecs::BitBuffer& in, Vec3 previous, FloatConfig config, Vec3& out) {
     return read_delta_float(in, previous.x, config, out.x) &&
         read_delta_float(in, previous.y, config, out.y) &&
         read_delta_float(in, previous.z, config, out.z);
 }
 
-inline void write_quaternion(BitBuffer& out, Quaternion value, FloatConfig config) {
+inline void write_quaternion(ecs::BitBuffer& out, Quaternion value, FloatConfig config) {
     write_float(out, value.x, config);
     write_float(out, value.y, config);
     write_float(out, value.z, config);
     write_float(out, value.w, config);
 }
 
-inline bool read_quaternion(BitBuffer& in, FloatConfig config, Quaternion& out) {
+inline bool read_quaternion(ecs::BitBuffer& in, FloatConfig config, Quaternion& out) {
     return read_float(in, config, out.x) &&
         read_float(in, config, out.y) &&
         read_float(in, config, out.z) &&
         read_float(in, config, out.w);
 }
 
-inline void write_delta_quaternion(BitBuffer& out, Quaternion previous, Quaternion current, FloatConfig config) {
+inline void write_delta_quaternion(ecs::BitBuffer& out, Quaternion previous, Quaternion current, FloatConfig config) {
     write_delta_float(out, previous.x, current.x, config);
     write_delta_float(out, previous.y, current.y, config);
     write_delta_float(out, previous.z, current.z, config);
     write_delta_float(out, previous.w, current.w, config);
 }
 
-inline bool read_delta_quaternion(BitBuffer& in, Quaternion previous, FloatConfig config, Quaternion& out) {
+inline bool read_delta_quaternion(ecs::BitBuffer& in, Quaternion previous, FloatConfig config, Quaternion& out) {
     return read_delta_float(in, previous.x, config, out.x) &&
         read_delta_float(in, previous.y, config, out.y) &&
         read_delta_float(in, previous.z, config, out.z) &&

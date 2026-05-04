@@ -11,7 +11,7 @@
 
 namespace fps {
 
-using ClientLinkSimulator = kage::sync::SimulatedLink<kage::sync::BitBuffer, int>;
+using ClientLinkSimulator = kage::sync::SimulatedLink<ecs::BitBuffer, int>;
 
 struct AppConfig {
     bool server = false;

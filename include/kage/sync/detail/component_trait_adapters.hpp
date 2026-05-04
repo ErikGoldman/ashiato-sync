@@ -17,7 +17,7 @@ struct has_context_cue_serialize<
     T,
     std::void_t<decltype(SyncCueTraits<T>::serialize(
         std::declval<const T&>(),
-        std::declval<BitBuffer&>(),
+        std::declval<ecs::BitBuffer&>(),
         std::declval<EntityReferenceContext&>()))>> : std::true_type {};
 
 template <typename T, typename = void>
@@ -27,7 +27,7 @@ template <typename T>
 struct has_context_cue_deserialize<
     T,
     std::void_t<decltype(SyncCueTraits<T>::deserialize(
-        std::declval<BitBuffer&>(),
+        std::declval<ecs::BitBuffer&>(),
         std::declval<T&>(),
         std::declval<EntityReferenceContext&>()))>> : std::true_type {};
 
@@ -45,7 +45,7 @@ struct has_frame_cue_play<
         std::declval<SyncFrame>()))>> : std::true_type {};
 
 template <typename T>
-void serialize_cue_payload(const T& cue, BitBuffer& out, EntityReferenceContext* references) {
+void serialize_cue_payload(const T& cue, ecs::BitBuffer& out, EntityReferenceContext* references) {
     if constexpr (has_context_cue_serialize<T>::value) {
         EntityReferenceContext empty_references;
         SyncCueTraits<T>::serialize(cue, out, references != nullptr ? *references : empty_references);
@@ -56,8 +56,8 @@ void serialize_cue_payload(const T& cue, BitBuffer& out, EntityReferenceContext*
 }
 
 template <typename T>
-bool read_cue_payload(const BitBuffer& payload, T& out, EntityReferenceContext* references = nullptr) {
-    BitBuffer copy = payload;
+bool read_cue_payload(const ecs::BitBuffer& payload, T& out, EntityReferenceContext* references = nullptr) {
+    ecs::BitBuffer copy = payload;
     if constexpr (has_context_cue_deserialize<T>::value) {
         EntityReferenceContext empty_references;
         return SyncCueTraits<T>::deserialize(copy, out, references != nullptr ? *references : empty_references);
@@ -71,7 +71,7 @@ template <typename T>
 bool play_cue_payload(
     ecs::Registry& registry,
     ecs::Entity owner,
-    const BitBuffer& payload,
+    const ecs::BitBuffer& payload,
     float late_seconds,
     SyncFrame frame,
     EntityReferenceContext* references) {
@@ -91,7 +91,7 @@ template <typename T>
 bool rollback_cue_payload(
     ecs::Registry& registry,
     ecs::Entity owner,
-    const BitBuffer& payload,
+    const ecs::BitBuffer& payload,
     EntityReferenceContext* references) {
     T value{};
     if (!read_cue_payload(payload, value, references)) {
@@ -102,8 +102,8 @@ bool rollback_cue_payload(
 
 template <typename T>
 bool equal_cue_payloads(
-    const BitBuffer& lhs_payload,
-    const BitBuffer& rhs_payload,
+    const ecs::BitBuffer& lhs_payload,
+    const ecs::BitBuffer& rhs_payload,
     EntityReferenceContext* references) {
     T lhs{};
     T rhs{};
@@ -123,14 +123,14 @@ struct has_context_serialize<
     std::void_t<decltype(Traits::serialize(
         std::declval<const Quantized*>(),
         std::declval<const Quantized&>(),
-        std::declval<BitBuffer&>(),
+        std::declval<ecs::BitBuffer&>(),
         std::declval<EntityReferenceContext&>()))>> : std::true_type {};
 
 template <typename Traits, typename Quantized>
 void serialize_quantized(
     const Quantized* previous,
     const Quantized& current,
-    BitBuffer& out,
+    ecs::BitBuffer& out,
     EntityReferenceContext* references) {
     if constexpr (has_context_serialize<Traits, Quantized>::value) {
         EntityReferenceContext empty_references;
@@ -149,14 +149,14 @@ struct has_context_deserialize<
     Traits,
     Quantized,
     std::void_t<decltype(Traits::deserialize(
-        std::declval<BitBuffer&>(),
+        std::declval<ecs::BitBuffer&>(),
         std::declval<const Quantized*>(),
         std::declval<Quantized&>(),
         std::declval<EntityReferenceContext&>()))>> : std::true_type {};
 
 template <typename Traits, typename Quantized>
 bool deserialize_quantized(
-    BitBuffer& in,
+    ecs::BitBuffer& in,
     const Quantized* previous,
     Quantized& out,
     EntityReferenceContext* references) {
@@ -367,7 +367,7 @@ struct has_trace_cue<
         std::declval<SyncTraceStringBuilder&>()))>> : std::true_type {};
 
 template <typename T>
-bool trace_cue_payload(const BitBuffer& payload, SyncTraceStringBuilder& out) {
+bool trace_cue_payload(const ecs::BitBuffer& payload, SyncTraceStringBuilder& out) {
     T value{};
     if (!read_cue_payload(payload, value)) {
         return false;

@@ -21,11 +21,11 @@ TEST_CASE("server packet id allocator wraps and repairs invalid next ids") {
 
 TEST_CASE("server packet helper writes update header before record payload") {
     kage::sync::ReplicationServerOptions options;
-    kage::sync::BitBuffer records;
+    ecs::BitBuffer records;
     records.push_bool(false);
     records.push_bits(0x5, 3U);
 
-    kage::sync::BitBuffer packet = kage::sync::server_detail::make_server_packet(
+    ecs::BitBuffer packet = kage::sync::server_detail::make_server_packet(
         options.mtu_bytes,
         kage::sync::server_detail::configured_packet_id_bits(options),
         42,

@@ -157,7 +157,7 @@ bool ClientInputBuffer::drain_packet(
     std::size_t mtu_bytes,
     std::size_t packet_id_bits,
     std::vector<std::uint32_t>& pending_acks,
-    std::vector<BitBuffer>& packets,
+    std::vector<ecs::BitBuffer>& packets,
     ClientInputPacketTrace* trace) {
     if (trace != nullptr) {
         *trace = {};
@@ -189,7 +189,7 @@ bool ClientInputBuffer::drain_packet(
     const bool first_input_full = first_input != nullptr &&
         (history_discontinuous_ || first_input_frame != acked_frame_ + 1U || !baseline_valid);
 
-    BitBuffer packet;
+    ecs::BitBuffer packet;
     packet.reserve_bytes(mtu_bytes);
     packet.push_bits(protocol::client_input_message, 8U);
     const std::size_t ack_count_offset = packet.bit_size();
@@ -197,7 +197,7 @@ bool ClientInputBuffer::drain_packet(
 
     std::size_t reserved_first_input_bits = 0;
     if (first_input != nullptr) {
-        BitBuffer first_input_payload;
+        ecs::BitBuffer first_input_payload;
         const std::uint8_t* previous = first_input_full || acked_baseline_.empty()
             ? nullptr
             : acked_baseline_.data();
@@ -210,7 +210,7 @@ bool ClientInputBuffer::drain_packet(
         std::numeric_limits<std::uint16_t>::max(),
         (mtu_bits - fixed_header_bits) / packet_id_bits);
     while (ack_count < max_acks && ack_count < pending_acks.size()) {
-        BitBuffer candidate = packet;
+        ecs::BitBuffer candidate = packet;
         candidate.push_bits(pending_acks[ack_count], packet_id_bits);
         const std::size_t explicit_first_frame_bits = first_input_full ? 32U : 0U;
         if (protocol::bytes_for_bits(
@@ -249,7 +249,7 @@ bool ClientInputBuffer::drain_packet(
                 break;
             }
 
-            BitBuffer candidate = packet;
+            ecs::BitBuffer candidate = packet;
             ops_.serialize(previous, input.bytes.data(), candidate, nullptr);
             if (protocol::bytes_for_bits(candidate.bit_size()) > mtu_bytes) {
                 break;

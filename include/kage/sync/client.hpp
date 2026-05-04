@@ -359,13 +359,13 @@ public:
         return set_input_bytes(registry, component, &input);
     }
     bool tick(ecs::Registry& registry, double dt_seconds);
-    void set_packet_sender(std::function<void(const BitBuffer&)> sender);
-    void receive_packet(BitBuffer packet);
-    bool receive(ecs::Registry& registry, BitBuffer packet);
-    bool receive(ecs::Registry& registry, BitBuffer packet, SyncFrame client_frame);
+    void set_packet_sender(std::function<void(const ecs::BitBuffer&)> sender);
+    void receive_packet(ecs::BitBuffer packet);
+    bool receive(ecs::Registry& registry, ecs::BitBuffer packet);
+    bool receive(ecs::Registry& registry, ecs::BitBuffer packet, SyncFrame client_frame);
     bool receive(
         ecs::Registry& registry,
-        BitBuffer packet,
+        ecs::BitBuffer packet,
         SyncFrame receive_frame,
         SyncFrame playback_frame);
     bool tick(ecs::Registry& registry, double dt_seconds, ecs::RunJobsOptions prediction_options);
@@ -392,8 +392,8 @@ public:
         double client_frame,
         DisplayInterpolationSampleBuffer& out) const;
     const DisplayInterpolationSampleBuffer& display_interpolation_frame(const ecs::Registry& registry);
-    std::vector<BitBuffer> drain_packets();
-    std::vector<BitBuffer> drain_ack_packets();
+    std::vector<ecs::BitBuffer> drain_packets();
+    std::vector<ecs::BitBuffer> drain_ack_packets();
     std::size_t pending_ack_count() const noexcept;
     bool is_alive_network_id(ClientEntityNetworkId network_id) const noexcept;
     ecs::Entity local_entity(ClientEntityNetworkId network_id) const;
@@ -480,7 +480,7 @@ private:
     const QuantizedFrameData* find_baseline(const EntityState& state, SyncFrame frame) const noexcept;
     bool apply_update(
         ecs::Registry& registry,
-        BitBuffer& packet,
+        ecs::BitBuffer& packet,
         std::uint32_t packet_id,
         SyncFrame frame,
         std::uint16_t record_count);
@@ -489,8 +489,8 @@ private:
         const SyncSettings& settings,
         SyncFrame frame,
         std::uint32_t network_id,
-        BitBuffer& packet);
-    bool read_cues(BitBuffer& packet, std::vector<EntityCue>& out);
+        ecs::BitBuffer& packet);
+    bool read_cues(ecs::BitBuffer& packet, std::vector<EntityCue>& out);
     bool play_cue(
         ecs::Registry& registry,
         const SyncSettings& settings,
@@ -627,12 +627,12 @@ private:
     void remember_baseline(EntityState& state);
     void queue_ack(std::uint32_t packet_id);
     void record_server_packet_sequence(std::uint32_t packet_id) noexcept;
-    bool receive_connect_response(ecs::Registry& registry, BitBuffer& packet);
-    bool receive_pong(ecs::Registry& registry, BitBuffer& packet, SyncFrame receive_frame);
-    void drain_connect_packets(std::vector<BitBuffer>& packets);
-    void drain_ping_packets(std::vector<BitBuffer>& packets);
-    void drain_ack_packets_into(std::vector<BitBuffer>& packets);
-    void drain_input_packets_into(std::vector<BitBuffer>& packets);
+    bool receive_connect_response(ecs::Registry& registry, ecs::BitBuffer& packet);
+    bool receive_pong(ecs::Registry& registry, ecs::BitBuffer& packet, SyncFrame receive_frame);
+    void drain_connect_packets(std::vector<ecs::BitBuffer>& packets);
+    void drain_ping_packets(std::vector<ecs::BitBuffer>& packets);
+    void drain_ack_packets_into(std::vector<ecs::BitBuffer>& packets);
+    void drain_input_packets_into(std::vector<ecs::BitBuffer>& packets);
     bool process_inbound_packets(ecs::Registry& registry);
     void send_pending_packets();
     ClientEntityNetworkId client_entity_network_id_for_wire(std::uint32_t wire_network_id);
@@ -749,8 +749,8 @@ private:
 #if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
     std::vector<std::string> current_packet_cue_summaries_;
 #endif
-    std::vector<BitBuffer> inbound_packets_;
-    std::function<void(const BitBuffer&)> packet_sender_;
+    std::vector<ecs::BitBuffer> inbound_packets_;
+    std::function<void(const ecs::BitBuffer&)> packet_sender_;
     DisplayInterpolationSampleBuffer display_frame_;
     DisplayInterpolationSampleBuffer display_scratch_;
     std::string connect_error_;

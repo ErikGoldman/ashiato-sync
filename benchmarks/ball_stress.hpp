@@ -43,11 +43,11 @@ struct SyncComponentTraits<stress::BallPosition> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -97,13 +97,13 @@ namespace kage::sync {
 
 template <>
 struct SyncCueTraits<stress::BallBounceCue> {
-    static void serialize(const stress::BallBounceCue& cue, BitBuffer& out) {
+    static void serialize(const stress::BallBounceCue& cue, ecs::BitBuffer& out) {
         out.push_bits(cue.sequence, 32U);
         out.push_bits(cue.energy, 8U);
         out.push_bytes(reinterpret_cast<const char*>(cue.padding), sizeof(cue.padding));
     }
 
-    static bool deserialize(BitBuffer& in, stress::BallBounceCue& out) {
+    static bool deserialize(ecs::BitBuffer& in, stress::BallBounceCue& out) {
         out.sequence = static_cast<std::uint32_t>(in.read_bits(32U));
         out.energy = static_cast<std::uint8_t>(in.read_bits(8U));
         in.read_bytes(reinterpret_cast<char*>(out.padding), sizeof(out.padding));
@@ -315,7 +315,7 @@ struct StressReport {
     std::uint32_t live_balls = 0;
 };
 
-using SimulatedLink = ::kage::sync::SimulatedLink<BitBuffer, ClientId>;
+using SimulatedLink = ::kage::sync::SimulatedLink<ecs::BitBuffer, ClientId>;
 
 class ScopedTimer {
 public:
@@ -379,7 +379,7 @@ inline std::size_t current_rss_bytes() {
 #endif
 }
 
-inline void add_packet_stats(DirectionStats& stats, const BitBuffer& packet, const PacketBreakdown& breakdown) {
+inline void add_packet_stats(DirectionStats& stats, const ecs::BitBuffer& packet, const PacketBreakdown& breakdown) {
     const std::uint64_t bytes = packet.byte_size();
     ++stats.packets;
     stats.bytes += bytes;
@@ -471,7 +471,7 @@ inline void record_wire_slot(WireFormatStats& wire, std::size_t slot, bool has_i
 }
 
 inline PacketBreakdown classify_packet(
-    BitBuffer packet,
+    ecs::BitBuffer packet,
     WireFormatStats* wire = nullptr,
     std::size_t network_entity_id_tier0_bits = protocol::default_network_entity_id_tier0_bits) {
     PacketBreakdown result;
@@ -764,7 +764,7 @@ inline void enqueue_packet(
     SimulatedLink& link,
     DirectionStats& stats,
     ClientId client,
-    const BitBuffer& packet,
+    const ecs::BitBuffer& packet,
     double now_seconds,
     bool wire_diagnostics = false) {
     const PacketBreakdown breakdown = classify_packet(packet, wire_diagnostics ? &stats.wire : nullptr);
@@ -779,7 +779,7 @@ inline void enqueue_packet(
 
 template <typename Fn>
 void deliver_ready(SimulatedLink& link, DirectionStats& stats, double now_seconds, Fn&& fn) {
-    link.deliver_ready(now_seconds, [&](ClientId client, const BitBuffer& packet) {
+    link.deliver_ready(now_seconds, [&](ClientId client, const ecs::BitBuffer& packet) {
         ++stats.delivered_packets;
         stats.delivered_bytes += packet.byte_size();
         fn(client, packet);
@@ -1149,7 +1149,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
     server_options.serialized_worker_threads = config.server_worker_threads;
     server_options.fixed_dt_seconds = 1.0 / config.tick_rate;
     server_options.prioritizer = make_sphere_prioritizer(server_registry);
-    server_options.transport = [&](ClientId client, const BitBuffer& packet) {
+    server_options.transport = [&](ClientId client, const ecs::BitBuffer& packet) {
         enqueue_packet(
             server_to_clients,
             report.server_to_clients,
@@ -1199,7 +1199,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
 
         {
             ScopedTimer timer(report.timing.client_receive_seconds);
-            deliver_ready(server_to_clients, report.server_to_clients, now, [&](ClientId client_id, const BitBuffer& packet) {
+            deliver_ready(server_to_clients, report.server_to_clients, now, [&](ClientId client_id, const ecs::BitBuffer& packet) {
                 const std::size_t index = static_cast<std::size_t>(client_id - 1U);
                 if (index < clients.size()) {
                     clients[index].receive(
@@ -1224,7 +1224,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
         {
             ScopedTimer timer(report.timing.ack_processing_seconds);
             for (std::size_t index = 0; index < clients.size(); ++index) {
-                for (const BitBuffer& ack : clients[index].drain_packets()) {
+                for (const ecs::BitBuffer& ack : clients[index].drain_packets()) {
                     enqueue_packet(
                         clients_to_server,
                         report.clients_to_server,
@@ -1234,7 +1234,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
                         config.wire_diagnostics);
                 }
             }
-            deliver_ready(clients_to_server, report.clients_to_server, now, [&](ClientId client_id, const BitBuffer& packet) {
+            deliver_ready(clients_to_server, report.clients_to_server, now, [&](ClientId client_id, const ecs::BitBuffer& packet) {
                 server.process_packet(client_id, packet);
             });
         }
@@ -1261,7 +1261,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
     }
 
     const double end_time = static_cast<double>(total_ticks) * dt + 60.0;
-    deliver_ready(server_to_clients, report.server_to_clients, end_time, [&](ClientId client_id, const BitBuffer& packet) {
+    deliver_ready(server_to_clients, report.server_to_clients, end_time, [&](ClientId client_id, const ecs::BitBuffer& packet) {
         const std::size_t index = static_cast<std::size_t>(client_id - 1U);
         if (index < clients.size()) {
             clients[index].receive(client_registries[index], packet);
@@ -1271,7 +1271,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
         }
     });
     for (std::size_t index = 0; index < clients.size(); ++index) {
-        for (const BitBuffer& ack : clients[index].drain_packets()) {
+        for (const ecs::BitBuffer& ack : clients[index].drain_packets()) {
             enqueue_packet(
                 clients_to_server,
                 report.clients_to_server,
@@ -1281,7 +1281,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
                 config.wire_diagnostics);
         }
     }
-    deliver_ready(clients_to_server, report.clients_to_server, end_time + 60.0, [&](ClientId client_id, const BitBuffer& packet) {
+    deliver_ready(clients_to_server, report.clients_to_server, end_time + 60.0, [&](ClientId client_id, const ecs::BitBuffer& packet) {
         server.process_packet(client_id, packet);
     });
 

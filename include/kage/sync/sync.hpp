@@ -1,6 +1,6 @@
 #pragma once
 
-#include "kage/sync/bit_buffer.hpp"
+#include "ecs/bit_buffer.hpp"
 #include "kage/sync/client.hpp"
 #include "kage/sync/component_traits.hpp"
 #include "kage/sync/components.hpp"

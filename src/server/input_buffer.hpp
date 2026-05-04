@@ -23,7 +23,7 @@ struct ServerDueInput {
 class ServerInputBuffer {
 public:
     bool process_packet_payload(
-        BitBuffer& packet,
+        ecs::BitBuffer& packet,
         const SyncComponentOps& ops,
         std::size_t capacity_frames,
         ServerInputPacketTrace* trace);

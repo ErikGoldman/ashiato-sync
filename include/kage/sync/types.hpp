@@ -1,6 +1,6 @@
 #pragma once
 
-#include "kage/sync/bit_buffer.hpp"
+#include "ecs/bit_buffer.hpp"
 #include "kage/sync/protocol.hpp"
 
 #include "ecs/ecs.hpp"
@@ -28,7 +28,7 @@ using ClientId = std::uint64_t;
 using SyncFrame = std::uint32_t;
 using SyncCueTypeId = std::uint16_t;
 using ClientEntityNetworkId = std::uint64_t;
-using TransportFn = std::function<void(ClientId, const BitBuffer&)>;
+using TransportFn = std::function<void(ClientId, const ecs::BitBuffer&)>;
 using ConnectHandlerFn = std::function<bool(const std::string&, ClientId&, std::string&)>;
 
 struct ReplicationPriorityObject {
@@ -318,7 +318,7 @@ struct EntityReferenceContext {
 };
 
 inline bool write_entity_reference(
-    BitBuffer& out,
+    ecs::BitBuffer& out,
     ecs::Entity entity,
     const EntityReferenceContext& context) {
     const std::uint32_t network_id = context.network_id_for_entity(entity);
@@ -331,14 +331,14 @@ inline bool write_entity_reference(
 }
 
 inline bool write_entity_reference(
-    BitBuffer& out,
+    ecs::BitBuffer& out,
     const EntityReference& reference,
     const EntityReferenceContext& context) {
     return write_entity_reference(out, reference.entity, context);
 }
 
 inline bool read_entity_reference(
-    BitBuffer& in,
+    ecs::BitBuffer& in,
     EntityReferenceContext& context,
     EntityReference& out) {
     if (in.remaining_bits() < 1U) {
@@ -370,8 +370,8 @@ struct SyncComponentOps {
     using QuantizeFn = void (*)(const void*, std::uint8_t*);
     using DequantizeFn = void (*)(const std::uint8_t*, void*);
     using ApplyFn = bool (*)(ecs::Registry&, ecs::Entity, const std::uint8_t*);
-    using SerializeFn = void (*)(const std::uint8_t*, const std::uint8_t*, BitBuffer&, EntityReferenceContext*);
-    using DeserializeFn = bool (*)(BitBuffer&, const std::uint8_t*, std::uint8_t*, EntityReferenceContext*);
+    using SerializeFn = void (*)(const std::uint8_t*, const std::uint8_t*, ecs::BitBuffer&, EntityReferenceContext*);
+    using DeserializeFn = bool (*)(ecs::BitBuffer&, const std::uint8_t*, std::uint8_t*, EntityReferenceContext*);
     using InterpolateFn = bool (*)(const std::uint8_t*, const std::uint8_t*, float, std::uint8_t*);
     using ComputeErrorFn = bool (*)(const std::uint8_t*, const std::uint8_t*, QuantizedBytes&);
     using ApplyErrorFn = bool (*)(const std::uint8_t*, const QuantizedBytes&, QuantizedBytes&);
@@ -401,12 +401,12 @@ struct SyncComponentOps {
 };
 
 struct SyncCueOps {
-    using SerializeFn = void (*)(const void*, BitBuffer&, EntityReferenceContext*);
-    using PlayFn = bool (*)(ecs::Registry&, ecs::Entity, const BitBuffer&, float, SyncFrame, EntityReferenceContext*);
-    using RollbackFn = bool (*)(ecs::Registry&, ecs::Entity, const BitBuffer&, EntityReferenceContext*);
-    using EqualsFn = bool (*)(const BitBuffer&, const BitBuffer&, EntityReferenceContext*);
+    using SerializeFn = void (*)(const void*, ecs::BitBuffer&, EntityReferenceContext*);
+    using PlayFn = bool (*)(ecs::Registry&, ecs::Entity, const ecs::BitBuffer&, float, SyncFrame, EntityReferenceContext*);
+    using RollbackFn = bool (*)(ecs::Registry&, ecs::Entity, const ecs::BitBuffer&, EntityReferenceContext*);
+    using EqualsFn = bool (*)(const ecs::BitBuffer&, const ecs::BitBuffer&, EntityReferenceContext*);
 #if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
-    using TraceFn = bool (*)(const BitBuffer&, SyncTraceStringBuilder&);
+    using TraceFn = bool (*)(const ecs::BitBuffer&, SyncTraceStringBuilder&);
 #endif
 
     SerializeFn serialize = nullptr;
@@ -425,7 +425,7 @@ struct QueuedSyncCue {
     SyncFrame frame = 0;
     SyncCueTypeId type = 0;
     float relevance_seconds = 0.0f;
-    BitBuffer payload;
+    ecs::BitBuffer payload;
     std::shared_ptr<void> value;
     bool only_replicate_to_owner = false;
 };
