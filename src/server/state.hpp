@@ -1,6 +1,7 @@
 #pragma once
 
 #include "kage/sync/server.hpp"
+#include "server/input_buffer.hpp"
 
 namespace kage::sync {
 
@@ -93,19 +94,7 @@ struct ReplicationServer::ClientState {
     std::vector<ClientEntityState> entity_states;
     std::vector<ClientDestroyState> pending_destroys;
     std::vector<PendingPacketAck> pending_packet_acks;
-    struct InputFrame {
-        SyncFrame frame = 0;
-        bool valid = false;
-        std::vector<std::uint8_t> bytes;
-    };
-    std::vector<InputFrame> input_frames;
-    std::vector<std::uint8_t> latest_input;
-    std::vector<std::uint8_t> latest_applied_input;
-    SyncFrame input_ack_frame = 0;
-    SyncFrame latest_applied_input_frame = 0;
-    bool has_latest_input = false;
-    bool has_latest_applied_input = false;
-    ClientInputStats input_stats;
+    server_detail::ServerInputBuffer input;
     struct NetworkIdEntry {
         std::uint32_t slot_or_next_free = 0;
         std::uint32_t version = 0;

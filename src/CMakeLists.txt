@@ -9,6 +9,7 @@ add_library(kage_sync
     detail/options_validation.cpp
     server.cpp
     server/detail.cpp
+    server/input_buffer.cpp
     server/packet.cpp
     server/packet_ack.cpp
     server/quantized_frame.cpp

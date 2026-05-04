@@ -20,8 +20,10 @@ add_executable(kage_sync_tests
     quantized_bytes.test.cpp
     server_connection.test.cpp
     server_destroy_ack.test.cpp
+    server_input_buffer.test.cpp
     server_input.test.cpp
     server_lifecycle.test.cpp
+    server_packet_ack_tracker.test.cpp
     server_packet.test.cpp
     server_prioritization.test.cpp
     server_transport.test.cpp

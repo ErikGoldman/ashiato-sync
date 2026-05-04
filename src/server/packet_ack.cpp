@@ -1,6 +1,7 @@
 #include "kage/sync/server.hpp"
 
 #include "server/packet.hpp"
+#include "server/packet_ack_tracker.hpp"
 #include "server/state.hpp"
 
 #include <algorithm>
@@ -90,23 +91,16 @@ void ReplicationServer::cleanup_packet_acks(ClientState& client) {
 }
 
 std::uint32_t ReplicationServer::allocate_packet_id(ClientState& client) {
-    const server_detail::ServerPacketIdAllocator allocator(options_.protocol.max_pending_packet_acks_per_client);
-    const std::uint32_t packet_id = allocator.allocate(client.next_packet_id);
-    client.pending_packet_acks.erase(
-        std::remove_if(
-            client.pending_packet_acks.begin(),
-            client.pending_packet_acks.end(),
-            [packet_id](const PendingPacketAck& pending) {
-                return pending.packet_id == packet_id;
-            }),
-        client.pending_packet_acks.end());
-    return packet_id;
+    return server_detail::allocate_tracked_packet_id(
+        client.next_packet_id,
+        client.pending_packet_acks,
+        options_.protocol.max_pending_packet_acks_per_client);
 }
 
 void ReplicationServer::enforce_pending_packet_ack_limit(ClientState& client) {
-    while (client.pending_packet_acks.size() > options_.protocol.max_pending_packet_acks_per_client) {
-        client.pending_packet_acks.erase(client.pending_packet_acks.begin());
-    }
+    server_detail::enforce_pending_packet_ack_limit(
+        client.pending_packet_acks,
+        options_.protocol.max_pending_packet_acks_per_client);
 }
 
 void ReplicationServer::track_packet_ack(
@@ -116,7 +110,7 @@ void ReplicationServer::track_packet_ack(
     if (records.empty()) {
         return;
     }
-    client.pending_packet_acks.push_back(PendingPacketAck{packet_id, records});
+    server_detail::track_packet_ack(client.pending_packet_acks, packet_id, records);
 }
 
 }  // namespace kage::sync
