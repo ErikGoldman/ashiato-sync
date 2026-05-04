@@ -41,6 +41,8 @@ struct FpsCombatState {
 
 struct FpsStunned {};
 
+struct FpsKillCamTarget {};
+
 struct FpsStunState {
     float remaining = 0.0f;
 };

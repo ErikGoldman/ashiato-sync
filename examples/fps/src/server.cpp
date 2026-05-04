@@ -1,6 +1,7 @@
 #include "app.hpp"
 
 #include "game/components.hpp"
+#include "game/cues.hpp"
 #include "game/jobs.hpp"
 #include "game/math.hpp"
 #include "game/schema.hpp"
@@ -10,6 +11,8 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <memory>
+#include <typeindex>
 #include <unordered_map>
 #include <vector>
 
@@ -27,7 +30,6 @@ void run_server(const AppConfig& config) {
 
     SocketHandle socket = make_udp_socket(config.port);
     std::unordered_map<kage::sync::ClientId, sockaddr_in> peers;
-    std::unordered_map<kage::sync::ClientId, std::uint8_t> previous_dead;
     std::vector<kage::sync::ClientId> pending_spawns;
     struct ServerPlayer {
         kage::sync::ClientId client = kage::sync::invalid_client_id;
@@ -39,11 +41,31 @@ void run_server(const AppConfig& config) {
     options.bandwidth_limit_bytes_per_tick = 64 * 1024;
     options.mtu_bytes = 1200;
     options.fixed_dt_seconds = fixed_dt;
-    options.post_tick = [&replay_recorder](
+    options.post_tick = [&replay_recorder, &replay_server](
         const ecs::Registry& tick_registry,
         kage::sync::SyncFrame frame,
         kage::sync::QueuedSyncCueView cues) {
         replay_recorder.record(tick_registry, frame, cues);
+        const kage::sync::SyncSettings& settings = tick_registry.get<kage::sync::SyncSettings>();
+        const auto found_death_type = settings.cue_type_ids.find(std::type_index(typeid(PlayerDeathCue)));
+        if (found_death_type == settings.cue_type_ids.end()) {
+            return;
+        }
+        for (const kage::sync::QueuedSyncCue& cue : cues) {
+            if (cue.type != found_death_type->second || cue.value == nullptr) {
+                continue;
+            }
+            const kage::sync::NetworkOwner* victim_owner = tick_registry.try_get<kage::sync::NetworkOwner>(cue.entity);
+            if (victim_owner == nullptr) {
+                continue;
+            }
+            const auto death = std::static_pointer_cast<PlayerDeathCue>(cue.value);
+            if (death == nullptr) {
+                continue;
+            }
+            const ecs::Entity killer_entity = death->shooter.entity;
+            replay_server.record_death(victim_owner->client, frame, killer_entity);
+        }
     };
     options.connect_handler = [&pending_spawns](const std::string&, kage::sync::ClientId& client, std::string&) {
         pending_spawns.push_back(client);
@@ -107,24 +129,6 @@ void run_server(const AppConfig& config) {
         (void)server.tick(registry, dt);
         g_server_frame = server.frame();
 
-        for (const ServerPlayer& player : players) {
-            if (!registry.alive(player.entity)) {
-                continue;
-            }
-            const FpsCombatState* combat = registry.try_get<FpsCombatState>(player.entity);
-            if (combat == nullptr) {
-                continue;
-            }
-            const std::uint8_t was_dead = previous_dead[player.client];
-            if (combat->dead != 0U && was_dead == 0U) {
-                kage::sync::ClientId killer = kage::sync::invalid_client_id;
-                if (const FpsDeathInfo* death = registry.try_get<FpsDeathInfo>(player.entity)) {
-                    killer = death->killer;
-                }
-                replay_server.record_death(player.client, server.frame(), killer);
-            }
-            previous_dead[player.client] = combat->dead;
-        }
         replay_server.tick(dt);
 
         for (const kage::sync::ClientId client : pending_spawns) {
@@ -140,7 +144,6 @@ void run_server(const AppConfig& config) {
                     255},
                 client);
             players.push_back(ServerPlayer{client, entity});
-            previous_dead[client] = 0U;
             std::cout << "client " << client << " joined\n";
         }
         pending_spawns.clear();

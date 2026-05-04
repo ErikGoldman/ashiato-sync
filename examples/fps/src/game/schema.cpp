@@ -15,6 +15,7 @@ SyncSchema define_schema(ecs::Registry& registry) {
     const ecs::Entity owner = kage::sync::register_sync_component<kage::sync::NetworkOwner>(registry, "kage.sync.NetworkOwner");
     const ecs::Entity no_simulate = registry.component<kage::sync::NoSimulate>();
     const ecs::Entity stunned = registry.register_component<FpsStunned>("FpsStunned");
+    const ecs::Entity kill_cam_target = registry.register_component<FpsKillCamTarget>("FpsKillCamTarget");
     kage::sync::register_sync_component<FpsInput>(registry, "FpsInput");
     registry.register_component<FpsShotEffect>("FpsShotEffect");
     registry.register_component<FpsHitEffect>("FpsHitEffect");
@@ -39,6 +40,7 @@ SyncSchema define_schema(ecs::Registry& registry) {
                 {
                     {no_simulate, kage::sync::ReplicationAudience::All},
                     {stunned, kage::sync::ReplicationAudience::All},
+                    {kill_cam_target, kage::sync::ReplicationAudience::All},
                 },
                 {
                 {transform, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate},

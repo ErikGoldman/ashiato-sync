@@ -12,6 +12,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <iostream>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -178,9 +180,98 @@ void run_client(const AppConfig& config) {
         const bool replay_ready = replay_local_entity != ecs::Entity{};
         ecs::Registry& render_registry = replay_ready ? death_cam.registry() : registry;
         kage::sync::ReplicationClient& render_client = replay_ready ? death_cam.client() : client;
-        const ecs::Entity local_entity = find_local_entity(render_registry);
+        ecs::Entity local_entity = find_local_entity(render_registry);
         const kage::sync::DisplayInterpolationSampleBuffer& render_display =
             render_client.display_interpolation_frame(render_registry);
+        static bool kill_cam_ecs_seen = false;
+        static bool kill_cam_display_seen = false;
+        if (replay_ready) {
+            const ecs::Entity kill_cam_target = render_registry.component<FpsKillCamTarget>();
+            std::size_t ecs_target_count = 0;
+            ecs::Entity ecs_target;
+            render_registry.view<const FpsTransform>().with_tags<const FpsKillCamTarget>().each(
+                [&ecs_target_count, &ecs_target](ecs::Entity entity, const FpsTransform&) {
+                    ++ecs_target_count;
+                    if (!ecs_target) {
+                        ecs_target = entity;
+                    }
+                });
+            std::size_t display_target_count = 0;
+            ecs::Entity display_target;
+            kage::sync::SyncFrame display_target_frame = 0;
+            float display_target_alpha = 0.0f;
+            for (const kage::sync::DisplayInterpolationSample& sample : render_display.entities) {
+                if (sample.has_tag(render_registry, kill_cam_target)) {
+                    ++display_target_count;
+                    if (!display_target) {
+                        display_target = sample.local_entity;
+                        display_target_frame = sample.frame;
+                        display_target_alpha = sample.alpha;
+                    }
+                }
+            }
+            if (ecs_target) {
+                local_entity = ecs_target;
+            }
+            if (display_target && !kill_cam_display_seen) {
+                kill_cam_display_seen = true;
+                std::cerr << "fps kill cam target display first_seen"
+                          << " playback=" << render_client.playback_frame()
+                          << " continuous_playback=" << render_client.continuous_playback_frame()
+                          << " display_target_frame=" << render_client.display_target_frame()
+                          << " last_applied="
+                          << (render_client.has_applied_buffered_frame()
+                                  ? std::to_string(render_client.last_applied_buffered_frame())
+                                  : std::string("none"))
+                          << " ecs_targets=" << ecs_target_count
+                          << " display_target=" << display_target.value
+                          << " display_sample_frame=" << display_target_frame
+                          << " display_alpha=" << display_target_alpha
+                          << '\n';
+            }
+            if (ecs_target && !kill_cam_ecs_seen) {
+                kill_cam_ecs_seen = true;
+                std::cerr << "fps kill cam target ecs first_seen"
+                          << " playback=" << render_client.playback_frame()
+                          << " continuous_playback=" << render_client.continuous_playback_frame()
+                          << " display_target_frame=" << render_client.display_target_frame()
+                          << " last_applied="
+                          << (render_client.has_applied_buffered_frame()
+                                  ? std::to_string(render_client.last_applied_buffered_frame())
+                                  : std::string("none"))
+                          << " ecs_target=" << ecs_target.value
+                          << " display_target=" << display_target.value
+                          << " display_sample_frame=" << display_target_frame
+                          << " display_alpha=" << display_target_alpha
+                          << '\n';
+            }
+            static double kill_cam_tag_log_seconds = 0.0;
+            const bool missing_target = ecs_target_count == 0;
+            kill_cam_tag_log_seconds += dt;
+            if (missing_target && kill_cam_tag_log_seconds >= 1.0) {
+                kill_cam_tag_log_seconds = 0.0;
+                std::cerr << "fps kill cam target lookup ecs_targets=" << ecs_target_count
+                          << " display_targets=" << display_target_count
+                          << " ecs_target=" << ecs_target.value
+                          << " display_target=" << display_target.value
+                          << " fallback_local=" << replay_local_entity.value
+                          << " selected=" << local_entity.value
+                          << " display_samples=" << render_display.entities.size()
+                          << " playback=" << render_client.playback_frame()
+                          << " continuous_playback=" << render_client.continuous_playback_frame()
+                          << " display_target_frame=" << render_client.display_target_frame()
+                          << " last_applied="
+                          << (render_client.has_applied_buffered_frame()
+                                  ? std::to_string(render_client.last_applied_buffered_frame())
+                                  : std::string("none"))
+                          << " display_sample_frame=" << display_target_frame
+                          << " display_alpha=" << display_target_alpha
+                          << '\n';
+            }
+        } else {
+            kill_cam_ecs_seen = false;
+            kill_cam_display_seen = false;
+        }
 
         update_effects(render_registry, dt);
         for (WallParticle& particle : particles) {

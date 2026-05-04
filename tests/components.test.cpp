@@ -4,6 +4,7 @@
 
 #include <array>
 #include <stdexcept>
+#include <type_traits>
 
 using kage_sync_tests::Health;
 using kage_sync_tests::NetworkedPayload;
@@ -12,6 +13,10 @@ using kage_sync_tests::Position;
 using kage_sync_tests::Secret;
 using kage_sync_tests::Visible;
 using kage_sync_tests::read_networked_payload;
+
+static_assert(
+    std::is_nothrow_move_constructible<kage::sync::SyncSettings>::value,
+    "SyncSettings must satisfy ecs component storage requirements");
 
 TEST_CASE("sync components register into the ecs registry") {
     ecs::Registry registry;

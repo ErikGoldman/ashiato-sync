@@ -627,10 +627,12 @@ struct SyncCueTraits<HitConfirmCue> {
 
 template <>
 struct SyncCueTraits<PlayerDeathCue> {
-    static void serialize(const PlayerDeathCue&, BitBuffer&) {}
+    static void serialize(const PlayerDeathCue& cue, BitBuffer& out, EntityReferenceContext& references) {
+        (void)write_entity_reference(out, cue.shooter, references);
+    }
 
-    static bool deserialize(BitBuffer&, PlayerDeathCue&) {
-        return true;
+    static bool deserialize(BitBuffer& in, PlayerDeathCue& out, EntityReferenceContext& references) {
+        return read_entity_reference(in, references, out.shooter);
     }
 
     static bool play(ecs::Registry& registry, ecs::Entity owner, const PlayerDeathCue&, float late_seconds, SyncFrame) {
@@ -645,8 +647,12 @@ struct SyncCueTraits<PlayerDeathCue> {
         return true;
     }
 
-    static bool equals_cue(const PlayerDeathCue&, const PlayerDeathCue&) {
-        return true;
+    static bool equals_cue(const PlayerDeathCue& lhs, const PlayerDeathCue& rhs) {
+        if (lhs.shooter.client_entity_network_id != kage::sync::invalid_client_entity_network_id ||
+            rhs.shooter.client_entity_network_id != kage::sync::invalid_client_entity_network_id) {
+            return lhs.shooter.client_entity_network_id == rhs.shooter.client_entity_network_id;
+        }
+        return lhs.shooter.entity == rhs.shooter.entity;
     }
 };
 

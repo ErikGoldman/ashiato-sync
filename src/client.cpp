@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <limits>
 #include <mutex>
 #include <sstream>
@@ -3009,6 +3010,25 @@ bool ReplicationClient::apply_buffered_sample(
 #endif
     if (!apply_archetype_tags(registry, state.local, archetype, sample.baseline.tag_mask)) {
         return false;
+    }
+    if (!archetype.tags.empty()) {
+        std::uint64_t after_tag_mask = 0;
+        for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
+            if (registry.has(state.local, archetype.tags[tag_index].tag)) {
+                after_tag_mask |= std::uint64_t{1} << tag_index;
+            }
+        }
+        if (after_tag_mask != sample.baseline.tag_mask) {
+            std::cerr << "sync client buffered tag apply frame=" << sample.frame
+                      << " client=" << client_id_
+                      << " network=" << state.client_entity_network_id
+                      << " local=" << state.local.value
+                      << " archetype=" << sample.archetype.value
+                      << " sample_mask=0x" << std::hex << sample.baseline.tag_mask
+                      << " registry_mask=0x" << after_tag_mask << std::dec
+                      << " tag_count=" << archetype.tags.size()
+                      << '\n';
+        }
     }
 #ifdef KAGE_SYNC_ENABLE_TRACING
     if (tracer_ != nullptr && tracer_->enabled() && previous_tag_mask != sample.baseline.tag_mask) {

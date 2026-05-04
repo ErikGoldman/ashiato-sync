@@ -457,6 +457,36 @@ struct QuantizedFrameData {
 };
 
 struct SyncSettings {
+    SyncSettings()
+        : cue_queue(std::make_shared<SyncCueQueue>()) {}
+
+    SyncSettings(const SyncSettings&) = default;
+    SyncSettings& operator=(const SyncSettings&) = default;
+
+    SyncSettings(SyncSettings&& other) noexcept {
+        swap(other);
+    }
+
+    SyncSettings& operator=(SyncSettings&& other) noexcept {
+        if (this != &other) {
+            SyncSettings moved(std::move(other));
+            swap(moved);
+        }
+        return *this;
+    }
+
+    void swap(SyncSettings& other) noexcept {
+        using std::swap;
+        swap(role, other.role);
+        swap(local_client, other.local_client);
+        swap(input_component, other.input_component);
+        archetypes.swap(other.archetypes);
+        component_ops.swap(other.component_ops);
+        cue_ops.swap(other.cue_ops);
+        cue_type_ids.swap(other.cue_type_ids);
+        cue_queue.swap(other.cue_queue);
+    }
+
     SyncRole role = SyncRole::Server;
     ClientId local_client = invalid_client_id;
     ecs::Entity input_component;
@@ -464,7 +494,7 @@ struct SyncSettings {
     std::unordered_map<std::uint64_t, SyncComponentOps> component_ops;
     std::vector<SyncCueOps> cue_ops;
     std::unordered_map<std::type_index, SyncCueTypeId> cue_type_ids;
-    std::shared_ptr<SyncCueQueue> cue_queue = std::make_shared<SyncCueQueue>();
+    std::shared_ptr<SyncCueQueue> cue_queue;
 };
 
 struct QueuedSyncCueView {

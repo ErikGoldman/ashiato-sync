@@ -136,7 +136,12 @@ void simulate_fire(
             if (!stun_attack && best_combat->health <= 0 && best_combat->dead == 0U) {
                 best_combat->dead = 1;
                 best_combat->respawn_remaining = respawn_seconds;
-                (void)kage::sync::emit_cue(sync, best_entity, PlayerDeathCue{}, 0.75f, true);
+                (void)kage::sync::emit_cue(
+                    sync,
+                    best_entity,
+                    PlayerDeathCue{kage::sync::EntityReference{shooter}},
+                    0.75f,
+                    true);
                 if (best_death != nullptr) {
                     best_death->killer = kage::sync::invalid_client_id;
                     if (const kage::sync::NetworkOwner* owner = view.template try_get<const kage::sync::NetworkOwner>(shooter)) {

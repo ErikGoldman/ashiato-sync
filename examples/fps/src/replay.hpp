@@ -65,13 +65,13 @@ public:
     FpsReplayServer(const FpsReplayServer&) = delete;
     FpsReplayServer& operator=(const FpsReplayServer&) = delete;
 
-    void record_death(kage::sync::ClientId client, kage::sync::SyncFrame frame, kage::sync::ClientId killer);
+    void record_death(kage::sync::ClientId client, kage::sync::SyncFrame frame, ecs::Entity killer_entity);
     void tick(double dt_seconds);
 
 private:
     struct DeathInfo {
         kage::sync::SyncFrame frame = 0;
-        kage::sync::ClientId killer = kage::sync::invalid_client_id;
+        std::uint64_t killer_entity_value = 0;
     };
 
     struct Session;
@@ -103,6 +103,9 @@ public:
 
 private:
     bool active_ = false;
+    float active_seconds_ = 0.0f;
+    bool replay_done_received_ = false;
+    float replay_done_drain_seconds_ = 0.0f;
     SocketHandle socket_ = invalid_socket_handle;
     sockaddr_in server_address_{};
     std::unique_ptr<ecs::Registry> registry_;

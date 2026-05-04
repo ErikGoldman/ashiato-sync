@@ -428,6 +428,12 @@ public:
     double display_target_frame() const noexcept {
         return clock_.display_target_frame();
     }
+    bool has_applied_buffered_frame() const noexcept {
+        return has_applied_buffered_frame_;
+    }
+    SyncFrame last_applied_buffered_frame() const noexcept {
+        return last_applied_buffered_frame_;
+    }
     double estimated_server_frame() const noexcept;
     double continuous_prediction_frames_ahead() const noexcept;
     double continuous_interpolation_frames_behind() const noexcept;
