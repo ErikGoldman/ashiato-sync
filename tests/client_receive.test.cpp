@@ -11,6 +11,30 @@
 
 using namespace kage_sync_tests;
 
+namespace {
+
+constexpr std::size_t client_destroy_tombstone_capacity = 65536;
+
+kage::sync::BitBuffer make_destroy_packet_for_wire_ids(
+    kage::sync::SyncFrame frame,
+    std::uint32_t packet_id,
+    std::uint32_t first_wire_id,
+    std::uint16_t count) {
+    kage::sync::BitBuffer packet;
+    packet.push_bits(kage::sync::protocol::server_update_message, 8U);
+    packet.push_bits(frame, 32U);
+    packet.push_bits(packet_id, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(0, 32U);
+    packet.push_bits(count, 16U);
+    for (std::uint16_t offset = 0; offset < count; ++offset) {
+        packet.push_bool(true);
+        kage::sync::protocol::write_network_entity_id(packet, first_wire_id + offset);
+    }
+    return packet;
+}
+
+}  // namespace
+
 TEST_CASE("replication client applies full updates and queues ACKs") {
     ecs::Registry server_registry;
     const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
@@ -979,4 +1003,40 @@ TEST_CASE("replication client does not advance implicit versions twice for destr
     const std::vector<AckRecord> records = read_acks(acks[0]);
     REQUIRE(records.size() == 1);
     REQUIRE(records[0].packet_id == 4);
+}
+
+TEST_CASE("replication client evicts destroy tombstones by deterministic age") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client;
+    constexpr std::uint32_t first_wire_id = 2U;
+    constexpr std::uint16_t first_packet_destroy_count =
+        static_cast<std::uint16_t>(client_destroy_tombstone_capacity - 1U);
+    REQUIRE(client.receive(
+        client_registry,
+        make_destroy_packet_for_wire_ids(1, 1, first_wire_id, first_packet_destroy_count)));
+    REQUIRE(client.receive(
+        client_registry,
+        make_destroy_packet_for_wire_ids(2, 2, first_wire_id + first_packet_destroy_count, 2U)));
+    REQUIRE_FALSE(client.drain_ack_packets().empty());
+
+    const ecs::Entity evicted_server_entity{first_wire_id - 1U};
+    const kage::sync::ClientEntityNetworkId evicted_id =
+        test_client_entity_network_id(1, first_wire_id, 1U);
+    REQUIRE(client.receive(
+        client_registry,
+        make_position_packet(1, {{evicted_server_entity, Position{1.0f, 2.0f}}}, 2U, 3U)));
+    const ecs::Entity evicted_local = client.local_entity(evicted_id);
+    REQUIRE(evicted_local);
+    REQUIRE(client_registry.alive(evicted_local));
+
+    constexpr std::uint32_t retained_wire_id = first_wire_id + 1U;
+    const ecs::Entity retained_server_entity{retained_wire_id - 1U};
+    REQUIRE_FALSE(client.receive(
+        client_registry,
+        make_position_packet(1, {{retained_server_entity, Position{3.0f, 4.0f}}}, 2U, 4U)));
+    REQUIRE_FALSE(client.local_entity(test_client_entity_network_id(1, retained_wire_id, 1U)));
 }

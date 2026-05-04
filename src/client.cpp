@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -463,12 +464,19 @@ ReplicationClient::EntityState* ReplicationClient::ensure_entity_state(
         return existing;
     }
 
-    if (entities_.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
-        throw std::length_error("kage sync client entity state space exhausted");
+    std::uint32_t entity_index = invalid_entity_index;
+    if (!free_entity_indices_.empty()) {
+        entity_index = free_entity_indices_.back();
+        free_entity_indices_.pop_back();
+    } else {
+        if (entities_.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+            throw std::length_error("kage sync client entity state space exhausted");
+        }
+        entity_index = static_cast<std::uint32_t>(entities_.size());
+        entities_.emplace_back();
     }
-    const std::uint32_t entity_index = static_cast<std::uint32_t>(entities_.size());
-    entities_.emplace_back();
     EntityState& fresh = entities_[entity_index];
+    fresh = EntityState{};
     fresh.client_entity_network_id = network_id;
     fresh.wire_network_id = wire_network_id;
     fresh.active_index = active_entities_.size();
@@ -519,6 +527,7 @@ void ReplicationClient::erase_entity_state(
     }
 
     state = EntityState{};
+    free_entity_indices_.push_back(entity_index);
 }
 
 void ReplicationClient::set_buffered_membership(std::uint32_t entity_index, bool active) {
@@ -606,7 +615,7 @@ void ReplicationClient::sync_entity_memberships(EntityState& state) {
 
 bool ReplicationClient::destroy_tombstone_blocks(std::uint32_t wire_network_id, SyncFrame frame) const {
     const auto found = destroy_tombstones_.find(wire_network_id);
-    return found != destroy_tombstones_.end() && frame <= found->second;
+    return found != destroy_tombstones_.end() && frame <= found->second.frame;
 }
 
 void ReplicationClient::record_destroy_tombstone(std::uint32_t wire_network_id, SyncFrame frame) {
@@ -614,21 +623,71 @@ void ReplicationClient::record_destroy_tombstone(std::uint32_t wire_network_id, 
         return;
     }
 
-    auto [found, inserted] = destroy_tombstones_.try_emplace(wire_network_id, frame);
-    if (!inserted && frame > found->second) {
-        found->second = frame;
+    auto [found, inserted] = destroy_tombstones_.try_emplace(wire_network_id);
+    if (!inserted && frame <= found->second.frame) {
+        return;
     }
+    if (inserted) {
+        found->second.frame = frame;
+        found->second.age_order = destroy_tombstone_next_age_order_++;
+    } else {
+        found->second.frame = frame;
+        ++found->second.generation;
+        found->second.age_order = destroy_tombstone_next_age_order_++;
+    }
+    destroy_tombstone_ages_.push_back(
+        DestroyTombstoneAgeEntry{wire_network_id, found->second.generation, found->second.age_order});
+    compact_destroy_tombstone_ages();
     if (destroy_tombstones_.size() <= max_destroy_tombstones) {
         return;
     }
 
-    auto erase = destroy_tombstones_.begin();
-    if (erase != destroy_tombstones_.end() && erase->first == wire_network_id) {
-        ++erase;
-    }
-    if (erase != destroy_tombstones_.end()) {
+    while (destroy_tombstones_.size() > max_destroy_tombstones &&
+           destroy_tombstone_age_begin_ < destroy_tombstone_ages_.size()) {
+        const DestroyTombstoneAgeEntry age = destroy_tombstone_ages_[destroy_tombstone_age_begin_++];
+        const auto erase = destroy_tombstones_.find(age.wire_network_id);
+        if (erase == destroy_tombstones_.end() ||
+            erase->second.generation != age.generation ||
+            erase->second.age_order != age.age_order) {
+            continue;
+        }
         destroy_tombstones_.erase(erase);
     }
+    compact_destroy_tombstone_ages();
+}
+
+void ReplicationClient::compact_destroy_tombstone_ages() {
+    if (destroy_tombstone_age_begin_ == destroy_tombstone_ages_.size()) {
+        destroy_tombstone_ages_.clear();
+        destroy_tombstone_age_begin_ = 0;
+        return;
+    }
+    if (destroy_tombstone_age_begin_ != 0U &&
+        destroy_tombstone_age_begin_ >= 4096U &&
+        destroy_tombstone_age_begin_ * 2U >= destroy_tombstone_ages_.size()) {
+        destroy_tombstone_ages_.erase(
+            destroy_tombstone_ages_.begin(),
+            destroy_tombstone_ages_.begin() + static_cast<std::ptrdiff_t>(destroy_tombstone_age_begin_));
+        destroy_tombstone_age_begin_ = 0;
+    }
+    if (destroy_tombstone_ages_.size() <= max_destroy_tombstones * 2U) {
+        return;
+    }
+    destroy_tombstone_ages_.clear();
+    destroy_tombstone_ages_.reserve(destroy_tombstones_.size());
+    for (const auto& tombstone : destroy_tombstones_) {
+        destroy_tombstone_ages_.push_back(DestroyTombstoneAgeEntry{
+            tombstone.first,
+            tombstone.second.generation,
+            tombstone.second.age_order});
+    }
+    std::sort(
+        destroy_tombstone_ages_.begin(),
+        destroy_tombstone_ages_.end(),
+        [](const DestroyTombstoneAgeEntry& lhs, const DestroyTombstoneAgeEntry& rhs) {
+            return lhs.age_order < rhs.age_order;
+        });
+    destroy_tombstone_age_begin_ = 0;
 }
 
 const QuantizedFrameData* ReplicationClient::find_baseline(
@@ -2550,10 +2609,18 @@ bool ReplicationClient::apply_destroy(ecs::Registry& registry, SyncFrame frame, 
     if (state == nullptr) {
         const auto found_tombstone = destroy_tombstones_.find(network_id);
         if (found_tombstone != destroy_tombstones_.end()) {
-            if (frame <= found_tombstone->second) {
+            if (frame <= found_tombstone->second.frame) {
                 return false;
             }
-            found_tombstone->second = frame;
+            found_tombstone->second.frame = frame;
+            ++found_tombstone->second.generation;
+            found_tombstone->second.age_order = destroy_tombstone_next_age_order_++;
+            destroy_tombstone_ages_.push_back(
+                DestroyTombstoneAgeEntry{
+                    network_id,
+                    found_tombstone->second.generation,
+                    found_tombstone->second.age_order});
+            compact_destroy_tombstone_ages();
             return true;
         }
         record_destroy_tombstone(network_id, frame);

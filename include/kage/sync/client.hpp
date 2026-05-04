@@ -448,6 +448,7 @@ private:
     void sync_entity_memberships(EntityState& state);
     bool destroy_tombstone_blocks(std::uint32_t wire_network_id, SyncFrame frame) const;
     void record_destroy_tombstone(std::uint32_t wire_network_id, SyncFrame frame);
+    void compact_destroy_tombstone_ages();
     const QuantizedFrameData* find_baseline(const EntityState& state, SyncFrame frame) const noexcept;
     bool apply_update(
         ecs::Registry& registry,
@@ -683,6 +684,7 @@ private:
     ecs::JobGraph resim_job_graph_;
     bool resim_job_graph_valid_ = false;
     std::vector<EntityState> entities_;
+    std::vector<std::uint32_t> free_entity_indices_;
     std::vector<std::uint32_t> active_entities_;
     std::vector<std::uint32_t> buffered_entities_;
     std::vector<std::uint32_t> snap_error_entities_;
@@ -699,8 +701,23 @@ private:
     bool has_received_server_update_ = false;
     using PendingPing = client_detail::PendingPing;
 
+    struct DestroyTombstone {
+        SyncFrame frame = 0;
+        std::uint32_t generation = 0;
+        std::uint64_t age_order = 0;
+    };
+
+    struct DestroyTombstoneAgeEntry {
+        std::uint32_t wire_network_id = 0;
+        std::uint32_t generation = 0;
+        std::uint64_t age_order = 0;
+    };
+
     std::unordered_map<std::uint32_t, PendingPing> pending_pings_;
-    std::unordered_map<std::uint32_t, SyncFrame> destroy_tombstones_;
+    std::unordered_map<std::uint32_t, DestroyTombstone> destroy_tombstones_;
+    std::vector<DestroyTombstoneAgeEntry> destroy_tombstone_ages_;
+    std::size_t destroy_tombstone_age_begin_ = 0;
+    std::uint64_t destroy_tombstone_next_age_order_ = 0;
 #if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
     std::vector<std::string> current_packet_cue_summaries_;
 #endif

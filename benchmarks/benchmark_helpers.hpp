@@ -39,6 +39,12 @@ struct DestroyPackets {
     std::vector<BitBuffer> destroys;
 };
 
+struct ChurnPackets {
+    std::vector<BitBuffer> initial;
+    std::vector<BitBuffer> destroys;
+    std::vector<BitBuffer> respawns;
+};
+
 struct TaggedSchema {
     SyncArchetypeId archetype;
     std::vector<ecs::Entity> tags;
@@ -513,6 +519,53 @@ inline DestroyPackets make_destroy_packets(int entity_count) {
     packets.destroys.reserve(sent.size());
     for (const auto& packet : sent) {
         packets.destroys.push_back(packet.second);
+    }
+    return packets;
+}
+
+inline ChurnPackets make_churn_packets(int entity_count) {
+    ecs::Registry registry;
+    const SyncArchetypeId archetype = define_delta_archetype(registry);
+    std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
+
+    std::vector<std::pair<ClientId, BitBuffer>> sent;
+    ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition) * 16U;
+    options.mtu_bytes = 1200;
+    options.transport = [&](ClientId client, const BitBuffer& packet) {
+        sent.push_back({client, packet});
+    };
+
+    ReplicationServer server(options);
+    server.add_client(1);
+    add_replication_configs(registry, entities, archetype);
+    server.tick(registry);
+
+    ChurnPackets packets;
+    packets.initial.reserve(sent.size());
+    for (const auto& packet : sent) {
+        packets.initial.push_back(packet.second);
+    }
+
+    ack_packets(server, sent);
+    sent.clear();
+    for (const ecs::Entity entity : entities) {
+        registry.destroy(entity);
+    }
+    server.tick(registry);
+    packets.destroys.reserve(sent.size());
+    for (const auto& packet : sent) {
+        packets.destroys.push_back(packet.second);
+    }
+
+    ack_packets(server, sent);
+    sent.clear();
+    entities = create_delta_entities(registry, entity_count);
+    add_replication_configs(registry, entities, archetype);
+    server.tick(registry);
+    packets.respawns.reserve(sent.size());
+    for (const auto& packet : sent) {
+        packets.respawns.push_back(packet.second);
     }
     return packets;
 }
