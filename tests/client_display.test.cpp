@@ -140,6 +140,65 @@ TEST_CASE("display interpolation omits untagged components from samples") {
     REQUIRE(display.entities.empty());
 }
 
+TEST_CASE("display interpolation samples expose synced tag masks") {
+    ecs::Registry server_registry;
+    const ecs::Entity server_visible = server_registry.register_component<Visible>("Visible");
+    const ecs::Entity server_secret = server_registry.register_component<Secret>("Secret");
+    const ecs::Entity server_position =
+        kage::sync::register_sync_component<SmoothPosition>(server_registry, "SmoothPosition");
+    const kage::sync::SyncArchetypeId server_archetype = kage::sync::define_archetype(
+        server_registry,
+        kage::sync::SyncArchetypeDesc{
+            "TaggedSmoothActor",
+            {{server_visible, kage::sync::ReplicationAudience::All},
+             {server_secret, kage::sync::ReplicationAudience::All}},
+            {{server_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}},
+        });
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<SmoothPosition>(server_entity, SmoothPosition{2.0f, 4.0f}) != nullptr);
+    REQUIRE(server_registry.add_tag(server_entity, server_visible));
+
+    std::vector<kage::sync::BitBuffer> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+    ecs::Registry client_registry;
+    const ecs::Entity client_visible = client_registry.register_component<Visible>("Visible");
+    const ecs::Entity client_secret = client_registry.register_component<Secret>("Secret");
+    const ecs::Entity client_position =
+        kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
+    REQUIRE(kage::sync::set_display_interpolated(client_registry, client_position));
+    REQUIRE(kage::sync::define_archetype(
+                client_registry,
+                kage::sync::SyncArchetypeDesc{
+                    "TaggedSmoothActor",
+                    {{client_visible, kage::sync::ReplicationAudience::All},
+                     {client_secret, kage::sync::ReplicationAudience::All}},
+                    {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}},
+                }) == server_archetype);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        1,
+        8});
+    server.tick(server_registry);
+    REQUIRE(client.receive(client_registry, packets.back()));
+
+    kage::sync::DisplayInterpolationSampleBuffer display;
+    REQUIRE(client.sample_display_interpolation_frame(client_registry, 2.0, display));
+    REQUIRE(display.entities.size() == 1);
+    REQUIRE(display.entities[0].has_tag(client_registry, client_visible));
+    REQUIRE_FALSE(display.entities[0].has_tag(client_registry, client_secret));
+    REQUIRE_FALSE(display.entities[0].has_tag(client_registry, client_position));
+}
+
 TEST_CASE("display samples throw for non-display components instead of falling through to ECS") {
     auto define_actor = [](ecs::Registry& registry, bool display_position) {
         const ecs::Entity position =

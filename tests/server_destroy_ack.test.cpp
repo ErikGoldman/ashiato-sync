@@ -379,6 +379,38 @@ TEST_CASE("replication server shares ACKed quantized frames across clients and f
     REQUIRE(server.retained_quantized_frame_bytes() == 0);
 }
 
+TEST_CASE("replication server trims unacked pending quantized frames per entity") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "NetworkedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    const ecs::Entity entity = registry.create();
+    REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{0.0f, 0.0f}) != nullptr);
+
+    std::vector<kage::sync::BitBuffer> payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 1024;
+    options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& payload) {
+        payloads.push_back(payload);
+    };
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(registry, entity, archetype));
+
+    for (int frame = 0; frame < 70; ++frame) {
+        registry.write<NetworkedPosition>(entity) =
+            NetworkedPosition{static_cast<float>(frame), static_cast<float>(frame)};
+        server.tick(registry);
+    }
+
+    REQUIRE(payloads.size() == 70U);
+    REQUIRE(server.retained_quantized_frame_count() <= 64U);
+    REQUIRE(server.retained_quantized_frame_bytes() <= 64U * sizeof(kage_sync_tests::QuantizedNetworkedPosition));
+}
+
 TEST_CASE("replication server keeps swapped clients addressable after removal") {
     ecs::Registry registry;
     const ecs::Entity position_component =

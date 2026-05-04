@@ -41,6 +41,48 @@ TEST_CASE("replication client queued receive packets are processed during tick")
     REQUIRE(client.continuous_receive_frame() == Catch::Approx(0.5));
 }
 
+TEST_CASE("replication client rejects malformed connect responses") {
+    ecs::Registry registry;
+    kage::sync::configure_client(registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.connect_token = "token";
+    kage::sync::ReplicationClient client(options);
+    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Connecting);
+
+    kage::sync::BitBuffer truncated_accept;
+    truncated_accept.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
+    truncated_accept.push_bool(true);
+    truncated_accept.push_bits(1, 8U);
+    REQUIRE_FALSE(client.receive(registry, truncated_accept));
+    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Connecting);
+
+    kage::sync::BitBuffer truncated_reject;
+    truncated_reject.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
+    truncated_reject.push_bool(false);
+    truncated_reject.push_bits(5, 16U);
+    REQUIRE_FALSE(client.receive(registry, truncated_reject));
+    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Connecting);
+}
+
+TEST_CASE("replication client stores rejected connect response errors") {
+    ecs::Registry registry;
+    kage::sync::configure_client(registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.connect_token = "token";
+    kage::sync::ReplicationClient client(options);
+
+    kage::sync::BitBuffer rejected;
+    rejected.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
+    rejected.push_bool(false);
+    kage::sync::protocol::write_string(rejected, "bad token");
+
+    REQUIRE(client.receive(registry, rejected));
+    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Rejected);
+    REQUIRE(client.connect_error() == "bad token");
+}
+
 TEST_CASE("replication client queued stale receive packets do not fail tick") {
     ecs::Registry registry;
     const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(registry);

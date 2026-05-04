@@ -95,6 +95,17 @@ TEST_CASE("replication client rejects invalid option values") {
     require_invalid_client_options([](auto& options) {
         options.adaptive_ping_jump_threshold_frames = std::numeric_limits<float>::quiet_NaN();
     });
+    require_invalid_client_options([](auto& options) { options.prediction_buffer_capacity_frames = 3; });
+    require_invalid_client_options([](auto& options) { options.interpolation_buffer_capacity_frames = 0; });
+    require_invalid_client_options([](auto& options) { options.input_buffer_capacity_frames = 3; });
+    require_invalid_client_options([](auto& options) {
+        options.interpolation_buffer_capacity_frames = 8;
+        options.interpolation_buffer_frames = 8;
+    });
+    require_invalid_client_options([](auto& options) {
+        options.input_buffer_capacity_frames = 8;
+        options.prediction_lead_frames = 8;
+    });
 }
 
 TEST_CASE("client clock rejects non-finite timing config values") {

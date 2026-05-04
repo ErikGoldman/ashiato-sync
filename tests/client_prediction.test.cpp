@@ -93,6 +93,86 @@ TEST_CASE("predicted client rolls back and resimulates mismatched frames") {
     REQUIRE(registry.get<PredictedPosition>(local).x == 3.0f);
 }
 
+TEST_CASE("predicted client rolls back locally predicted cues missing from authoritative frame") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    registry.register_component<CuePlayback>("CuePlayback");
+    kage::sync::register_sync_cue<TestCue>(registry);
+    kage::sync::configure_client(registry, 1);
+
+    bool emit_prediction_cue = true;
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+    options.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
+    kage::sync::ReplicationClient client(options);
+    client.simulation_job<PredictedPosition, kage::sync::SyncSettings>(registry, 0).each(
+        [&](ecs::Entity entity, PredictedPosition& position, kage::sync::SyncSettings& settings) {
+            position.x += 1.0f;
+            if (emit_prediction_cue) {
+                REQUIRE(kage::sync::emit_cue(settings, entity, TestCue{7}, 1.0f));
+                emit_prediction_cue = false;
+            }
+        });
+
+    const ecs::Entity server_entity = registry.create();
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(registry.get<CuePlayback>(local).plays == 1);
+    REQUIRE(registry.get<CuePlayback>(local).rollbacks == 0);
+
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
+    REQUIRE(registry.get<CuePlayback>(local).rollbacks == 1);
+}
+
+TEST_CASE("predicted client keeps locally predicted cues replayed during resimulation") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    registry.register_component<CuePlayback>("CuePlayback");
+    kage::sync::register_sync_cue<TestCue>(registry);
+    kage::sync::configure_client(registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+    options.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
+    kage::sync::ReplicationClient client(options);
+    int prediction_jobs = 0;
+    client.simulation_job<PredictedPosition, kage::sync::SyncSettings>(registry, 0).each(
+        [&](ecs::Entity entity, PredictedPosition& position, kage::sync::SyncSettings& settings) {
+            position.x += 1.0f;
+            ++prediction_jobs;
+            if (prediction_jobs == 2 || prediction_jobs == 3) {
+                REQUIRE(kage::sync::emit_cue(settings, entity, TestCue{5}, 1.0f));
+            }
+        });
+
+    const ecs::Entity server_entity = registry.create();
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE_FALSE(registry.contains<CuePlayback>(local));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(registry.get<CuePlayback>(local).plays == 1);
+    REQUIRE(registry.get<CuePlayback>(local).rollbacks == 0);
+
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
+    REQUIRE(registry.get<CuePlayback>(local).rollbacks == 0);
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(registry.get<CuePlayback>(local).rollbacks == 0);
+}
+
 #ifdef KAGE_SYNC_ENABLE_TRACING
 
 TEST_CASE("predicted client traces rollback reason separately from rollback conflict") {

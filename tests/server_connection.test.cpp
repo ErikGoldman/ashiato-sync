@@ -71,6 +71,33 @@ TEST_CASE("server connect response resends until client id is ACKed") {
     REQUIRE(error == "bad token");
 }
 
+TEST_CASE("server duplicate connect request from same peer resends existing accepted id") {
+    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> sent;
+    kage::sync::ReplicationServerOptions options;
+    options.connect_handler = [](const std::string&, kage::sync::ClientId& client, std::string&) {
+        client = 5;
+        return true;
+    };
+    options.transport = [&](kage::sync::ClientId peer, const kage::sync::BitBuffer& packet) {
+        sent.push_back({peer, packet});
+    };
+    kage::sync::ReplicationServer server(options);
+
+    REQUIRE(server.process_packet(77, make_connect_request("token")));
+    REQUIRE(server.process_packet(77, make_connect_request("token")));
+    REQUIRE(server.client_count() == 1U);
+    REQUIRE(server.has_client(5));
+    REQUIRE(sent.size() == 2);
+
+    for (auto& [peer, packet] : sent) {
+        REQUIRE(peer == 77);
+        REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) ==
+                kage::sync::protocol::server_connect_response_message);
+        REQUIRE(packet.read_bool());
+        REQUIRE(packet.read_unsigned_bits(64U) == 5);
+    }
+}
+
 TEST_CASE("replication client and server templates configure network id tier width") {
     kage::sync::ReplicationClientT<8> client;
     REQUIRE(client.options().protocol.network_entity_id_tier0_bits == 8U);

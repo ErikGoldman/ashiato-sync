@@ -31,6 +31,38 @@ TEST_CASE("client frame data initializes and accesses component payloads") {
     REQUIRE(read == bytes);
 }
 
+TEST_CASE("client frame data rejects malformed archetype and frame layouts") {
+    ecs::Registry registry;
+    const ecs::Entity position = kage::sync::register_sync_component<kage_sync_tests::Position>(registry, "Position");
+    const kage::sync::SyncArchetypeId archetype_id = kage::sync::define_archetype(
+        registry,
+        "Actor",
+        {{position, kage::sync::ReplicationAudience::All}});
+
+    const kage::sync::SyncArchetype& archetype = registry.get<kage::sync::SyncSettings>().archetypes[archetype_id.value];
+    kage::sync::QuantizedFrameData frame;
+    REQUIRE(kage::sync::client_detail::init_frame_data(archetype, frame));
+
+    kage::sync::SyncArchetype missing_offset = archetype;
+    missing_offset.component_offsets.clear();
+    REQUIRE_FALSE(kage::sync::client_detail::init_frame_data(missing_offset, frame));
+    REQUIRE(kage::sync::client_detail::frame_component_data(missing_offset, frame, 0) == nullptr);
+    REQUIRE(kage::sync::client_detail::mutable_frame_component_data(missing_offset, frame, 0) == nullptr);
+
+    kage::sync::SyncArchetype oversized_tags = archetype;
+    oversized_tags.tags.resize(65);
+    REQUIRE_FALSE(kage::sync::client_detail::init_frame_data(oversized_tags, frame));
+
+    kage::sync::QuantizedFrameData truncated = frame;
+    truncated.bytes.clear();
+    truncated.present_mask = 1;
+    REQUIRE(kage::sync::client_detail::frame_component_data(archetype, truncated, 0) == nullptr);
+    REQUIRE(kage::sync::client_detail::mutable_frame_component_data(archetype, truncated, 0) == nullptr);
+
+    REQUIRE_FALSE(kage::sync::client_detail::frame_has_component(frame, 64));
+    REQUIRE_FALSE(kage::sync::client_detail::tag_bit_set(1, 64));
+}
+
 TEST_CASE("client frame data applies and removes archetype tags") {
     ecs::Registry registry;
     kage::sync::register_components(registry);

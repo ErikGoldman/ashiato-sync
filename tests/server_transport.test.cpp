@@ -47,6 +47,38 @@ TEST_CASE("replication server rejects malformed ACK packets") {
     REQUIRE_FALSE(server.process_packet(1, write_ack_packet(42)));
 }
 
+TEST_CASE("replication server rejects malformed connect ack and input packets") {
+    ecs::Registry registry;
+    kage::sync::configure_server(registry);
+
+    kage::sync::ReplicationServer server;
+
+    kage::sync::BitBuffer malformed_connect;
+    malformed_connect.push_bits(kage::sync::protocol::client_connect_request_message, 8U);
+    REQUIRE_FALSE(server.process_packet(registry, 10, malformed_connect));
+
+    REQUIRE(server.add_client(1));
+
+    kage::sync::BitBuffer truncated_connect_ack;
+    truncated_connect_ack.push_bits(kage::sync::protocol::client_connect_ack_message, 8U);
+    truncated_connect_ack.push_bits(1, 8U);
+    REQUIRE_FALSE(server.process_packet(registry, 1, truncated_connect_ack));
+
+    kage::sync::BitBuffer wrong_connect_ack;
+    wrong_connect_ack.push_bits(kage::sync::protocol::client_connect_ack_message, 8U);
+    wrong_connect_ack.push_unsigned_bits(2, 64U);
+    REQUIRE_FALSE(server.process_packet(registry, 1, wrong_connect_ack));
+
+    kage::sync::BitBuffer input_without_registry;
+    input_without_registry.push_bits(kage::sync::protocol::client_input_message, 8U);
+    REQUIRE_FALSE(server.process_packet(1, input_without_registry));
+
+    kage::sync::BitBuffer truncated_input;
+    truncated_input.push_bits(kage::sync::protocol::client_input_message, 8U);
+    truncated_input.push_bits(0, 16U);
+    REQUIRE_FALSE(server.process_packet(registry, 1, truncated_input));
+}
+
 TEST_CASE("replication server respects per-client bandwidth limits") {
     ecs::Registry registry;
     const kage::sync::SyncArchetypeId archetype = define_networked_position_archetype(registry);
@@ -91,6 +123,75 @@ TEST_CASE("replication server respects per-client bandwidth limits") {
         }
     }
     REQUIRE(unsent_count == 2);
+}
+
+TEST_CASE("replication server parallel path applies bandwidth limits independently per client") {
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_networked_position_archetype(registry);
+    std::vector<ecs::Entity> entities;
+    for (int i = 0; i < 3; ++i) {
+        const ecs::Entity entity = registry.create();
+        REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{}) != nullptr);
+        REQUIRE(start_sync(registry, entity, archetype));
+        entities.push_back(entity);
+    }
+
+    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 21;
+    options.serialized_worker_threads = 2;
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        packets.emplace_back(client, payload);
+    };
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(server.add_client(2));
+
+    server.tick(registry);
+
+    REQUIRE(packets.size() == 2);
+    for (const kage::sync::ClientId client : {1ULL, 2ULL}) {
+        const ServerUpdatePacket update = read_server_update(packet_for(packets, client));
+        REQUIRE(update.entities.size() == 1);
+
+        std::size_t unsent_count = 0;
+        for (const ecs::Entity entity : entities) {
+            if (entity != entities[update.entities[0].network_id - 1U]) {
+                ++unsent_count;
+                REQUIRE(server.priority(client, entity) == 1);
+            }
+        }
+        REQUIRE(unsent_count == 2);
+    }
+}
+
+TEST_CASE("replication server parallel path batches records when budget allows") {
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_networked_position_archetype(registry);
+    for (int i = 0; i < 3; ++i) {
+        const ecs::Entity entity = registry.create();
+        REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{}) != nullptr);
+        REQUIRE(start_sync(registry, entity, archetype));
+    }
+
+    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 1024;
+    options.serialized_worker_threads = 2;
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        packets.emplace_back(client, payload);
+    };
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(server.add_client(2));
+
+    server.tick(registry);
+
+    REQUIRE(packets.size() == 2);
+    for (const kage::sync::ClientId client : {1ULL, 2ULL}) {
+        const ServerUpdatePacket update = read_server_update(packet_for(packets, client));
+        REQUIRE(update.entities.size() == 3);
+    }
 }
 
 TEST_CASE("replication server rotates budget-limited sends by priority") {
@@ -221,6 +322,31 @@ TEST_CASE("replication server sends nothing when bandwidth cannot cover a serial
 
     REQUIRE(sends == 0);
     REQUIRE(server.priority(1, entity) == 1);
+}
+
+TEST_CASE("replication server parallel path releases quantized frames for unsent records") {
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_networked_position_archetype(registry);
+    const ecs::Entity entity = registry.create();
+    REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{}) != nullptr);
+    REQUIRE(start_sync(registry, entity, archetype));
+
+    std::vector<std::pair<kage::sync::ClientId, kage::sync::BitBuffer>> packets;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 20;
+    options.serialized_worker_threads = 2;
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& payload) {
+        packets.emplace_back(client, payload);
+    };
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(server.add_client(2));
+
+    server.tick(registry);
+
+    REQUIRE(packets.empty());
+    REQUIRE(server.retained_quantized_frame_count() == 0U);
+    REQUIRE(server.retained_quantized_frame_bytes() == 0U);
 }
 
 TEST_CASE("replication server serializes full and delta component payloads through transport") {

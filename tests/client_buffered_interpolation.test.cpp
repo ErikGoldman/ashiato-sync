@@ -113,6 +113,72 @@ TEST_CASE("entity mode selector chooses snap or buffered from decoded component 
     REQUIRE(client_registry.get<Position>(recreated_local).x == 2.0f);
 }
 
+TEST_CASE("entity mode selector can inspect synced tag masks") {
+    ecs::Registry server_registry;
+    const ecs::Entity server_visible = server_registry.register_component<Visible>("Visible");
+    const ecs::Entity server_secret = server_registry.register_component<Secret>("Secret");
+    const ecs::Entity server_position =
+        kage::sync::register_sync_component<Position>(server_registry, "Position");
+    const kage::sync::SyncArchetypeId server_archetype = kage::sync::define_archetype(
+        server_registry,
+        kage::sync::SyncArchetypeDesc{
+            "TaggedActor",
+            {{server_visible, kage::sync::ReplicationAudience::All},
+             {server_secret, kage::sync::ReplicationAudience::All}},
+            {{server_position, kage::sync::ReplicationAudience::All}},
+        });
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<Position>(server_entity, Position{4.0f, 8.0f}) != nullptr);
+    REQUIRE(server_registry.add_tag(server_entity, server_visible));
+
+    std::vector<kage::sync::BitBuffer> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId, const kage::sync::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+    ecs::Registry client_registry;
+    const ecs::Entity client_visible = client_registry.register_component<Visible>("Visible");
+    const ecs::Entity client_secret = client_registry.register_component<Secret>("Secret");
+    const ecs::Entity client_position =
+        kage::sync::register_sync_component<Position>(client_registry, "Position");
+    REQUIRE(kage::sync::define_archetype(
+                client_registry,
+                kage::sync::SyncArchetypeDesc{
+                    "TaggedActor",
+                    {{client_visible, kage::sync::ReplicationAudience::All},
+                     {client_secret, kage::sync::ReplicationAudience::All}},
+                    {{client_position, kage::sync::ReplicationAudience::All}},
+                }) == server_archetype);
+    kage::sync::configure_client(client_registry, 1);
+
+    int selector_calls = 0;
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Snap;
+    options.interpolation_buffer_frames = 1;
+    options.interpolation_buffer_capacity_frames = 8;
+    options.entity_mode_selector = [&](const kage::sync::ReplicatedEntityUpdateView& update) {
+        ++selector_calls;
+        REQUIRE(update.has_tag(client_registry, client_visible));
+        REQUIRE_FALSE(update.has_tag(client_registry, client_secret));
+        REQUIRE_FALSE(update.has_tag(client_registry, client_position));
+        return kage::sync::ReplicationClientMode::Snap;
+    };
+    kage::sync::ReplicationClient client(options);
+
+    server.tick(server_registry);
+    REQUIRE(client.receive(client_registry, packets.back()));
+
+    REQUIRE(selector_calls == 1);
+    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
+    REQUIRE(local);
+    REQUIRE(client_registry.has(local, client_visible));
+    REQUIRE_FALSE(client_registry.has(local, client_secret));
+}
+
 TEST_CASE("set entity mode rejects unknown entities") {
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);

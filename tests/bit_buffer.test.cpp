@@ -6,7 +6,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <random>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 TEST_CASE("bit buffer pushes and reads bits, bytes, and bools") {
     kage::sync::BitBuffer buffer;
@@ -125,6 +128,28 @@ TEST_CASE("bit buffer appends source buffers bit-exactly") {
     REQUIRE(combined.remaining_bits() == 0);
 }
 
+TEST_CASE("bit buffer round-trips deterministic randomized unaligned integer fields") {
+    std::mt19937 rng(12345);
+    std::vector<std::pair<std::uint64_t, std::size_t>> fields;
+    kage::sync::BitBuffer buffer;
+    buffer.push_bits(0b101, 3U);
+
+    for (int field = 0; field < 128; ++field) {
+        const std::size_t bits = 1U + (rng() % 64U);
+        const std::uint64_t mask = bits == 64U ? ~std::uint64_t{0} : ((std::uint64_t{1} << bits) - 1U);
+        const std::uint64_t value =
+            ((static_cast<std::uint64_t>(rng()) << 32U) | static_cast<std::uint64_t>(rng())) & mask;
+        fields.push_back({value, bits});
+        buffer.push_unsigned_bits(value, bits);
+    }
+
+    REQUIRE(buffer.read_bits(3U) == 0b101);
+    for (const auto& [value, bits] : fields) {
+        REQUIRE(buffer.read_unsigned_bits(bits) == value);
+    }
+    REQUIRE(buffer.remaining_bits() == 0U);
+}
+
 TEST_CASE("protocol baseline frame encoding uses relative deltas when possible") {
     kage::sync::BitBuffer relative;
     kage::sync::protocol::write_baseline_frame(relative, 40U, 35U);
@@ -145,6 +170,26 @@ TEST_CASE("protocol baseline frame encoding uses relative deltas when possible")
     REQUIRE(kage::sync::protocol::read_baseline_frame(full, 40U, decoded));
     REQUIRE(decoded == 40U - kage::sync::protocol::max_baseline_frame_delta - 1U);
     REQUIRE(full.remaining_bits() == 0U);
+}
+
+TEST_CASE("protocol baseline frame encoding round-trips sampled frame pairs") {
+    for (std::uint32_t current = 0; current < 256U; current += 17U) {
+        for (std::uint32_t baseline : {
+                 0U,
+                 current,
+                 current > 3U ? current - 3U : 0U,
+                 current + 11U,
+                 current > kage::sync::protocol::max_baseline_frame_delta + 2U
+                     ? current - kage::sync::protocol::max_baseline_frame_delta - 2U
+                     : 0U}) {
+            kage::sync::BitBuffer buffer;
+            kage::sync::protocol::write_baseline_frame(buffer, current, baseline);
+            std::uint32_t decoded = 0;
+            REQUIRE(kage::sync::protocol::read_baseline_frame(buffer, current, decoded));
+            REQUIRE(decoded == baseline);
+            REQUIRE(buffer.remaining_bits() == 0U);
+        }
+    }
 }
 
 TEST_CASE("protocol network entity id encoding uses compact tiers") {
@@ -171,6 +216,46 @@ TEST_CASE("protocol network entity id encoding uses compact tiers") {
             REQUIRE(buffer.remaining_bits() == 0U);
         }
     }
+}
+
+TEST_CASE("protocol network entity id encoding round-trips sampled ids across tier widths") {
+    std::mt19937 rng(6789);
+    for (const std::size_t tier0_bits : {1U, 4U, 8U, 11U, 22U}) {
+        for (int sample = 0; sample < 128; ++sample) {
+            const std::uint32_t id = rng();
+            kage::sync::BitBuffer buffer;
+            kage::sync::protocol::write_network_entity_id(buffer, id, tier0_bits);
+            REQUIRE(buffer.bit_size() ==
+                    kage::sync::protocol::network_entity_id_encoded_bits(id, tier0_bits));
+
+            std::uint32_t decoded = 0;
+            REQUIRE(kage::sync::protocol::read_network_entity_id(buffer, decoded, tier0_bits));
+            REQUIRE(decoded == id);
+            REQUIRE(buffer.remaining_bits() == 0U);
+        }
+    }
+}
+
+TEST_CASE("protocol strings round-trip and reject truncated payloads") {
+    const std::vector<std::string> values = {"", "a", "hello", std::string(32, 'x')};
+    for (const std::string& value : values) {
+        kage::sync::BitBuffer buffer;
+        kage::sync::protocol::write_string(buffer, value);
+        std::string decoded;
+        REQUIRE(kage::sync::protocol::read_string(buffer, decoded));
+        REQUIRE(decoded == value);
+        REQUIRE(buffer.remaining_bits() == 0U);
+    }
+
+    kage::sync::BitBuffer truncated_length;
+    truncated_length.push_bits(1, 8U);
+    std::string decoded;
+    REQUIRE_FALSE(kage::sync::protocol::read_string(truncated_length, decoded));
+
+    kage::sync::BitBuffer truncated_payload;
+    truncated_payload.push_bits(4, 16U);
+    truncated_payload.push_bytes("xy", 2U);
+    REQUIRE_FALSE(kage::sync::protocol::read_string(truncated_payload, decoded));
 }
 
 TEST_CASE("delta helpers quantize floats and vectors with changed-value masks") {
