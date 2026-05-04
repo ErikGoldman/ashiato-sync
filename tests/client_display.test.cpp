@@ -387,10 +387,10 @@ TEST_CASE("client-owned display frame keeps previous entities while committing n
     REQUIRE(client.display_interpolation_frame(client_registry).entities.size() == 1);
 
     REQUIRE(client.set_default_entity_mode(kage::sync::ReplicationClientMode::BufferedInterpolation));
-    REQUIRE(client.set_entity_mode(
+    client.set_entity_mode(
         client_registry,
         test_client_entity_network_id(1, existing),
-        kage::sync::ReplicationClientMode::BufferedInterpolation));
+        kage::sync::ReplicationClientMode::BufferedInterpolation);
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{incoming, Position{20.0f, 0.0f}}})));
     REQUIRE(client.tick(client_registry, 1.0));
 

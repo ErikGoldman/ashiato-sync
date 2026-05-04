@@ -815,12 +815,7 @@ bool ReplicationClient::receive(ecs::Registry& registry, BitBuffer packet) {
             }
         }
         return applied;
-    } catch (const std::logic_error& error) {
-        if (std::string(error.what()).find("predicted replicated components") != std::string::npos) {
-            throw;
-        }
-        return false;
-    } catch (const std::exception&) {
+    } catch (const std::out_of_range&) {
         return false;
     }
 }
@@ -933,12 +928,7 @@ bool ReplicationClient::receive(
             }
         }
         return applied;
-    } catch (const std::logic_error& error) {
-        if (std::string(error.what()).find("predicted replicated components") != std::string::npos) {
-            throw;
-        }
-        return false;
-    } catch (const std::exception&) {
+    } catch (const std::out_of_range&) {
         return false;
     }
 }
@@ -954,28 +944,30 @@ bool ReplicationClient::set_default_entity_mode(ReplicationClientMode mode) noex
     return true;
 }
 
-bool ReplicationClient::set_entity_mode(
+void ReplicationClient::set_entity_mode(
     ecs::Registry& registry,
     ClientEntityNetworkId network_id,
     ReplicationClientMode mode) {
     EntityState* state = find_entity_state(network_id);
     if (state == nullptr) {
-        return false;
+        throw ClientError(ClientStatus::EntityNotFound, "client entity network id is not alive");
     }
 
     if (!state->entity_present && !state->local) {
-        return false;
+        throw ClientError(ClientStatus::EntityUnavailable, "client entity is not currently present");
     }
     if (state->mode == mode) {
-        return true;
+        return;
     }
 
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    if (mode == ReplicationClientMode::Predict) {
+        (void)validate_predicted_archetype(settings, state->archetype);
+    }
     if (mode == ReplicationClientMode::Predict && !has_predicted_entities()) {
         has_predicted_frame_ = false;
         last_predicted_frame_ = 0;
     }
-
-    const SyncSettings& settings = registry.get<SyncSettings>();
 #ifdef KAGE_SYNC_ENABLE_TRACING
     const ReplicationClientMode previous_mode = state->mode;
 #endif
@@ -1001,7 +993,9 @@ bool ReplicationClient::set_entity_mode(
         has_predicted_frame_ = false;
         last_predicted_frame_ = 0;
     }
-    return switched;
+    if (!switched) {
+        throw ClientError(ClientStatus::ModeSwitchFailed, "client entity mode switch failed");
+    }
 }
 
 #ifdef KAGE_SYNC_ENABLE_TRACING
@@ -2179,6 +2173,24 @@ bool ReplicationClient::apply_upsert(
         return false;
     }
 
+    const bool mode_needs_selection = found_state == nullptr || previous_absent || !found_state->mode_selected;
+    ReplicationClientMode selected_mode = options_.default_entity_mode;
+    if (mode_needs_selection) {
+        if (options_.entity_mode_selector) {
+            ReplicatedEntityUpdateView update;
+            update.client_entity_network_id = client_entity_network_id;
+            update.local_entity = found_state != nullptr ? found_state->local : ecs::Entity{};
+            update.archetype = archetype;
+            update.frame = frame;
+            update.tag_mask = merged.tag_mask;
+            update.components = &decoded_updates;
+            selected_mode = options_.entity_mode_selector(update);
+        }
+        if (selected_mode == ReplicationClientMode::Predict) {
+            (void)validate_predicted_archetype(settings, archetype);
+        }
+    }
+
     EntityState* ensured_state = ensure_entity_state(registry, client_entity_network_id, network_id);
     if (ensured_state == nullptr) {
         return false;
@@ -2196,20 +2208,9 @@ bool ReplicationClient::apply_upsert(
         tracer_->trace(event);
     }
 #endif
-    if (!state.mode_selected) {
-        ReplicationClientMode selected = options_.default_entity_mode;
-        if (options_.entity_mode_selector) {
-            ReplicatedEntityUpdateView update;
-            update.client_entity_network_id = client_entity_network_id;
-            update.local_entity = state.local;
-            update.archetype = archetype;
-            update.frame = frame;
-            update.tag_mask = merged.tag_mask;
-            update.components = &decoded_updates;
-            selected = options_.entity_mode_selector(update);
-        }
+    if (mode_needs_selection) {
 #ifdef KAGE_SYNC_ENABLE_TRACING
-        if (tracer_ != nullptr && tracer_->enabled() && state.mode != selected) {
+        if (tracer_ != nullptr && tracer_->enabled() && state.mode != selected_mode) {
             SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ModeChanged, client_id_, frame);
             event.server_entity = ecs::Entity{client_entity_network_id};
             event.local_entity = state.local;
@@ -2218,11 +2219,11 @@ bool ReplicationClient::apply_upsert(
             event.network_version = client_entity_network_id_version(client_entity_network_id);
             event.archetype = archetype;
             event.previous_mode = state.mode;
-            event.mode = selected;
+            event.mode = selected_mode;
             tracer_->trace(event);
         }
 #endif
-        state.mode = selected;
+        state.mode = selected_mode;
         state.mode_selected = true;
     }
 
@@ -2783,7 +2784,9 @@ bool ReplicationClient::validate_predicted_archetype(const SyncSettings& setting
     for (std::size_t index = 0; index < definition.components.size(); ++index) {
         if (index >= definition.component_ops.size() ||
             definition.component_ops[index].should_roll_back == nullptr) {
-            throw std::logic_error("predicted replicated components must define SyncComponentTraits<T>::should_roll_back");
+            throw ClientError(
+                ClientStatus::MissingPredictionRollbackTrait,
+                "predicted replicated components must define SyncComponentTraits<T>::should_roll_back");
         }
     }
     return true;
@@ -3206,7 +3209,9 @@ bool ReplicationClient::compare_predicted_frame(
         TRACE_ROLLBACK_CONFLICT_IF(component_index >= archetype.component_ops.size());
         const SyncComponentOps& ops = archetype.component_ops[component_index];
         if (ops.should_roll_back == nullptr) {
-            throw std::logic_error("predicted replicated components must define SyncComponentTraits<T>::should_roll_back");
+            throw ClientError(
+                ClientStatus::MissingPredictionRollbackTrait,
+                "predicted replicated components must define SyncComponentTraits<T>::should_roll_back");
         }
         const std::uint8_t* predicted_bytes =
             unchecked_frame_component_data(archetype, predicted.baseline, component_index);

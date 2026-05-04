@@ -25,9 +25,12 @@ TEST_CASE("predicted client mode requires ShouldRollBack traits") {
     options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
     kage::sync::ReplicationClient client(options);
 
-    REQUIRE_THROWS_AS(
-        client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})),
-        std::logic_error);
+    try {
+        (void)client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}));
+        FAIL("expected missing prediction rollback trait error");
+    } catch (const kage::sync::ClientError& error) {
+        REQUIRE(error.status() == kage::sync::ClientStatus::MissingPredictionRollbackTrait);
+    }
 }
 
 TEST_CASE("predicted client snaps first frame predicts locally and skips matching rollback") {

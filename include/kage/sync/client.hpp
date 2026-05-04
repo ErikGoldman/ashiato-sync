@@ -9,6 +9,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -101,6 +102,27 @@ enum class EntityReferenceStatus {
     Pending,
     Alive,
     Destroyed
+};
+
+enum class ClientStatus {
+    Ok,
+    EntityNotFound,
+    EntityUnavailable,
+    ModeSwitchFailed,
+    MissingPredictionRollbackTrait
+};
+
+class ClientError : public std::runtime_error {
+public:
+    ClientError(ClientStatus status, const char* message)
+        : std::runtime_error(message), status_(status) {}
+
+    ClientStatus status() const noexcept {
+        return status_;
+    }
+
+private:
+    ClientStatus status_;
 };
 
 struct ReplicationClientOptions {
@@ -322,7 +344,7 @@ public:
 #endif
 
     bool set_default_entity_mode(ReplicationClientMode mode) noexcept;
-    bool set_entity_mode(ecs::Registry& registry, ClientEntityNetworkId network_id, ReplicationClientMode mode);
+    void set_entity_mode(ecs::Registry& registry, ClientEntityNetworkId network_id, ReplicationClientMode mode);
     ReplicationClientMode entity_mode(ClientEntityNetworkId network_id) const noexcept;
     bool set_interpolation_buffer_frames(SyncFrame frames) noexcept;
     SyncFrame current_interpolation_buffer_frames() const noexcept;

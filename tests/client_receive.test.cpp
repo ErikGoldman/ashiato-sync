@@ -174,6 +174,47 @@ TEST_CASE("replication client decodes deltas against the encoded baseline frame"
     REQUIRE(client_registry.get<NetworkedPosition>(local).y == 4.0f);
 }
 
+TEST_CASE("replication client reports missing prediction rollback traits for default predict mode") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+    kage::sync::ReplicationClient client(options);
+
+    const ecs::Entity server_entity{42};
+    try {
+        (void)client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}));
+        FAIL("expected missing prediction rollback trait error");
+    } catch (const kage::sync::ClientError& error) {
+        REQUIRE(error.status() == kage::sync::ClientStatus::MissingPredictionRollbackTrait);
+    }
+}
+
+TEST_CASE("replication client reports missing prediction rollback traits for selector predict mode") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Snap;
+    options.entity_mode_selector = [](const kage::sync::ReplicatedEntityUpdateView&) {
+        return kage::sync::ReplicationClientMode::Predict;
+    };
+    kage::sync::ReplicationClient client(options);
+
+    const ecs::Entity server_entity{42};
+    try {
+        (void)client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}));
+        FAIL("expected missing prediction rollback trait error");
+    } catch (const kage::sync::ClientError& error) {
+        REQUIRE(error.status() == kage::sync::ClientStatus::MissingPredictionRollbackTrait);
+    }
+}
+
 TEST_CASE("replication client decodes mixed-baseline deltas in one packet") {
     ecs::Registry server_registry;
     const ecs::Entity position_component =

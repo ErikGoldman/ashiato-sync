@@ -120,10 +120,11 @@ TEST_CASE("set entity mode rejects unknown entities") {
     kage::sync::configure_client(client_registry, 1);
 
     kage::sync::ReplicationClient client;
-    REQUIRE_FALSE(client.set_entity_mode(
+    REQUIRE_THROWS_AS(client.set_entity_mode(
         client_registry,
         test_client_entity_network_id(1, ecs::Entity{42}),
-        kage::sync::ReplicationClientMode::BufferedInterpolation));
+        kage::sync::ReplicationClientMode::BufferedInterpolation),
+        kage::sync::ClientError);
 }
 
 TEST_CASE("set entity mode switches snap entities to buffered for future updates") {
@@ -144,10 +145,10 @@ TEST_CASE("set entity mode switches snap entities to buffered for future updates
     REQUIRE(local);
     REQUIRE(client_registry.get<Position>(local).x == 1.0f);
 
-    REQUIRE(client.set_entity_mode(
+    client.set_entity_mode(
         client_registry,
         test_client_entity_network_id(1, server_entity),
-        kage::sync::ReplicationClientMode::BufferedInterpolation));
+        kage::sync::ReplicationClientMode::BufferedInterpolation);
     REQUIRE(client.entity_mode(test_client_entity_network_id(1, server_entity)) == kage::sync::ReplicationClientMode::BufferedInterpolation);
 
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{5.0f, 2.0f}}})));
@@ -177,10 +178,10 @@ TEST_CASE("set entity mode switches buffered entities to snap immediately") {
 
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{7.0f, 2.0f}}})));
     REQUIRE(client_registry.get<Position>(local).x == 1.0f);
-    REQUIRE(client.set_entity_mode(
+    client.set_entity_mode(
         client_registry,
         test_client_entity_network_id(1, server_entity),
-        kage::sync::ReplicationClientMode::Snap));
+        kage::sync::ReplicationClientMode::Snap);
     REQUIRE(client_registry.get<Position>(local).x == 7.0f);
 }
 
@@ -213,10 +214,10 @@ TEST_CASE("set entity mode switches buffered entities to predict and seeds predi
 
     REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{1.0f, 0.0f})));
     REQUIRE(registry.get<PredictedPosition>(local).x == 0.0f);
-    REQUIRE(client.set_entity_mode(
+    client.set_entity_mode(
         registry,
         test_client_entity_network_id(1, server_entity),
-        kage::sync::ReplicationClientMode::Predict));
+        kage::sync::ReplicationClientMode::Predict);
     REQUIRE(registry.get<PredictedPosition>(local).x == 1.0f);
 
     REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
@@ -248,7 +249,7 @@ TEST_CASE("set entity mode switches an entity by client network id") {
 
     const kage::sync::ClientEntityNetworkId network_id =
         test_client_entity_network_id(1, test_network_id(server_entity));
-    REQUIRE(client.set_entity_mode(registry, network_id, kage::sync::ReplicationClientMode::Predict));
+    client.set_entity_mode(registry, network_id, kage::sync::ReplicationClientMode::Predict);
     REQUIRE(client.entity_mode(test_client_entity_network_id(1, server_entity)) == kage::sync::ReplicationClientMode::Predict);
 
     REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
@@ -283,7 +284,7 @@ TEST_CASE("set entity mode by client network id switches buffered delayed destro
     const kage::sync::ClientEntityNetworkId network_id =
         test_client_entity_network_id(1, test_network_id(server_entity));
     REQUIRE(client.set_default_entity_mode(kage::sync::ReplicationClientMode::Predict));
-    REQUIRE(client.set_entity_mode(registry, network_id, kage::sync::ReplicationClientMode::Predict));
+    client.set_entity_mode(registry, network_id, kage::sync::ReplicationClientMode::Predict);
     REQUIRE_FALSE(registry.alive(local));
     REQUIRE(client.entity_mode(test_client_entity_network_id(1, server_entity)) == kage::sync::ReplicationClientMode::Predict);
 }
@@ -308,16 +309,17 @@ TEST_CASE("set entity mode switches buffered delayed destroys to snap immediatel
 
     REQUIRE(client.receive(client_registry, make_destroy_packet(2, server_entity)));
     REQUIRE(client_registry.alive(local));
-    REQUIRE(client.set_entity_mode(
+    client.set_entity_mode(
         client_registry,
         test_client_entity_network_id(1, server_entity),
-        kage::sync::ReplicationClientMode::Snap));
+        kage::sync::ReplicationClientMode::Snap);
     REQUIRE_FALSE(client_registry.alive(local));
     REQUIRE_FALSE(client.local_entity(test_client_entity_network_id(1, server_entity)));
-    REQUIRE_FALSE(client.set_entity_mode(
+    REQUIRE_THROWS_AS(client.set_entity_mode(
         client_registry,
         test_client_entity_network_id(1, server_entity),
-        kage::sync::ReplicationClientMode::BufferedInterpolation));
+        kage::sync::ReplicationClientMode::BufferedInterpolation),
+        kage::sync::ClientError);
 }
 
 TEST_CASE("snap-selected entities do not require interpolation trait hooks") {
