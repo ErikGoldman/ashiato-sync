@@ -3,11 +3,11 @@
 namespace kage::sync::server_detail {
 
 std::size_t configured_packet_id_bits(const ReplicationServerOptions& options) noexcept {
-    return protocol::packet_id_bits_for_max_pending(options.max_pending_packet_acks_per_client);
+    return protocol::packet_id_bits(options.protocol);
 }
 
 std::size_t server_update_header_bits(const ReplicationServerOptions& options) noexcept {
-    return 8U + 32U + configured_packet_id_bits(options) + 32U + 16U;
+    return protocol::server_update_header_bits_for(options.protocol);
 }
 
 std::size_t destroy_record_bits(std::uint32_t network_id, std::size_t tier0_bits) noexcept {

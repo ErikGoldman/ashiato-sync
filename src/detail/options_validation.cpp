@@ -54,6 +54,16 @@ void require_valid_max_pending_packet_acks(std::size_t value) {
     }
 }
 
+void validate_protocol_descriptor(const protocol::Descriptor& descriptor) {
+    require_valid_max_pending_packet_acks(descriptor.max_pending_packet_acks_per_client);
+    if (!protocol::valid_network_entity_id_tier0_bits(descriptor.network_entity_id_tier0_bits)) {
+        throw std::invalid_argument("network entity id tier0 bits must be in [1, 22]");
+    }
+    if (descriptor.baseline_frame_delta_bits != protocol::baseline_frame_delta_bits) {
+        throw std::invalid_argument("protocol descriptor baseline frame delta bits must match this build");
+    }
+}
+
 void validate_client_timing_options(
     double fixed_dt_seconds,
     std::size_t interpolation_buffer_capacity_frames,
@@ -129,10 +139,7 @@ void validate_client_timing_options(
 
 ReplicationClientOptions validate_client_options(ReplicationClientOptions options) {
     require_positive_bytes(options.mtu_bytes, "MTU bytes must be greater than zero");
-    require_valid_max_pending_packet_acks(options.max_pending_packet_acks_per_client);
-    if (!protocol::valid_network_entity_id_tier0_bits(options.network_entity_id_tier0_bits)) {
-        throw std::invalid_argument("network entity id tier0 bits must be in [1, 22]");
-    }
+    validate_protocol_descriptor(options.protocol);
     if (!is_power_of_two(options.prediction_buffer_capacity_frames)) {
         throw std::invalid_argument("prediction buffer capacity must be a nonzero power of two");
     }
@@ -202,7 +209,7 @@ ReplicationServerOptions validate_server_options(ReplicationServerOptions option
     if (options.serialized_worker_threads == 0U) {
         throw std::invalid_argument("serialized worker threads must be greater than zero");
     }
-    require_valid_max_pending_packet_acks(options.max_pending_packet_acks_per_client);
+    validate_protocol_descriptor(options.protocol);
     require_finite_positive(options.fixed_dt_seconds, "fixed dt seconds must be finite and positive");
     require_finite_positive(
         options.connect_resend_interval_seconds,
@@ -210,9 +217,6 @@ ReplicationServerOptions validate_server_options(ReplicationServerOptions option
     require_finite_non_negative(
         options.idle_client_timeout_seconds,
         "idle client timeout seconds must be finite and non-negative");
-    if (!protocol::valid_network_entity_id_tier0_bits(options.network_entity_id_tier0_bits)) {
-        throw std::invalid_argument("network entity id tier0 bits must be in [1, 22]");
-    }
     if (!is_power_of_two(options.input_buffer_capacity_frames)) {
         throw std::invalid_argument("input buffer capacity must be a nonzero power of two");
     }

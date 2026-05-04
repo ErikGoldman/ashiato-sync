@@ -38,7 +38,7 @@ using client_detail::unchecked_frame_component_data;
 using client_detail::unchecked_mutable_frame_component_data;
 
 std::size_t configured_packet_id_bits(const ReplicationClientOptions& options) noexcept {
-    return protocol::packet_id_bits_for_max_pending(options.max_pending_packet_acks_per_client);
+    return protocol::packet_id_bits(options.protocol);
 }
 
 ReplicationClientClockConfig make_clock_config(const ReplicationClientOptions& options) noexcept {
@@ -2008,7 +2008,7 @@ bool ReplicationClient::apply_update(
     for (std::uint16_t record = 0; record < record_count; ++record) {
         const bool destroy = packet.read_bool();
         std::uint32_t network_id = 0;
-        if (!protocol::read_network_entity_id(packet, network_id, options_.network_entity_id_tier0_bits)) {
+        if (!protocol::read_network_entity_id(packet, network_id, options_.protocol.network_entity_id_tier0_bits)) {
             return false;
         }
         if (network_id == 0U) {
@@ -2111,7 +2111,7 @@ bool ReplicationClient::apply_upsert(
     auto references_for_component = [&]() -> EntityReferenceContext* {
         if (!reference_context_initialized) {
             reference_context.user = this;
-            reference_context.network_entity_id_tier0_bits = options_.network_entity_id_tier0_bits;
+            reference_context.network_entity_id_tier0_bits = options_.protocol.network_entity_id_tier0_bits;
             reference_context.client_entity_network_id_for_wire = [](void* user, std::uint32_t wire_network_id) {
                 return static_cast<ReplicationClient*>(user)->client_entity_network_id_for_wire(wire_network_id);
             };
@@ -2528,7 +2528,7 @@ bool ReplicationClient::play_cue(
     }
     EntityReferenceContext reference_context;
     reference_context.user = this;
-    reference_context.network_entity_id_tier0_bits = options_.network_entity_id_tier0_bits;
+    reference_context.network_entity_id_tier0_bits = options_.protocol.network_entity_id_tier0_bits;
     reference_context.client_entity_network_id_for_wire = [](void* user, std::uint32_t wire_network_id) {
         return static_cast<ReplicationClient*>(user)->client_entity_network_id_for_wire(wire_network_id);
     };
@@ -2600,7 +2600,7 @@ bool ReplicationClient::rollback_played_cue(
     }
     EntityReferenceContext reference_context;
     reference_context.user = this;
-    reference_context.network_entity_id_tier0_bits = options_.network_entity_id_tier0_bits;
+    reference_context.network_entity_id_tier0_bits = options_.protocol.network_entity_id_tier0_bits;
     reference_context.client_entity_network_id_for_wire = [](void* user, std::uint32_t wire_network_id) {
         return static_cast<ReplicationClient*>(user)->client_entity_network_id_for_wire(wire_network_id);
     };
@@ -4356,7 +4356,7 @@ void ReplicationClient::queue_ack(std::uint32_t packet_id) {
 void ReplicationClient::record_server_packet_sequence(std::uint32_t packet_id) noexcept {
     client_detail::record_packet_window(
         packet_id,
-        options_.max_pending_packet_acks_per_client,
+        options_.protocol.max_pending_packet_acks_per_client,
         clock_.mutable_stats(),
         highest_server_update_packet_id_,
         server_update_packet_window_mask_,

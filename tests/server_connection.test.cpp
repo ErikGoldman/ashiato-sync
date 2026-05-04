@@ -73,23 +73,23 @@ TEST_CASE("server connect response resends until client id is ACKed") {
 
 TEST_CASE("replication client and server templates configure network id tier width") {
     kage::sync::ReplicationClientT<8> client;
-    REQUIRE(client.options().network_entity_id_tier0_bits == 8U);
+    REQUIRE(client.options().protocol.network_entity_id_tier0_bits == 8U);
 
     kage::sync::ReplicationServerT<8> server;
-    REQUIRE(server.options().network_entity_id_tier0_bits == 8U);
+    REQUIRE(server.options().protocol.network_entity_id_tier0_bits == 8U);
 }
 
 TEST_CASE("replication client and server reject invalid network id tier widths") {
     kage::sync::ReplicationClientOptions client_options;
-    client_options.network_entity_id_tier0_bits = 0U;
+    client_options.protocol.network_entity_id_tier0_bits = 0U;
     REQUIRE_THROWS_AS(kage::sync::ReplicationClient(client_options), std::invalid_argument);
-    client_options.network_entity_id_tier0_bits = 23U;
+    client_options.protocol.network_entity_id_tier0_bits = 23U;
     REQUIRE_THROWS_AS(kage::sync::ReplicationClient(client_options), std::invalid_argument);
 
     kage::sync::ReplicationServerOptions server_options;
-    server_options.network_entity_id_tier0_bits = 0U;
+    server_options.protocol.network_entity_id_tier0_bits = 0U;
     REQUIRE_THROWS_AS(kage::sync::ReplicationServer(server_options), std::invalid_argument);
-    server_options.network_entity_id_tier0_bits = 23U;
+    server_options.protocol.network_entity_id_tier0_bits = 23U;
     REQUIRE_THROWS_AS(kage::sync::ReplicationServer(server_options), std::invalid_argument);
 }
 

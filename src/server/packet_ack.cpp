@@ -90,7 +90,7 @@ void ReplicationServer::cleanup_packet_acks(ClientState& client) {
 }
 
 std::uint32_t ReplicationServer::allocate_packet_id(ClientState& client) {
-    const server_detail::ServerPacketIdAllocator allocator(options_.max_pending_packet_acks_per_client);
+    const server_detail::ServerPacketIdAllocator allocator(options_.protocol.max_pending_packet_acks_per_client);
     const std::uint32_t packet_id = allocator.allocate(client.next_packet_id);
     client.pending_packet_acks.erase(
         std::remove_if(
@@ -104,7 +104,7 @@ std::uint32_t ReplicationServer::allocate_packet_id(ClientState& client) {
 }
 
 void ReplicationServer::enforce_pending_packet_ack_limit(ClientState& client) {
-    while (client.pending_packet_acks.size() > options_.max_pending_packet_acks_per_client) {
+    while (client.pending_packet_acks.size() > options_.protocol.max_pending_packet_acks_per_client) {
         client.pending_packet_acks.erase(client.pending_packet_acks.begin());
     }
 }

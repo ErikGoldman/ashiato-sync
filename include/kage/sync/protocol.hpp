@@ -42,6 +42,14 @@ static_assert(baseline_frame_delta_bits < 32U, "KAGE_SYNC_BASELINE_FRAME_DELTA_B
 inline constexpr std::uint32_t max_baseline_frame_delta =
     (std::uint32_t{1} << baseline_frame_delta_bits) - 1U;
 
+struct Descriptor {
+    std::size_t max_pending_packet_acks_per_client = default_max_pending_packet_acks_per_client;
+    std::size_t network_entity_id_tier0_bits = default_network_entity_id_tier0_bits;
+    std::size_t baseline_frame_delta_bits = protocol::baseline_frame_delta_bits;
+};
+
+inline constexpr Descriptor default_descriptor{};
+
 inline constexpr std::size_t bytes_for_bits(std::size_t bits) noexcept {
     return (bits + 7U) / 8U;
 }
@@ -67,6 +75,10 @@ inline constexpr std::size_t packet_id_bits_for_max_pending(std::size_t max_pend
     return bits > 32U ? 32U : bits;
 }
 
+inline constexpr std::size_t packet_id_bits(const Descriptor& descriptor) noexcept {
+    return packet_id_bits_for_max_pending(descriptor.max_pending_packet_acks_per_client);
+}
+
 inline constexpr std::uint32_t packet_id_mask(std::size_t packet_id_bits) noexcept {
     return packet_id_bits >= 32U
         ? std::numeric_limits<std::uint32_t>::max()
@@ -77,6 +89,14 @@ inline constexpr std::size_t server_packet_id_bits =
     packet_id_bits_for_max_pending(default_max_pending_packet_acks_per_client);
 inline constexpr std::size_t server_update_header_bits = 8U + 32U + server_packet_id_bits + 32U + 16U;
 inline constexpr std::size_t client_ack_record_bits = server_packet_id_bits;
+
+inline constexpr std::size_t server_update_header_bits_for(const Descriptor& descriptor) noexcept {
+    return 8U + 32U + packet_id_bits(descriptor) + 32U + 16U;
+}
+
+inline constexpr std::size_t client_ack_record_bits_for(const Descriptor& descriptor) noexcept {
+    return packet_id_bits(descriptor);
+}
 
 inline constexpr bool valid_network_entity_id_tier0_bits(std::size_t tier0_bits) noexcept {
     return tier0_bits > 0U && tier0_bits < network_entity_id_tier1_bits;

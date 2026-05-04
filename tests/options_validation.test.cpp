@@ -55,10 +55,13 @@ TEST_CASE("replication server rejects invalid option values") {
     require_invalid_server_options([](auto& options) { options.bandwidth_limit_bytes_per_tick = 0; });
     require_invalid_server_options([](auto& options) { options.fixed_entity_replication_cost_bytes = 0; });
     require_invalid_server_options([](auto& options) { options.serialized_worker_threads = 0; });
-    require_invalid_server_options([](auto& options) { options.max_pending_packet_acks_per_client = 0; });
+    require_invalid_server_options([](auto& options) { options.protocol.max_pending_packet_acks_per_client = 0; });
     require_invalid_server_options([](auto& options) {
-        options.max_pending_packet_acks_per_client =
+        options.protocol.max_pending_packet_acks_per_client =
             static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) + 1U;
+    });
+    require_invalid_server_options([](auto& options) {
+        options.protocol.baseline_frame_delta_bits = kage::sync::protocol::baseline_frame_delta_bits + 1U;
     });
     require_invalid_server_options([](auto& options) {
         options.fixed_dt_seconds = std::numeric_limits<double>::infinity();
@@ -75,10 +78,13 @@ TEST_CASE("replication server rejects invalid option values") {
 
 TEST_CASE("replication client rejects invalid option values") {
     require_invalid_client_options([](auto& options) { options.mtu_bytes = 0; });
-    require_invalid_client_options([](auto& options) { options.max_pending_packet_acks_per_client = 0; });
+    require_invalid_client_options([](auto& options) { options.protocol.max_pending_packet_acks_per_client = 0; });
     require_invalid_client_options([](auto& options) {
-        options.max_pending_packet_acks_per_client =
+        options.protocol.max_pending_packet_acks_per_client =
             static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) + 1U;
+    });
+    require_invalid_client_options([](auto& options) {
+        options.protocol.baseline_frame_delta_bits = kage::sync::protocol::baseline_frame_delta_bits + 1U;
     });
     require_invalid_client_options([](auto& options) {
         options.auto_interpolation_jitter_multiplier = std::numeric_limits<float>::quiet_NaN();

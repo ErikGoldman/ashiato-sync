@@ -254,7 +254,7 @@ public:
 
 private:
     static ReplicationServerOptions configure(ReplicationServerOptions options) {
-        options.network_entity_id_tier0_bits = NetworkEntityIdTier0Bits;
+        options.protocol.network_entity_id_tier0_bits = NetworkEntityIdTier0Bits;
         return options;
     }
 };

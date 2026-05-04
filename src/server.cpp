@@ -1301,7 +1301,7 @@ void ReplicationServer::end_tick(ecs::Registry& registry) {
                 }
                 ClientDestroyState& destroy = client.pending_destroys[candidate.destroy_index];
                 const std::size_t destroy_bits =
-                    destroy_record_bits(destroy.network_id, options_.network_entity_id_tier0_bits);
+                    destroy_record_bits(destroy.network_id, options_.protocol.network_entity_id_tier0_bits);
                 const std::size_t next_packet_bits =
                     update_header_bits + records.bit_size() + destroy_bits;
                 if (!records.empty() && protocol::bytes_for_bits(next_packet_bits) > options_.mtu_bytes) {
@@ -1329,7 +1329,7 @@ void ReplicationServer::end_tick(ecs::Registry& registry) {
                 protocol::write_network_entity_id(
                     records,
                     destroy.network_id,
-                    options_.network_entity_id_tier0_bits);
+                    options_.protocol.network_entity_id_tier0_bits);
 #ifdef KAGE_SYNC_ENABLE_TRACING
                 if (tracer_ != nullptr && tracer_->enabled()) {
                     SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::EntityDestroyed, client.id, frame_);
@@ -1638,7 +1638,7 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
                 ClientDestroyState& destroy = client.pending_destroys[candidate.destroy_index];
                 const std::size_t update_header_bits = server_update_header_bits(options_);
                 const std::size_t destroy_bits =
-                    destroy_record_bits(destroy.network_id, options_.network_entity_id_tier0_bits);
+                    destroy_record_bits(destroy.network_id, options_.protocol.network_entity_id_tier0_bits);
                 const std::size_t next_packet_bits =
                     update_header_bits + records.bit_size() + destroy_bits;
                 if (!records.empty() && protocol::bytes_for_bits(next_packet_bits) > options_.mtu_bytes) {
@@ -1663,7 +1663,7 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
                 protocol::write_network_entity_id(
                     records,
                     destroy.network_id,
-                    options_.network_entity_id_tier0_bits);
+                    options_.protocol.network_entity_id_tier0_bits);
 #ifdef KAGE_SYNC_ENABLE_TRACING
                 if (tracer_ != nullptr && tracer_->enabled()) {
                     SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::EntityDestroyed, client.id, frame_);
@@ -1925,7 +1925,7 @@ void ReplicationServer::attach_cue_to_clients(
             } reference_context_data{this, &client, slot};
             EntityReferenceContext reference_context;
             reference_context.user = &reference_context_data;
-            reference_context.network_entity_id_tier0_bits = options_.network_entity_id_tier0_bits;
+            reference_context.network_entity_id_tier0_bits = options_.protocol.network_entity_id_tier0_bits;
             reference_context.server_network_id_for_entity = [](void* user, ecs::Entity entity) {
                 ReferenceContextData& data = *static_cast<ReferenceContextData*>(user);
                 const auto found = data.server->entity_to_slot_.find(entity.value);
@@ -2291,7 +2291,7 @@ void ReplicationServer::write_entity_record(
     auto references_for_component = [&]() -> EntityReferenceContext* {
         if (!reference_context_initialized) {
             reference_context.user = &reference_context_data;
-            reference_context.network_entity_id_tier0_bits = options_.network_entity_id_tier0_bits;
+            reference_context.network_entity_id_tier0_bits = options_.protocol.network_entity_id_tier0_bits;
             reference_context.server_network_id_for_entity = [](void* user, ecs::Entity entity) {
                 ReferenceContextData& data = *static_cast<ReferenceContextData*>(user);
                 const auto found = data.server->entity_to_slot_.find(entity.value);
@@ -2315,7 +2315,7 @@ void ReplicationServer::write_entity_record(
         return &reference_context;
     };
 
-    protocol::write_network_entity_id(out, network_id, options_.network_entity_id_tier0_bits);
+    protocol::write_network_entity_id(out, network_id, options_.protocol.network_entity_id_tier0_bits);
     out.push_bool(!delta);
     if (!delta) {
         out.push_bits(quantized_frame.archetype.value, 32U);

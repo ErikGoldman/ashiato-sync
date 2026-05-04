@@ -114,11 +114,10 @@ struct ReplicationClientOptions {
     float auto_interpolation_time_dilation_gain = 0.05f;
     EntityModeSelector entity_mode_selector;
     double fixed_dt_seconds = 1.0 / 60.0;
-    std::size_t max_pending_packet_acks_per_client = protocol::default_max_pending_packet_acks_per_client;
+    protocol::Descriptor protocol = protocol::default_descriptor;
     std::string connect_token;
     double connect_resend_interval_seconds = 0.25;
     double ping_interval_seconds = 3.0;
-    std::size_t network_entity_id_tier0_bits = protocol::default_network_entity_id_tier0_bits;
     ReplicationRollbackPolicy rollback_policy = ReplicationRollbackPolicy::All;
     std::size_t prediction_buffer_capacity_frames = 64;
     std::size_t input_buffer_capacity_frames = 64;
@@ -760,7 +759,7 @@ public:
 
 private:
     static ReplicationClientOptions configure(ReplicationClientOptions options) {
-        options.network_entity_id_tier0_bits = NetworkEntityIdTier0Bits;
+        options.protocol.network_entity_id_tier0_bits = NetworkEntityIdTier0Bits;
         return options;
     }
 };

@@ -501,11 +501,10 @@ struct ReplicationServerOptions {
     std::size_t fixed_entity_replication_cost_bytes = 128;
     std::size_t mtu_bytes = 1200;
     std::size_t serialized_worker_threads = 1;
-    std::size_t max_pending_packet_acks_per_client = protocol::default_max_pending_packet_acks_per_client;
+    protocol::Descriptor protocol = protocol::default_descriptor;
     double fixed_dt_seconds = 1.0 / 60.0;
     double connect_resend_interval_seconds = 0.25;
     double idle_client_timeout_seconds = 0.0;
-    std::size_t network_entity_id_tier0_bits = protocol::default_network_entity_id_tier0_bits;
     std::size_t input_buffer_capacity_frames = 64;
     SyncFrame prioritizer_interval_frames = 4;
     ReplicationPrioritizerFn prioritizer;
