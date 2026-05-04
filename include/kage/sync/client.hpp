@@ -307,8 +307,8 @@ class ReplicationClient {
 public:
     explicit ReplicationClient(ReplicationClientOptions options = {});
     ~ReplicationClient();
-    ReplicationClient(const ReplicationClient& other);
-    ReplicationClient& operator=(const ReplicationClient& other);
+    ReplicationClient(const ReplicationClient& other) = delete;
+    ReplicationClient& operator=(const ReplicationClient& other) = delete;
     ReplicationClient(ReplicationClient&& other) noexcept;
     ReplicationClient& operator=(ReplicationClient&& other) noexcept;
 

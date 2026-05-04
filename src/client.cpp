@@ -387,10 +387,6 @@ ReplicationClient::ReplicationClient(ReplicationClientOptions options)
 
 ReplicationClient::~ReplicationClient() = default;
 
-ReplicationClient::ReplicationClient(const ReplicationClient& other) = default;
-
-ReplicationClient& ReplicationClient::operator=(const ReplicationClient& other) = default;
-
 ReplicationClient::ReplicationClient(ReplicationClient&& other) noexcept = default;
 
 ReplicationClient& ReplicationClient::operator=(ReplicationClient&& other) noexcept = default;

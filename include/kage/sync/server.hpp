@@ -29,8 +29,8 @@ public:
 
     explicit ReplicationServer(ReplicationServerOptions options = {});
     ~ReplicationServer();
-    ReplicationServer(const ReplicationServer& other);
-    ReplicationServer& operator=(const ReplicationServer& other);
+    ReplicationServer(const ReplicationServer& other) = delete;
+    ReplicationServer& operator=(const ReplicationServer& other) = delete;
     ReplicationServer(ReplicationServer&& other) noexcept;
     ReplicationServer& operator=(ReplicationServer&& other) noexcept;
 

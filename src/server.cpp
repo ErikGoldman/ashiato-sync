@@ -189,10 +189,6 @@ ReplicationServer::ReplicationServer(ReplicationServerOptions options)
 
 ReplicationServer::~ReplicationServer() = default;
 
-ReplicationServer::ReplicationServer(const ReplicationServer& other) = default;
-
-ReplicationServer& ReplicationServer::operator=(const ReplicationServer& other) = default;
-
 ReplicationServer::ReplicationServer(ReplicationServer&& other) noexcept = default;
 
 ReplicationServer& ReplicationServer::operator=(ReplicationServer&& other) noexcept = default;

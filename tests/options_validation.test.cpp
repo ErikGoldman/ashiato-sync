@@ -6,6 +6,7 @@
 
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 
 namespace {
 
@@ -31,6 +32,23 @@ void require_invalid_clock_config(Mutate mutate) {
 }
 
 }  // namespace
+
+static_assert(!std::is_copy_constructible<kage::sync::ReplicationClient>::value,
+              "ReplicationClient must remain move-only");
+static_assert(!std::is_copy_assignable<kage::sync::ReplicationClient>::value,
+              "ReplicationClient must remain move-only");
+static_assert(std::is_move_constructible<kage::sync::ReplicationClient>::value,
+              "ReplicationClient must remain movable");
+static_assert(std::is_move_assignable<kage::sync::ReplicationClient>::value,
+              "ReplicationClient must remain movable");
+static_assert(!std::is_copy_constructible<kage::sync::ReplicationServer>::value,
+              "ReplicationServer must remain move-only");
+static_assert(!std::is_copy_assignable<kage::sync::ReplicationServer>::value,
+              "ReplicationServer must remain move-only");
+static_assert(std::is_move_constructible<kage::sync::ReplicationServer>::value,
+              "ReplicationServer must remain movable");
+static_assert(std::is_move_assignable<kage::sync::ReplicationServer>::value,
+              "ReplicationServer must remain movable");
 
 TEST_CASE("replication server rejects invalid option values") {
     require_invalid_server_options([](auto& options) { options.mtu_bytes = 0; });
