@@ -3,6 +3,7 @@ kage_sync_fetch_catch2()
 add_executable(kage_sync_tests
     ball_stress.test.cpp
     bit_buffer.test.cpp
+    client_ack_queue.test.cpp
     client_buffered_interpolation.test.cpp
     client_clock.test.cpp
     client_cues.test.cpp

@@ -1,6 +1,8 @@
 #include "kage/sync/client.hpp"
 
+#include "client/ack_queue.hpp"
 #include "client/frame_data.hpp"
+#include "client/input_buffer.hpp"
 #include "client/packet_window.hpp"
 #include "client/state.hpp"
 #include "detail/options_validation.hpp"
@@ -377,7 +379,9 @@ bool DisplayInterpolationSample::has_tag(const ecs::Registry& registry, ecs::Ent
 
 ReplicationClient::ReplicationClient(ReplicationClientOptions options)
     : options_(detail::validate_client_options(std::move(options))),
-      clock_(make_clock_config(options_)) {
+      clock_(make_clock_config(options_)),
+      ack_queue_(std::make_unique<client_detail::ClientAckQueue>()),
+      input_(std::make_unique<client_detail::ClientInputBuffer>()) {
     adaptive_ping_active_ = options_.adaptive_ping_interval;
     if (options_.connect_token.empty()) {
         connection_state_ = ReplicationClientConnectionState::Ready;
@@ -694,7 +698,7 @@ bool ReplicationClient::receive(ecs::Registry& registry, BitBuffer packet) {
                 (void)fill_input_frames_through(registry, settings, clock_.input_frame());
             }
             record_server_packet_sequence(packet_id);
-            const SyncFrame decision_last_recorded_input_frame = last_recorded_input_frame_;
+            const SyncFrame decision_last_recorded_input_frame = input_->last_recorded_frame();
             SyncFrame prefill_input_frame =
                 clock_.record_server_update(
                     frame,
@@ -726,7 +730,7 @@ bool ReplicationClient::receive(ecs::Registry& registry, BitBuffer packet) {
                 decision_last_recorded_input_frame,
                 prefill_input_frame);
 #endif
-            if (prefill_input_frame > last_recorded_input_frame_) {
+            if (prefill_input_frame > input_->last_recorded_frame()) {
                 const SyncSettings& settings = registry.get<SyncSettings>();
                 (void)fill_input_frames_through(registry, settings, prefill_input_frame);
                 if (prefill_input_frame > pending_prediction_catchup_frame_) {
@@ -814,7 +818,7 @@ bool ReplicationClient::receive(
                 (void)fill_input_frames_through(registry, settings, clock_.input_frame());
             }
             record_server_packet_sequence(packet_id);
-            const SyncFrame decision_last_recorded_input_frame = last_recorded_input_frame_;
+            const SyncFrame decision_last_recorded_input_frame = input_->last_recorded_frame();
             SyncFrame prefill_input_frame = clock_.record_server_update(
                 frame,
                 static_cast<double>(receive_frame),
@@ -844,7 +848,7 @@ bool ReplicationClient::receive(
                 decision_last_recorded_input_frame,
                 prefill_input_frame);
 #endif
-            if (prefill_input_frame > last_recorded_input_frame_) {
+            if (prefill_input_frame > input_->last_recorded_frame()) {
                 const SyncSettings& settings = registry.get<SyncSettings>();
                 (void)fill_input_frames_through(registry, settings, prefill_input_frame);
                 if (prefill_input_frame > pending_prediction_catchup_frame_) {
@@ -1317,7 +1321,7 @@ bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds, ecs::Ru
                 catchup_server_frame,
                 clock_.receive_frame(),
                 clock_.playback_frame(),
-                last_recorded_input_frame_,
+                input_->last_recorded_frame(),
                 clock_.input_frame());
 #endif
         }
@@ -1561,348 +1565,88 @@ void ReplicationClient::send_pending_packets() {
 }
 
 void ReplicationClient::drain_ack_packets_into(std::vector<BitBuffer>& packets) {
-    if (pending_acks_.empty()) {
-        pending_acks_.clear();
-        return;
-    }
-
-    const std::size_t packet_id_bits = configured_packet_id_bits(options_);
-    const std::size_t one_ack_bytes = protocol::bytes_for_bits(protocol::client_ack_header_bits + packet_id_bits);
-    if (one_ack_bytes > options_.mtu_bytes) {
-        return;
-    }
-
-    const std::size_t mtu_bits = options_.mtu_bytes * 8U;
-    const std::size_t max_acks_per_packet =
-        std::min<std::size_t>(
-            std::numeric_limits<std::uint16_t>::max(),
-            (mtu_bits - protocol::client_ack_header_bits) / packet_id_bits);
-    if (max_acks_per_packet == 0U) {
-        return;
-    }
-
-    packets.reserve(packets.size() + (pending_acks_.size() + max_acks_per_packet - 1U) / max_acks_per_packet);
-    BitBuffer packet;
-    std::uint16_t packet_ack_count = 0;
-    std::size_t packet_count_offset = 0;
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
-    std::vector<std::uint32_t> packet_acks;
-#endif
-    auto begin_packet = [&]() {
-        packet.clear();
-        packet.reserve_bytes(options_.mtu_bytes);
-        packet.push_bits(protocol::client_ack_message, 8U);
-        packet_count_offset = packet.bit_size();
-        packet.push_bits(0, 16U);
-        packet_ack_count = 0;
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
-        packet_acks.clear();
-#endif
-    };
-    auto finish_packet = [&]() {
-        if (packet_ack_count == 0U) {
-            return;
-        }
-        packet.overwrite_unsigned_bits(packet_count_offset, packet_ack_count, 16U);
 #if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
-        trace_outgoing_ack_packet(packet_acks);
-#endif
-        packets.push_back(std::move(packet));
-        packet = BitBuffer{};
-    };
-
-    begin_packet();
-    for (const std::uint32_t packet_id : pending_acks_) {
-        if (packet_ack_count == max_acks_per_packet) {
-            finish_packet();
-            begin_packet();
-        }
-        packet.push_bits(packet_id, packet_id_bits);
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
-        packet_acks.push_back(packet_id);
-#endif
-        ++packet_ack_count;
+    std::vector<client_detail::ClientAckPacketTrace> traces;
+    ack_queue_->drain_ack_packets(options_.mtu_bytes, configured_packet_id_bits(options_), packets, &traces);
+    for (const client_detail::ClientAckPacketTrace& trace : traces) {
+        trace_outgoing_ack_packet(trace.acks);
     }
-    finish_packet();
-
-    pending_acks_.clear();
+#else
+    ack_queue_->drain_ack_packets(options_.mtu_bytes, configured_packet_id_bits(options_), packets, nullptr);
+#endif
 }
 
 void ReplicationClient::drain_input_packets_into(std::vector<BitBuffer>& packets) {
     if (connection_state_ != ReplicationClientConnectionState::Ready || !clock_.bootstrapped()) {
         return;
     }
-    const bool has_input_frames = has_latest_input_ && last_recorded_input_frame_ > acked_input_frame_;
-    if (!has_input_ops_ || !has_input_frames) {
-        return;
-    }
-
-    const std::size_t packet_id_bits = configured_packet_id_bits(options_);
-    const std::size_t mtu_bits = options_.mtu_bytes * 8U;
-    const std::size_t fixed_header_bits = 8U + 16U + 32U + 16U + 1U;
-    if (mtu_bits < fixed_header_bits) {
-        return;
-    }
-
-    SyncFrame first_input_frame = 0;
-    const InputFrame* first_input = nullptr;
-    if (!input_frames_.empty()) {
-        for (SyncFrame frame = acked_input_frame_ + 1U; frame <= last_recorded_input_frame_; ++frame) {
-            const InputFrame& input = input_frames_[frame & (input_frames_.size() - 1U)];
-            if (input.valid && input.frame == frame && input.bytes.size() == input_ops_.quantized_size) {
-                first_input_frame = frame;
-                first_input = &input;
-                break;
-            }
-        }
-    }
-    const bool baseline_valid = acked_input_frame_ == 0U || has_acked_input_baseline_;
-    const bool first_input_full = first_input != nullptr &&
-        (input_history_discontinuous_ || first_input_frame != acked_input_frame_ + 1U || !baseline_valid);
-
-    BitBuffer packet;
-    packet.reserve_bytes(options_.mtu_bytes);
-    packet.push_bits(protocol::client_input_message, 8U);
-    const std::size_t ack_count_offset = packet.bit_size();
-    packet.push_bits(0, 16U);
-
-    std::size_t reserved_first_input_bits = 0;
-    if (first_input != nullptr) {
-        BitBuffer first_input_payload;
-        const std::uint8_t* previous = first_input_full || acked_input_baseline_.empty()
-            ? nullptr
-            : acked_input_baseline_.data();
-        input_ops_.serialize(previous, first_input->bytes.data(), first_input_payload, nullptr);
-        reserved_first_input_bits = first_input_payload.bit_size();
-    }
-
-    std::uint16_t ack_count = 0;
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
-    std::vector<std::uint32_t> packet_acks;
-#endif
-    const std::size_t max_acks = std::min<std::size_t>(
-        std::numeric_limits<std::uint16_t>::max(),
-        (mtu_bits - fixed_header_bits) / packet_id_bits);
-    while (ack_count < max_acks && ack_count < pending_acks_.size()) {
-        BitBuffer candidate = packet;
-        candidate.push_bits(pending_acks_[ack_count], packet_id_bits);
-        const std::size_t explicit_first_frame_bits = first_input_full ? 32U : 0U;
-        if (protocol::bytes_for_bits(
-                candidate.bit_size() + 32U + 16U + 1U + explicit_first_frame_bits + reserved_first_input_bits) >
-            options_.mtu_bytes) {
-            break;
-        }
-        packet = std::move(candidate);
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
-        packet_acks.push_back(pending_acks_[ack_count]);
-#endif
-        ++ack_count;
-    }
-    packet.overwrite_unsigned_bits(ack_count_offset, ack_count, 16U);
-
-    packet.push_bits(acked_input_frame_, 32U);
-    const std::size_t input_count_offset = packet.bit_size();
-    packet.push_bits(0, 16U);
-    packet.push_bool(first_input_full);
-    if (first_input_full) {
-        packet.push_bits(first_input_frame, 32U);
-    }
-
-    std::uint16_t input_count = 0;
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
-    SyncFrame last_input_frame = 0;
-#endif
-    const std::uint8_t* previous = first_input_full || acked_input_baseline_.empty()
-        ? nullptr
-        : acked_input_baseline_.data();
-    if (first_input_frame != 0U) {
-        for (SyncFrame frame = first_input_frame; frame <= last_recorded_input_frame_; ++frame) {
-            if (input_frames_.empty()) {
-                break;
-            }
-            const InputFrame& input = input_frames_[frame & (input_frames_.size() - 1U)];
-            if (!input.valid || input.frame != frame || input.bytes.size() != input_ops_.quantized_size) {
-                break;
-            }
-
-            BitBuffer candidate = packet;
-            input_ops_.serialize(previous, input.bytes.data(), candidate, nullptr);
-            if (protocol::bytes_for_bits(candidate.bit_size()) > options_.mtu_bytes) {
-                break;
-            }
-            packet = std::move(candidate);
-            previous = input.bytes.data();
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
-            last_input_frame = frame;
-#endif
-            ++input_count;
-            if (input_count == std::numeric_limits<std::uint16_t>::max()) {
-                break;
-            }
-        }
-    }
-
-    if (ack_count == 0U && input_count == 0U) {
-        return;
-    }
-    packet.overwrite_unsigned_bits(input_count_offset, input_count, 16U);
 #if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
-    trace_outgoing_input_packet(packet_acks, acked_input_frame_, first_input_frame, last_input_frame);
+    client_detail::ClientInputPacketTrace trace;
+    const bool sent = input_->drain_packet(
+        options_.mtu_bytes,
+        configured_packet_id_bits(options_),
+        ack_queue_->pending(),
+        packets,
+        &trace);
+    if (sent && trace.sent) {
+        trace_outgoing_input_packet(trace.acks, trace.baseline_frame, trace.first_input_frame, trace.last_input_frame);
+    }
+#else
+    (void)input_->drain_packet(
+        options_.mtu_bytes,
+        configured_packet_id_bits(options_),
+        ack_queue_->pending(),
+        packets,
+        nullptr);
 #endif
-    packets.push_back(std::move(packet));
-    if (input_count != 0U) {
-        input_history_discontinuous_ = false;
-    }
-    if (ack_count != 0U) {
-        pending_acks_.erase(pending_acks_.begin(), pending_acks_.begin() + ack_count);
-    }
 }
 
 std::size_t ReplicationClient::pending_ack_count() const noexcept {
-    return pending_acks_.size();
+    return ack_queue_->size();
 }
 
 bool ReplicationClient::set_input_bytes(ecs::Registry& registry, ecs::Entity component, const void* input) {
-    if (input == nullptr) {
-        return false;
-    }
     const SyncSettings& settings = registry.get<SyncSettings>();
-    if (!settings.input_component || settings.input_component != component) {
-        return false;
-    }
-    const auto found_ops = settings.component_ops.find(component.value);
-    if (found_ops == settings.component_ops.end() ||
-        found_ops->second.quantize == nullptr ||
-        found_ops->second.serialize == nullptr ||
-        found_ops->second.apply == nullptr ||
-        found_ops->second.quantized_size == 0U) {
-        return false;
-    }
-
-    input_component_ = component;
-    input_ops_ = found_ops->second;
-    has_input_ops_ = true;
-    latest_input_.assign(input_ops_.quantized_size, 0U);
-    input_ops_.quantize(input, latest_input_.data());
-    if (acked_input_baseline_.size() != input_ops_.quantized_size) {
-        acked_input_baseline_.assign(input_ops_.quantized_size, 0U);
-    }
-    has_acked_input_baseline_ = true;
-    has_latest_input_ = true;
-    apply_input_to_owned_entities(registry, component, latest_input_.data());
-    return true;
+    return input_->set_latest(registry, settings, component, input);
 }
 
 bool ReplicationClient::record_input_frame(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame) {
-    if (!has_latest_input_ || !has_input_ops_ || !settings.input_component ||
-        settings.input_component != input_component_ || frame <= acked_input_frame_) {
-        return true;
-    }
-    if (input_frames_.empty()) {
-        input_frames_.resize(options_.input_buffer_capacity_frames);
-    }
-    InputFrame& stored = input_frames_[frame & (input_frames_.size() - 1U)];
-    if (stored.valid && stored.frame != frame && stored.frame > acked_input_frame_) {
-        input_history_discontinuous_ = true;
-    }
-    stored.frame = frame;
-    stored.valid = true;
-    stored.bytes = latest_input_;
-    last_recorded_input_frame_ = std::max(last_recorded_input_frame_, frame);
+    client_detail::ClientInputRecord recorded;
+    const bool ok = input_->record_frame(settings, options_.input_buffer_capacity_frames, frame, &recorded);
 #ifdef KAGE_SYNC_ENABLE_TRACING
-    trace_input_components(registry, settings, frame, input_component_, stored.bytes.data());
+    if (ok && recorded.bytes != nullptr) {
+        trace_input_components(registry, settings, recorded.frame, recorded.component, recorded.bytes);
+    }
 #else
     (void)registry;
 #endif
-    return true;
+    return ok;
 }
 
 bool ReplicationClient::fill_input_frames_through(
     ecs::Registry& registry,
     const SyncSettings& settings,
     SyncFrame frame) {
-    if (!has_latest_input_ || !has_input_ops_ || !settings.input_component ||
-        settings.input_component != input_component_ || frame <= acked_input_frame_) {
-        return true;
-    }
-    if (input_frames_.empty()) {
-        input_frames_.resize(options_.input_buffer_capacity_frames);
-    }
-    if (input_frames_.empty()) {
-        return true;
-    }
-    const SyncFrame begin = std::max(acked_input_frame_ + 1U, last_recorded_input_frame_ + 1U);
-    for (SyncFrame current = begin; current <= frame; ++current) {
-        InputFrame& stored = input_frames_[current & (input_frames_.size() - 1U)];
-        if (stored.valid && stored.frame == current && stored.bytes.size() == input_ops_.quantized_size) {
-            last_recorded_input_frame_ = std::max(last_recorded_input_frame_, current);
-            continue;
-        }
-        if (stored.valid && stored.frame != current && stored.frame > acked_input_frame_) {
-            input_history_discontinuous_ = true;
-        }
-        stored.frame = current;
-        stored.valid = true;
-        stored.bytes = latest_input_;
-        last_recorded_input_frame_ = std::max(last_recorded_input_frame_, current);
+    std::vector<client_detail::ClientInputRecord> recorded;
+    const bool ok = input_->fill_frames_through(settings, options_.input_buffer_capacity_frames, frame, recorded);
 #ifdef KAGE_SYNC_ENABLE_TRACING
-        trace_input_components(registry, settings, current, input_component_, stored.bytes.data());
-#else
-        (void)registry;
-#endif
+    if (ok) {
+        for (const client_detail::ClientInputRecord& input_record : recorded) {
+            trace_input_components(registry, settings, input_record.frame, input_record.component, input_record.bytes);
+        }
     }
-    return true;
+#else
+    (void)registry;
+#endif
+    return ok;
 }
 
 bool ReplicationClient::apply_input_frame(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame) {
-    if (!has_input_ops_ || !settings.input_component || settings.input_component != input_component_) {
-        return true;
-    }
-    if (input_frames_.empty()) {
-        return true;
-    }
-    const InputFrame& stored = input_frames_[frame & (input_frames_.size() - 1U)];
-    if (!stored.valid || stored.frame != frame || stored.bytes.size() != input_ops_.quantized_size) {
-        return true;
-    }
-    apply_input_to_owned_entities(registry, input_component_, stored.bytes.data());
-    return true;
-}
-
-void ReplicationClient::apply_input_to_owned_entities(
-    ecs::Registry& registry,
-    ecs::Entity component,
-    const std::uint8_t* quantized) {
-    const SyncSettings& settings = registry.get<SyncSettings>();
-    if (settings.local_client == invalid_client_id || quantized == nullptr || input_ops_.apply == nullptr) {
-        return;
-    }
-    registry.view<const NetworkOwner>().each([&](ecs::Entity entity, const NetworkOwner& owner) {
-        if (owner.client == settings.local_client) {
-            (void)input_ops_.apply(registry, entity, quantized);
-        }
-    });
-    (void)component;
+    return input_->apply_frame(registry, settings, frame);
 }
 
 void ReplicationClient::acknowledge_input_frame(SyncFrame frame) {
-    if (frame <= acked_input_frame_) {
-        return;
-    }
-    bool found_baseline = false;
-    if (!input_frames_.empty()) {
-        for (SyncFrame current = acked_input_frame_ + 1U; current <= frame; ++current) {
-            InputFrame& stored = input_frames_[current & (input_frames_.size() - 1U)];
-            if (stored.valid && stored.frame == current) {
-                if (current == frame) {
-                    acked_input_baseline_ = stored.bytes;
-                    found_baseline = true;
-                }
-            }
-        }
-    }
-    has_acked_input_baseline_ = frame == 0U || found_baseline;
-    acked_input_frame_ = frame;
+    input_->acknowledge_frame(frame);
 }
 
 ecs::Entity ReplicationClient::local_entity(ClientEntityNetworkId network_id) const {
@@ -4350,7 +4094,7 @@ void ReplicationClient::remember_baseline(EntityState& state) {
 }
 
 void ReplicationClient::queue_ack(std::uint32_t packet_id) {
-    pending_acks_.push_back(packet_id);
+    ack_queue_->push(packet_id);
 }
 
 void ReplicationClient::record_server_packet_sequence(std::uint32_t packet_id) noexcept {
@@ -4473,10 +4217,10 @@ bool ReplicationClient::receive_pong(ecs::Registry& registry, BitBuffer& packet,
             last_server_update_frame_,
             receive_frame,
             clock_.playback_frame(),
-            last_recorded_input_frame_,
+            input_->last_recorded_frame(),
             prefill_input_frame);
 #endif
-        if (prefill_input_frame > last_recorded_input_frame_) {
+        if (prefill_input_frame > input_->last_recorded_frame()) {
             const SyncSettings& settings = registry.get<SyncSettings>();
             (void)fill_input_frames_through(registry, settings, prefill_input_frame);
             active_prediction_snap_lead_frames_ = after.target_prediction_lead_frames;
@@ -4495,7 +4239,7 @@ bool ReplicationClient::receive_pong(ecs::Registry& registry, BitBuffer& packet,
                 last_server_update_frame_,
                 receive_frame,
                 clock_.playback_frame(),
-                last_recorded_input_frame_,
+                input_->last_recorded_frame(),
                 prefill_input_frame);
 #endif
         }

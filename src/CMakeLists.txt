@@ -1,5 +1,7 @@
 add_library(kage_sync
     client.cpp
+    client/ack_queue.cpp
+    client/input_buffer.cpp
     client/packet_window.cpp
     client_clock.cpp
     components.cpp

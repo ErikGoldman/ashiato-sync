@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -19,6 +20,7 @@ class SyncTracer;
 enum class SyncTraceEventType : std::uint8_t;
 
 namespace client_detail {
+class ClientAckQueue;
 struct EntityState;
 struct EntityCue;
 struct EntityPlayedCue;
@@ -27,6 +29,7 @@ struct OriginalPredictionCapture;
 struct WireNetworkIdState;
 struct InputFrame;
 struct PendingPing;
+class ClientInputBuffer;
 }  // namespace client_detail
 
 struct ReplicatedComponentUpdate {
@@ -666,11 +669,9 @@ private:
     bool record_input_frame(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame);
     bool fill_input_frames_through(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame);
     bool apply_input_frame(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame);
-    void apply_input_to_owned_entities(ecs::Registry& registry, ecs::Entity component, const std::uint8_t* quantized);
     void acknowledge_input_frame(SyncFrame frame);
 
     using WireNetworkIdState = client_detail::WireNetworkIdState;
-    using InputFrame = client_detail::InputFrame;
 
     ReplicationClientOptions options_;
     ReplicationClientClock clock_;
@@ -691,20 +692,10 @@ private:
     std::vector<OriginalPredictionCapture> rollback_original_current_scratch_;
     std::vector<WireNetworkIdState> wire_network_ids_;
     std::unordered_map<ClientEntityNetworkId, std::uint32_t> network_entity_indices_;
-    std::vector<std::uint32_t> pending_acks_;
-    std::vector<InputFrame> input_frames_;
-    std::vector<std::uint8_t> latest_input_;
-    std::vector<std::uint8_t> acked_input_baseline_;
-    SyncComponentOps input_ops_;
-    ecs::Entity input_component_;
-    SyncFrame last_recorded_input_frame_ = 0;
+    std::unique_ptr<client_detail::ClientAckQueue> ack_queue_;
+    std::unique_ptr<client_detail::ClientInputBuffer> input_;
     SyncFrame last_server_update_frame_ = 0;
     double last_server_update_receive_frame_ = 0.0;
-    SyncFrame acked_input_frame_ = 0;
-    bool has_latest_input_ = false;
-    bool has_input_ops_ = false;
-    bool has_acked_input_baseline_ = true;
-    bool input_history_discontinuous_ = false;
     bool has_received_server_update_ = false;
     using PendingPing = client_detail::PendingPing;
 
