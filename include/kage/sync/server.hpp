@@ -4,7 +4,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <limits>
 #include <string>
 #include <unordered_map>
@@ -17,8 +16,6 @@ class SyncTracer;
 
 class ReplicationServer {
 public:
-    using ReplicateFn = std::function<void(ClientId, ecs::Entity)>;
-
     struct ClientInputStats {
         std::uint64_t input_frames_applied = 0;
         std::uint64_t input_starvation_frames = 0;
@@ -64,10 +61,8 @@ public:
 
     void begin_tick(ecs::Registry& registry);
     void end_tick(ecs::Registry& registry);
-    void end_tick(ecs::Registry& registry, const ReplicateFn& replicate);
     bool tick(ecs::Registry& registry, double dt_seconds);
     void tick(ecs::Registry& registry);
-    void tick(ecs::Registry& registry, const ReplicateFn& replicate);
     // Current server simulation frame; remains 0 until the first tick begins.
     SyncFrame frame() const noexcept {
         return frame_;

@@ -19,20 +19,21 @@ void BM_ServerTickFullBudget(benchmark::State& state) {
     const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
     const std::vector<ecs::Entity> entities = create_entities(registry, entity_count);
 
-    kage::sync::ReplicationServer server(kage::sync::ReplicationServerOptions{
-        static_cast<std::size_t>(entity_count) * 128U,
-        128U,
-    });
+    std::uint64_t sent = 0;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * 128U;
+    options.fixed_entity_replication_cost_bytes = 128U;
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& packet) {
+        sent += client ^ packet.byte_size();
+        benchmark::DoNotOptimize(sent);
+    };
+    kage::sync::ReplicationServer server(options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
     server.refresh_replicated(registry);
 
-    std::uint64_t sent = 0;
     for (auto _ : state) {
-        server.tick(registry, [&](kage::sync::ClientId client, ecs::Entity entity) {
-            sent += client ^ entity.value;
-            benchmark::DoNotOptimize(sent);
-        });
+        server.tick(registry);
     }
 
     state.SetItemsProcessed(
@@ -48,20 +49,21 @@ void BM_ServerTickBudgetLimited(benchmark::State& state) {
     const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
     const std::vector<ecs::Entity> entities = create_entities(registry, entity_count);
 
-    kage::sync::ReplicationServer server(kage::sync::ReplicationServerOptions{
-        static_cast<std::size_t>(sends_per_client) * 128U,
-        128U,
-    });
+    std::uint64_t sent = 0;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(sends_per_client) * 128U;
+    options.fixed_entity_replication_cost_bytes = 128U;
+    options.transport = [&](kage::sync::ClientId client, const kage::sync::BitBuffer& packet) {
+        sent += client + packet.byte_size();
+        benchmark::DoNotOptimize(sent);
+    };
+    kage::sync::ReplicationServer server(options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
     server.refresh_replicated(registry);
 
-    std::uint64_t sent = 0;
     for (auto _ : state) {
-        server.tick(registry, [&](kage::sync::ClientId client, ecs::Entity entity) {
-            sent += client + entity.value;
-            benchmark::DoNotOptimize(sent);
-        });
+        server.tick(registry);
     }
 
     state.SetItemsProcessed(
@@ -74,7 +76,9 @@ void BM_ServerRefreshReplicatedChanges(benchmark::State& state) {
     ecs::Registry registry;
     const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
     const std::vector<ecs::Entity> entities = create_entities(registry, entity_count);
-    kage::sync::ReplicationServer server;
+    kage::sync::ReplicationServerOptions options;
+    options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
+    kage::sync::ReplicationServer server(options);
     add_clients(server, 4);
 
     for (auto _ : state) {
@@ -896,7 +900,9 @@ void BM_ServerTickInputUpsert(benchmark::State& state) {
     client.tick(client_registry, client.options().fixed_dt_seconds);
     std::vector<kage::sync::BitBuffer> packets = client.drain_packets();
 
-    kage::sync::ReplicationServer server;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
+    kage::sync::ReplicationServer server(server_options);
     server.add_client(1);
     for (const kage::sync::BitBuffer& packet : packets) {
         kage::sync::BitBuffer copy = packet;
@@ -906,7 +912,7 @@ void BM_ServerTickInputUpsert(benchmark::State& state) {
     }
 
     for (auto _ : state) {
-        server.tick(registry, kage::sync::ReplicationServer::ReplicateFn{});
+        server.tick(registry);
     }
 
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(entity_count));

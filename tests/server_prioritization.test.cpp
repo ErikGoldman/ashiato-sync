@@ -429,10 +429,11 @@ TEST_CASE("replication prioritizer rejects callbacks that return the wrong decis
                              std::vector<kage::sync::ReplicationPriorityDecision>& decisions) {
         decisions.clear();
     };
+    options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
 
     kage::sync::ReplicationServer server(options);
     REQUIRE(server.add_client(1));
-    REQUIRE_THROWS_AS(server.tick(registry, kage::sync::ReplicationServer::ReplicateFn{}), std::invalid_argument);
+    REQUIRE_THROWS_AS(server.tick(registry), std::invalid_argument);
 }
 
 TEST_CASE("replication prioritizer applies independent decisions per client") {

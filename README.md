@@ -17,9 +17,8 @@ The current implementation provides the v0 replication foundation:
 - a `ReplicationClient` with snap mode, client-side buffered interpolation, and
   predicted mode with rollback/resimulation
 - client ACK packets packed up to a configured MTU
-
-Production transport integration is planned surface area rather than complete
-behavior in this revision.
+- transport callbacks for serialized server-to-client and client-to-server
+  packets
 
 ## Requirements
 
@@ -156,23 +155,26 @@ int main() {
 
     ecs::Entity entity = registry.create();
 
-    kage::sync::ReplicationServer server({
-        1024, // bandwidth_limit_bytes_per_tick
-        128,  // fixed_entity_replication_cost_bytes
-    });
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.bandwidth_limit_bytes_per_tick = 1024;
+    server_options.transport =
+        [](kage::sync::ClientId client, const kage::sync::BitBuffer& packet) {
+            // Enqueue `packet` for `client` on your UDP/socket transport here.
+        };
+    kage::sync::ReplicationServer server(server_options);
 
     server.add_client(1);
     registry.add<kage::sync::Replicated>(entity, {actor});
 
-    server.tick(registry, [&](kage::sync::ClientId client, ecs::Entity replicated) {
-        // Serialize and enqueue `replicated` for `client` here.
-    });
+    server.tick(registry);
 }
 ```
 
-`ReplicationServer::tick` advances every tracked client by one scheduling epoch.
-Entities sent in the current tick are moved behind unsent entities for that
-client, so bandwidth-limited clients naturally receive older unsent state first.
+`ReplicationServer::tick` advances every tracked client by one scheduling epoch,
+serializes due entity updates into server update packets, and sends those packets
+through `ReplicationServerOptions::transport`. Entities sent in the current tick
+are moved behind unsent entities for that client, so bandwidth-limited clients
+naturally receive older unsent state first.
 
 ## API Notes
 
@@ -240,10 +242,9 @@ client, so bandwidth-limited clients naturally receive older unsent state first.
   untagged components such as visuals. If auto-buffering changes depth or target
   data is missing, the client keeps returning the previous valid display frame
   instead of rewinding or exposing partial live transform state.
-- `ReplicationAudience::All` and `ReplicationAudience::Owner` are stored as
-  archetype metadata. The current scheduler callback receives every scheduled
-  entity; audience filtering and serialization policy should be applied by the
-  caller for now.
+- `ReplicationAudience::All` and `ReplicationAudience::Owner` are applied by
+  server packet serialization. Full and delta records include only the
+  components visible to the receiving client.
 - Destroyed entities and entities externally unmarked as `Replicated` are
   removed from the server's schedule on the next tick.
 

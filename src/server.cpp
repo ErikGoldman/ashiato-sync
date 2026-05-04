@@ -975,77 +975,7 @@ void ReplicationServer::begin_tick(ecs::Registry& registry) {
 
 void ReplicationServer::tick(ecs::Registry& registry) {
     begin_tick(registry);
-    end_tick(registry, ReplicateFn{});
-    emit_post_tick(registry);
-}
-
-void ReplicationServer::end_tick(ecs::Registry& registry, const ReplicateFn& replicate) {
-    if (options_.transport) {
-        end_tick(registry);
-        return;
-    }
-
-    refresh_replicated(registry);
-    const SyncSettings& settings = registry.get<SyncSettings>();
-    capture_queued_cues(registry, settings);
-
-    std::vector<std::uint32_t> sent;
-    std::vector<std::uint32_t> next_order;
-    sent.reserve(active_replicated_count_);
-    next_order.reserve(active_replicated_count_);
-
-    for (ClientState& client : clients_) {
-        if (!client.ready_for_updates) {
-            client.connect_resend_accumulator_seconds += options_.fixed_dt_seconds;
-            if (client.connect_resend_accumulator_seconds >= options_.connect_resend_interval_seconds) {
-                send_connect_response(client);
-                client.connect_resend_accumulator_seconds = 0.0;
-            }
-            continue;
-        }
-
-        ++client.epoch;
-
-        std::size_t remaining = options_.bandwidth_limit_bytes_per_tick;
-        refresh_client_priorities(registry, client);
-        std::vector<std::uint32_t> order = std::move(client.order);
-        sent.clear();
-        next_order.clear();
-        next_order.reserve(order.size());
-
-        for (const std::uint32_t slot : order) {
-            if (!slot_is_replicable(registry, slot)) {
-                if (slot < replicated_.size() && replicated_[slot].active) {
-                    deactivate_slot(slot);
-                }
-                continue;
-            }
-            if (slot >= client.entity_states.size() || !client.entity_states[slot].priority_replicate) {
-                next_order.push_back(slot);
-                continue;
-            }
-
-            if (options_.fixed_entity_replication_cost_bytes > remaining) {
-                next_order.push_back(slot);
-                continue;
-            }
-
-            if (replicate) {
-                replicate(client.id, replicated_[slot].entity);
-            }
-            remaining -= options_.fixed_entity_replication_cost_bytes;
-            client.reset_epochs[slot] = client.epoch;
-            sent.push_back(slot);
-        }
-
-        next_order.insert(next_order.end(), sent.begin(), sent.end());
-        client.order = std::move(next_order);
-    }
-}
-
-void ReplicationServer::tick(ecs::Registry& registry, const ReplicateFn& replicate) {
-    begin_tick(registry);
-    end_tick(registry, replicate);
+    end_tick(registry);
     emit_post_tick(registry);
 }
 
@@ -1152,8 +1082,7 @@ void ReplicationServer::emit_post_tick(const ecs::Registry& registry) {
 
 void ReplicationServer::end_tick(ecs::Registry& registry) {
     if (!options_.transport) {
-        end_tick(registry, ReplicateFn{});
-        return;
+        throw std::logic_error("replication server requires ReplicationServerOptions::transport for serialized sends");
     }
 
     if (options_.serialized_worker_threads > 1U && clients_.size() > 1U) {

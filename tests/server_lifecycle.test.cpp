@@ -59,6 +59,7 @@ TEST_CASE("replication server disconnects clients after configured idle timeout"
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 1.0;
     options.idle_client_timeout_seconds = 2.0;
+    options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
     kage::sync::ReplicationServer server(options);
     REQUIRE(server.add_client(1));
 
@@ -75,6 +76,7 @@ TEST_CASE("replication server resets idle timeout when a client sends packets") 
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 1.0;
     options.idle_client_timeout_seconds = 2.0;
+    options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
     kage::sync::ReplicationServer server(options);
     REQUIRE(server.add_client(1));
 
@@ -90,6 +92,15 @@ TEST_CASE("replication server resets idle timeout when a client sends packets") 
     REQUIRE(server.has_client(1));
     server.tick(registry);
     REQUIRE_FALSE(server.has_client(1));
+}
+
+TEST_CASE("replication server tick requires a transport callback") {
+    ecs::Registry registry;
+    kage::sync::configure_server(registry);
+
+    kage::sync::ReplicationServer server;
+
+    REQUIRE_THROWS_AS(server.tick(registry), std::logic_error);
 }
 
 TEST_CASE("replication server continuous tick owns the fixed-step accumulator") {
@@ -108,6 +119,7 @@ TEST_CASE("replication server continuous tick owns the fixed-step accumulator") 
 
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 0.25;
+    options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
     kage::sync::ReplicationServer server(options);
 
     REQUIRE(server.tick(registry, 0.125));
@@ -130,6 +142,7 @@ TEST_CASE("replication server post tick callback fires once per completed fixed 
     std::vector<kage::sync::SyncFrame> frames;
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 0.25;
+    options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
     options.post_tick = [&frames](
         const ecs::Registry& callback_registry,
         kage::sync::SyncFrame frame,
@@ -149,7 +162,7 @@ TEST_CASE("replication server post tick callback fires once per completed fixed 
     server.tick(registry);
     REQUIRE(frames == std::vector<kage::sync::SyncFrame>{1, 2, 3});
 
-    server.tick(registry, [](kage::sync::ClientId, ecs::Entity) {});
+    server.tick(registry);
     REQUIRE(frames == std::vector<kage::sync::SyncFrame>{1, 2, 3, 4});
 
     server.begin_tick(registry);
@@ -178,6 +191,7 @@ TEST_CASE("replication server post tick callback receives cues drained for the f
 
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 0.25;
+    options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
     options.post_tick = [&seen](const ecs::Registry&, kage::sync::SyncFrame, kage::sync::QueuedSyncCueView cues) {
         for (const kage::sync::QueuedSyncCue& cue : cues) {
             kage::sync::BitBuffer payload = cue.payload;
@@ -208,7 +222,9 @@ TEST_CASE("replication server frame is the currently simulating frame") {
     ecs::Registry registry;
     kage::sync::configure_server(registry);
 
-    kage::sync::ReplicationServer server;
+    kage::sync::ReplicationServerOptions options;
+    options.transport = [](kage::sync::ClientId, const kage::sync::BitBuffer&) {};
+    kage::sync::ReplicationServer server(options);
     REQUIRE(server.frame() == 0);
 
     server.begin_tick(registry);
