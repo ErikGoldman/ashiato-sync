@@ -4,6 +4,32 @@
 
 namespace kage::sync::server_detail {
 
+bool ServerInputBuffer::set_local_frame(
+    SyncFrame frame,
+    const std::uint8_t* bytes,
+    std::size_t quantized_size,
+    std::size_t capacity_frames) {
+    if (frame == 0U || bytes == nullptr || quantized_size == 0U || capacity_frames == 0U) {
+        return false;
+    }
+    if (input_frames_.empty()) {
+        input_frames_.resize(capacity_frames);
+    }
+    if (input_frames_.empty()) {
+        return false;
+    }
+
+    InputFrame& stored = input_frames_[frame & (input_frames_.size() - 1U)];
+    stored.frame = frame;
+    stored.valid = true;
+    stored.bytes.assign(bytes, bytes + quantized_size);
+    latest_input_ = stored.bytes;
+    input_ack_frame_ = std::max(input_ack_frame_, frame);
+    has_latest_input_ = true;
+    stats_.latest_received_input_frame = std::max(stats_.latest_received_input_frame, frame);
+    return true;
+}
+
 bool ServerInputBuffer::process_packet_payload(
     ecs::BitBuffer& packet,
     const SyncComponentOps& ops,

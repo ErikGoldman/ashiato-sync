@@ -17,6 +17,7 @@ struct AppConfig {
     bool server = false;
     bool client = false;
     bool launcher = false;
+    bool listen = false;
     bool trace_frame_data = true;
 #ifdef KAGE_SYNC_TRACE_PACKET_LOGS
     bool trace_packet_logs = false;
@@ -36,10 +37,24 @@ struct AppConfig {
 AppConfig parse_args(int argc, char** argv);
 void run_server(const AppConfig& config);
 void run_client(const AppConfig& config);
+void run_listen_server(const AppConfig& config);
 void run_launcher(const AppConfig& config);
 
+class RemoteClientLauncher {
+public:
+    explicit RemoteClientLauncher(const AppConfig& config);
+    ~RemoteClientLauncher();
+
+    RemoteClientLauncher(const RemoteClientLauncher&) = delete;
+    RemoteClientLauncher& operator=(const RemoteClientLauncher&) = delete;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
 #ifdef KAGE_SYNC_ENABLE_TRACING
-std::unique_ptr<kage::sync::KTraceDirectoryWriter> make_trace_writer(const AppConfig& config);
+kage::sync::TraceOptions make_trace_options(const AppConfig& config);
 #endif
 
 }  // namespace fps

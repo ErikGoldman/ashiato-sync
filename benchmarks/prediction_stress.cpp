@@ -350,14 +350,6 @@ void maybe_mispredict(
     }
 }
 
-void clear_dirty(ecs::Registry& registry) {
-    registry.clear_all_dirty<PredPosition>();
-    registry.clear_all_dirty<PredVelocity>();
-    registry.clear_all_dirty<PredAcceleration>();
-    registry.clear_all_dirty<PredEnergy>();
-    registry.clear_all_dirty<PredFlags>();
-}
-
 std::uint32_t parse_u32(const std::string& arg, const std::string& value) {
     const unsigned long parsed = std::stoul(value);
     if (parsed > std::numeric_limits<std::uint32_t>::max()) {
@@ -529,7 +521,6 @@ Report run(const Config& config) {
         {
             ScopedTimer timer(report.timing.server_replication_seconds);
             server.tick(server_registry);
-            clear_dirty(server_registry);
         }
     }
 

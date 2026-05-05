@@ -1200,6 +1200,16 @@ int main(int argc, char** argv) {
             queue_packet(downstream_link, server_socket, client_address, packet, stats, true);
         }
     };
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    kage::sync::TraceOptions trace_options;
+    trace_options.enabled = !trace_dir.empty();
+    trace_options.directory = trace_dir;
+    trace_options.frame_data = trace_frame_data;
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+    trace_options.packet_logs = trace_packet_logs;
+#endif
+    server_options.trace = trace_options;
+#endif
     kage::sync::ReplicationServer server(server_options);
     kage::sync::ReplicationClientOptions client_options;
     client_options.mtu_bytes = 1200;
@@ -1218,20 +1228,10 @@ int main(int argc, char** argv) {
     };
     client_options.fixed_dt_seconds = 1.0 / 30.0;
     client_options.rollback_policy = kage::sync::ReplicationRollbackPolicy::OnlyAffected;
-    kage::sync::ReplicationClient client(client_options);
 #ifdef KAGE_SYNC_ENABLE_TRACING
-    std::unique_ptr<kage::sync::KTraceDirectoryWriter> trace_writer;
-    if (!trace_dir.empty()) {
-        trace_writer = std::make_unique<kage::sync::KTraceDirectoryWriter>(
-            kage::sync::KTraceDirectoryWriterOptions{trace_dir});
-        trace_writer->tracer().set_frame_data_enabled(trace_frame_data);
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
-        trace_writer->tracer().set_packet_logs_enabled(trace_packet_logs);
+    client_options.trace = trace_options;
 #endif
-        server.set_tracer(&trace_writer->tracer());
-        client.set_tracer(&trace_writer->tracer());
-    }
-#endif
+    kage::sync::ReplicationClient client(client_options);
     register_client_prediction_jobs(client_registry, client);
 
     InitWindow(1280, 720, "kage-sync localhost balls");
@@ -1442,9 +1442,8 @@ int main(int argc, char** argv) {
 
     CloseWindow();
 #ifdef KAGE_SYNC_ENABLE_TRACING
-    if (trace_writer != nullptr) {
-        trace_writer->close();
-    }
+    client.close_trace();
+    server.close_trace();
 #endif
     close_socket(client_socket);
     close_socket(server_socket);

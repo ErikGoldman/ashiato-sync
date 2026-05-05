@@ -22,6 +22,12 @@ struct ServerDueInput {
 
 class ServerInputBuffer {
 public:
+    bool set_local_frame(
+        SyncFrame frame,
+        const std::uint8_t* bytes,
+        std::size_t quantized_size,
+        std::size_t capacity_frames);
+
     bool process_packet_payload(
         ecs::BitBuffer& packet,
         const SyncComponentOps& ops,

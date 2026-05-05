@@ -12,6 +12,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <typeindex>
+#include <utility>
 
 namespace fps {
 namespace {
@@ -33,8 +34,8 @@ void push_replay_component(const ecs::Registry& registry, std::vector<ecs::Entit
     }
 }
 
-ecs::SnapshotIoOptions build_replay_snapshot_options(const ecs::Registry& registry) {
-    ecs::SnapshotIoOptions options;
+ecs::SnapshotComponentOptions build_replay_snapshot_options(const ecs::Registry& registry) {
+    ecs::SnapshotComponentOptions options;
     std::vector<ecs::Entity> components;
     components.reserve(16);
 
@@ -102,8 +103,17 @@ std::uint8_t read_u8(std::istream& in) {
 constexpr std::uint32_t replay_frame_magic = 0x52535046U;
 constexpr std::uint32_t replay_frame_version = 2U;
 constexpr std::uint8_t replay_done_message = 200U;
-constexpr kage::sync::SyncFrame replay_preroll_frames = 3U * 60U;
-constexpr kage::sync::SyncFrame replay_tail_frames = 1U * 60U;
+constexpr std::uint8_t replay_target_message = 201U;
+constexpr kage::sync::SyncFrame replay_frames_for_seconds(float seconds) {
+    return static_cast<kage::sync::SyncFrame>(seconds / fixed_dt + 0.5f);
+}
+
+constexpr float replay_transfer_budget_seconds = 0.5f;
+constexpr kage::sync::SyncFrame replay_preroll_frames = replay_frames_for_seconds(3.0f);
+constexpr kage::sync::SyncFrame replay_total_frames =
+    replay_frames_for_seconds(respawn_seconds - replay_transfer_budget_seconds);
+constexpr kage::sync::SyncFrame replay_tail_frames =
+    replay_total_frames > replay_preroll_frames ? replay_total_frames - replay_preroll_frames : 0U;
 constexpr double replay_done_resend_seconds = 1.0;
 constexpr double replay_session_timeout_seconds = 8.0;
 constexpr float replay_client_timeout_seconds = 8.0f;
@@ -115,13 +125,6 @@ struct ReplayCueRecord {
     float relevance_seconds = 0.0f;
     bool only_replicate_to_owner = false;
     std::string payload;
-};
-
-struct ReplayKillCamTargetDebug {
-    bool last_available = false;
-    bool last_tagged = false;
-    bool last_replicated = false;
-    bool initialized = false;
 };
 
 struct ReplayFrameData {
@@ -150,6 +153,22 @@ void send_replay_done(SocketHandle socket, const sockaddr_in& target) {
     ecs::BitBuffer packet;
     packet.push_bits(replay_done_message, 8U);
     send_packet(socket, target, packet);
+}
+
+void send_replay_target(SocketHandle socket, const sockaddr_in& target, std::uint64_t player_id) {
+    ecs::BitBuffer packet;
+    packet.push_bits(replay_target_message, 8U);
+    packet.push_unsigned_bits(player_id, 64U);
+    send_packet(socket, target, packet);
+}
+
+bool read_replay_target(ecs::BitBuffer packet, std::uint64_t& player_id) {
+    if (packet.remaining_bits() < 8U + 64U ||
+        static_cast<std::uint8_t>(packet.read_bits(8U)) != replay_target_message) {
+        return false;
+    }
+    player_id = packet.read_unsigned_bits(64U);
+    return true;
 }
 
 void write_string_payload(std::ostream& out, const std::string& payload) {
@@ -335,81 +354,6 @@ void mark_restored_replicated_dirty(ecs::Registry& registry) {
     }
 }
 
-ecs::Entity set_replay_kill_cam_target(ecs::Registry& registry, std::uint64_t killer_entity_value) {
-    std::vector<ecs::Entity> previous_targets;
-    registry.view<const kage::sync::Replicated>().with_tags<const FpsKillCamTarget>().each([&previous_targets](ecs::Entity entity, const kage::sync::Replicated&) {
-        previous_targets.push_back(entity);
-    });
-    for (ecs::Entity entity : previous_targets) {
-        registry.remove<FpsKillCamTarget>(entity);
-    }
-
-    const ecs::Entity killer_entity{killer_entity_value};
-    if (killer_entity && registry.alive(killer_entity) && registry.contains<kage::sync::Replicated>(killer_entity)) {
-        registry.add<FpsKillCamTarget>(killer_entity);
-    }
-    return killer_entity;
-}
-
-void log_replay_kill_cam_target_state(
-    const char* phase,
-    ecs::Registry& registry,
-    std::uint64_t killer_entity_value,
-    ecs::Entity killer_entity,
-    kage::sync::SyncFrame frame,
-    ReplayKillCamTargetDebug& debug) {
-    const ecs::Entity kill_cam_target = registry.component<FpsKillCamTarget>();
-    const bool killer_alive = killer_entity && registry.alive(killer_entity);
-    const bool killer_replicated = killer_alive && registry.contains<kage::sync::Replicated>(killer_entity);
-    const bool killer_tagged = killer_alive && registry.has(killer_entity, kill_cam_target);
-    if (debug.initialized &&
-        debug.last_available == killer_alive &&
-        debug.last_replicated == killer_replicated &&
-        debug.last_tagged == killer_tagged) {
-        return;
-    }
-    debug.initialized = true;
-    debug.last_available = killer_alive;
-    debug.last_replicated = killer_replicated;
-    debug.last_tagged = killer_tagged;
-
-    std::size_t tagged_count = 0;
-    ecs::Entity tagged_entity;
-    registry.view<const kage::sync::Replicated>().with_tags<const FpsKillCamTarget>().each(
-        [&tagged_count, &tagged_entity](ecs::Entity entity, const kage::sync::Replicated&) {
-            ++tagged_count;
-            if (!tagged_entity) {
-                tagged_entity = entity;
-            }
-        });
-
-    std::uint64_t killer_visible_mask = 0;
-    const kage::sync::SyncSettings& settings = registry.get<kage::sync::SyncSettings>();
-    if (killer_alive) {
-        const kage::sync::Replicated* replicated = registry.try_get<kage::sync::Replicated>(killer_entity);
-        if (replicated != nullptr && replicated->archetype.value < settings.archetypes.size()) {
-            const kage::sync::SyncArchetype& archetype = settings.archetypes[replicated->archetype.value];
-            for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
-                if (registry.has(killer_entity, archetype.tags[tag_index].tag)) {
-                    killer_visible_mask |= std::uint64_t{1} << tag_index;
-                }
-            }
-        }
-    }
-
-    std::cerr << "fps replay kill cam target " << phase
-              << " frame=" << frame
-              << " killer_entity_value=" << killer_entity_value
-              << " killer=" << killer_entity.value
-              << " killer_alive=" << (killer_alive ? "yes" : "no")
-              << " killer_replicated=" << (killer_replicated ? "yes" : "no")
-              << " killer_tagged=" << (killer_tagged ? "yes" : "no")
-              << " tagged_count=" << tagged_count
-              << " tagged_entity=" << tagged_entity.value
-              << " killer_tag_mask=0x" << std::hex << killer_visible_mask << std::dec
-              << '\n';
-}
-
 void emit_replay_cues(ecs::Registry& registry, const std::vector<ReplayCueRecord>& cues) {
     const kage::sync::SyncSettings& settings = registry.get<kage::sync::SyncSettings>();
     const auto shot_type = settings.cue_type_ids.at(std::type_index(typeid(ShotCue)));
@@ -475,16 +419,17 @@ void emit_replay_cues(ecs::Registry& registry, const std::vector<ReplayCueRecord
 
 struct FpsReplayServer::Session {
     kage::sync::SyncFrame end_frame = 0;
+    SocketHandle socket = invalid_socket_handle;
     sockaddr_in address{};
     std::size_t next_entry = 0;
     std::uint64_t killer_entity_value = 0;
+    std::uint64_t killer_player_id = 0;
     ecs::Registry registry;
     std::unique_ptr<kage::sync::ReplicationServer> server;
     bool ready = false;
     bool done = false;
     double lifetime_seconds = 0.0;
     double done_notify_seconds = 0.0;
-    ReplayKillCamTargetDebug target_debug;
 
     Session(
         const FpsReplayRecorder& recorder,
@@ -496,8 +441,10 @@ struct FpsReplayServer::Session {
         std::uint64_t recorded_killer_entity_value,
         const ecs::BitBuffer& connect_packet)
         : end_frame(death_frame + replay_tail_frames),
+          socket(socket),
           address(peer_address),
-          killer_entity_value(recorded_killer_entity_value) {
+          killer_entity_value(recorded_killer_entity_value),
+          killer_player_id(recorded_killer_entity_value) {
         const auto& entries = recorder.entries();
         const kage::sync::SyncFrame target = death_frame > replay_preroll_frames
             ? death_frame - replay_preroll_frames
@@ -518,8 +465,10 @@ struct FpsReplayServer::Session {
         registry.restore_snapshot(ecs::Registry::Snapshot::read(payload));
         kage::sync::configure_server(registry);
         (void)define_schema(registry);
-        const ecs::Entity killer_entity = set_replay_kill_cam_target(registry, killer_entity_value);
-        log_replay_kill_cam_target_state("initial", registry, killer_entity_value, killer_entity, entries[start].frame, target_debug);
+        const ecs::Entity killer_entity{killer_entity_value};
+        if (const FpsUniquePlayerId* unique = registry.try_get<FpsUniquePlayerId>(killer_entity)) {
+            killer_player_id = unique->value;
+        }
         mark_restored_replicated_dirty(registry);
 
         kage::sync::ReplicationServerOptions options;
@@ -552,6 +501,7 @@ struct FpsReplayServer::Session {
         const bool processed = server->process_packet(registry, peer, std::move(packet));
         if (processed && ack) {
             ready = true;
+            send_replay_target(socket, address, killer_player_id);
         }
     }
 
@@ -588,18 +538,29 @@ struct FpsReplayServer::Session {
         } else {
             registry.restore_delta_snapshot(ecs::Registry::DeltaSnapshot::read(payload));
         }
-        const ecs::Entity killer_entity = set_replay_kill_cam_target(registry, killer_entity_value);
-        log_replay_kill_cam_target_state("pre_send", registry, killer_entity_value, killer_entity, entry.frame, target_debug);
         mark_restored_replicated_dirty(registry);
         emit_replay_cues(registry, frame_data.cues);
-        server->begin_tick(registry);
-        server->end_tick(registry);
+        server->advance_frame_without_simulating(registry);
         ++next_entry;
     }
 };
 
 FpsReplayRecorder::FpsReplayRecorder(const ecs::Registry& registry, const std::string& directory) {
-    options_ = build_replay_snapshot_options(registry);
+    kage::sync::SnapshotWriterOptions options;
+    options.component_options = build_replay_snapshot_options(registry);
+    options.full_snapshot_interval_frames = 60;
+    options.write = [this](const kage::sync::SnapshotWriterFrame& frame) {
+        if (frame.registry == nullptr) {
+            return;
+        }
+        write_frame(
+            *frame.registry,
+            frame.kind == kage::sync::SnapshotWriterFrameKind::Full ? FrameKind::Full : FrameKind::Delta,
+            frame.frame,
+            frame.payload,
+            frame.cues);
+    };
+    writer_ = kage::sync::SnapshotWriter(std::move(options));
 
     std::filesystem::create_directories(directory);
     frame_path_ = (std::filesystem::path(directory) / "frames.bin").string();
@@ -609,27 +570,12 @@ FpsReplayRecorder::FpsReplayRecorder(const ecs::Registry& registry, const std::s
     }
 }
 
-void FpsReplayRecorder::record(
-    const ecs::Registry& registry,
-    kage::sync::SyncFrame frame,
-    kage::sync::QueuedSyncCueView cues) {
-    const bool write_full = last_full_ == nullptr || frame % full_snapshot_interval_frames == 0U;
-    std::stringstream payload(std::ios::in | std::ios::out | std::ios::binary);
-    if (write_full) {
-        auto snapshot = std::make_unique<ecs::Registry::Snapshot>(registry.create_snapshot());
-        snapshot->write(payload, options_);
-        write_frame(registry, FrameKind::Full, frame, payload.str(), cues);
-        last_full_ = std::move(snapshot);
-        last_delta_.reset();
-        return;
-    }
+void FpsReplayRecorder::attach(kage::sync::ReplicationServer& server) {
+    writer_.attach(server);
+}
 
-    auto delta = last_delta_ != nullptr
-        ? std::make_unique<ecs::Registry::DeltaSnapshot>(registry.create_delta_snapshot(*last_delta_))
-        : std::make_unique<ecs::Registry::DeltaSnapshot>(registry.create_delta_snapshot(*last_full_));
-    delta->write(payload, options_);
-    write_frame(registry, FrameKind::Delta, frame, payload.str(), cues);
-    last_delta_ = std::move(delta);
+void FpsReplayRecorder::detach() {
+    writer_.detach();
 }
 
 void FpsReplayRecorder::write_frame(
@@ -776,6 +722,7 @@ void FpsDeathCamClient::start(const std::string& host, std::uint16_t replay_port
     });
     active_seconds_ = 0.0f;
     replay_done_received_ = false;
+    target_player_id_ = 0;
     replay_done_drain_seconds_ = 0.0f;
     active_ = true;
 }
@@ -789,6 +736,11 @@ void FpsDeathCamClient::tick(float dt_seconds) {
     while (receive_packet(socket_, packet)) {
         if (is_replay_done_packet(packet)) {
             replay_done_received_ = true;
+            continue;
+        }
+        std::uint64_t target_player_id = 0;
+        if (read_replay_target(packet, target_player_id)) {
+            target_player_id_ = target_player_id;
             continue;
         }
         client_->receive_packet(packet);
@@ -816,6 +768,7 @@ void FpsDeathCamClient::stop() {
     active_ = false;
     active_seconds_ = 0.0f;
     replay_done_received_ = false;
+    target_player_id_ = 0;
     replay_done_drain_seconds_ = 0.0f;
 }
 

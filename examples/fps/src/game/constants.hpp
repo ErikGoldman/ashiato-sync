@@ -26,7 +26,7 @@ constexpr float stun_seconds = 2.0f;
 constexpr float stun_bot_radius = capsule_radius * 0.66f;
 constexpr float stun_bot_height = capsule_height * 0.36f;
 constexpr float stun_bot_hover_y = eye_height + 0.15f;
-constexpr float respawn_seconds = 3.0f;
+constexpr float respawn_seconds = 4.0f;
 
 struct CoverBox {
     Vector3 center{};

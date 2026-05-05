@@ -18,6 +18,7 @@
 namespace kage::sync {
 
 class SyncTracer;
+class KTraceDirectoryWriter;
 enum class SyncTraceEventType : std::uint8_t;
 
 namespace client_detail {
@@ -162,6 +163,9 @@ struct ReplicationClientOptions {
     std::uint32_t adaptive_ping_stable_samples = 4;
     float adaptive_ping_stable_threshold_frames = 0.5f;
     float adaptive_ping_jump_threshold_frames = 3.0f;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    TraceOptions trace;
+#endif
 };
 
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
@@ -341,6 +345,9 @@ public:
     }
 #ifdef KAGE_SYNC_ENABLE_TRACING
     void set_tracer(SyncTracer* tracer) noexcept;
+    void set_trace_options(TraceOptions options);
+    void flush_trace();
+    void close_trace();
 #endif
 
     bool set_default_entity_mode(ReplicationClientMode mode) noexcept;
@@ -778,6 +785,7 @@ private:
     bool has_server_update_packet_window_ = false;
 #ifdef KAGE_SYNC_ENABLE_TRACING
     SyncTracer* tracer_ = nullptr;
+    std::unique_ptr<KTraceDirectoryWriter> trace_writer_;
 #endif
 };
 

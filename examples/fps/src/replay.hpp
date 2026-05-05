@@ -27,10 +27,8 @@ public:
     FpsReplayRecorder(const FpsReplayRecorder&) = delete;
     FpsReplayRecorder& operator=(const FpsReplayRecorder&) = delete;
 
-    void record(
-        const ecs::Registry& registry,
-        kage::sync::SyncFrame frame,
-        kage::sync::QueuedSyncCueView cues = {});
+    void attach(kage::sync::ReplicationServer& server);
+    void detach();
     const std::string& frame_path() const noexcept { return frame_path_; }
     const std::vector<FrameEntry>& entries() const noexcept { return entries_; }
 
@@ -40,14 +38,10 @@ private:
         Delta = 2
     };
 
-    static constexpr kage::sync::SyncFrame full_snapshot_interval_frames = 60;
-
-    ecs::SnapshotIoOptions options_;
     std::string frame_path_;
     std::ofstream frames_;
     std::vector<FrameEntry> entries_;
-    std::unique_ptr<ecs::Registry::Snapshot> last_full_;
-    std::unique_ptr<ecs::Registry::DeltaSnapshot> last_delta_;
+    kage::sync::SnapshotWriter writer_;
 
     void write_frame(
         const ecs::Registry& registry,
@@ -97,6 +91,7 @@ public:
     void start(const std::string& host, std::uint16_t replay_port, kage::sync::ClientId client_id);
     void tick(float dt_seconds);
     void stop();
+    std::uint64_t target_player_id() const noexcept { return target_player_id_; }
 
     ecs::Registry& registry() { return *registry_; }
     kage::sync::ReplicationClient& client() { return *client_; }
@@ -105,6 +100,7 @@ private:
     bool active_ = false;
     float active_seconds_ = 0.0f;
     bool replay_done_received_ = false;
+    std::uint64_t target_player_id_ = 0;
     float replay_done_drain_seconds_ = 0.0f;
     SocketHandle socket_ = invalid_socket_handle;
     sockaddr_in server_address_{};

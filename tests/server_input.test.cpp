@@ -79,6 +79,61 @@ TEST_CASE("replication server decodes client input, upserts owned entities, and 
     ack_packet.read_bits(kage::sync::protocol::server_packet_id_bits);
 }
 
+TEST_CASE("replication server applies local client input without packets") {
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+    kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    kage::sync::configure_server(registry);
+    REQUIRE(kage::sync::set_client_input_component<NetworkedPosition>(registry));
+
+    kage::sync::ReplicationServer server;
+    const kage::sync::ClientId local = server.add_local_client();
+    REQUIRE(local != kage::sync::invalid_client_id);
+
+    const ecs::Entity owned = registry.create();
+    REQUIRE(registry.add<NetworkedPosition>(owned, NetworkedPosition{}) != nullptr);
+    REQUIRE(kage::sync::set_owner(registry, owned, local));
+    REQUIRE(start_sync(registry, owned, archetype));
+
+    REQUIRE(server.set_local_input(registry, NetworkedPosition{7.0f, 8.0f}));
+    server.tick(registry);
+
+    REQUIRE(registry.get<NetworkedPosition>(owned).x == 7.0f);
+    REQUIRE(registry.get<NetworkedPosition>(owned).y == 8.0f);
+    const kage::sync::ReplicationServer::ClientInputStats stats = server.input_stats(local);
+    REQUIRE(stats.latest_received_input_frame == 1);
+    REQUIRE(stats.latest_applied_input_frame == 1);
+    REQUIRE(stats.input_frames_applied == 1);
+}
+
+TEST_CASE("replication server can advance frame without applying queued input") {
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+    kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    kage::sync::configure_server(registry);
+    REQUIRE(kage::sync::set_client_input_component<NetworkedPosition>(registry));
+
+    kage::sync::ReplicationServer server;
+    const kage::sync::ClientId local = server.add_local_client();
+    REQUIRE(local != kage::sync::invalid_client_id);
+
+    const ecs::Entity owned = registry.create();
+    REQUIRE(registry.add<NetworkedPosition>(owned, NetworkedPosition{}) != nullptr);
+    REQUIRE(kage::sync::set_owner(registry, owned, local));
+    REQUIRE(start_sync(registry, owned, archetype));
+
+    REQUIRE(server.set_local_input(registry, NetworkedPosition{7.0f, 8.0f}));
+    server.advance_frame_without_simulating(registry);
+
+    REQUIRE(registry.get<NetworkedPosition>(owned).x == 0.0f);
+    REQUIRE(registry.get<NetworkedPosition>(owned).y == 0.0f);
+    REQUIRE(server.frame() == 1);
+    const kage::sync::ReplicationServer::ClientInputStats stats = server.input_stats(local);
+    REQUIRE(stats.latest_received_input_frame == 1);
+    REQUIRE(stats.latest_applied_input_frame == 0);
+    REQUIRE(stats.input_frames_applied == 0);
+}
+
 TEST_CASE("replication server phased tick replicates post-input simulation state") {
     ecs::Registry server_registry;
     const kage::sync::SyncArchetypeId server_archetype = define_position_archetype(server_registry);

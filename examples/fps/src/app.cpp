@@ -103,6 +103,19 @@ PROCESS_INFORMATION spawn_process(const std::vector<std::string>& args) {
     return process;
 }
 
+struct RemoteClientLauncher::Impl {
+    std::vector<PROCESS_INFORMATION> clients;
+
+    ~Impl() {
+        for (PROCESS_INFORMATION& client : clients) {
+            TerminateProcess(client.hProcess, 0);
+            WaitForSingleObject(client.hProcess, 2000);
+            CloseHandle(client.hThread);
+            CloseHandle(client.hProcess);
+        }
+    }
+};
+
 void run_launcher(const AppConfig& config) {
     std::vector<std::string> server_args{
         config.executable,
@@ -164,6 +177,24 @@ pid_t spawn_process(const std::vector<std::string>& args) {
     return pid;
 }
 
+struct RemoteClientLauncher::Impl {
+    std::vector<pid_t> clients;
+
+    ~Impl() {
+        for (pid_t client : clients) {
+            kill(client, SIGTERM);
+        }
+        for (pid_t client : clients) {
+            int status = 0;
+            while (waitpid(client, &status, 0) < 0) {
+                if (errno != EINTR) {
+                    break;
+                }
+            }
+        }
+    }
+};
+
 void run_launcher(const AppConfig& config) {
     std::vector<std::string> server_args{
         config.executable,
@@ -209,6 +240,33 @@ void run_launcher(const AppConfig& config) {
 
 #endif
 
+RemoteClientLauncher::RemoteClientLauncher(const AppConfig& config)
+    : impl_(std::make_unique<Impl>()) {
+    if (config.clients <= 0) {
+        return;
+    }
+    if (config.executable.empty()) {
+        throw std::runtime_error("cannot determine executable path for spawned clients");
+    }
+    impl_->clients.reserve(static_cast<std::size_t>(config.clients));
+    for (int index = 0; index < config.clients; ++index) {
+        std::vector<std::string> client_args{
+            config.executable,
+            "--client",
+            "--host",
+            config.host,
+            "--port",
+            to_string_port(config.port)};
+        append_link_args(config, client_args);
+        append_trace_args(config, client_args);
+        append_replay_args(config, client_args);
+        impl_->clients.push_back(spawn_process(client_args));
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    }
+}
+
+RemoteClientLauncher::~RemoteClientLauncher() = default;
+
 AppConfig parse_args(int argc, char** argv) {
     AppConfig config;
     if (argc > 0 && argv[0] != nullptr) {
@@ -226,6 +284,8 @@ AppConfig parse_args(int argc, char** argv) {
             config.server = true;
         } else if (arg == "--client") {
             config.client = true;
+        } else if (arg == "--listen") {
+            config.listen = true;
         } else if (arg == "--clients") {
             config.launcher = true;
             config.clients = std::max(0, std::stoi(require_value()));
@@ -277,14 +337,15 @@ AppConfig parse_args(int argc, char** argv) {
             throw std::runtime_error("unknown argument: " + arg);
         }
     }
-    const int modes = (config.server ? 1 : 0) + (config.client ? 1 : 0) + (config.launcher ? 1 : 0);
+    const int modes = (config.server ? 1 : 0) + (config.client ? 1 : 0) +
+        (config.launcher && !config.listen ? 1 : 0) + (config.listen ? 1 : 0);
     if (modes != 1) {
-        throw std::runtime_error("pass exactly one of --server, --client, or --clients N");
+        throw std::runtime_error("pass exactly one of --server, --client, --listen, or --clients N");
     }
-    if (config.launcher && config.clients <= 0) {
+    if (config.launcher && !config.listen && config.clients <= 0) {
         throw std::runtime_error("--clients must be greater than zero");
     }
-    if (config.executable.empty()) {
+    if (config.executable.empty() && (config.launcher || (config.listen && config.clients > 0))) {
         throw std::runtime_error("cannot determine executable path for launcher mode");
     }
     if (config.replay_port == 0U) {

@@ -358,6 +358,8 @@ public:
     static KTraceSourceHistory build_source_history(KTraceFile file);
 };
 
+std::unique_ptr<KTraceDirectoryWriter> make_trace_writer(const TraceOptions& options);
+
 }  // namespace kage::sync
 
 #endif

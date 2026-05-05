@@ -1247,12 +1247,6 @@ inline StressReport run_stress(const StressConfig& input_config) {
         {
             ScopedTimer timer(report.timing.server_replication_seconds);
             server.tick(server_registry);
-            server_registry.clear_all_dirty<BallPosition>();
-            server_registry.clear_all_dirty<BallVisual>();
-            server_registry.clear_all_dirty<BallHealth>();
-            server_registry.clear_all_dirty<BallPoison>();
-            server_registry.clear_all_dirty<BallSpawnTagged>();
-            server_registry.clear_all_dirty<BallBounced>();
         }
 
         if ((tick % 16U) == 0U) {

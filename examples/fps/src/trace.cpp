@@ -4,17 +4,15 @@
 
 namespace fps {
 
-std::unique_ptr<kage::sync::KTraceDirectoryWriter> make_trace_writer(const AppConfig& config) {
-    if (config.trace_dir.empty()) {
-        return nullptr;
-    }
-    auto writer = std::make_unique<kage::sync::KTraceDirectoryWriter>(
-        kage::sync::KTraceDirectoryWriterOptions{config.trace_dir});
-    writer->tracer().set_frame_data_enabled(config.trace_frame_data);
+kage::sync::TraceOptions make_trace_options(const AppConfig& config) {
+    kage::sync::TraceOptions options;
+    options.enabled = !config.trace_dir.empty();
+    options.directory = config.trace_dir;
+    options.frame_data = config.trace_frame_data;
 #ifdef KAGE_SYNC_TRACE_PACKET_LOGS
-    writer->tracer().set_packet_logs_enabled(config.trace_packet_logs);
+    options.packet_logs = config.trace_packet_logs;
 #endif
-    return writer;
+    return options;
 }
 
 }  // namespace fps

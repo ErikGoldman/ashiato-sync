@@ -86,6 +86,7 @@ struct ReplicationServer::ClientState {
     ClientId peer = invalid_client_id;
     std::uint64_t epoch = 0;
     std::uint32_t next_packet_id = 1;
+    bool local = false;
     bool ready_for_updates = true;
     double connect_resend_accumulator_seconds = 0.0;
     double idle_seconds = 0.0;

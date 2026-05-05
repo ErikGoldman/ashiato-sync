@@ -1121,6 +1121,23 @@ SyncTraceHistory KTraceReader::read_directory(const std::string& directory) cons
     return history;
 }
 
+std::unique_ptr<KTraceDirectoryWriter> make_trace_writer(const TraceOptions& options) {
+    if (!options.enabled) {
+        return nullptr;
+    }
+    KTraceDirectoryWriterOptions writer_options;
+    writer_options.directory = options.directory;
+    writer_options.queue_capacity_bytes = options.queue_capacity_bytes;
+    writer_options.flush_threshold_bytes = options.flush_threshold_bytes;
+    writer_options.truncate_existing = options.truncate_existing;
+    auto writer = std::make_unique<KTraceDirectoryWriter>(std::move(writer_options));
+    writer->tracer().set_frame_data_enabled(options.frame_data);
+#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+    writer->tracer().set_packet_logs_enabled(options.packet_logs);
+#endif
+    return writer;
+}
+
 }  // namespace kage::sync
 
 #endif

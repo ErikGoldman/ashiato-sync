@@ -1,10 +1,12 @@
 #pragma once
 
-#include "kage/sync/types.hpp"
+#include "kage/sync/components.hpp"
+#include "kage/sync/frame_delegate.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -13,6 +15,8 @@
 namespace kage::sync {
 
 class SyncTracer;
+class KTraceDirectoryWriter;
+class DisplayFrameInterpolation;
 
 class ReplicationServer {
 public:
@@ -39,9 +43,17 @@ public:
     void set_packet_sender(TransportFn sender);
 #ifdef KAGE_SYNC_ENABLE_TRACING
     void set_tracer(SyncTracer* tracer) noexcept;
+    void set_trace_options(TraceOptions options);
+    void flush_trace();
+    void close_trace();
 #endif
 
     bool add_client(ClientId client);
+    ClientId add_local_client();
+    ClientId local_client() const noexcept {
+        return local_client_;
+    }
+    bool is_local_client(ClientId client) const noexcept;
     bool remove_client(ClientId client);
     bool has_client(ClientId client) const;
     std::size_t client_count() const noexcept;
@@ -55,12 +67,29 @@ public:
     void receive_packet(ClientId client, ecs::BitBuffer packet);
     bool process_packet(ClientId client, ecs::BitBuffer packet);
     bool process_packet(ecs::Registry& registry, ClientId client, ecs::BitBuffer packet);
+    template <typename T>
+    bool set_local_input(ecs::Registry& registry, const T& input) {
+        register_components(registry);
+        const ecs::Entity component = registry.template component<T>();
+        const SyncSettings& settings = registry.template get<SyncSettings>();
+        if (settings.input_component != component) {
+            return false;
+        }
+        return set_local_input_bytes(registry, component, &input);
+    }
+    bool set_local_input_bytes(ecs::Registry& registry, ecs::Entity component, const void* input);
     ClientInputStats input_stats(ClientId client) const noexcept;
     std::size_t retained_quantized_frame_count() const noexcept;
     std::size_t retained_quantized_frame_bytes() const noexcept;
+    FrameDelegate& after_frame() noexcept {
+        return after_frame_;
+    }
 
     void begin_tick(ecs::Registry& registry);
     void end_tick(ecs::Registry& registry);
+    // Advance the replication frame and send the current registry state without
+    // applying input or running simulation; mostly used for replay playback.
+    void advance_frame_without_simulating(ecs::Registry& registry);
     bool tick(ecs::Registry& registry, double dt_seconds);
     void tick(ecs::Registry& registry);
     // Current server simulation frame; remains 0 until the first tick begins.
@@ -75,6 +104,8 @@ public:
     }
 
 private:
+    friend class DisplayFrameInterpolation;
+
     static constexpr std::uint32_t invalid_quantized_frame_id = std::numeric_limits<std::uint32_t>::max();
 
     struct ReplicatedSlot;
@@ -102,8 +133,12 @@ private:
     void free_network_id(ClientState& client, std::uint32_t network_id);
     std::uint32_t network_id_for_slot(ClientState& client, std::uint32_t slot);
     bool slot_is_replicable(const ecs::Registry& registry, std::uint32_t slot) const;
-    void capture_dirty_components(const ecs::Registry& registry, const SyncSettings& settings);
-    void capture_queued_cues(const ecs::Registry& registry, const SyncSettings& settings);
+    void publish_frame(ecs::Registry& registry);
+    void replicate_frame(ecs::Registry& registry, ecs::Registry::DirtyView dirty);
+    void refresh_replicated(ecs::Registry& registry, ecs::Registry::DirtyView dirty);
+    void capture_dirty_components(ecs::Registry::DirtyView dirty, const SyncSettings& settings);
+    void capture_queued_cues(ecs::Registry& registry, const SyncSettings& settings);
+    bool play_local_cue(ecs::Registry& registry, const SyncSettings& settings, const QueuedSyncCue& cue);
     void attach_cue_to_clients(const ecs::Registry& registry, const SyncSettings& settings, std::uint32_t slot, const QueuedSyncCue& cue);
     void expire_pending_cues(ClientState& client, SyncFrame frame);
     void mark_dirty_component(const SyncSettings& settings, std::uint32_t slot, ecs::Entity component);
@@ -113,8 +148,8 @@ private:
     static bool archetype_is_same_frame_cacheable(const SyncArchetype& archetype);
     void refresh_client_priorities(const ecs::Registry& registry, ClientState& client);
     void tick_serialized(ecs::Registry& registry);
-    void tick_serialized_parallel(ecs::Registry& registry);
-    void emit_post_tick(const ecs::Registry& registry);
+    void tick_serialized_parallel(ecs::Registry& registry, ecs::Registry::DirtyView dirty);
+    void emit_after_frame(const ecs::Registry& registry, ecs::Registry::DirtyView dirty);
     void disconnect_idle_clients();
     bool serialize_entity(
         const ecs::Registry& registry,
@@ -166,6 +201,7 @@ private:
         const ecs::BitBuffer& records,
         const std::vector<PacketAckRecord>& ack_records);
     bool add_client_for_peer(ClientId peer, ClientId client, bool ready_for_updates);
+    bool add_client_state(ClientState state);
     void send_connect_response(ClientState& client);
     void send_pong(
         ClientId peer,
@@ -225,13 +261,16 @@ private:
     std::unordered_map<ClientId, std::size_t> peer_to_index_;
     std::vector<PendingInboundPacket> inbound_packets_;
     std::vector<QueuedSyncCue> post_tick_cues_;
+    FrameDelegate after_frame_;
     std::size_t active_replicated_count_ = 0;
     ClientId next_connect_client_id_ = 1;
+    ClientId local_client_ = invalid_client_id;
     SyncFrame frame_ = 0;
     double tick_accumulator_seconds_ = 0.0;
     bool replicated_initialized_ = false;
 #ifdef KAGE_SYNC_ENABLE_TRACING
     SyncTracer* tracer_ = nullptr;
+    std::unique_ptr<KTraceDirectoryWriter> trace_writer_;
 #endif
 };
 

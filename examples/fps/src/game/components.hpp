@@ -43,6 +43,10 @@ struct FpsStunned {};
 
 struct FpsKillCamTarget {};
 
+struct FpsUniquePlayerId {
+    std::uint64_t value = 0;
+};
+
 struct FpsStunState {
     float remaining = 0.0f;
 };

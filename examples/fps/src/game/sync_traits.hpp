@@ -19,6 +19,7 @@ using fps::FpsInput;
 using fps::FpsShotEffect;
 using fps::FpsSurfaceHitEffect;
 using fps::FpsTransform;
+using fps::FpsUniquePlayerId;
 using fps::FpsVelocity;
 using fps::FpsVisual;
 using fps::HitConfirmCue;
@@ -71,6 +72,33 @@ inline Vector3 deserialize_fps_cue_normal(ecs::BitBuffer& in) {
 }
 
 }  // namespace detail
+
+template <>
+struct SyncComponentTraits<FpsUniquePlayerId> {
+    using Quantized = FpsUniquePlayerId;
+
+    static Quantized quantize(const FpsUniquePlayerId& value) {
+        return value;
+    }
+
+    static FpsUniquePlayerId dequantize(const Quantized& value) {
+        return value;
+    }
+
+    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+        out.push_unsigned_bits(current.value, 64U);
+    }
+
+    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+        out.value = in.read_unsigned_bits(64U);
+        return true;
+    }
+
+    static bool should_roll_back(const Quantized& predicted, const Quantized& authoritative) {
+        TRACE_ROLLBACK_IF(predicted.value != authoritative.value, "FpsUniquePlayerId.value");
+        return false;
+    }
+};
 
 template <>
 struct SyncComponentTraits<NetworkOwner> {

@@ -7,6 +7,7 @@ add_library(kage_sync
     components.cpp
     detail/frame_data.cpp
     detail/options_validation.cpp
+    display.cpp
     server.cpp
     server/detail.cpp
     server/input_buffer.cpp
@@ -14,6 +15,7 @@ add_library(kage_sync
     server/packet_ack.cpp
     server/quantized_frame.cpp
     server/transport.cpp
+    snapshot_writer.cpp
     tracing.cpp
 )
 

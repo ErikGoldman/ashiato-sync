@@ -21,6 +21,8 @@ int main(int argc, char** argv) {
         const fps::AppConfig config = fps::parse_args(argc, argv);
         if (config.server) {
             fps::run_server(config);
+        } else if (config.listen) {
+            fps::run_listen_server(config);
         } else if (config.client) {
             fps::run_client(config);
         } else {
@@ -32,6 +34,7 @@ int main(int argc, char** argv) {
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         std::cerr << "usage: kage_sync_fps_example --server [--port N] [--replay-port N] [--bots N] [--replay-dir DIR] [--trace-dir DIR]\n"
+                  << "       kage_sync_fps_example --listen [--clients N] [--port N] [--replay-port N] [--bots N] [--replay-dir DIR] [--trace-dir DIR]\n"
                   << "       kage_sync_fps_example --client [--host A.B.C.D] [--port N] [--replay-port N] [--latency-ms N] [--jitter-ms N] [--trace-dir DIR]\n"
                   << "       kage_sync_fps_example --clients N [--host A.B.C.D] [--port N] [--replay-port N] [--bots N] [--replay-dir DIR] [--latency-ms N] [--jitter-ms N] [--trace-dir DIR]\n"
                   << "       trace options: [--trace-frame-data on|off] [--trace-packet-logs on|off]\n";

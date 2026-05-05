@@ -1,6 +1,5 @@
 add_executable(kage_sync_fps_example
     src/app.cpp
-    src/client.cpp
     src/game/constants.cpp
     src/game/jobs.cpp
     src/game/math.cpp
@@ -8,8 +7,10 @@ add_executable(kage_sync_fps_example
     src/game/simulation.cpp
     src/main.cpp
     src/net.cpp
+    src/raylib_frontend/client.cpp
+    src/raylib_frontend/listen_server_frontend.cpp
+    src/raylib_frontend/rendering.cpp
     src/replay.cpp
-    src/rendering.cpp
     src/server.cpp
     src/trace.cpp
 )

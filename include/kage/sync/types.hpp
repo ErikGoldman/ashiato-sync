@@ -113,6 +113,16 @@ enum class ReplicationRollbackPolicy {
 };
 
 #ifdef KAGE_SYNC_ENABLE_TRACING
+struct TraceOptions {
+    bool enabled = false;
+    std::string directory;
+    std::size_t queue_capacity_bytes = 4 * 1024 * 1024;
+    std::size_t flush_threshold_bytes = 64 * 1024;
+    bool truncate_existing = true;
+    bool frame_data = false;
+    bool packet_logs = false;
+};
+
 struct SyncTraceStringBuilder {
     std::string value;
 
@@ -539,8 +549,10 @@ struct ReplicationServerOptions {
     SyncFrame prioritizer_interval_frames = 4;
     ReplicationPrioritizerFn prioritizer;
     ConnectHandlerFn connect_handler;
-    std::function<void(const ecs::Registry&, SyncFrame, QueuedSyncCueView)> post_tick;
     TransportFn transport;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    TraceOptions trace;
+#endif
 };
 
 }  // namespace kage::sync

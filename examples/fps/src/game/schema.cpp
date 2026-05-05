@@ -12,10 +12,11 @@ SyncSchema define_schema(ecs::Registry& registry) {
     const ecs::Entity combat = kage::sync::register_sync_component<FpsCombatState>(registry, "FpsCombatState");
     const ecs::Entity death = kage::sync::register_sync_component<FpsDeathInfo>(registry, "FpsDeathInfo");
     const ecs::Entity visual = kage::sync::register_sync_component<FpsVisual>(registry, "FpsVisual");
+    const ecs::Entity unique_player_id = kage::sync::register_sync_component<FpsUniquePlayerId>(registry, "FpsUniquePlayerId");
     const ecs::Entity owner = kage::sync::register_sync_component<kage::sync::NetworkOwner>(registry, "kage.sync.NetworkOwner");
     const ecs::Entity no_simulate = registry.component<kage::sync::NoSimulate>();
     const ecs::Entity stunned = registry.register_component<FpsStunned>("FpsStunned");
-    const ecs::Entity kill_cam_target = registry.register_component<FpsKillCamTarget>("FpsKillCamTarget");
+    registry.register_component<FpsKillCamTarget>("FpsKillCamTarget");
     kage::sync::register_sync_component<FpsInput>(registry, "FpsInput");
     registry.register_component<FpsShotEffect>("FpsShotEffect");
     registry.register_component<FpsHitEffect>("FpsHitEffect");
@@ -40,7 +41,6 @@ SyncSchema define_schema(ecs::Registry& registry) {
                 {
                     {no_simulate, kage::sync::ReplicationAudience::All},
                     {stunned, kage::sync::ReplicationAudience::All},
-                    {kill_cam_target, kage::sync::ReplicationAudience::All},
                 },
                 {
                 {transform, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate},
@@ -48,6 +48,7 @@ SyncSchema define_schema(ecs::Registry& registry) {
                 {combat, kage::sync::ReplicationAudience::All},
                 {death, kage::sync::ReplicationAudience::All},
                 {visual, kage::sync::ReplicationAudience::All},
+                {unique_player_id, kage::sync::ReplicationAudience::All},
                 {owner, kage::sync::ReplicationAudience::All},
                 }})};
 }
@@ -74,6 +75,7 @@ ecs::Entity spawn_character(
             255,
             0});
     registry.add<FpsInput>(entity, FpsInput{});
+    registry.add<FpsUniquePlayerId>(entity, FpsUniquePlayerId{entity.value});
     if (registry.get<kage::sync::SyncSettings>().role == kage::sync::SyncRole::Server) {
         registry.add<FpsTransformHistory>(entity, FpsTransformHistory{});
     }

@@ -44,6 +44,30 @@ TEST_CASE("binary sync trace writer writes role-specific files") {
     REQUIRE(client_file.tellg() > 10);
 }
 
+TEST_CASE("replication server owns configured trace writer lifecycle") {
+    const std::string directory = "/tmp/kage_sync_owned_trace_writer_test";
+    std::filesystem::remove_all(directory);
+
+    kage::sync::ReplicationServerOptions options;
+    options.trace.enabled = true;
+    options.trace.directory = directory;
+    options.trace.flush_threshold_bytes = 1;
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+    server.flush_trace();
+    server.close_trace();
+
+    kage::sync::KTraceReader reader;
+    kage::sync::SyncTraceHistory history = reader.read_directory(directory);
+    REQUIRE(history.sources.size() == 1);
+    REQUIRE(history.sources[0].role == kage::sync::SyncTraceRole::Server);
+    std::vector<kage::sync::SyncTraceEvent> events;
+    for (const kage::sync::KTraceRecord& record : history.sources[0].records) {
+        events.push_back(record.event);
+    }
+    REQUIRE(has_event(events, kage::sync::SyncTraceEventType::ClientConnected));
+}
+
 TEST_CASE("ktrace directory writer preserves every event and reader builds history") {
     const std::string directory = "/tmp/kage_sync_ktrace_directory_test";
     std::filesystem::remove_all(directory);

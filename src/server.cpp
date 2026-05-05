@@ -185,7 +185,11 @@ std::uint64_t visible_tag_mask(
 }  // namespace
 
 ReplicationServer::ReplicationServer(ReplicationServerOptions options)
-    : options_(detail::validate_server_options(std::move(options))) {}
+    : options_(detail::validate_server_options(std::move(options))) {
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    set_trace_options(options_.trace);
+#endif
+}
 
 ReplicationServer::~ReplicationServer() = default;
 
@@ -203,12 +207,71 @@ void ReplicationServer::set_packet_sender(TransportFn sender) {
 
 #ifdef KAGE_SYNC_ENABLE_TRACING
 void ReplicationServer::set_tracer(SyncTracer* tracer) noexcept {
+    trace_writer_.reset();
     tracer_ = tracer;
+}
+
+void ReplicationServer::set_trace_options(TraceOptions options) {
+    options_.trace = std::move(options);
+    trace_writer_ = make_trace_writer(options_.trace);
+    tracer_ = trace_writer_ != nullptr ? &trace_writer_->tracer() : nullptr;
+}
+
+void ReplicationServer::flush_trace() {
+    if (trace_writer_ != nullptr) {
+        trace_writer_->flush();
+    }
+}
+
+void ReplicationServer::close_trace() {
+    if (trace_writer_ != nullptr) {
+        trace_writer_->close();
+    }
 }
 #endif
 
 bool ReplicationServer::add_client(ClientId client) {
     return add_client_for_peer(client, client, true);
+}
+
+bool ReplicationServer::add_client_state(ClientState state) {
+    if (state.id == invalid_client_id ||
+        state.id > max_client_entity_network_id_client ||
+        client_to_index_.find(state.id) != client_to_index_.end()) {
+        return false;
+    }
+    if (!state.local && (state.peer == invalid_client_id || peer_to_index_.find(state.peer) != peer_to_index_.end())) {
+        return false;
+    }
+
+    state.reset_epochs.resize(replicated_.size(), state.epoch);
+    state.entity_states.resize(replicated_.size());
+    if (!state.local) {
+        state.order.reserve(active_replicated_count_);
+        for (std::uint32_t slot = 0; slot < replicated_.size(); ++slot) {
+            if (replicated_[slot].active) {
+                state.order.push_back(slot);
+            }
+        }
+    }
+
+    const ClientId client = state.id;
+    const ClientId peer = state.peer;
+    const bool local = state.local;
+    const std::size_t index = clients_.size();
+    clients_.push_back(std::move(state));
+    client_to_index_[client] = index;
+    if (!local) {
+        peer_to_index_[peer] = index;
+    }
+    next_connect_client_id_ = std::max(next_connect_client_id_, client + 1U);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    if (tracer_ != nullptr && tracer_->enabled()) {
+        SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::ClientConnected, client, frame_);
+        tracer_->trace(event);
+    }
+#endif
+    return true;
 }
 
 bool ReplicationServer::add_client_for_peer(ClientId peer, ClientId client, bool ready_for_updates) {
@@ -225,27 +288,39 @@ bool ReplicationServer::add_client_for_peer(ClientId peer, ClientId client, bool
     state.peer = peer;
     state.ready_for_updates = ready_for_updates;
     state.connect_resend_accumulator_seconds = options_.connect_resend_interval_seconds;
-    state.reset_epochs.resize(replicated_.size(), state.epoch);
-    state.entity_states.resize(replicated_.size());
-    state.order.reserve(active_replicated_count_);
-    for (std::uint32_t slot = 0; slot < replicated_.size(); ++slot) {
-        if (replicated_[slot].active) {
-            state.order.push_back(slot);
-        }
+    return add_client_state(std::move(state));
+}
+
+ClientId ReplicationServer::add_local_client() {
+    if (local_client_ != invalid_client_id) {
+        return invalid_client_id;
+    }
+    while (next_connect_client_id_ != invalid_client_id &&
+           next_connect_client_id_ <= max_client_entity_network_id_client &&
+           client_to_index_.find(next_connect_client_id_) != client_to_index_.end()) {
+        ++next_connect_client_id_;
+    }
+    if (next_connect_client_id_ == invalid_client_id ||
+        next_connect_client_id_ > max_client_entity_network_id_client) {
+        return invalid_client_id;
     }
 
-    const std::size_t index = clients_.size();
-    clients_.push_back(std::move(state));
-    client_to_index_[client] = index;
-    peer_to_index_[peer] = index;
-    next_connect_client_id_ = std::max(next_connect_client_id_, client + 1U);
-#ifdef KAGE_SYNC_ENABLE_TRACING
-    if (tracer_ != nullptr && tracer_->enabled()) {
-        SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::ClientConnected, client, frame_);
-        tracer_->trace(event);
+    ClientState state;
+    state.id = next_connect_client_id_;
+    state.peer = invalid_client_id;
+    state.local = true;
+    state.ready_for_updates = true;
+    state.connect_resend_accumulator_seconds = options_.connect_resend_interval_seconds;
+    if (!add_client_state(std::move(state))) {
+        return invalid_client_id;
     }
-#endif
-    return true;
+    local_client_ = next_connect_client_id_ - 1U;
+    return local_client_;
+}
+
+bool ReplicationServer::is_local_client(ClientId client) const noexcept {
+    const auto found = client_to_index_.find(client);
+    return found != client_to_index_.end() && clients_[found->second].local;
 }
 
 #ifdef KAGE_SYNC_ENABLE_TRACING
@@ -467,6 +542,7 @@ bool ReplicationServer::remove_client(ClientId client) {
 
     const std::size_t index = found->second;
     const ClientId removed_peer = clients_[index].peer;
+    const bool removed_local = clients_[index].local;
 #ifdef KAGE_SYNC_ENABLE_TRACING
     const ClientId removed_client = clients_[index].id;
 #endif
@@ -478,12 +554,18 @@ bool ReplicationServer::remove_client(ClientId client) {
     if (index != last) {
         clients_[index] = std::move(clients_[last]);
         client_to_index_[clients_[index].id] = index;
-        peer_to_index_[clients_[index].peer] = index;
+        if (!clients_[index].local) {
+            peer_to_index_[clients_[index].peer] = index;
+        }
     }
 
     clients_.pop_back();
     client_to_index_.erase(found);
-    peer_to_index_.erase(removed_peer);
+    if (!removed_local) {
+        peer_to_index_.erase(removed_peer);
+    } else {
+        local_client_ = invalid_client_id;
+    }
 #ifdef KAGE_SYNC_ENABLE_TRACING
     if (tracer_ != nullptr && tracer_->enabled()) {
         SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::ClientDisconnected, removed_client, frame_);
@@ -517,18 +599,37 @@ void ReplicationServer::refresh_replicated(ecs::Registry& registry) {
             upsert_replicated(registry, entity, replicated.archetype);
         });
         replicated_initialized_ = true;
-        registry.clear_all_dirty<Replicated>();
         return;
     }
 
-    registry.each_removed<Replicated>([&](ecs::Registry::ComponentRemoval removal) {
+    for (std::uint32_t slot = 0; slot < replicated_.size(); ++slot) {
+        if (replicated_[slot].active && !slot_is_replicable(registry, slot)) {
+            deactivate_slot(slot);
+        }
+    }
+    registry.view<const Replicated>().each([&](ecs::Entity entity, const Replicated& replicated) {
+        upsert_replicated(registry, entity, replicated.archetype);
+    });
+}
+
+void ReplicationServer::refresh_replicated(ecs::Registry& registry, ecs::Registry::DirtyView dirty) {
+    register_components(registry);
+
+    if (!replicated_initialized_) {
+        registry.view<const Replicated>().each([&](ecs::Entity entity, const Replicated& replicated) {
+            upsert_replicated(registry, entity, replicated.archetype);
+        });
+        replicated_initialized_ = true;
+        return;
+    }
+
+    dirty.each_removed<Replicated>([&](ecs::Registry::ComponentRemoval removal) {
         deactivate_entity_index(removal.entity_index);
     });
 
-    registry.each_dirty<Replicated>([&](ecs::Entity entity, const void* value) {
+    dirty.each_dirty<Replicated>([&](ecs::Entity entity, const void* value) {
         upsert_replicated(registry, entity, static_cast<const Replicated*>(value)->archetype);
     });
-    registry.clear_all_dirty<Replicated>();
 }
 
 bool ReplicationServer::is_replicated(ecs::Entity entity) const {
@@ -612,6 +713,36 @@ bool ReplicationServer::process_packet(ClientId client, ecs::BitBuffer packet) {
 
 bool ReplicationServer::process_packet(ecs::Registry& registry, ClientId client, ecs::BitBuffer packet) {
     return process_packet_impl(&registry, client, std::move(packet));
+}
+
+bool ReplicationServer::set_local_input_bytes(ecs::Registry& registry, ecs::Entity component, const void* input) {
+    if (local_client_ == invalid_client_id || input == nullptr) {
+        return false;
+    }
+    const auto found_client = client_to_index_.find(local_client_);
+    if (found_client == client_to_index_.end() || !clients_[found_client->second].local) {
+        return false;
+    }
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    if (!settings.input_component || settings.input_component != component) {
+        return false;
+    }
+    const auto found_ops = settings.component_ops.find(component.value);
+    if (found_ops == settings.component_ops.end() ||
+        found_ops->second.quantize == nullptr ||
+        found_ops->second.apply == nullptr ||
+        found_ops->second.quantized_size == 0U) {
+        return false;
+    }
+
+    const SyncComponentOps& ops = found_ops->second;
+    std::vector<std::uint8_t> quantized(ops.quantized_size);
+    ops.quantize(input, quantized.data());
+    return clients_[found_client->second].input.set_local_frame(
+        frame_ + 1U,
+        quantized.data(),
+        quantized.size(),
+        options_.input_buffer_capacity_frames);
 }
 
 bool ReplicationServer::process_packet_impl(ecs::Registry* registry, ClientId client, ecs::BitBuffer packet) {
@@ -853,8 +984,7 @@ void ReplicationServer::begin_tick(ecs::Registry& registry) {
 
 void ReplicationServer::tick(ecs::Registry& registry) {
     begin_tick(registry);
-    end_tick(registry);
-    emit_post_tick(registry);
+    publish_frame(registry);
 }
 
 bool ReplicationServer::tick(ecs::Registry& registry, double dt_seconds) {
@@ -873,8 +1003,7 @@ bool ReplicationServer::tick(ecs::Registry& registry, double dt_seconds) {
         tick_accumulator_seconds_ -= options_.fixed_dt_seconds;
         begin_tick(registry);
         registry.run_jobs();
-        end_tick(registry);
-        emit_post_tick(registry);
+        publish_frame(registry);
     }
 
     return true;
@@ -886,6 +1015,10 @@ void ReplicationServer::disconnect_idle_clients() {
     }
     for (std::size_t index = 0; index < clients_.size();) {
         ClientState& client = clients_[index];
+        if (client.local) {
+            ++index;
+            continue;
+        }
         client.idle_seconds += options_.fixed_dt_seconds;
         if (client.idle_seconds >= options_.idle_client_timeout_seconds) {
             remove_client(client.id);
@@ -944,34 +1077,52 @@ void ReplicationServer::refresh_client_priorities(const ecs::Registry& registry,
 
 void ReplicationServer::tick_serialized(ecs::Registry& registry) {
     begin_tick(registry);
-    end_tick(registry);
-    emit_post_tick(registry);
+    publish_frame(registry);
 }
 
-void ReplicationServer::emit_post_tick(const ecs::Registry& registry) {
-    if (options_.post_tick) {
-        options_.post_tick(
-            registry,
-            frame_,
-            QueuedSyncCueView{post_tick_cues_.empty() ? nullptr : post_tick_cues_.data(), post_tick_cues_.size()});
-    }
-    post_tick_cues_.clear();
+void ReplicationServer::advance_frame_without_simulating(ecs::Registry& registry) {
+    ++frame_;
+    disconnect_idle_clients();
+    publish_frame(registry);
 }
 
 void ReplicationServer::end_tick(ecs::Registry& registry) {
-    if (!options_.transport) {
+    publish_frame(registry);
+}
+
+void ReplicationServer::publish_frame(ecs::Registry& registry) {
+    auto dirty_frame = registry.begin_dirty_frame();
+    const ecs::Registry::DirtyView dirty = dirty_frame.view();
+    replicate_frame(registry, dirty);
+    emit_after_frame(registry, dirty);
+    post_tick_cues_.clear();
+}
+
+void ReplicationServer::emit_after_frame(const ecs::Registry& registry, ecs::Registry::DirtyView dirty) {
+    after_frame_.publish(ServerFrameContext{
+        registry,
+        frame_,
+        dirty,
+        QueuedSyncCueView{post_tick_cues_.empty() ? nullptr : post_tick_cues_.data(), post_tick_cues_.size()}});
+}
+
+void ReplicationServer::replicate_frame(ecs::Registry& registry, ecs::Registry::DirtyView dirty) {
+    const bool has_remote_client = std::any_of(clients_.begin(), clients_.end(), [](const ClientState& client) {
+        return !client.local;
+    });
+    if (has_remote_client && !options_.transport) {
         throw std::logic_error("replication server requires ReplicationServerOptions::transport for serialized sends");
     }
 
-    if (options_.serialized_worker_threads > 1U && clients_.size() > 1U) {
-        tick_serialized_parallel(registry);
+    if (options_.serialized_worker_threads > 1U && clients_.size() > 1U && has_remote_client) {
+        tick_serialized_parallel(registry, dirty);
         return;
     }
 
-    refresh_replicated(registry);
+    refresh_replicated(registry, dirty);
 
     const SyncSettings& settings = registry.get<SyncSettings>();
-    capture_dirty_components(registry, settings);
+    capture_dirty_components(dirty, settings);
     capture_queued_cues(registry, settings);
     std::vector<SerializedCandidate> candidates;
     std::vector<SerializedCandidate> update_candidates;
@@ -994,6 +1145,9 @@ void ReplicationServer::end_tick(ecs::Registry& registry) {
     const std::size_t update_header_bits = server_update_header_bits(options_);
 
     for (ClientState& client : clients_) {
+        if (client.local) {
+            continue;
+        }
         if (!client.ready_for_updates) {
             client.connect_resend_accumulator_seconds += options_.fixed_dt_seconds;
             if (client.connect_resend_accumulator_seconds >= options_.connect_resend_interval_seconds) {
@@ -1233,11 +1387,11 @@ void ReplicationServer::end_tick(ecs::Registry& registry) {
     }
 }
 
-void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
-    refresh_replicated(registry);
+void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry, ecs::Registry::DirtyView dirty) {
+    refresh_replicated(registry, dirty);
 
     const SyncSettings& settings = registry.get<SyncSettings>();
-    capture_dirty_components(registry, settings);
+    capture_dirty_components(dirty, settings);
     capture_queued_cues(registry, settings);
 #ifdef KAGE_SYNC_ENABLE_TRACING
     trace_frame_components(registry, settings);
@@ -1269,6 +1423,9 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
 
     for (std::size_t client_index = 0; client_index < clients_.size(); ++client_index) {
         ClientState& client = clients_[client_index];
+        if (client.local) {
+            continue;
+        }
         if (!client.ready_for_updates) {
             client.connect_resend_accumulator_seconds += options_.fixed_dt_seconds;
             if (client.connect_resend_accumulator_seconds >= options_.connect_resend_interval_seconds) {
@@ -1389,6 +1546,9 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
 
     auto pack_client = [&](std::size_t client_index) {
         ClientState& client = clients_[client_index];
+        if (client.local) {
+            return;
+        }
         if (!client.ready_for_updates) {
             return;
         }
@@ -1609,16 +1769,16 @@ void ReplicationServer::tick_serialized_parallel(ecs::Registry& registry) {
     }
 }
 
-void ReplicationServer::capture_dirty_components(const ecs::Registry& registry, const SyncSettings& settings) {
+void ReplicationServer::capture_dirty_components(ecs::Registry::DirtyView dirty, const SyncSettings& settings) {
     for (const SyncArchetype& archetype : settings.archetypes) {
         for (const SyncTagReplication& tag_replication : archetype.tags) {
-            registry.each_dirty(tag_replication.tag, [&](ecs::Entity entity, const void*) {
+            dirty.each_dirty(tag_replication.tag, [&](ecs::Entity entity, const void*) {
                 const auto found = entity_to_slot_.find(entity.value);
                 if (found != entity_to_slot_.end()) {
                     mark_dirty_tag(settings, found->second, tag_replication.tag);
                 }
             });
-            registry.each_removed(tag_replication.tag, [&](ecs::Registry::ComponentRemoval removal) {
+            dirty.each_removed(tag_replication.tag, [&](ecs::Registry::ComponentRemoval removal) {
                 const auto found = entity_index_to_slot_.find(removal.entity_index);
                 if (found != entity_index_to_slot_.end()) {
                     mark_dirty_tag(settings, found->second, tag_replication.tag);
@@ -1629,13 +1789,13 @@ void ReplicationServer::capture_dirty_components(const ecs::Registry& registry, 
 
     for (const auto& component_ops : settings.component_ops) {
         const ecs::Entity component{component_ops.first};
-        registry.each_dirty(component, [&](ecs::Entity entity, const void*) {
+        dirty.each_dirty(component, [&](ecs::Entity entity, const void*) {
             const auto found = entity_to_slot_.find(entity.value);
             if (found != entity_to_slot_.end()) {
                 mark_dirty_component(settings, found->second, component);
             }
         });
-        registry.each_removed(component, [&](ecs::Registry::ComponentRemoval removal) {
+        dirty.each_removed(component, [&](ecs::Registry::ComponentRemoval removal) {
             const auto found = entity_index_to_slot_.find(removal.entity_index);
             if (found != entity_index_to_slot_.end()) {
                 mark_dirty_component(settings, found->second, component);
@@ -1643,13 +1803,13 @@ void ReplicationServer::capture_dirty_components(const ecs::Registry& registry, 
         });
     }
 
-    registry.each_dirty<NetworkOwner>([&](ecs::Entity entity, const void*) {
+    dirty.each_dirty<NetworkOwner>([&](ecs::Entity entity, const void*) {
         const auto found = entity_to_slot_.find(entity.value);
         if (found != entity_to_slot_.end()) {
             mark_owner_visibility_dirty(settings, found->second);
         }
     });
-    registry.each_removed<NetworkOwner>([&](ecs::Registry::ComponentRemoval removal) {
+    dirty.each_removed<NetworkOwner>([&](ecs::Registry::ComponentRemoval removal) {
         const auto found = entity_index_to_slot_.find(removal.entity_index);
         if (found != entity_index_to_slot_.end()) {
             mark_owner_visibility_dirty(settings, found->second);
@@ -1657,7 +1817,67 @@ void ReplicationServer::capture_dirty_components(const ecs::Registry& registry, 
     });
 }
 
-void ReplicationServer::capture_queued_cues(const ecs::Registry& registry, const SyncSettings& settings) {
+bool ReplicationServer::play_local_cue(
+    ecs::Registry& registry,
+    const SyncSettings& settings,
+    const QueuedSyncCue& cue) {
+    if (local_client_ == invalid_client_id ||
+        cue.type >= settings.cue_ops.size() ||
+        settings.cue_ops[cue.type].play == nullptr ||
+        !registry.alive(cue.entity)) {
+        return false;
+    }
+    const NetworkOwner* owner = registry.try_get<NetworkOwner>(cue.entity);
+    if (cue.only_replicate_to_owner && (owner == nullptr || owner->client != local_client_)) {
+        return true;
+    }
+
+    struct ReferenceContextData {
+        ReplicationServer* server = nullptr;
+    } reference_context_data{this};
+    EntityReferenceContext reference_context;
+    reference_context.user = &reference_context_data;
+    reference_context.network_entity_id_tier0_bits = options_.protocol.network_entity_id_tier0_bits;
+    reference_context.server_network_id_for_entity = [](void* user, ecs::Entity entity) {
+        ReferenceContextData& data = *static_cast<ReferenceContextData*>(user);
+        const auto found = data.server->entity_to_slot_.find(entity.value);
+        if (found == data.server->entity_to_slot_.end()) {
+            return 0U;
+        }
+        return found->second + 1U;
+    };
+    reference_context.client_entity_network_id_for_wire = [](void* user, std::uint32_t wire_network_id) {
+        if (wire_network_id == 0U) {
+            return invalid_client_entity_network_id;
+        }
+        ReferenceContextData& data = *static_cast<ReferenceContextData*>(user);
+        const std::uint32_t slot = wire_network_id - 1U;
+        if (slot >= data.server->replicated_.size() || !data.server->replicated_[slot].active) {
+            return invalid_client_entity_network_id;
+        }
+        return make_client_entity_network_id(data.server->local_client_, wire_network_id, 1U);
+    };
+    reference_context.client_local_entity = [](void* user, ClientEntityNetworkId network_id) {
+        ReferenceContextData& data = *static_cast<ReferenceContextData*>(user);
+        const std::uint32_t slot = client_entity_network_id_wire_id(network_id) - 1U;
+        if (slot >= data.server->replicated_.size() || !data.server->replicated_[slot].active) {
+            return ecs::Entity{};
+        }
+        return data.server->replicated_[slot].entity;
+    };
+
+    ecs::BitBuffer payload = cue.payload;
+    if (settings.cue_ops[cue.type].references_entities) {
+        if (!cue.value || settings.cue_ops[cue.type].serialize == nullptr) {
+            return false;
+        }
+        payload.clear();
+        settings.cue_ops[cue.type].serialize(cue.value.get(), payload, &reference_context);
+    }
+    return settings.cue_ops[cue.type].play(registry, cue.entity, payload, 0.0f, cue.frame, &reference_context);
+}
+
+void ReplicationServer::capture_queued_cues(ecs::Registry& registry, const SyncSettings& settings) {
     post_tick_cues_.clear();
     if (!settings.cue_queue) {
         return;
@@ -1676,6 +1896,7 @@ void ReplicationServer::capture_queued_cues(const ecs::Registry& registry, const
         if (found == entity_to_slot_.end()) {
             continue;
         }
+        (void)play_local_cue(registry, settings, cue);
 #ifdef KAGE_SYNC_ENABLE_TRACING
         if (tracer_ != nullptr && tracer_->enabled()) {
             SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::CueEmitted, invalid_client_id, cue.frame);
@@ -1710,6 +1931,9 @@ void ReplicationServer::attach_cue_to_clients(
     const SyncFrame expire_frame = cue.frame + relevance_frames;
     const NetworkOwner* owner = registry.try_get<NetworkOwner>(cue.entity);
     for (ClientState& client : clients_) {
+        if (client.local) {
+            continue;
+        }
         if (cue.only_replicate_to_owner && (owner == nullptr || owner->client != client.id)) {
             continue;
         }
@@ -2412,6 +2636,9 @@ bool ReplicationServer::upsert_replicated(ecs::Registry& registry, ecs::Entity e
     entity_to_slot_[key] = slot;
     entity_index_to_slot_[ecs::Registry::entity_index(entity)] = slot;
     for (ClientState& client : clients_) {
+        if (client.local) {
+            continue;
+        }
         if (client.reset_epochs.size() < replicated_.size()) {
             client.reset_epochs.resize(replicated_.size(), client.epoch);
             client.entity_states.resize(replicated_.size());

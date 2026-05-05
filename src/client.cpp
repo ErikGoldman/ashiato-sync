@@ -384,6 +384,9 @@ ReplicationClient::ReplicationClient(ReplicationClientOptions options)
       clock_(make_clock_config(options_)),
       ack_queue_(std::make_unique<client_detail::ClientAckQueue>()),
       input_(std::make_unique<client_detail::ClientInputBuffer>()) {
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    set_trace_options(options_.trace);
+#endif
     adaptive_ping_active_ = options_.adaptive_ping_interval;
     if (options_.connect_token.empty()) {
         connection_state_ = ReplicationClientConnectionState::Ready;
@@ -936,7 +939,26 @@ bool ReplicationClient::receive(
 
 #ifdef KAGE_SYNC_ENABLE_TRACING
 void ReplicationClient::set_tracer(SyncTracer* tracer) noexcept {
+    trace_writer_.reset();
     tracer_ = tracer;
+}
+
+void ReplicationClient::set_trace_options(TraceOptions options) {
+    options_.trace = std::move(options);
+    trace_writer_ = make_trace_writer(options_.trace);
+    tracer_ = trace_writer_ != nullptr ? &trace_writer_->tracer() : nullptr;
+}
+
+void ReplicationClient::flush_trace() {
+    if (trace_writer_ != nullptr) {
+        trace_writer_->flush();
+    }
+}
+
+void ReplicationClient::close_trace() {
+    if (trace_writer_ != nullptr) {
+        trace_writer_->close();
+    }
 }
 #endif
 

@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -65,14 +66,13 @@ void run_client(const AppConfig& config) {
     client_options.interpolation_buffer_frames = 2;
     client_options.interpolation_buffer_capacity_frames = 64;
     client_options.entity_mode_selector = FpsEntityModeSelector{&registry};
-    kage::sync::ReplicationClient client(client_options);
 #ifdef KAGE_SYNC_ENABLE_TRACING
-    std::unique_ptr<kage::sync::KTraceDirectoryWriter> trace_writer = make_trace_writer(config);
-    if (trace_writer != nullptr) {
-        client.set_tracer(&trace_writer->tracer());
-    }
+    client_options.trace = make_trace_options(config);
 #endif
+    kage::sync::ReplicationClient client(client_options);
     register_game_jobs(registry, client);
+    kage::sync::DisplayFrameInterpolation client_display(client);
+    std::unique_ptr<kage::sync::DisplayFrameInterpolation> death_cam_display;
 
     SocketHandle socket = make_udp_socket(0);
     const sockaddr_in server_address = make_address(config.host, config.port);
@@ -178,99 +178,42 @@ void run_client(const AppConfig& config) {
 
         const ecs::Entity replay_local_entity = death_cam.active() ? find_local_entity(death_cam.registry()) : ecs::Entity{};
         const bool replay_ready = replay_local_entity != ecs::Entity{};
+        if (replay_ready && death_cam_display == nullptr) {
+            death_cam_display = std::make_unique<kage::sync::DisplayFrameInterpolation>(death_cam.client());
+        } else if (!replay_ready) {
+            death_cam_display.reset();
+        }
         ecs::Registry& render_registry = replay_ready ? death_cam.registry() : registry;
         kage::sync::ReplicationClient& render_client = replay_ready ? death_cam.client() : client;
+        kage::sync::DisplayFrameInterpolation& render_display_source =
+            replay_ready ? *death_cam_display : client_display;
         ecs::Entity local_entity = find_local_entity(render_registry);
-        const kage::sync::DisplayInterpolationSampleBuffer& render_display =
-            render_client.display_interpolation_frame(render_registry);
-        static bool kill_cam_ecs_seen = false;
-        static bool kill_cam_display_seen = false;
+        const std::vector<kage::sync::DisplayFrameEntity>& render_display =
+            render_display_source.entities(render_registry);
         if (replay_ready) {
             const ecs::Entity kill_cam_target = render_registry.component<FpsKillCamTarget>();
-            std::size_t ecs_target_count = 0;
             ecs::Entity ecs_target;
             render_registry.view<const FpsTransform>().with_tags<const FpsKillCamTarget>().each(
-                [&ecs_target_count, &ecs_target](ecs::Entity entity, const FpsTransform&) {
-                    ++ecs_target_count;
+                [&ecs_target](ecs::Entity entity, const FpsTransform&) {
                     if (!ecs_target) {
                         ecs_target = entity;
                     }
                 });
-            std::size_t display_target_count = 0;
-            ecs::Entity display_target;
-            kage::sync::SyncFrame display_target_frame = 0;
-            float display_target_alpha = 0.0f;
-            for (const kage::sync::DisplayInterpolationSample& sample : render_display.entities) {
-                if (sample.has_tag(render_registry, kill_cam_target)) {
-                    ++display_target_count;
-                    if (!display_target) {
-                        display_target = sample.local_entity;
-                        display_target_frame = sample.frame;
-                        display_target_alpha = sample.alpha;
-                    }
-                }
+            const std::uint64_t replay_target_player_id = death_cam.target_player_id();
+            if (replay_target_player_id != 0U) {
+                render_registry.view<const FpsUniquePlayerId, const FpsTransform>().each(
+                    [&ecs_target, replay_target_player_id](
+                        ecs::Entity entity,
+                        const FpsUniquePlayerId& unique,
+                        const FpsTransform&) {
+                        if (unique.value == replay_target_player_id) {
+                            ecs_target = entity;
+                        }
+                    });
             }
             if (ecs_target) {
                 local_entity = ecs_target;
             }
-            if (display_target && !kill_cam_display_seen) {
-                kill_cam_display_seen = true;
-                std::cerr << "fps kill cam target display first_seen"
-                          << " playback=" << render_client.playback_frame()
-                          << " continuous_playback=" << render_client.continuous_playback_frame()
-                          << " display_target_frame=" << render_client.display_target_frame()
-                          << " last_applied="
-                          << (render_client.has_applied_buffered_frame()
-                                  ? std::to_string(render_client.last_applied_buffered_frame())
-                                  : std::string("none"))
-                          << " ecs_targets=" << ecs_target_count
-                          << " display_target=" << display_target.value
-                          << " display_sample_frame=" << display_target_frame
-                          << " display_alpha=" << display_target_alpha
-                          << '\n';
-            }
-            if (ecs_target && !kill_cam_ecs_seen) {
-                kill_cam_ecs_seen = true;
-                std::cerr << "fps kill cam target ecs first_seen"
-                          << " playback=" << render_client.playback_frame()
-                          << " continuous_playback=" << render_client.continuous_playback_frame()
-                          << " display_target_frame=" << render_client.display_target_frame()
-                          << " last_applied="
-                          << (render_client.has_applied_buffered_frame()
-                                  ? std::to_string(render_client.last_applied_buffered_frame())
-                                  : std::string("none"))
-                          << " ecs_target=" << ecs_target.value
-                          << " display_target=" << display_target.value
-                          << " display_sample_frame=" << display_target_frame
-                          << " display_alpha=" << display_target_alpha
-                          << '\n';
-            }
-            static double kill_cam_tag_log_seconds = 0.0;
-            const bool missing_target = ecs_target_count == 0;
-            kill_cam_tag_log_seconds += dt;
-            if (missing_target && kill_cam_tag_log_seconds >= 1.0) {
-                kill_cam_tag_log_seconds = 0.0;
-                std::cerr << "fps kill cam target lookup ecs_targets=" << ecs_target_count
-                          << " display_targets=" << display_target_count
-                          << " ecs_target=" << ecs_target.value
-                          << " display_target=" << display_target.value
-                          << " fallback_local=" << replay_local_entity.value
-                          << " selected=" << local_entity.value
-                          << " display_samples=" << render_display.entities.size()
-                          << " playback=" << render_client.playback_frame()
-                          << " continuous_playback=" << render_client.continuous_playback_frame()
-                          << " display_target_frame=" << render_client.display_target_frame()
-                          << " last_applied="
-                          << (render_client.has_applied_buffered_frame()
-                                  ? std::to_string(render_client.last_applied_buffered_frame())
-                                  : std::string("none"))
-                          << " display_sample_frame=" << display_target_frame
-                          << " display_alpha=" << display_target_alpha
-                          << '\n';
-            }
-        } else {
-            kill_cam_ecs_seen = false;
-            kill_cam_display_seen = false;
         }
 
         update_effects(render_registry, dt);
@@ -296,7 +239,7 @@ void run_client(const AppConfig& config) {
         if (local_entity && render_registry.alive(local_entity)) {
             FpsTransform sampled_transform{};
             const FpsTransform* transform = nullptr;
-            for (const kage::sync::DisplayInterpolationSample& sample : render_display.entities) {
+            for (const kage::sync::DisplayFrameEntity& sample : render_display) {
                 if (sample.local_entity == local_entity && sample.try_get_display_value(render_registry, sampled_transform)) {
                     transform = &sampled_transform;
                     break;
@@ -327,7 +270,7 @@ void run_client(const AppConfig& config) {
         ClearBackground(Color{20, 22, 26, 255});
         BeginMode3D(camera);
         draw_arena();
-        for (const kage::sync::DisplayInterpolationSample& sample : render_display.entities) {
+        for (const kage::sync::DisplayFrameEntity& sample : render_display) {
             FpsTransform transform{};
             if (!sample.try_get_display_value(render_registry, transform)) {
                 continue;
@@ -579,9 +522,7 @@ void run_client(const AppConfig& config) {
     CloseAudioDevice();
     CloseWindow();
 #ifdef KAGE_SYNC_ENABLE_TRACING
-    if (trace_writer != nullptr) {
-        trace_writer->close();
-    }
+    client.close_trace();
 #endif
     close_socket(socket);
 }

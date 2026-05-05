@@ -16,6 +16,7 @@ add_executable(kage_sync_tests
     client_timing.test.cpp
     client_transport.test.cpp
     components.test.cpp
+    display.test.cpp
     header_api.test.cpp
     options_validation.test.cpp
     quantized_bytes.test.cpp
