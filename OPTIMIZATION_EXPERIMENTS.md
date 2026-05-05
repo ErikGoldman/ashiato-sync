@@ -817,7 +817,7 @@ Focused baseline:
 - `BM_ClientReceiveBufferedInterpolation/4096/16`: `9138283 ns`
 - `BM_ClientReceiveMixedEntityModes/4096/16`: `8005884 ns`
 - `BM_ClientApplyBufferedInterpolation/4096/16`: `3750218 ns`
-- `BM_ClientSampleDisplayInterpolation/4096/16`: `4615188 ns`
+- `BM_ClientSampleFractionalTick/4096/16`: `4615188 ns`
 - `BM_ClientDrainDuplicateHeavyAckPackets/4096/64`: `5393868 ns`
 - `BM_ClientTickBufferedAutoInterpolation/4096/16`: `28556498 ns`
 
@@ -827,14 +827,14 @@ Focused final:
 - `BM_ClientReceiveBufferedInterpolation/4096/16`: `7986956 ns`
 - `BM_ClientReceiveMixedEntityModes/4096/16`: `8465797 ns`
 - `BM_ClientApplyBufferedInterpolation/4096/16`: `3097993 ns`
-- `BM_ClientSampleDisplayInterpolation/4096/16`: `3837330 ns`
+- `BM_ClientSampleFractionalTick/4096/16`: `3837330 ns`
 - `BM_ClientDrainDuplicateHeavyAckPackets/4096/64`: `5020239 ns`
 - `BM_ClientTickBufferedAutoInterpolation/4096/16`: `16780657 ns`
 
 Focused command:
 
 ```sh
-build-bench/kage_sync_benchmark --benchmark_filter='BM_ClientReceiveSnap|BM_ClientReceiveBufferedInterpolation|BM_ClientReceiveMixedEntityModes|BM_ClientApplyBufferedInterpolation|BM_ClientSampleDisplayInterpolation|BM_ClientTickBufferedAutoInterpolation|BM_ClientDrainDuplicateHeavyAckPackets' --benchmark_min_time=0.05s
+build-bench/kage_sync_benchmark --benchmark_filter='BM_ClientReceiveSnap|BM_ClientReceiveBufferedInterpolation|BM_ClientReceiveMixedEntityModes|BM_ClientApplyBufferedInterpolation|BM_ClientSampleFractionalTick|BM_ClientTickBufferedAutoInterpolation|BM_ClientDrainDuplicateHeavyAckPackets' --benchmark_min_time=0.05s
 ```
 
 Focused artifact: `build-bench/kage_sync_benchmark`

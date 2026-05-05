@@ -5,34 +5,15 @@
 
 namespace kage::sync {
 
-struct DisplayFrameEntity {
-    ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
-    ecs::Entity local_entity;
-    SyncArchetypeId archetype;
-    SyncFrame frame = 0;
-    float alpha = 0.0f;
-    std::uint64_t tag_mask = 0;
-    std::vector<ReplicatedComponentUpdate> components;
-
-    template <typename T>
-    bool try_get_display_value(const ecs::Registry& registry, T& out) const {
-        const ecs::Entity component = registry.component<T>();
-        return try_get_display_value(registry, component, &out);
-    }
-
-    bool try_get_display_value(const ecs::Registry& registry, ecs::Entity component, void* out) const;
-    bool has_tag(const ecs::Registry& registry, ecs::Entity tag) const;
-};
-
-class DisplayFrameInterpolation {
+class FractionalTickSampler {
 public:
-    explicit DisplayFrameInterpolation(ReplicationClient& client);
-    explicit DisplayFrameInterpolation(ReplicationServer& server);
+    explicit FractionalTickSampler(ReplicationClient& client);
+    explicit FractionalTickSampler(ReplicationServer& server);
 
     ClientId local_client() const noexcept;
     double target_frame() const noexcept;
     void capture_server_frame(ecs::Registry& registry);
-    const std::vector<DisplayFrameEntity>& entities(const ecs::Registry& registry);
+    const std::vector<FractionalTickSample>& entities(const ecs::Registry& registry);
 
 private:
     enum class Source {
@@ -40,9 +21,14 @@ private:
         Server
     };
 
+    struct SnapshotEntity {
+        FractionalTickSample sample;
+        SyncArchetypeId archetype = invalid_sync_archetype_id;
+    };
+
     struct Snapshot {
         SyncFrame frame = 0;
-        std::vector<DisplayFrameEntity> entities;
+        std::vector<SnapshotEntity> entities;
         bool valid = false;
     };
 
@@ -54,7 +40,7 @@ private:
     ReplicationServer* server_ = nullptr;
     Snapshot previous_;
     Snapshot current_;
-    std::vector<DisplayFrameEntity> display_;
+    std::vector<FractionalTickSample> samples_;
 };
 
 }  // namespace kage::sync

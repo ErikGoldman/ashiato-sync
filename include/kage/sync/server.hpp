@@ -16,7 +16,7 @@ namespace kage::sync {
 
 class SyncTracer;
 class KTraceDirectoryWriter;
-class DisplayFrameInterpolation;
+class FractionalTickSampler;
 
 class ReplicationServer {
 public:
@@ -104,7 +104,7 @@ public:
     }
 
 private:
-    friend class DisplayFrameInterpolation;
+    friend class FractionalTickSampler;
 
     static constexpr std::uint32_t invalid_quantized_frame_id = std::numeric_limits<std::uint32_t>::max();
 

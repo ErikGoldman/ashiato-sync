@@ -11,7 +11,7 @@
 
 using namespace kage_sync_tests;
 
-TEST_CASE("display interpolation samples fractional frames without mutating ECS") {
+TEST_CASE("fractional tick sampling samples fractional frames without mutating ECS") {
     ecs::Registry server_registry;
     const ecs::Entity server_position =
         kage::sync::register_sync_component<SmoothPosition>(server_registry, "SmoothPosition");
@@ -34,7 +34,7 @@ TEST_CASE("display interpolation samples fractional frames without mutating ECS"
     ecs::Registry client_registry;
     const ecs::Entity client_position =
         kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
-    REQUIRE(kage::sync::set_display_interpolated(client_registry, client_position));
+    REQUIRE(kage::sync::set_fractional_tick_sampled(client_registry, client_position));
     const kage::sync::SyncArchetypeId client_archetype = kage::sync::define_archetype(
         client_registry,
         "SmoothActor",
@@ -67,8 +67,8 @@ TEST_CASE("display interpolation samples fractional frames without mutating ECS"
     REQUIRE(local);
     REQUIRE(client_registry.get<SmoothPosition>(local).x == 0.0f);
 
-    kage::sync::DisplayInterpolationSampleBuffer display;
-    REQUIRE(client.sample_display_interpolation_frame(client_registry, 2.5, display));
+    kage::sync::FractionalTickSampleBuffer display;
+    REQUIRE(client.sample_fractional_tick_frame(client_registry, 2.5, display));
     REQUIRE(display.entities.size() == 1);
     REQUIRE(display.entities[0].client_entity_network_id == client_entity_network_id);
     REQUIRE(display.entities[0].local_entity == local);
@@ -76,17 +76,17 @@ TEST_CASE("display interpolation samples fractional frames without mutating ECS"
     REQUIRE(display.entities[0].alpha == Catch::Approx(0.5f));
 
     SmoothPosition sampled;
-    REQUIRE(display.entities[0].try_get_display_value(client_registry, sampled));
+    REQUIRE(display.entities[0].try_get_sampled_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(5.0f));
     REQUIRE(sampled.y == Catch::Approx(0.0f));
     REQUIRE(client_registry.get<SmoothPosition>(local).x == 0.0f);
 }
 
-TEST_CASE("display interpolation returns floor samples when the next frame is unavailable") {
+TEST_CASE("fractional tick sampling returns floor samples when the next frame is unavailable") {
     ecs::Registry client_registry;
     const ecs::Entity client_position =
         kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
-    REQUIRE(kage::sync::set_display_interpolated(client_registry, client_position));
+    REQUIRE(kage::sync::set_fractional_tick_sampled(client_registry, client_position));
     const kage::sync::SyncArchetypeId client_archetype = kage::sync::define_archetype(
         client_registry,
         "SmoothActor",
@@ -104,17 +104,17 @@ TEST_CASE("display interpolation returns floor samples when the next frame is un
         client_registry,
         make_position_packet(1, {{server_entity, Position{7.0f, 3.0f}}})));
 
-    kage::sync::DisplayInterpolationSampleBuffer display;
-    REQUIRE(client.sample_display_interpolation_frame(client_registry, 2.75, display));
+    kage::sync::FractionalTickSampleBuffer display;
+    REQUIRE(client.sample_fractional_tick_frame(client_registry, 2.75, display));
     REQUIRE(display.entities.size() == 1);
 
     SmoothPosition sampled;
-    REQUIRE(display.entities[0].try_get_display_value(client_registry, sampled));
+    REQUIRE(display.entities[0].try_get_sampled_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(7.0f));
     REQUIRE(sampled.y == Catch::Approx(3.0f));
 }
 
-TEST_CASE("display interpolation omits untagged components from samples") {
+TEST_CASE("fractional tick sampling omits untagged components from samples") {
     ecs::Registry client_registry;
     const ecs::Entity client_position =
         kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
@@ -135,77 +135,18 @@ TEST_CASE("display interpolation omits untagged components from samples") {
         client_registry,
         make_position_packet(1, {{server_entity, Position{7.0f, 3.0f}}})));
 
-    kage::sync::DisplayInterpolationSampleBuffer display;
-    REQUIRE(client.sample_display_interpolation_frame(client_registry, 2.0, display));
+    kage::sync::FractionalTickSampleBuffer display;
+    REQUIRE(client.sample_fractional_tick_frame(client_registry, 2.0, display));
     REQUIRE(display.entities.empty());
 }
 
-TEST_CASE("display interpolation samples expose synced tag masks") {
-    ecs::Registry server_registry;
-    const ecs::Entity server_visible = server_registry.register_component<Visible>("Visible");
-    const ecs::Entity server_secret = server_registry.register_component<Secret>("Secret");
-    const ecs::Entity server_position =
-        kage::sync::register_sync_component<SmoothPosition>(server_registry, "SmoothPosition");
-    const kage::sync::SyncArchetypeId server_archetype = kage::sync::define_archetype(
-        server_registry,
-        kage::sync::SyncArchetypeDesc{
-            "TaggedSmoothActor",
-            {{server_visible, kage::sync::ReplicationAudience::All},
-             {server_secret, kage::sync::ReplicationAudience::All}},
-            {{server_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}},
-        });
-    const ecs::Entity server_entity = server_registry.create();
-    REQUIRE(server_registry.add<SmoothPosition>(server_entity, SmoothPosition{2.0f, 4.0f}) != nullptr);
-    REQUIRE(server_registry.add_tag(server_entity, server_visible));
-
-    std::vector<ecs::BitBuffer> packets;
-    kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
-        packets.push_back(packet);
-    };
-    kage::sync::ReplicationServer server(server_options);
-    REQUIRE(server.add_client(1));
-    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-
-    ecs::Registry client_registry;
-    const ecs::Entity client_visible = client_registry.register_component<Visible>("Visible");
-    const ecs::Entity client_secret = client_registry.register_component<Secret>("Secret");
-    const ecs::Entity client_position =
-        kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
-    REQUIRE(kage::sync::set_display_interpolated(client_registry, client_position));
-    REQUIRE(kage::sync::define_archetype(
-                client_registry,
-                kage::sync::SyncArchetypeDesc{
-                    "TaggedSmoothActor",
-                    {{client_visible, kage::sync::ReplicationAudience::All},
-                     {client_secret, kage::sync::ReplicationAudience::All}},
-                    {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}},
-                }) == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
-
-    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-        1200,
-        kage::sync::ReplicationClientMode::BufferedInterpolation,
-        1,
-        8});
-    server.tick(server_registry);
-    REQUIRE(client.receive(client_registry, packets.back()));
-
-    kage::sync::DisplayInterpolationSampleBuffer display;
-    REQUIRE(client.sample_display_interpolation_frame(client_registry, 2.0, display));
-    REQUIRE(display.entities.size() == 1);
-    REQUIRE(display.entities[0].has_tag(client_registry, client_visible));
-    REQUIRE_FALSE(display.entities[0].has_tag(client_registry, client_secret));
-    REQUIRE_FALSE(display.entities[0].has_tag(client_registry, client_position));
-}
-
-TEST_CASE("display samples throw for non-display components instead of falling through to ECS") {
+TEST_CASE("fractional tick samples throw for non-sampled components instead of falling through to ECS") {
     auto define_actor = [](ecs::Registry& registry, bool display_position) {
         const ecs::Entity position =
             kage::sync::register_sync_component<SmoothPosition>(registry, "SmoothPosition");
         const ecs::Entity health = kage::sync::register_sync_component<Health>(registry, "Health");
         if (display_position) {
-            REQUIRE(kage::sync::set_display_interpolated(registry, position));
+            REQUIRE(kage::sync::set_fractional_tick_sampled(registry, position));
         }
         return kage::sync::define_archetype(
             registry,
@@ -249,26 +190,26 @@ TEST_CASE("display samples throw for non-display components instead of falling t
     REQUIRE(client.receive(client_registry, packets[0]));
     REQUIRE(client.receive(client_registry, packets[1]));
 
-    kage::sync::DisplayInterpolationSampleBuffer display;
-    REQUIRE(client.sample_display_interpolation_frame(client_registry, 2.5, display));
+    kage::sync::FractionalTickSampleBuffer display;
+    REQUIRE(client.sample_fractional_tick_frame(client_registry, 2.5, display));
     REQUIRE(display.entities.size() == 1);
 
     SmoothPosition sampled_position;
     Health sampled_health;
-    REQUIRE(display.entities[0].try_get_display_value(client_registry, sampled_position));
+    REQUIRE(display.entities[0].try_get_sampled_value(client_registry, sampled_position));
     REQUIRE(sampled_position.x == Catch::Approx(5.0f));
-    REQUIRE_THROWS_AS(display.entities[0].try_get_display_value(client_registry, sampled_health), std::logic_error);
+    REQUIRE_THROWS_AS(display.entities[0].try_get_sampled_value(client_registry, sampled_health), std::logic_error);
 
-    REQUIRE(client.sample_display_interpolation_frame(client_registry, 3.0, display));
+    REQUIRE(client.sample_fractional_tick_frame(client_registry, 3.0, display));
     REQUIRE(display.entities.size() == 1);
-    REQUIRE_THROWS_AS(display.entities[0].try_get_display_value(client_registry, sampled_health), std::logic_error);
+    REQUIRE_THROWS_AS(display.entities[0].try_get_sampled_value(client_registry, sampled_health), std::logic_error);
 }
 
-TEST_CASE("display interpolation steps entity destroy at the floor frame") {
+TEST_CASE("fractional tick sampling steps entity destroy at the floor frame") {
     ecs::Registry client_registry;
     const ecs::Entity client_position =
         kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
-    REQUIRE(kage::sync::set_display_interpolated(client_registry, client_position));
+    REQUIRE(kage::sync::set_fractional_tick_sampled(client_registry, client_position));
     const kage::sync::SyncArchetypeId client_archetype = kage::sync::define_archetype(
         client_registry,
         "SmoothActor",
@@ -287,19 +228,19 @@ TEST_CASE("display interpolation steps entity destroy at the floor frame") {
         make_position_packet(1, {{server_entity, Position{7.0f, 3.0f}}})));
     REQUIRE(client.receive(client_registry, make_destroy_packet(2, server_entity)));
 
-    kage::sync::DisplayInterpolationSampleBuffer display;
-    REQUIRE(client.sample_display_interpolation_frame(client_registry, 2.5, display));
+    kage::sync::FractionalTickSampleBuffer display;
+    REQUIRE(client.sample_fractional_tick_frame(client_registry, 2.5, display));
     REQUIRE(display.entities.size() == 1);
 
-    REQUIRE(client.sample_display_interpolation_frame(client_registry, 3.0, display));
+    REQUIRE(client.sample_fractional_tick_frame(client_registry, 3.0, display));
     REQUIRE(display.entities.empty());
 }
 
-TEST_CASE("client-owned display frame holds instead of rewinding when buffer depth grows") {
+TEST_CASE("client-owned fractional tick frame holds instead of rewinding when buffer depth grows") {
     ecs::Registry client_registry;
     const ecs::Entity client_position =
         kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
-    REQUIRE(kage::sync::set_display_interpolated(client_registry, client_position));
+    REQUIRE(kage::sync::set_fractional_tick_sampled(client_registry, client_position));
     REQUIRE(kage::sync::define_archetype(
                 client_registry,
                 "SmoothActor",
@@ -320,25 +261,25 @@ TEST_CASE("client-owned display frame holds instead of rewinding when buffer dep
     REQUIRE(client.receive(client_registry, make_position_packet(3, {{server_entity, Position{30.0f, 0.0f}}})));
 
     REQUIRE(client.tick(client_registry, 3.0));
-    const kage::sync::DisplayInterpolationSampleBuffer& before = client.display_interpolation_frame(client_registry);
+    const kage::sync::FractionalTickSampleBuffer& before = client.fractional_tick_frame(client_registry);
     REQUIRE(before.entities.size() == 1);
     SmoothPosition sampled;
-    REQUIRE(before.entities[0].try_get_display_value(client_registry, sampled));
+    REQUIRE(before.entities[0].try_get_sampled_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(21.5f));
 
     REQUIRE(client.set_interpolation_buffer_frames(3));
     REQUIRE(client.tick(client_registry, 1.0 / 120.0));
-    const kage::sync::DisplayInterpolationSampleBuffer& after = client.display_interpolation_frame(client_registry);
+    const kage::sync::FractionalTickSampleBuffer& after = client.fractional_tick_frame(client_registry);
     REQUIRE(after.entities.size() == 1);
-    REQUIRE(after.entities[0].try_get_display_value(client_registry, sampled));
+    REQUIRE(after.entities[0].try_get_sampled_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(21.5f));
 }
 
-TEST_CASE("client-owned display frame returns the previous valid sample when target data is missing") {
+TEST_CASE("client-owned fractional tick frame returns the previous valid sample when target data is missing") {
     ecs::Registry client_registry;
     const ecs::Entity client_position =
         kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
-    REQUIRE(kage::sync::set_display_interpolated(client_registry, client_position));
+    REQUIRE(kage::sync::set_fractional_tick_sampled(client_registry, client_position));
     REQUIRE(kage::sync::define_archetype(
                 client_registry,
                 "SmoothActor",
@@ -356,25 +297,25 @@ TEST_CASE("client-owned display frame returns the previous valid sample when tar
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{10.0f, 0.0f}}})));
     REQUIRE(client.tick(client_registry, 2.0));
-    const kage::sync::DisplayInterpolationSampleBuffer& before = client.display_interpolation_frame(client_registry);
+    const kage::sync::FractionalTickSampleBuffer& before = client.fractional_tick_frame(client_registry);
     REQUIRE(before.entities.size() == 1);
     SmoothPosition sampled;
-    REQUIRE(before.entities[0].try_get_display_value(client_registry, sampled));
+    REQUIRE(before.entities[0].try_get_sampled_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(10.0f));
 
     REQUIRE(client.tick(client_registry, 1.0));
-    const kage::sync::DisplayInterpolationSampleBuffer& after = client.display_interpolation_frame(client_registry);
+    const kage::sync::FractionalTickSampleBuffer& after = client.fractional_tick_frame(client_registry);
     REQUIRE(after.entities.size() == 1);
-    REQUIRE(after.entities[0].try_get_display_value(client_registry, sampled));
+    REQUIRE(after.entities[0].try_get_sampled_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(10.0f));
 }
 
-TEST_CASE("client-owned display frame exposes snap and buffered entities in one loop") {
+TEST_CASE("client-owned fractional tick frame exposes snap and buffered entities in one loop") {
     ecs::Registry client_registry;
     const ecs::Entity smooth =
         kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
     const ecs::Entity health = kage::sync::register_sync_component<Health>(client_registry, "Health");
-    REQUIRE(kage::sync::set_display_interpolated(client_registry, smooth));
+    REQUIRE(kage::sync::set_fractional_tick_sampled(client_registry, smooth));
     REQUIRE(kage::sync::define_archetype(
                 client_registry,
                 "Actor",
@@ -402,12 +343,12 @@ TEST_CASE("client-owned display frame exposes snap and buffered entities in one 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{ecs::Entity{43}, Position{20.0f, 0.0f}}}, 3U)));
     REQUIRE(client.tick(client_registry, 2.0));
 
-    const kage::sync::DisplayInterpolationSampleBuffer& display = client.display_interpolation_frame(client_registry);
+    const kage::sync::FractionalTickSampleBuffer& display = client.fractional_tick_frame(client_registry);
     REQUIRE(display.entities.size() == 2);
     int found = 0;
-    for (const kage::sync::DisplayInterpolationSample& entity : display.entities) {
+    for (const kage::sync::FractionalTickSample& entity : display.entities) {
         SmoothPosition sampled;
-        REQUIRE(entity.try_get_display_value(client_registry, sampled));
+        REQUIRE(entity.try_get_sampled_value(client_registry, sampled));
         if (entity.client_entity_network_id == test_client_entity_network_id(1, test_network_id(ecs::Entity{42}))) {
             REQUIRE(sampled.x == Catch::Approx(10.0f));
             ++found;
@@ -420,11 +361,11 @@ TEST_CASE("client-owned display frame exposes snap and buffered entities in one 
     REQUIRE(found == 2);
 }
 
-TEST_CASE("client-owned display frame keeps previous entities while committing newly valid buffered entities") {
+TEST_CASE("client-owned fractional tick frame keeps previous entities while committing newly valid buffered entities") {
     ecs::Registry client_registry;
     const ecs::Entity smooth =
         kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
-    REQUIRE(kage::sync::set_display_interpolated(client_registry, smooth));
+    REQUIRE(kage::sync::set_fractional_tick_sampled(client_registry, smooth));
     REQUIRE(kage::sync::define_archetype(
                 client_registry,
                 "SmoothActor",
@@ -443,7 +384,7 @@ TEST_CASE("client-owned display frame keeps previous entities while committing n
     const ecs::Entity incoming{43};
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{existing, Position{10.0f, 0.0f}}})));
     REQUIRE(client.tick(client_registry, 2.0));
-    REQUIRE(client.display_interpolation_frame(client_registry).entities.size() == 1);
+    REQUIRE(client.fractional_tick_frame(client_registry).entities.size() == 1);
 
     REQUIRE(client.set_default_entity_mode(kage::sync::ReplicationClientMode::BufferedInterpolation));
     client.set_entity_mode(
@@ -453,13 +394,13 @@ TEST_CASE("client-owned display frame keeps previous entities while committing n
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{incoming, Position{20.0f, 0.0f}}})));
     REQUIRE(client.tick(client_registry, 1.0));
 
-    const kage::sync::DisplayInterpolationSampleBuffer& display = client.display_interpolation_frame(client_registry);
+    const kage::sync::FractionalTickSampleBuffer& display = client.fractional_tick_frame(client_registry);
     REQUIRE(display.entities.size() == 2);
 
     int found = 0;
-    for (const kage::sync::DisplayInterpolationSample& entity : display.entities) {
+    for (const kage::sync::FractionalTickSample& entity : display.entities) {
         SmoothPosition sampled;
-        REQUIRE(entity.try_get_display_value(client_registry, sampled));
+        REQUIRE(entity.try_get_sampled_value(client_registry, sampled));
         if (entity.client_entity_network_id == test_client_entity_network_id(1, test_network_id(existing))) {
             REQUIRE(sampled.x == Catch::Approx(10.0f));
             ++found;
@@ -472,11 +413,11 @@ TEST_CASE("client-owned display frame keeps previous entities while committing n
     REQUIRE(found == 2);
 }
 
-TEST_CASE("snap display error blending uses tick dt without mutating ECS") {
+TEST_CASE("snap fractional tick error blending uses tick dt without mutating ECS") {
     ecs::Registry client_registry;
     const ecs::Entity smooth =
         kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
-    REQUIRE(kage::sync::set_display_interpolated(client_registry, smooth));
+    REQUIRE(kage::sync::set_fractional_tick_sampled(client_registry, smooth));
     REQUIRE(kage::sync::define_archetype(
                 client_registry,
                 "SmoothActor",
@@ -492,10 +433,10 @@ TEST_CASE("snap display error blending uses tick dt without mutating ECS") {
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{0.0f, 0.0f}}})));
     REQUIRE(client.tick(client_registry, 0.5));
-    const kage::sync::DisplayInterpolationSampleBuffer& first = client.display_interpolation_frame(client_registry);
+    const kage::sync::FractionalTickSampleBuffer& first = client.fractional_tick_frame(client_registry);
     REQUIRE(first.entities.size() == 1);
     SmoothPosition sampled;
-    REQUIRE(first.entities[0].try_get_display_value(client_registry, sampled));
+    REQUIRE(first.entities[0].try_get_sampled_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(0.0f));
 
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{10.0f, 0.0f}}})));
@@ -504,23 +445,23 @@ TEST_CASE("snap display error blending uses tick dt without mutating ECS") {
     REQUIRE(client_registry.get<SmoothPosition>(local).x == Catch::Approx(10.0f));
 
     REQUIRE(client.tick(client_registry, 0.25));
-    const kage::sync::DisplayInterpolationSampleBuffer& blended = client.display_interpolation_frame(client_registry);
+    const kage::sync::FractionalTickSampleBuffer& blended = client.fractional_tick_frame(client_registry);
     REQUIRE(blended.entities.size() == 1);
-    REQUIRE(blended.entities[0].try_get_display_value(client_registry, sampled));
+    REQUIRE(blended.entities[0].try_get_sampled_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(2.5f));
     REQUIRE(client_registry.get<SmoothPosition>(local).x == Catch::Approx(10.0f));
 
-    const kage::sync::DisplayInterpolationSampleBuffer& repeated = client.display_interpolation_frame(client_registry);
+    const kage::sync::FractionalTickSampleBuffer& repeated = client.fractional_tick_frame(client_registry);
     REQUIRE(repeated.entities.size() == 1);
-    REQUIRE(repeated.entities[0].try_get_display_value(client_registry, sampled));
+    REQUIRE(repeated.entities[0].try_get_sampled_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(2.5f));
 }
 
-TEST_CASE("snap display error blending clears after the accumulated tick dt consumes the error") {
+TEST_CASE("snap fractional tick error blending clears after the accumulated tick dt consumes the error") {
     ecs::Registry client_registry;
     const ecs::Entity smooth =
         kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
-    REQUIRE(kage::sync::set_display_interpolated(client_registry, smooth));
+    REQUIRE(kage::sync::set_fractional_tick_sampled(client_registry, smooth));
     REQUIRE(kage::sync::define_archetype(
                 client_registry,
                 "SmoothActor",
@@ -538,14 +479,14 @@ TEST_CASE("snap display error blending clears after the accumulated tick dt cons
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{10.0f, 0.0f}}})));
     REQUIRE(client.tick(client_registry, 1.0));
 
-    const kage::sync::DisplayInterpolationSampleBuffer& display = client.display_interpolation_frame(client_registry);
+    const kage::sync::FractionalTickSampleBuffer& display = client.fractional_tick_frame(client_registry);
     REQUIRE(display.entities.size() == 1);
     SmoothPosition sampled;
-    REQUIRE(display.entities[0].try_get_display_value(client_registry, sampled));
+    REQUIRE(display.entities[0].try_get_sampled_value(client_registry, sampled));
     REQUIRE(sampled.x == Catch::Approx(10.0f));
 }
 
-TEST_CASE("display samples throw for unmarked snap components") {
+TEST_CASE("fractional tick samples throw for unmarked snap components") {
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
@@ -561,13 +502,13 @@ TEST_CASE("display samples throw for unmarked snap components") {
     REQUIRE(client.receive(client_registry, make_position_packet(2, {{server_entity, Position{10.0f, 0.0f}}})));
     REQUIRE(client.tick(client_registry, 0.25));
 
-    const kage::sync::DisplayInterpolationSampleBuffer& display = client.display_interpolation_frame(client_registry);
+    const kage::sync::FractionalTickSampleBuffer& display = client.fractional_tick_frame(client_registry);
     REQUIRE(display.entities.size() == 1);
     Position sampled;
-    REQUIRE_THROWS_AS(display.entities[0].try_get_display_value(client_registry, sampled), std::logic_error);
+    REQUIRE_THROWS_AS(display.entities[0].try_get_sampled_value(client_registry, sampled), std::logic_error);
 }
 
-TEST_CASE("predicted client error blends display-interpolated resim corrections") {
+TEST_CASE("predicted client error blends fractional-tick-sampled resim corrections") {
     ecs::Registry registry;
     const ecs::Entity position_component =
         kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
@@ -577,7 +518,7 @@ TEST_CASE("predicted client error blends display-interpolated resim corrections"
         {{position_component, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}});
     REQUIRE(archetype.value == 0);
     kage::sync::configure_client(registry, 1);
-    REQUIRE(kage::sync::set_display_interpolated<PredictedPosition>(registry));
+    REQUIRE(kage::sync::set_fractional_tick_sampled<PredictedPosition>(registry));
     kage::sync::ReplicationClientOptions options;
     options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
     kage::sync::ReplicationClient client(options);
@@ -595,14 +536,14 @@ TEST_CASE("predicted client error blends display-interpolated resim corrections"
     REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
     REQUIRE(registry.get<PredictedPosition>(local).x == 3.0f);
 
-    const kage::sync::DisplayInterpolationSampleBuffer& display = client.display_interpolation_frame(registry);
+    const kage::sync::FractionalTickSampleBuffer& display = client.fractional_tick_frame(registry);
     REQUIRE(display.entities.size() == 1);
     PredictedPosition shown;
-    REQUIRE(display.entities[0].try_get_display_value(registry, shown));
+    REQUIRE(display.entities[0].try_get_sampled_value(registry, shown));
     REQUIRE(shown.x == Catch::Approx(1.2f));
 }
 
-TEST_CASE("predicted client display samples prediction history between fixed ticks") {
+TEST_CASE("predicted client fractional tick samples prediction history between fixed ticks") {
     ecs::Registry registry;
     const ecs::Entity position_component =
         kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
@@ -612,7 +553,7 @@ TEST_CASE("predicted client display samples prediction history between fixed tic
         {{position_component, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}});
     REQUIRE(archetype.value == 0);
     kage::sync::configure_client(registry, 1);
-    REQUIRE(kage::sync::set_display_interpolated<PredictedPosition>(registry));
+    REQUIRE(kage::sync::set_fractional_tick_sampled<PredictedPosition>(registry));
     kage::sync::ReplicationClientOptions options;
     options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
     kage::sync::ReplicationClient client(options);
@@ -626,18 +567,18 @@ TEST_CASE("predicted client display samples prediction history between fixed tic
     REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
     REQUIRE(client.tick(registry, client.options().fixed_dt_seconds * 0.5));
 
-    const kage::sync::DisplayInterpolationSampleBuffer& display = client.display_interpolation_frame(registry);
+    const kage::sync::FractionalTickSampleBuffer& display = client.fractional_tick_frame(registry);
     REQUIRE(display.entities.size() == 1);
     REQUIRE(display.entities[0].frame == 2);
     REQUIRE(display.entities[0].alpha >= 0.0f);
     REQUIRE(display.entities[0].alpha < 1.0f);
     PredictedPosition shown;
-    REQUIRE(display.entities[0].try_get_display_value(registry, shown));
+    REQUIRE(display.entities[0].try_get_sampled_value(registry, shown));
     REQUIRE(shown.x > 1.0f);
     REQUIRE(shown.x < 2.0f);
 }
 
-TEST_CASE("predicted client display lags one fixed tick at tick boundaries") {
+TEST_CASE("predicted client fractional tick sample lags one fixed tick at tick boundaries") {
     ecs::Registry registry;
     const ecs::Entity position_component =
         kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
@@ -647,7 +588,7 @@ TEST_CASE("predicted client display lags one fixed tick at tick boundaries") {
         {{position_component, kage::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
     kage::sync::configure_client(registry, 1);
-    REQUIRE(kage::sync::set_display_interpolated<PredictedPosition>(registry));
+    REQUIRE(kage::sync::set_fractional_tick_sampled<PredictedPosition>(registry));
     kage::sync::ReplicationClientOptions options;
     options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
     kage::sync::ReplicationClient client(options);
@@ -660,16 +601,16 @@ TEST_CASE("predicted client display lags one fixed tick at tick boundaries") {
     REQUIRE(client.predict_tick(registry, 2));
     REQUIRE(client.predict_tick(registry, 3));
 
-    const kage::sync::DisplayInterpolationSampleBuffer& display = client.display_interpolation_frame(registry);
+    const kage::sync::FractionalTickSampleBuffer& display = client.fractional_tick_frame(registry);
     REQUIRE(display.entities.size() == 1);
     REQUIRE(display.entities[0].frame == 2);
     REQUIRE(display.entities[0].alpha == Catch::Approx(0.0f));
     PredictedPosition shown;
-    REQUIRE(display.entities[0].try_get_display_value(registry, shown));
+    REQUIRE(display.entities[0].try_get_sampled_value(registry, shown));
     REQUIRE(shown.x == Catch::Approx(1.0f));
 }
 
-TEST_CASE("predicted client display emits during single-sample warmup") {
+TEST_CASE("predicted client fractional tick sample emits during single-sample warmup") {
     ecs::Registry registry;
     const ecs::Entity position_component =
         kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
@@ -679,7 +620,7 @@ TEST_CASE("predicted client display emits during single-sample warmup") {
         {{position_component, kage::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
     kage::sync::configure_client(registry, 1);
-    REQUIRE(kage::sync::set_display_interpolated<PredictedPosition>(registry));
+    REQUIRE(kage::sync::set_fractional_tick_sampled<PredictedPosition>(registry));
     kage::sync::ReplicationClientOptions options;
     options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
     kage::sync::ReplicationClient client(options);
@@ -687,11 +628,11 @@ TEST_CASE("predicted client display emits during single-sample warmup") {
     const ecs::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{4.0f, 0.0f})));
 
-    const kage::sync::DisplayInterpolationSampleBuffer& display = client.display_interpolation_frame(registry);
+    const kage::sync::FractionalTickSampleBuffer& display = client.fractional_tick_frame(registry);
     REQUIRE(display.entities.size() == 1);
     REQUIRE(display.entities[0].frame == 1);
     REQUIRE(display.entities[0].alpha == Catch::Approx(0.0f));
     PredictedPosition shown;
-    REQUIRE(display.entities[0].try_get_display_value(registry, shown));
+    REQUIRE(display.entities[0].try_get_sampled_value(registry, shown));
     REQUIRE(shown.x == Catch::Approx(4.0f));
 }

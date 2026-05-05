@@ -27,7 +27,7 @@ TEST_CASE("sync components register into the ecs registry") {
     REQUIRE(registry.component<kage::sync::SyncAuthority>());
     REQUIRE(registry.component<kage::sync::Replicated>());
     REQUIRE(registry.component<kage::sync::NetworkOwner>());
-    REQUIRE(registry.component<kage::sync::DisplayInterpolated>());
+    REQUIRE(registry.component<kage::sync::FractionalTickSampled>());
 
     const kage::sync::SyncSettings& settings = registry.get<kage::sync::SyncSettings>();
     REQUIRE(settings.role == kage::sync::SyncRole::Server);
@@ -36,21 +36,21 @@ TEST_CASE("sync components register into the ecs registry") {
     REQUIRE(registry.get<kage::sync::SyncAuthority>().is_authoritative());
 }
 
-TEST_CASE("display interpolation marker is stored as a component entity tag") {
+TEST_CASE("fractional tick sample marker is stored as a component entity tag") {
     ecs::Registry registry;
     const ecs::Entity smooth_component =
         kage::sync::register_sync_component<kage_sync_tests::SmoothPosition>(registry, "SmoothPosition");
     const ecs::Entity position_component = kage::sync::register_sync_component<Position>(registry, "Position");
 
-    REQUIRE(kage::sync::set_display_interpolated(registry, smooth_component));
-    REQUIRE(kage::sync::is_display_interpolated(registry, smooth_component));
-    REQUIRE(registry.has<kage::sync::DisplayInterpolated>(smooth_component));
+    REQUIRE(kage::sync::set_fractional_tick_sampled(registry, smooth_component));
+    REQUIRE(kage::sync::is_fractional_tick_sampled(registry, smooth_component));
+    REQUIRE(registry.has<kage::sync::FractionalTickSampled>(smooth_component));
 
-    REQUIRE_FALSE(kage::sync::set_display_interpolated(registry, position_component));
-    REQUIRE_FALSE(kage::sync::is_display_interpolated(registry, position_component));
+    REQUIRE_FALSE(kage::sync::set_fractional_tick_sampled(registry, position_component));
+    REQUIRE_FALSE(kage::sync::is_fractional_tick_sampled(registry, position_component));
 
-    REQUIRE(kage::sync::set_display_interpolated<kage_sync_tests::SmoothPosition>(registry, false));
-    REQUIRE_FALSE(kage::sync::is_display_interpolated<kage_sync_tests::SmoothPosition>(registry));
+    REQUIRE(kage::sync::set_fractional_tick_sampled<kage_sync_tests::SmoothPosition>(registry, false));
+    REQUIRE_FALSE(kage::sync::is_fractional_tick_sampled<kage_sync_tests::SmoothPosition>(registry));
 }
 
 TEST_CASE("server and client configuration update singleton settings") {

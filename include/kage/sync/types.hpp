@@ -532,7 +532,7 @@ struct NetworkOwner {
     ClientId client = invalid_client_id;
 };
 
-struct DisplayInterpolated {};
+struct FractionalTickSampled {};
 struct NoResim {};
 struct NoSimulate {};
 

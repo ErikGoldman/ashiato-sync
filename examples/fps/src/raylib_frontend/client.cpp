@@ -71,8 +71,8 @@ void run_client(const AppConfig& config) {
 #endif
     kage::sync::ReplicationClient client(client_options);
     register_game_jobs(registry, client);
-    kage::sync::DisplayFrameInterpolation client_display(client);
-    std::unique_ptr<kage::sync::DisplayFrameInterpolation> death_cam_display;
+    kage::sync::FractionalTickSampler client_display(client);
+    std::unique_ptr<kage::sync::FractionalTickSampler> death_cam_display;
 
     SocketHandle socket = make_udp_socket(0);
     const sockaddr_in server_address = make_address(config.host, config.port);
@@ -113,7 +113,7 @@ void run_client(const AppConfig& config) {
         link_time_seconds += static_cast<double>(dt);
         packet_drop_remaining_seconds =
             std::max(0.0, packet_drop_remaining_seconds - static_cast<double>(dt));
-        const double display_target = client.display_target_frame();
+        const double display_target = client.fractional_tick_target_frame();
         const kage::sync::SyncFrame display_target_frame =
             display_target > 0.0 && std::isfinite(display_target)
             ? static_cast<kage::sync::SyncFrame>(std::floor(display_target))
@@ -179,16 +179,16 @@ void run_client(const AppConfig& config) {
         const ecs::Entity replay_local_entity = death_cam.active() ? find_local_entity(death_cam.registry()) : ecs::Entity{};
         const bool replay_ready = replay_local_entity != ecs::Entity{};
         if (replay_ready && death_cam_display == nullptr) {
-            death_cam_display = std::make_unique<kage::sync::DisplayFrameInterpolation>(death_cam.client());
+            death_cam_display = std::make_unique<kage::sync::FractionalTickSampler>(death_cam.client());
         } else if (!replay_ready) {
             death_cam_display.reset();
         }
         ecs::Registry& render_registry = replay_ready ? death_cam.registry() : registry;
         kage::sync::ReplicationClient& render_client = replay_ready ? death_cam.client() : client;
-        kage::sync::DisplayFrameInterpolation& render_display_source =
+        kage::sync::FractionalTickSampler& render_display_source =
             replay_ready ? *death_cam_display : client_display;
         ecs::Entity local_entity = find_local_entity(render_registry);
-        const std::vector<kage::sync::DisplayFrameEntity>& render_display =
+        const std::vector<kage::sync::FractionalTickSample>& render_display =
             render_display_source.entities(render_registry);
         if (replay_ready) {
             const ecs::Entity kill_cam_target = render_registry.component<FpsKillCamTarget>();
@@ -239,8 +239,8 @@ void run_client(const AppConfig& config) {
         if (local_entity && render_registry.alive(local_entity)) {
             FpsTransform sampled_transform{};
             const FpsTransform* transform = nullptr;
-            for (const kage::sync::DisplayFrameEntity& sample : render_display) {
-                if (sample.local_entity == local_entity && sample.try_get_display_value(render_registry, sampled_transform)) {
+            for (const kage::sync::FractionalTickSample& sample : render_display) {
+                if (sample.local_entity == local_entity && sample.try_get_sampled_value(render_registry, sampled_transform)) {
                     transform = &sampled_transform;
                     break;
                 }
@@ -270,9 +270,9 @@ void run_client(const AppConfig& config) {
         ClearBackground(Color{20, 22, 26, 255});
         BeginMode3D(camera);
         draw_arena();
-        for (const kage::sync::DisplayFrameEntity& sample : render_display) {
+        for (const kage::sync::FractionalTickSample& sample : render_display) {
             FpsTransform transform{};
-            if (!sample.try_get_display_value(render_registry, transform)) {
+            if (!sample.try_get_sampled_value(render_registry, transform)) {
                 continue;
             }
             const FpsVisual* visual = render_registry.try_get<FpsVisual>(sample.local_entity);

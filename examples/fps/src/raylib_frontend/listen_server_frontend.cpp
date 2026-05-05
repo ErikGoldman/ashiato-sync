@@ -60,8 +60,8 @@ struct ListenServerFrontend::Impl {
     kage::sync::ClientId host_client = kage::sync::invalid_client_id;
     std::string replay_host = "127.0.0.1";
     std::uint16_t replay_port = 0;
-    std::unique_ptr<kage::sync::DisplayFrameInterpolation> display;
-    std::unique_ptr<kage::sync::DisplayFrameInterpolation> death_cam_display;
+    std::unique_ptr<kage::sync::FractionalTickSampler> display;
+    std::unique_ptr<kage::sync::FractionalTickSampler> death_cam_display;
     FpsDeathCamClient death_cam;
     FpsInput current_input{};
     MouseLookState look;
@@ -88,7 +88,7 @@ ListenServerFrontend::ListenServerFrontend(
     impl_->replay_port = config.replay_port;
     (void)spawn_character(registry, schema, Vector3{0.0f, 0.0f, -3.0f}, Color{90, 180, 255, 255}, impl_->host_client);
 
-    impl_->display = std::make_unique<kage::sync::DisplayFrameInterpolation>(server);
+    impl_->display = std::make_unique<kage::sync::FractionalTickSampler>(server);
 
     InitWindow(1280, 720, "kage-sync FPS listen server");
     InitAudioDevice();
@@ -169,14 +169,14 @@ void ListenServerFrontend::render(ecs::Registry& registry, kage::sync::Replicati
         impl_->death_cam.active() ? find_local_player(impl_->death_cam.registry(), impl_->host_client) : ecs::Entity{};
     const bool replay_ready = replay_local_entity != ecs::Entity{};
     if (replay_ready && impl_->death_cam_display == nullptr) {
-        impl_->death_cam_display = std::make_unique<kage::sync::DisplayFrameInterpolation>(impl_->death_cam.client());
+        impl_->death_cam_display = std::make_unique<kage::sync::FractionalTickSampler>(impl_->death_cam.client());
     } else if (!replay_ready) {
         impl_->death_cam_display.reset();
     }
     ecs::Registry& render_registry = replay_ready ? impl_->death_cam.registry() : registry;
-    kage::sync::DisplayFrameInterpolation& render_display_source =
+    kage::sync::FractionalTickSampler& render_display_source =
         replay_ready ? *impl_->death_cam_display : *impl_->display;
-    const std::vector<kage::sync::DisplayFrameEntity>& render_display = render_display_source.entities(render_registry);
+    const std::vector<kage::sync::FractionalTickSample>& render_display = render_display_source.entities(render_registry);
     ecs::Entity local_entity = find_local_player(render_registry, impl_->host_client);
     if (replay_ready) {
         ecs::Entity ecs_target;
@@ -213,8 +213,8 @@ void ListenServerFrontend::render(ecs::Registry& registry, kage::sync::Replicati
     if (local_entity && render_registry.alive(local_entity)) {
         FpsTransform sampled_transform{};
         const FpsTransform* transform = nullptr;
-        for (const kage::sync::DisplayFrameEntity& sample : render_display) {
-            if (sample.local_entity == local_entity && sample.try_get_display_value(render_registry, sampled_transform)) {
+        for (const kage::sync::FractionalTickSample& sample : render_display) {
+            if (sample.local_entity == local_entity && sample.try_get_sampled_value(render_registry, sampled_transform)) {
                 transform = &sampled_transform;
                 break;
             }
@@ -244,9 +244,9 @@ void ListenServerFrontend::render(ecs::Registry& registry, kage::sync::Replicati
     ClearBackground(Color{20, 22, 26, 255});
     BeginMode3D(camera);
     draw_arena();
-    for (const kage::sync::DisplayFrameEntity& sample : render_display) {
+    for (const kage::sync::FractionalTickSample& sample : render_display) {
         FpsTransform transform{};
-        if (!sample.try_get_display_value(render_registry, transform)) {
+        if (!sample.try_get_sampled_value(render_registry, transform)) {
             continue;
         }
         const FpsVisual* visual = render_registry.try_get<FpsVisual>(sample.local_entity);
@@ -260,7 +260,7 @@ void ListenServerFrontend::render(ecs::Registry& registry, kage::sync::Replicati
         }
         draw_character_body(Vector3{transform.x, transform.y, transform.z}, *visual, color);
         draw_third_person_gun(transform, *visual);
-        if (sample.has_tag(render_registry, render_registry.component<FpsStunned>())) {
+        if (render_registry.has<FpsStunned>(sample.local_entity)) {
             draw_stunned_effect(transform, *visual);
         }
         if (render_registry.contains<FpsShotEffect>(sample.local_entity)) {

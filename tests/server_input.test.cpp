@@ -727,12 +727,12 @@ TEST_CASE("auto timing initializes prediction and interpolation quickly under re
         const bool interpolation_ready =
             timing.current_interpolation_buffer_frames + 1U >= timing.target_interpolation_buffer_frames &&
             timing.target_interpolation_buffer_frames + 1U >= timing.current_interpolation_buffer_frames;
-        const bool display_ready = !client.display_interpolation_frame(client_registry).entities.empty();
+        const bool fractional_tick_ready = !client.fractional_tick_frame(client_registry).entities.empty();
         if (first_update_tick >= 0 &&
             input_stats.input_starvation_frames == previous_starvations &&
             prediction_ready &&
             interpolation_ready &&
-            display_ready) {
+            fractional_tick_ready) {
             ++stable_ticks;
             if (stable_ticks >= 3) {
                 recovered_tick = tick;
@@ -752,7 +752,7 @@ TEST_CASE("auto timing initializes prediction and interpolation quickly under re
     INFO("prediction target=" << client.timing_stats().target_prediction_lead_frames);
     INFO("interpolation current=" << client.timing_stats().current_interpolation_buffer_frames);
     INFO("interpolation target=" << client.timing_stats().target_interpolation_buffer_frames);
-    INFO("display samples=" << client.display_interpolation_frame(client_registry).entities.size());
+    INFO("fractional tick samples=" << client.fractional_tick_frame(client_registry).entities.size());
     REQUIRE(first_update_tick >= 0);
     REQUIRE(recovered_tick >= 0);
     REQUIRE(client.timing_stats().current_prediction_lead_frames == client.timing_stats().target_prediction_lead_frames);
@@ -849,12 +849,12 @@ TEST_CASE("auto timing recovers prediction and interpolation quickly after packe
         const bool interpolation_ready =
             timing.current_interpolation_buffer_frames + 1U >= timing.target_interpolation_buffer_frames &&
             timing.target_interpolation_buffer_frames + 1U >= timing.current_interpolation_buffer_frames;
-        const bool display_ready = !client.display_interpolation_frame(client_registry).entities.empty();
+        const bool fractional_tick_ready = !client.fractional_tick_frame(client_registry).entities.empty();
         if (first_post_loss_update_tick >= 0 &&
             input_stats.input_starvation_frames == previous_starvations &&
             prediction_ready &&
             interpolation_ready &&
-            display_ready) {
+            fractional_tick_ready) {
             ++stable_ticks;
             if (stable_ticks >= 3) {
                 recovered_tick = tick;
@@ -874,7 +874,7 @@ TEST_CASE("auto timing recovers prediction and interpolation quickly after packe
     INFO("prediction target=" << client.timing_stats().target_prediction_lead_frames);
     INFO("interpolation current=" << client.timing_stats().current_interpolation_buffer_frames);
     INFO("interpolation target=" << client.timing_stats().target_interpolation_buffer_frames);
-    INFO("display samples=" << client.display_interpolation_frame(client_registry).entities.size());
+    INFO("fractional tick samples=" << client.fractional_tick_frame(client_registry).entities.size());
     REQUIRE(first_post_loss_update_tick >= 0);
     REQUIRE(recovered_tick >= 0);
     REQUIRE(recovered_tick - first_post_loss_update_tick <= 30);

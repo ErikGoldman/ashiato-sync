@@ -10,17 +10,17 @@ namespace kage::sync {
 void register_components(ecs::Registry& registry);
 
 const SyncComponentOps* find_component_ops(const ecs::Registry& registry, ecs::Entity component);
-bool set_display_interpolated(ecs::Registry& registry, ecs::Entity component, bool enabled = true);
-bool is_display_interpolated(const ecs::Registry& registry, ecs::Entity component);
+bool set_fractional_tick_sampled(ecs::Registry& registry, ecs::Entity component, bool enabled = true);
+bool is_fractional_tick_sampled(const ecs::Registry& registry, ecs::Entity component);
 
 template <typename T>
-bool set_display_interpolated(ecs::Registry& registry, bool enabled = true) {
-    return set_display_interpolated(registry, registry.component<T>(), enabled);
+bool set_fractional_tick_sampled(ecs::Registry& registry, bool enabled = true) {
+    return set_fractional_tick_sampled(registry, registry.component<T>(), enabled);
 }
 
 template <typename T>
-bool is_display_interpolated(const ecs::Registry& registry) {
-    return is_display_interpolated(registry, registry.component<T>());
+bool is_fractional_tick_sampled(const ecs::Registry& registry) {
+    return is_fractional_tick_sampled(registry, registry.component<T>());
 }
 
 void configure_server(ecs::Registry& registry);

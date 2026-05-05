@@ -19,6 +19,7 @@ namespace kage::sync {
 
 class SyncTracer;
 class KTraceDirectoryWriter;
+class FractionalTickSampler;
 enum class SyncTraceEventType : std::uint8_t;
 
 namespace client_detail {
@@ -61,27 +62,29 @@ private:
     const std::vector<ReplicatedComponentUpdate>* components = nullptr;
 };
 
-struct DisplayInterpolationSample {
+struct FractionalTickSample {
     ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
     ecs::Entity local_entity;
-    SyncArchetypeId archetype;
     SyncFrame frame = 0;
     float alpha = 0.0f;
-    std::uint64_t tag_mask = 0;
-    std::vector<ReplicatedComponentUpdate> components;
 
     template <typename T>
-    bool try_get_display_value(const ecs::Registry& registry, T& out) const {
+    bool try_get_sampled_value(const ecs::Registry& registry, T& out) const {
         const ecs::Entity component = registry.component<T>();
-        return try_get_display_value(registry, component, &out);
+        return try_get_sampled_value(registry, component, &out);
     }
 
-    bool try_get_display_value(const ecs::Registry& registry, ecs::Entity component, void* out) const;
-    bool has_tag(const ecs::Registry& registry, ecs::Entity tag) const;
+    bool try_get_sampled_value(const ecs::Registry& registry, ecs::Entity component, void* out) const;
+
+private:
+    friend class ReplicationClient;
+    friend class FractionalTickSampler;
+
+    std::vector<ReplicatedComponentUpdate> components_;
 };
 
-struct DisplayInterpolationSampleBuffer {
-    std::vector<DisplayInterpolationSample> entities;
+struct FractionalTickSampleBuffer {
+    std::vector<FractionalTickSample> entities;
 
     void clear() {
         entities.clear();
@@ -390,15 +393,15 @@ public:
         return detail::ClientJobBuilder<decltype(builder), false>(registry, std::move(builder), simulation_jobs_);
     }
     bool apply_frame(ecs::Registry& registry, SyncFrame client_frame);
-    bool sample_display_interpolation_target_frame(
+    bool sample_fractional_tick_target_frame(
         const ecs::Registry& registry,
         double target_frame,
-        DisplayInterpolationSampleBuffer& out) const;
-    bool sample_display_interpolation_frame(
+        FractionalTickSampleBuffer& out) const;
+    bool sample_fractional_tick_frame(
         const ecs::Registry& registry,
         double client_frame,
-        DisplayInterpolationSampleBuffer& out) const;
-    const DisplayInterpolationSampleBuffer& display_interpolation_frame(const ecs::Registry& registry);
+        FractionalTickSampleBuffer& out) const;
+    const FractionalTickSampleBuffer& fractional_tick_frame(const ecs::Registry& registry);
     std::vector<ecs::BitBuffer> drain_packets();
     std::vector<ecs::BitBuffer> drain_ack_packets();
     std::size_t pending_ack_count() const noexcept;
@@ -432,7 +435,7 @@ public:
     double continuous_input_frame() const noexcept {
         return clock_.continuous_input_frame();
     }
-    double display_target_frame() const noexcept {
+    double fractional_tick_target_frame() const noexcept {
         return clock_.display_target_frame();
     }
     bool has_applied_buffered_frame() const noexcept {
@@ -621,12 +624,12 @@ private:
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     void record_interpolation_frame(std::uint64_t checks, std::uint64_t starvations) noexcept;
 #endif
-    bool write_display_samples(
+    bool write_fractional_tick_samples(
         const ecs::Registry& registry,
         double target_frame,
         bool include_snap,
         bool include_empty_buffered,
-        DisplayInterpolationSampleBuffer& out) const;
+        FractionalTickSampleBuffer& out) const;
     ComponentInterpolation interpolation_for(
         const SyncSettings& settings,
         SyncArchetypeId archetype,
@@ -758,8 +761,8 @@ private:
 #endif
     std::vector<ecs::BitBuffer> inbound_packets_;
     std::function<void(const ecs::BitBuffer&)> packet_sender_;
-    DisplayInterpolationSampleBuffer display_frame_;
-    DisplayInterpolationSampleBuffer display_scratch_;
+    FractionalTickSampleBuffer fractional_tick_frame_;
+    FractionalTickSampleBuffer fractional_tick_scratch_;
     std::string connect_error_;
     ClientId client_id_ = invalid_client_id;
     ReplicationClientConnectionState connection_state_ = ReplicationClientConnectionState::Connecting;

@@ -9,7 +9,7 @@ namespace {
 kage::sync::SyncArchetypeId define_smooth_display_archetype(ecs::Registry& registry) {
     const ecs::Entity smooth =
         kage::sync::register_sync_component<SmoothPosition>(registry, "SmoothPosition");
-    REQUIRE(kage::sync::set_display_interpolated(registry, smooth));
+    REQUIRE(kage::sync::set_fractional_tick_sampled(registry, smooth));
     return kage::sync::define_archetype(
         registry,
         "SmoothDisplayActor",
@@ -18,7 +18,7 @@ kage::sync::SyncArchetypeId define_smooth_display_archetype(ecs::Registry& regis
 
 }  // namespace
 
-TEST_CASE("server-backed display frame interpolates between fixed simulation frames") {
+TEST_CASE("server-backed fractional tick frame interpolates between fixed simulation frames") {
     ecs::Registry registry;
     kage::sync::configure_server(registry);
     const kage::sync::SyncArchetypeId archetype = define_smooth_display_archetype(registry);
@@ -30,7 +30,7 @@ TEST_CASE("server-backed display frame interpolates between fixed simulation fra
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 1.0;
     kage::sync::ReplicationServer server(options);
-    kage::sync::DisplayFrameInterpolation display(server);
+    kage::sync::FractionalTickSampler display(server);
 
     server.tick(registry);
     display.capture_server_frame(registry);
@@ -40,17 +40,17 @@ TEST_CASE("server-backed display frame interpolates between fixed simulation fra
     display.capture_server_frame(registry);
 
     REQUIRE(server.tick(registry, 0.5));
-    const std::vector<kage::sync::DisplayFrameEntity>& entities = display.entities(registry);
+    const std::vector<kage::sync::FractionalTickSample>& entities = display.entities(registry);
     REQUIRE(entities.size() == 1U);
 
     SmoothPosition sampled{};
-    REQUIRE(entities[0].try_get_display_value(registry, sampled));
+    REQUIRE(entities[0].try_get_sampled_value(registry, sampled));
     REQUIRE(sampled.x == 5.0f);
     REQUIRE(sampled.y == 10.0f);
     REQUIRE(display.target_frame() == 1.5);
 }
 
-TEST_CASE("server-backed display frame uses current snapshot without a previous frame") {
+TEST_CASE("server-backed fractional tick frame uses current snapshot without a previous frame") {
     ecs::Registry registry;
     kage::sync::configure_server(registry);
     const kage::sync::SyncArchetypeId archetype = define_smooth_display_archetype(registry);
@@ -60,15 +60,15 @@ TEST_CASE("server-backed display frame uses current snapshot without a previous 
     REQUIRE(start_sync(registry, entity, archetype));
 
     kage::sync::ReplicationServer server;
-    kage::sync::DisplayFrameInterpolation display(server);
+    kage::sync::FractionalTickSampler display(server);
 
     server.tick(registry);
     display.capture_server_frame(registry);
 
-    const std::vector<kage::sync::DisplayFrameEntity>& entities = display.entities(registry);
+    const std::vector<kage::sync::FractionalTickSample>& entities = display.entities(registry);
     REQUIRE(entities.size() == 1U);
     SmoothPosition sampled{};
-    REQUIRE(entities[0].try_get_display_value(registry, sampled));
+    REQUIRE(entities[0].try_get_sampled_value(registry, sampled));
     REQUIRE(sampled.x == 3.0f);
     REQUIRE(sampled.y == 4.0f);
 }

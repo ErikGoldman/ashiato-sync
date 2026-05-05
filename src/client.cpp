@@ -331,24 +331,24 @@ bool ReplicatedEntityUpdateView::has_tag(const ecs::Registry& registry, ecs::Ent
     return false;
 }
 
-bool DisplayInterpolationSample::try_get_display_value(
+bool FractionalTickSample::try_get_sampled_value(
     const ecs::Registry& registry,
     ecs::Entity component,
     void* out) const {
     if (out == nullptr) {
         return false;
     }
-    if (!registry.has<DisplayInterpolated>(component)) {
-        throw std::logic_error("display sample component is not marked display-interpolated");
+    if (!registry.has<FractionalTickSampled>(component)) {
+        throw std::logic_error("fractional tick sample component is not marked fractional-tick-sampled");
     }
 
     const auto found = std::find_if(
-        components.begin(),
-        components.end(),
+        components_.begin(),
+        components_.end(),
         [component](const ReplicatedComponentUpdate& update) {
             return update.component == component;
         });
-    if (found == components.end()) {
+    if (found == components_.end()) {
         return false;
     }
 
@@ -363,20 +363,6 @@ bool DisplayInterpolationSample::try_get_display_value(
     }
     found_ops->second.dequantize(found->bytes.data(), out);
     return true;
-}
-
-bool DisplayInterpolationSample::has_tag(const ecs::Registry& registry, ecs::Entity tag) const {
-    const SyncSettings& settings = registry.get<SyncSettings>();
-    if (archetype.value >= settings.archetypes.size()) {
-        return false;
-    }
-    const SyncArchetype& definition = settings.archetypes[archetype.value];
-    for (std::size_t tag_index = 0; tag_index < definition.tags.size(); ++tag_index) {
-        if (definition.tags[tag_index].tag == tag) {
-            return tag_bit_set(tag_mask, tag_index);
-        }
-    }
-    return false;
 }
 
 ReplicationClient::ReplicationClient(ReplicationClientOptions options)
@@ -1573,24 +1559,24 @@ void ReplicationClient::record_interpolation_frame(std::uint64_t checks, std::ui
 }
 #endif
 
-bool ReplicationClient::sample_display_interpolation_target_frame(
+bool ReplicationClient::sample_fractional_tick_target_frame(
     const ecs::Registry& registry,
     double target_frame,
-    DisplayInterpolationSampleBuffer& out) const {
-    return write_display_samples(registry, target_frame, false, false, out);
+    FractionalTickSampleBuffer& out) const {
+    return write_fractional_tick_samples(registry, target_frame, false, false, out);
 }
 
-bool ReplicationClient::sample_display_interpolation_frame(
+bool ReplicationClient::sample_fractional_tick_frame(
     const ecs::Registry& registry,
     double client_frame,
-    DisplayInterpolationSampleBuffer& out) const {
-    return sample_display_interpolation_target_frame(
+    FractionalTickSampleBuffer& out) const {
+    return sample_fractional_tick_target_frame(
         registry,
         client_frame - static_cast<double>(clock_.interpolation_buffer_frames()),
         out);
 }
 
-const DisplayInterpolationSampleBuffer& ReplicationClient::display_interpolation_frame(const ecs::Registry& registry) {
+const FractionalTickSampleBuffer& ReplicationClient::fractional_tick_frame(const ecs::Registry& registry) {
     const double display_accumulator_seconds = clock_.consume_display_accumulator_seconds();
     const float display_dt = display_accumulator_seconds > 0.0 && std::isfinite(display_accumulator_seconds)
         ? static_cast<float>(display_accumulator_seconds)
@@ -1598,14 +1584,14 @@ const DisplayInterpolationSampleBuffer& ReplicationClient::display_interpolation
     if (display_dt > 0.0f) {
         blend_snap_errors(registry.get<SyncSettings>(), display_dt);
     }
-    if (write_display_samples(registry, clock_.display_target_frame(), true, true, display_scratch_)) {
-        display_frame_.entities.swap(display_scratch_.entities);
-        display_scratch_.clear();
-    } else if (display_frame_.entities.empty()) {
-        display_frame_.entities.swap(display_scratch_.entities);
-        display_scratch_.clear();
+    if (write_fractional_tick_samples(registry, clock_.display_target_frame(), true, true, fractional_tick_scratch_)) {
+        fractional_tick_frame_.entities.swap(fractional_tick_scratch_.entities);
+        fractional_tick_scratch_.clear();
+    } else if (fractional_tick_frame_.entities.empty()) {
+        fractional_tick_frame_.entities.swap(fractional_tick_scratch_.entities);
+        fractional_tick_scratch_.clear();
     }
-    return display_frame_;
+    return fractional_tick_frame_;
 }
 
 std::vector<ecs::BitBuffer> ReplicationClient::drain_packets() {
@@ -3380,7 +3366,7 @@ bool ReplicationClient::blend_resim_errors(
         state.snap_errors.clear();
         for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
             const ComponentReplication& replication = archetype.components[component_index];
-            if (!registry.has<DisplayInterpolated>(replication.component) ||
+            if (!registry.has<FractionalTickSampled>(replication.component) ||
                 component_index >= archetype.component_ops.size()) {
                 continue;
             }
@@ -3902,12 +3888,12 @@ void ReplicationClient::blend_snap_errors(const SyncSettings& settings, float dt
     }
 }
 
-bool ReplicationClient::write_display_samples(
+bool ReplicationClient::write_fractional_tick_samples(
     const ecs::Registry& registry,
     double target_frame,
     bool include_snap,
     bool include_empty_buffered,
-    DisplayInterpolationSampleBuffer& out) const {
+    FractionalTickSampleBuffer& out) const {
     out.clear();
     const bool target_valid = target_frame >= 0.0 &&
         std::isfinite(target_frame) &&
@@ -3918,17 +3904,17 @@ bool ReplicationClient::write_display_samples(
     const SyncSettings& settings = registry.get<SyncSettings>();
     bool all_valid = target_valid || !has_buffered_entities();
     std::size_t sampled_count = 0;
-    auto previous_display = [&](ClientEntityNetworkId network_id) -> const DisplayInterpolationSample* {
+    auto previous_display = [&](ClientEntityNetworkId network_id) -> const FractionalTickSample* {
         const auto found = std::find_if(
-            display_frame_.entities.begin(),
-            display_frame_.entities.end(),
-            [network_id](const DisplayInterpolationSample& sample) {
+            fractional_tick_frame_.entities.begin(),
+            fractional_tick_frame_.entities.end(),
+            [network_id](const FractionalTickSample& sample) {
                 return sample.client_entity_network_id == network_id;
             });
-        return found != display_frame_.entities.end() ? &*found : nullptr;
+        return found != fractional_tick_frame_.entities.end() ? &*found : nullptr;
     };
     auto append_previous_display = [&](ClientEntityNetworkId network_id) {
-        const DisplayInterpolationSample* previous = previous_display(network_id);
+        const FractionalTickSample* previous = previous_display(network_id);
         if (previous == nullptr) {
             return false;
         }
@@ -3973,21 +3959,19 @@ bool ReplicationClient::write_display_samples(
                     if (sampled_count == out.entities.size()) {
                         out.entities.emplace_back();
                     }
-                    DisplayInterpolationSample& display = out.entities[sampled_count];
+                    FractionalTickSample& display = out.entities[sampled_count];
                     display.client_entity_network_id = state.client_entity_network_id;
                     display.local_entity = state.local;
-                    display.archetype = floor_sample->archetype;
                     display.frame = floor_sample->frame;
                     display.alpha = next_sample != nullptr ? predicted_alpha : 0.0f;
-                    display.tag_mask = floor_sample->baseline.tag_mask;
-                    display.components.clear();
+                    display.components_.clear();
 
                     const SyncArchetype& display_archetype = settings.archetypes[floor_sample->archetype.value];
-                    display.components.reserve(display_archetype.components.size());
+                    display.components_.reserve(display_archetype.components.size());
                     for (std::size_t component_index = 0; component_index < display_archetype.components.size(); ++component_index) {
                         const ecs::Entity component = display_archetype.components[component_index].component;
                         if (!frame_has_component(floor_sample->baseline, component_index) ||
-                            !registry.has<DisplayInterpolated>(component)) {
+                            !registry.has<FractionalTickSampled>(component)) {
                             continue;
                         }
 
@@ -4033,10 +4017,10 @@ bool ReplicationClient::write_display_samples(
                             }
                         }
 
-                        display.components.push_back(std::move(value));
+                        display.components_.push_back(std::move(value));
                     }
 
-                    if (include_empty_buffered || !display.components.empty()) {
+                    if (include_empty_buffered || !display.components_.empty()) {
                         ++sampled_count;
                     }
                     continue;
@@ -4046,19 +4030,17 @@ bool ReplicationClient::write_display_samples(
             if (sampled_count == out.entities.size()) {
                 out.entities.emplace_back();
             }
-            DisplayInterpolationSample& display = out.entities[sampled_count++];
+            FractionalTickSample& display = out.entities[sampled_count++];
             display.client_entity_network_id = state.client_entity_network_id;
             display.local_entity = state.local;
-            display.archetype = state.archetype;
             display.frame = state.frame;
             display.alpha = 0.0f;
-            display.tag_mask = state.baseline.tag_mask;
-            display.components.clear();
+            display.components_.clear();
             const SyncArchetype& display_archetype = settings.archetypes[state.archetype.value];
-            display.components.reserve(display_archetype.components.size());
+            display.components_.reserve(display_archetype.components.size());
             for (std::size_t component_index = 0; component_index < display_archetype.components.size(); ++component_index) {
                 const ecs::Entity component = display_archetype.components[component_index].component;
-                if (!registry.has<DisplayInterpolated>(component)) {
+                if (!registry.has<FractionalTickSampled>(component)) {
                     continue;
                 }
                 if (component_index >= display_archetype.component_ops.size()) {
@@ -4089,7 +4071,7 @@ bool ReplicationClient::write_display_samples(
                         return false;
                     }
                 }
-                display.components.push_back(std::move(value));
+                display.components_.push_back(std::move(value));
             }
             continue;
         }
@@ -4125,21 +4107,19 @@ bool ReplicationClient::write_display_samples(
         if (sampled_count == out.entities.size()) {
             out.entities.emplace_back();
         }
-        DisplayInterpolationSample& display = out.entities[sampled_count];
+        FractionalTickSample& display = out.entities[sampled_count];
         display.client_entity_network_id = state.client_entity_network_id;
         display.local_entity = state.local;
-        display.archetype = floor_sample.archetype;
         display.frame = floor_frame;
         display.alpha = alpha;
-        display.tag_mask = floor_sample.baseline.tag_mask;
-        display.components.clear();
+        display.components_.clear();
         const SyncArchetype& display_archetype = settings.archetypes[floor_sample.archetype.value];
-        display.components.reserve(display_archetype.components.size());
+        display.components_.reserve(display_archetype.components.size());
 
         for (std::size_t component_index = 0; component_index < display_archetype.components.size(); ++component_index) {
             const ecs::Entity component = display_archetype.components[component_index].component;
             if (!frame_has_component(floor_sample.baseline, component_index) ||
-                !registry.has<DisplayInterpolated>(component)) {
+                !registry.has<FractionalTickSampled>(component)) {
                 continue;
             }
 
@@ -4168,10 +4148,10 @@ bool ReplicationClient::write_display_samples(
             } else {
                 value.bytes.assign(baseline_bytes, ops.quantized_size);
             }
-            display.components.push_back(std::move(value));
+            display.components_.push_back(std::move(value));
         }
 
-        if (include_empty_buffered || !display.components.empty()) {
+        if (include_empty_buffered || !display.components_.empty()) {
             ++sampled_count;
         }
     }

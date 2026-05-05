@@ -38,7 +38,7 @@ void register_components(ecs::Registry& registry) {
     registry.register_component<SyncAuthority>("kage.sync.SyncAuthority");
     registry.register_component<Replicated>("kage.sync.Replicated");
     registry.register_component<NetworkOwner>("kage.sync.NetworkOwner");
-    registry.register_component<DisplayInterpolated>("kage.sync.DisplayInterpolated");
+    registry.register_component<FractionalTickSampled>("kage.sync.FractionalTickSampled");
     registry.register_component<NoResim>("kage.sync.NoResim");
     registry.register_component<NoSimulate>("kage.sync.NoSimulate");
 }
@@ -49,15 +49,15 @@ const SyncComponentOps* find_component_ops(const ecs::Registry& registry, ecs::E
     return found != settings.component_ops.end() ? &found->second : nullptr;
 }
 
-bool set_display_interpolated(ecs::Registry& registry, ecs::Entity component, bool enabled) {
+bool set_fractional_tick_sampled(ecs::Registry& registry, ecs::Entity component, bool enabled) {
     register_components(registry);
     if (!component || registry.component_info(component) == nullptr) {
         return false;
     }
 
-    const ecs::Entity tag = registry.component<DisplayInterpolated>();
+    const ecs::Entity tag = registry.component<FractionalTickSampled>();
     if (!enabled) {
-        if (!registry.has<DisplayInterpolated>(component)) {
+        if (!registry.has<FractionalTickSampled>(component)) {
             return true;
         }
         return registry.remove_tag(component, tag);
@@ -71,11 +71,11 @@ bool set_display_interpolated(ecs::Registry& registry, ecs::Entity component, bo
     return registry.add_tag(component, tag);
 }
 
-bool is_display_interpolated(const ecs::Registry& registry, ecs::Entity component) {
+bool is_fractional_tick_sampled(const ecs::Registry& registry, ecs::Entity component) {
     if (!component || registry.component_info(component) == nullptr) {
         return false;
     }
-    return registry.has<DisplayInterpolated>(component);
+    return registry.has<FractionalTickSampled>(component);
 }
 
 void configure_server(ecs::Registry& registry) {

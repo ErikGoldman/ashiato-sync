@@ -237,16 +237,16 @@ naturally receive older unsent state first.
   `SyncComponentTraits<T>` must provide `static Quantized interpolate(...)`;
   otherwise buffered receive rejects the update without ACKing it. Components
   left as `Step` hold the previous value until the received frame.
-- Mark component entities with `set_display_interpolated` when render code
+- Mark component entities with `set_fractional_tick_sampled` when render code
   should sample them at fractional playback frames without mutating the ECS, then
-  render `client.display_interpolation_frame(registry).entities`. The display
+  render `client.fractional_tick_frame(registry).entities`. The fractional tick
   frame contains snap and buffered entities in one list. Predicted entities lag
-  display-interpolated components one fixed tick behind simulation and sample
-  between predicted history frames. Typed `try_get<T>` reads sampled
-  display-interpolated values first and falls back to live ECS values for
-  untagged components such as visuals. If auto-buffering changes depth or target
-  data is missing, the client keeps returning the previous valid display frame
-  instead of rewinding or exposing partial live transform state.
+  sampled components one fixed tick behind simulation and sample between
+  predicted history frames. Typed `try_get_sampled_value<T>` reads sampled values
+  for marked components; read all other entity data directly from ECS. If
+  auto-buffering changes depth or target data is missing, the client keeps
+  returning the previous valid fractional tick frame instead of rewinding or
+  exposing partial live transform state.
 - `ReplicationAudience::All` and `ReplicationAudience::Owner` are applied by
   server packet serialization. Full and delta records include only the
   components visible to the receiving client.

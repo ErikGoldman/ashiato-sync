@@ -26,7 +26,7 @@ SyncSchema define_schema(ecs::Registry& registry) {
     registry.register_component<FpsServerFrame>("FpsServerFrame");
     registry.register_component<FpsStunState>("FpsStunState");
     registry.register_component<BotBrain>("BotBrain");
-    (void)kage::sync::set_display_interpolated(registry, transform);
+    (void)kage::sync::set_fractional_tick_sampled(registry, transform);
     (void)kage::sync::register_sync_cue<ShotCue>(registry);
     (void)kage::sync::register_sync_cue<SurfaceHitCue>(registry);
     (void)kage::sync::register_sync_cue<PlayerHitCue>(registry);

@@ -165,7 +165,7 @@ void BM_ClientPredictTickQuantize(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(frame_count));
 }
 
-void BM_ClientSampleDisplayInterpolation(benchmark::State& state) {
+void BM_ClientSampleFractionalTick(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
     const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
@@ -174,7 +174,7 @@ void BM_ClientSampleDisplayInterpolation(benchmark::State& state) {
         state.PauseTiming();
         ecs::Registry registry;
         define_client_delta_schema(registry, true);
-        kage::sync::set_display_interpolated<DeltaPosition>(registry);
+        kage::sync::set_fractional_tick_sampled<DeltaPosition>(registry);
         kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
             1200,
             kage::sync::ReplicationClientMode::BufferedInterpolation,
@@ -183,11 +183,11 @@ void BM_ClientSampleDisplayInterpolation(benchmark::State& state) {
         for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
-        kage::sync::DisplayInterpolationSampleBuffer display;
+        kage::sync::FractionalTickSampleBuffer display;
         state.ResumeTiming();
 
         for (int frame = 1; frame < frame_count; ++frame) {
-            benchmark::DoNotOptimize(client.sample_display_interpolation_target_frame(
+            benchmark::DoNotOptimize(client.sample_fractional_tick_target_frame(
                 registry,
                 static_cast<double>(frame) + 0.5,
                 display));
@@ -198,7 +198,7 @@ void BM_ClientSampleDisplayInterpolation(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(frame_count - 1));
 }
 
-void BM_ClientSampleDisplayLargePayload(benchmark::State& state) {
+void BM_ClientSampleFractionalTickLargePayload(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
     const std::vector<ecs::BitBuffer> packets =
@@ -208,7 +208,7 @@ void BM_ClientSampleDisplayLargePayload(benchmark::State& state) {
         state.PauseTiming();
         ecs::Registry registry;
         define_client_large_payload_schema(registry);
-        kage::sync::set_display_interpolated<LargePayload>(registry);
+        kage::sync::set_fractional_tick_sampled<LargePayload>(registry);
         kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
             1200,
             kage::sync::ReplicationClientMode::BufferedInterpolation,
@@ -217,11 +217,11 @@ void BM_ClientSampleDisplayLargePayload(benchmark::State& state) {
         for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
-        kage::sync::DisplayInterpolationSampleBuffer display;
+        kage::sync::FractionalTickSampleBuffer display;
         state.ResumeTiming();
 
         for (int frame = 1; frame < frame_count; ++frame) {
-            benchmark::DoNotOptimize(client.sample_display_interpolation_target_frame(
+            benchmark::DoNotOptimize(client.sample_fractional_tick_target_frame(
                 registry,
                 static_cast<double>(frame) + 0.5,
                 display));
@@ -435,8 +435,8 @@ BENCHMARK(BM_ClientReceivePredict)->Apply(ClientArgs);
 BENCHMARK(BM_ClientReceiveMixedEntityModes)->Apply(ClientArgs);
 BENCHMARK(BM_ClientApplyBufferedInterpolation)->Apply(ClientArgs);
 BENCHMARK(BM_ClientPredictTickQuantize)->Apply(ClientArgs);
-BENCHMARK(BM_ClientSampleDisplayInterpolation)->Apply(ClientArgs);
-BENCHMARK(BM_ClientSampleDisplayLargePayload)->Apply(ClientArgs);
+BENCHMARK(BM_ClientSampleFractionalTick)->Apply(ClientArgs);
+BENCHMARK(BM_ClientSampleFractionalTickLargePayload)->Apply(ClientArgs);
 BENCHMARK(BM_ClientDrainAckPackets)->Apply(ClientArgs);
 BENCHMARK(BM_ClientDrainDuplicateHeavyAckPackets)->Args({1024, 64})->Args({4096, 64});
 BENCHMARK(BM_ClientReceiveDestroySnap)->Apply(DestroyArgs);

@@ -525,7 +525,7 @@ SyncSchema define_schema(ecs::Registry& registry, bool interpolate_position = fa
     registry.register_component<BallCueFlash>("BallCueFlash");
     kage::sync::register_sync_cue<BallBounceCue>(registry);
     if (interpolate_position) {
-        kage::sync::set_display_interpolated(registry, position);
+        kage::sync::set_fractional_tick_sampled(registry, position);
     }
     return SyncSchema{
         kage::sync::define_archetype(
@@ -1336,9 +1336,9 @@ int main(int argc, char** argv) {
         DrawGrid(12, 1.0f);
         const float pulse_time = static_cast<float>(GetTime());
         rendered_balls.clear();
-        for (const kage::sync::DisplayInterpolationSample& entity : client.display_interpolation_frame(client_registry).entities) {
+        for (const kage::sync::FractionalTickSample& entity : client.fractional_tick_frame(client_registry).entities) {
             BallPosition position;
-            if (!entity.try_get_display_value(client_registry, position)) {
+            if (!entity.try_get_sampled_value(client_registry, position)) {
                 continue;
             }
             const BallVisual* visual = client_registry.try_get<BallVisual>(entity.local_entity);
@@ -1352,8 +1352,8 @@ int main(int argc, char** argv) {
                 Vector3{position.x, position.y, position.z},
                 *visual,
                 contact != nullptr ? *contact : BallContact{},
-                entity.has_tag(client_registry, client_schema.spawn_tagged),
-                entity.has_tag(client_registry, client_schema.bounced),
+                client_registry.has(entity.local_entity, client_schema.spawn_tagged),
+                client_registry.has(entity.local_entity, client_schema.bounced),
             });
             remember_client_entity(known_client_entities, entity.client_entity_network_id);
         }

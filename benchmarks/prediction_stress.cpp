@@ -260,7 +260,7 @@ Schema define_schema(ecs::Registry& registry) {
     const ecs::Entity acceleration = register_sync_component<PredAcceleration>(registry, "PredAcceleration");
     const ecs::Entity energy = register_sync_component<PredEnergy>(registry, "PredEnergy");
     const ecs::Entity flags = register_sync_component<PredFlags>(registry, "PredFlags");
-    (void)set_display_interpolated(registry, position);
+    (void)set_fractional_tick_sampled(registry, position);
     return Schema{
         define_archetype(
             registry,
