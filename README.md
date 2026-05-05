@@ -239,8 +239,10 @@ naturally receive older unsent state first.
   left as `Step` hold the previous value until the received frame.
 - Mark component entities with `set_display_interpolated` when render code
   should sample them at fractional playback frames without mutating the ECS, then
-  render `client.display_interpolation_frame(registry).entities`. The display frame contains
-  snap and buffered entities in one list. Typed `try_get<T>` reads sampled
+  render `client.display_interpolation_frame(registry).entities`. The display
+  frame contains snap and buffered entities in one list. Predicted entities lag
+  display-interpolated components one fixed tick behind simulation and sample
+  between predicted history frames. Typed `try_get<T>` reads sampled
   display-interpolated values first and falls back to live ECS values for
   untagged components such as visuals. If auto-buffering changes depth or target
   data is missing, the client keeps returning the previous valid display frame

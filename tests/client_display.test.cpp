@@ -574,7 +574,7 @@ TEST_CASE("predicted client error blends display-interpolated resim corrections"
     const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
         registry,
         "PredictedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
+        {{position_component, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}});
     REQUIRE(archetype.value == 0);
     kage::sync::configure_client(registry, 1);
     REQUIRE(kage::sync::set_display_interpolated<PredictedPosition>(registry));
@@ -599,10 +599,45 @@ TEST_CASE("predicted client error blends display-interpolated resim corrections"
     REQUIRE(display.entities.size() == 1);
     PredictedPosition shown;
     REQUIRE(display.entities[0].try_get_display_value(registry, shown));
-    REQUIRE(shown.x == Catch::Approx(2.1f));
+    REQUIRE(shown.x == Catch::Approx(1.2f));
 }
 
 TEST_CASE("predicted client display samples prediction history between fixed ticks") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}});
+    REQUIRE(archetype.value == 0);
+    kage::sync::configure_client(registry, 1);
+    REQUIRE(kage::sync::set_display_interpolated<PredictedPosition>(registry));
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+    kage::sync::ReplicationClient client(options);
+    client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
+        position.x += 1.0f;
+    });
+
+    const ecs::Entity server_entity = registry.create();
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds * 0.5));
+
+    const kage::sync::DisplayInterpolationSampleBuffer& display = client.display_interpolation_frame(registry);
+    REQUIRE(display.entities.size() == 1);
+    REQUIRE(display.entities[0].frame == 2);
+    REQUIRE(display.entities[0].alpha >= 0.0f);
+    REQUIRE(display.entities[0].alpha < 1.0f);
+    PredictedPosition shown;
+    REQUIRE(display.entities[0].try_get_display_value(registry, shown));
+    REQUIRE(shown.x > 1.0f);
+    REQUIRE(shown.x < 2.0f);
+}
+
+TEST_CASE("predicted client display lags one fixed tick at tick boundaries") {
     ecs::Registry registry;
     const ecs::Entity position_component =
         kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
@@ -622,13 +657,41 @@ TEST_CASE("predicted client display samples prediction history between fixed tic
 
     const ecs::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
-    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
-    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
-    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds * 0.5));
+    REQUIRE(client.predict_tick(registry, 2));
+    REQUIRE(client.predict_tick(registry, 3));
 
     const kage::sync::DisplayInterpolationSampleBuffer& display = client.display_interpolation_frame(registry);
     REQUIRE(display.entities.size() == 1);
+    REQUIRE(display.entities[0].frame == 2);
+    REQUIRE(display.entities[0].alpha == Catch::Approx(0.0f));
     PredictedPosition shown;
     REQUIRE(display.entities[0].try_get_display_value(registry, shown));
-    REQUIRE(shown.x == Catch::Approx(2.0f));
+    REQUIRE(shown.x == Catch::Approx(1.0f));
+}
+
+TEST_CASE("predicted client display emits during single-sample warmup") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    kage::sync::configure_client(registry, 1);
+    REQUIRE(kage::sync::set_display_interpolated<PredictedPosition>(registry));
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+    kage::sync::ReplicationClient client(options);
+
+    const ecs::Entity server_entity = registry.create();
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{4.0f, 0.0f})));
+
+    const kage::sync::DisplayInterpolationSampleBuffer& display = client.display_interpolation_frame(registry);
+    REQUIRE(display.entities.size() == 1);
+    REQUIRE(display.entities[0].frame == 1);
+    REQUIRE(display.entities[0].alpha == Catch::Approx(0.0f));
+    PredictedPosition shown;
+    REQUIRE(display.entities[0].try_get_display_value(registry, shown));
+    REQUIRE(shown.x == Catch::Approx(4.0f));
 }

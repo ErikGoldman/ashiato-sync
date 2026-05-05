@@ -3935,14 +3935,16 @@ bool ReplicationClient::write_display_samples(
                 const std::size_t mask = state.predicted_frames.size() - 1U;
                 const EntityBufferedFrame& current_sample = state.predicted_frames[last_predicted_frame_ & mask];
                 if (current_sample.valid && current_sample.frame == last_predicted_frame_ && current_sample.entity_present) {
-                    const EntityBufferedFrame* previous_sample = nullptr;
+                    const EntityBufferedFrame* floor_sample = &current_sample;
+                    const EntityBufferedFrame* next_sample = nullptr;
                     float predicted_alpha = 0.0f;
                     if (last_predicted_frame_ != 0U) {
                         const SyncFrame previous_frame = last_predicted_frame_ - 1U;
                         const EntityBufferedFrame& candidate = state.predicted_frames[previous_frame & mask];
                         if (candidate.valid && candidate.frame == previous_frame && candidate.entity_present) {
-                            previous_sample = &candidate;
-                            predicted_alpha = 1.0f + static_cast<float>(
+                            floor_sample = &candidate;
+                            next_sample = &current_sample;
+                            predicted_alpha = static_cast<float>(
                                 clock_.input_accumulator_seconds() / options_.fixed_dt_seconds);
                         }
                     }
@@ -3952,17 +3954,17 @@ bool ReplicationClient::write_display_samples(
                     DisplayInterpolationSample& display = out.entities[sampled_count];
                     display.client_entity_network_id = state.client_entity_network_id;
                     display.local_entity = state.local;
-                    display.archetype = current_sample.archetype;
-                    display.frame = current_sample.frame;
-                    display.alpha = previous_sample != nullptr ? predicted_alpha : 0.0f;
-                    display.tag_mask = current_sample.baseline.tag_mask;
+                    display.archetype = floor_sample->archetype;
+                    display.frame = floor_sample->frame;
+                    display.alpha = next_sample != nullptr ? predicted_alpha : 0.0f;
+                    display.tag_mask = floor_sample->baseline.tag_mask;
                     display.components.clear();
 
-                    const SyncArchetype& display_archetype = settings.archetypes[current_sample.archetype.value];
+                    const SyncArchetype& display_archetype = settings.archetypes[floor_sample->archetype.value];
                     display.components.reserve(display_archetype.components.size());
                     for (std::size_t component_index = 0; component_index < display_archetype.components.size(); ++component_index) {
                         const ecs::Entity component = display_archetype.components[component_index].component;
-                        if (!frame_has_component(current_sample.baseline, component_index) ||
+                        if (!frame_has_component(floor_sample->baseline, component_index) ||
                             !registry.has<DisplayInterpolated>(component)) {
                             continue;
                         }
@@ -3970,28 +3972,29 @@ bool ReplicationClient::write_display_samples(
                         ReplicatedComponentUpdate value;
                         value.component = component;
                         const SyncComponentOps& ops = display_archetype.component_ops[component_index];
-                        const std::uint8_t* current_bytes =
-                            frame_component_data(display_archetype, current_sample.baseline, component_index);
-                        if (current_bytes == nullptr) {
+                        const std::uint8_t* floor_bytes =
+                            frame_component_data(display_archetype, floor_sample->baseline, component_index);
+                        if (floor_bytes == nullptr) {
                             return false;
                         }
 
-                        if (previous_sample != nullptr &&
-                            frame_has_component(previous_sample->baseline, component_index) &&
+                        if (next_sample != nullptr &&
+                            next_sample->archetype == floor_sample->archetype &&
+                            frame_has_component(next_sample->baseline, component_index) &&
                             display_archetype.components[component_index].interpolation == ComponentInterpolation::Interpolate) {
                             if (component_index >= display_archetype.component_ops.size() ||
                                 ops.interpolate == nullptr) {
                                 return false;
                             }
-                            const std::uint8_t* previous_bytes =
-                                frame_component_data(display_archetype, previous_sample->baseline, component_index);
+                            const std::uint8_t* next_bytes =
+                                frame_component_data(display_archetype, next_sample->baseline, component_index);
                             value.bytes.resize(ops.quantized_size);
-                            if (previous_bytes == nullptr ||
-                                !ops.interpolate(previous_bytes, current_bytes, predicted_alpha, value.bytes.data())) {
+                            if (next_bytes == nullptr ||
+                                !ops.interpolate(floor_bytes, next_bytes, predicted_alpha, value.bytes.data())) {
                                 return false;
                             }
                         } else {
-                            value.bytes.assign(current_bytes, ops.quantized_size);
+                            value.bytes.assign(floor_bytes, ops.quantized_size);
                         }
 
                         auto found_error = std::find_if(
