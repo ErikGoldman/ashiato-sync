@@ -45,6 +45,26 @@ inline kage::sync::SyncArchetypeId define_networked_archetype(ecs::Registry& reg
         {{position, kage::sync::ReplicationAudience::All}});
 }
 
+inline const kage::sync::KTraceFrameCell* find_trace_cell(
+    const kage::sync::KTraceFrameRun& run,
+    kage::sync::SyncFrame frame) {
+    const auto found = std::find_if(run.frames.begin(), run.frames.end(), [frame](const kage::sync::KTraceFrameCell& cell) {
+        return cell.frame == frame;
+    });
+    return found != run.frames.end() ? &*found : nullptr;
+}
+
+inline const kage::sync::KTraceFrameCell* find_trace_cell(
+    const kage::sync::KTraceComponentRow& row,
+    kage::sync::SyncFrame frame) {
+    for (const kage::sync::KTraceFrameRun& run : row.runs) {
+        if (const kage::sync::KTraceFrameCell* cell = find_trace_cell(run, frame)) {
+            return cell;
+        }
+    }
+    return nullptr;
+}
+
 }  // namespace kage_sync_tests
 
 #endif

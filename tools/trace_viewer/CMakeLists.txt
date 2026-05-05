@@ -43,6 +43,33 @@ target_link_libraries(kage_sync_trace_viewer
 
 target_compile_features(kage_sync_trace_viewer PRIVATE cxx_std_17)
 
+if(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
+    set(kage_sync_trace_viewer_stb_include_dir "")
+    foreach(candidate
+        "${glfw_SOURCE_DIR}/deps"
+        "${GLFW_SOURCE_DIR}/deps"
+        "${raylib_SOURCE_DIR}/external"
+        "${raylib_SOURCE_DIR}/src/external"
+    )
+        if(EXISTS "${candidate}/stb_image_write.h")
+            set(kage_sync_trace_viewer_stb_include_dir "${candidate}")
+            break()
+        endif()
+    endforeach()
+    if(kage_sync_trace_viewer_stb_include_dir STREQUAL "")
+        message(FATAL_ERROR "KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION requires stb_image_write.h from GLFW deps or raylib external headers")
+    endif()
+
+    target_compile_definitions(kage_sync_trace_viewer
+        PRIVATE
+            KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION=1
+    )
+    target_include_directories(kage_sync_trace_viewer
+        PRIVATE
+            ${kage_sync_trace_viewer_stb_include_dir}
+    )
+endif()
+
 if(KAGE_SYNC_ENABLE_GPROF)
     if(MSVC)
         message(WARNING "KAGE_SYNC_ENABLE_GPROF is ignored for the trace viewer with MSVC")

@@ -30,7 +30,12 @@
 #include <unordered_set>
 #include <vector>
 
-#ifndef _WIN32
+#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
+#endif
+
+#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION) && !defined(_WIN32)
 #include <cerrno>
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -38,7 +43,7 @@
 #include <unistd.h>
 #endif
 
-#ifndef MSG_NOSIGNAL
+#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION) && !defined(MSG_NOSIGNAL)
 #define MSG_NOSIGNAL 0
 #endif
 
@@ -64,7 +69,7 @@ struct SelectedCell {
     ClientEntityNetworkId network_id = invalid_client_entity_network_id;
     ecs::Entity component{};
     SyncFrame frame = 0;
-    bool branch = false;
+    KTraceRunId run = 0;
     std::vector<std::uint32_t> event_indices;
 };
 
@@ -73,7 +78,7 @@ bool operator==(const SelectedCell& lhs, const SelectedCell& rhs) {
         lhs.network_id == rhs.network_id &&
         lhs.component == rhs.component &&
         lhs.frame == rhs.frame &&
-        lhs.branch == rhs.branch &&
+        lhs.run == rhs.run &&
         lhs.event_indices == rhs.event_indices;
 }
 
@@ -164,6 +169,7 @@ struct PacketClientTimeline {
 struct DirectoryPickerEntry {
     std::string name;
     std::string path;
+    bool has_ktrace_files = false;
 };
 
 struct BenchmarkOptions {
@@ -285,20 +291,27 @@ struct ViewerState {
     std::vector<DirectoryPickerEntry> picker_entries;
     std::string picker_error;
     int picker_selected = -1;
+    bool directory_has_ktrace_files = false;
+    bool picker_path_has_ktrace_files = false;
+#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
     std::string screenshot_path;
     std::string last_screenshot_path;
     std::string control_socket_path;
+#endif
     std::unordered_set<EntityExpansionKey, EntityExpansionKeyHash> expanded_entities;
     std::unordered_set<ComponentExpansionKey, ComponentExpansionKeyHash> expanded_components;
+#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
     std::uint32_t screenshot_counter = 0;
     bool screenshot_requested = false;
     bool screenshot_failed = false;
+#endif
     bool selected_source_dirty = true;
     bool details_dirty = true;
     bool packet_details_dirty = true;
     TraceLoadState loader;
 };
 
+#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
 struct PendingMouseClick {
     float x = 0.0f;
     float y = 0.0f;
@@ -319,11 +332,14 @@ struct AutomationInput {
     std::vector<PendingMouseButton> buttons;
     std::vector<std::array<float, 2>> scrolls;
 };
+#endif
 
+bool directory_contains_ktrace_files(const std::filesystem::path& path);
 void load_directory(ViewerState& state);
 
-struct BranchRenderItem {
-    const KTraceEntityBranch* branch = nullptr;
+struct RunRenderItem {
+    const KTraceFrameRun* run = nullptr;
+    KTraceRunId run_id = invalid_trace_run;
     int lane = 0;
     SyncFrame end_frame = 0;
     std::vector<std::pair<SyncFrame, int>> frame_lanes;
@@ -332,9 +348,15 @@ struct BranchRenderItem {
 constexpr int component_lane = -1;
 constexpr int unassigned_lane = -2;
 
-struct BranchLaneLayout {
-    std::vector<BranchRenderItem> items;
+struct RunLaneLayout {
+    std::vector<RunRenderItem> items;
     int lane_count = 0;
+};
+
+struct RunVerticalSpan {
+    SyncFrame frame = 0;
+    int from_lane = 0;
+    int to_lane = 0;
 };
 
 enum class CellVisualKind {
@@ -373,6 +395,7 @@ double elapsed_ms(Clock::time_point start, Clock::time_point end = Clock::now())
     return std::chrono::duration<double, std::milli>(end - start).count();
 }
 
+#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
 std::string default_screenshot_path(ViewerState& state) {
     const auto now = std::chrono::system_clock::now().time_since_epoch();
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
@@ -427,99 +450,7 @@ void apply_automation_input(AutomationInput& input) {
     input.clicks = std::move(continuing);
 }
 
-void append_u32_be(std::vector<unsigned char>& out, std::uint32_t value) {
-    out.push_back(static_cast<unsigned char>((value >> 24U) & 0xffU));
-    out.push_back(static_cast<unsigned char>((value >> 16U) & 0xffU));
-    out.push_back(static_cast<unsigned char>((value >> 8U) & 0xffU));
-    out.push_back(static_cast<unsigned char>(value & 0xffU));
-}
-
-std::uint32_t crc32_bytes(const unsigned char* data, std::size_t size) {
-    std::uint32_t crc = 0xffffffffU;
-    for (std::size_t index = 0; index < size; ++index) {
-        crc ^= data[index];
-        for (int bit = 0; bit < 8; ++bit) {
-            crc = (crc >> 1U) ^ (0xedb88320U & (0U - (crc & 1U)));
-        }
-    }
-    return crc ^ 0xffffffffU;
-}
-
-std::uint32_t adler32_bytes(const std::vector<unsigned char>& data) {
-    constexpr std::uint32_t mod = 65521U;
-    std::uint32_t a = 1U;
-    std::uint32_t b = 0U;
-    for (unsigned char byte : data) {
-        a = (a + byte) % mod;
-        b = (b + a) % mod;
-    }
-    return (b << 16U) | a;
-}
-
-void append_png_chunk(std::vector<unsigned char>& png, const char type[4], const std::vector<unsigned char>& data) {
-    append_u32_be(png, static_cast<std::uint32_t>(data.size()));
-    const std::size_t crc_start = png.size();
-    png.insert(png.end(), type, type + 4);
-    png.insert(png.end(), data.begin(), data.end());
-    append_u32_be(png, crc32_bytes(png.data() + crc_start, png.size() - crc_start));
-}
-
-std::vector<unsigned char> zlib_store(const std::vector<unsigned char>& data) {
-    std::vector<unsigned char> zlib;
-    zlib.reserve(data.size() + (data.size() / 65535U + 1U) * 5U + 6U);
-    zlib.push_back(0x78U);
-    zlib.push_back(0x01U);
-
-    std::size_t offset = 0;
-    while (offset < data.size()) {
-        const std::size_t remaining = data.size() - offset;
-        const std::uint16_t block_size = static_cast<std::uint16_t>(std::min<std::size_t>(remaining, 65535U));
-        const bool final_block = offset + block_size == data.size();
-        zlib.push_back(final_block ? 0x01U : 0x00U);
-        zlib.push_back(static_cast<unsigned char>(block_size & 0xffU));
-        zlib.push_back(static_cast<unsigned char>((block_size >> 8U) & 0xffU));
-        const std::uint16_t inverse = static_cast<std::uint16_t>(~block_size);
-        zlib.push_back(static_cast<unsigned char>(inverse & 0xffU));
-        zlib.push_back(static_cast<unsigned char>((inverse >> 8U) & 0xffU));
-        zlib.insert(zlib.end(), data.begin() + static_cast<std::ptrdiff_t>(offset), data.begin() + static_cast<std::ptrdiff_t>(offset + block_size));
-        offset += block_size;
-    }
-
-    append_u32_be(zlib, adler32_bytes(data));
-    return zlib;
-}
-
 bool write_png_rgb(const std::string& path, int width, int height, const std::vector<unsigned char>& bottom_up_rgb, std::string& error) {
-    if (bottom_up_rgb.size() != static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 3U) {
-        error = "invalid screenshot buffer size";
-        return false;
-    }
-
-    std::vector<unsigned char> scanlines;
-    const std::size_t row_bytes = static_cast<std::size_t>(width) * 3U;
-    scanlines.reserve((row_bytes + 1U) * static_cast<std::size_t>(height));
-    for (int row = height - 1; row >= 0; --row) {
-        scanlines.push_back(0U);
-        const unsigned char* row_start = bottom_up_rgb.data() + static_cast<std::size_t>(row) * row_bytes;
-        scanlines.insert(scanlines.end(), row_start, row_start + row_bytes);
-    }
-
-    std::vector<unsigned char> png;
-    const unsigned char signature[8] = {0x89U, 'P', 'N', 'G', '\r', '\n', 0x1aU, '\n'};
-    png.insert(png.end(), signature, signature + 8);
-
-    std::vector<unsigned char> ihdr;
-    append_u32_be(ihdr, static_cast<std::uint32_t>(width));
-    append_u32_be(ihdr, static_cast<std::uint32_t>(height));
-    ihdr.push_back(8U);  // bit depth
-    ihdr.push_back(2U);  // RGB color
-    ihdr.push_back(0U);  // deflate
-    ihdr.push_back(0U);  // adaptive filters
-    ihdr.push_back(0U);  // no interlace
-    append_png_chunk(png, "IHDR", ihdr);
-    append_png_chunk(png, "IDAT", zlib_store(scanlines));
-    append_png_chunk(png, "IEND", {});
-
     const std::filesystem::path output_path(path);
     const std::filesystem::path parent = output_path.parent_path();
     if (!parent.empty()) {
@@ -531,13 +462,13 @@ bool write_png_rgb(const std::string& path, int width, int height, const std::ve
         }
     }
 
-    std::ofstream out(output_path, std::ios::binary);
-    if (!out) {
-        error = "failed to open screenshot file";
+    if (bottom_up_rgb.size() != static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 3U) {
+        error = "invalid screenshot buffer size";
         return false;
     }
-    out.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
-    if (!out) {
+
+    stbi_flip_vertically_on_write(1);
+    if (stbi_write_png(path.c_str(), width, height, 3, bottom_up_rgb.data(), width * 3) == 0) {
         error = "failed to write screenshot file";
         return false;
     }
@@ -556,7 +487,9 @@ bool write_framebuffer_png(const std::string& path, int width, int height, std::
     glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
     return write_png_rgb(path, width, height, pixels, error);
 }
+#endif
 
+#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
 int mouse_button_from_token(const std::string& token) {
     if (token.empty() || token == "left" || token == "0") {
         return 0;
@@ -659,7 +592,7 @@ std::string handle_control_command(
     return "ERR unknown command\n";
 }
 
-#ifndef _WIN32
+#if !defined(_WIN32)
 struct ControlClient {
     int fd = -1;
     std::string input;
@@ -836,43 +769,31 @@ void stop_control_server(ControlServer&) {}
 
 void poll_control_server(ControlServer&, ViewerState&, AutomationInput&, GLFWwindow*) {}
 #endif
+#endif
 
 SyncFrame component_end_frame(const KTraceComponentRow& component, SyncFrame fallback) {
     SyncFrame end = fallback;
-    for (const KTraceFrameCell& cell : component.cells) {
+    for (const KTraceFrameRun& run : component.runs) {
+        for (const KTraceFrameCell& cell : run.frames) {
+            end = std::max(end, cell.frame);
+        }
+    }
+    return end;
+}
+
+SyncFrame run_end_frame(const KTraceFrameRun& run) {
+    SyncFrame end = run.start_frame;
+    for (const KTraceFrameCell& cell : run.frames) {
         end = std::max(end, cell.frame);
     }
     return end;
 }
 
-SyncFrame branch_end_frame(const KTraceEntityBranch& branch) {
-    SyncFrame end = branch.from_frame;
-    for (const KTraceComponentRow& component : branch.components) {
-        end = component_end_frame(component, end);
-    }
-    return end;
-}
-
-const KTraceComponentRow* find_branch_component(const KTraceEntityBranch& branch, ecs::Entity component) {
-    const auto found = std::find_if(branch.components.begin(), branch.components.end(), [component](const KTraceComponentRow& row) {
-        return row.component == component;
-    });
-    return found != branch.components.end() ? &*found : nullptr;
-}
-
-SyncFrame branch_component_end_frame(const KTraceEntityBranch& branch, ecs::Entity component, SyncFrame fallback) {
-    const KTraceComponentRow* row = find_branch_component(branch, component);
-    return row != nullptr ? component_end_frame(*row, fallback) : fallback;
-}
-
-std::vector<SyncFrame> branch_component_frames(const KTraceEntityBranch& branch, ecs::Entity component) {
+std::vector<SyncFrame> run_frames_for_layout(const KTraceFrameRun& run) {
     std::vector<SyncFrame> frames;
-    frames.push_back(branch.from_frame);
-    const KTraceComponentRow* row = find_branch_component(branch, component);
-    if (row != nullptr) {
-        for (const KTraceFrameCell& cell : row->cells) {
-            frames.push_back(cell.frame);
-        }
+    frames.push_back(run.start_frame);
+    for (const KTraceFrameCell& cell : run.frames) {
+        frames.push_back(cell.frame);
     }
     std::sort(frames.begin(), frames.end());
     frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
@@ -880,6 +801,10 @@ std::vector<SyncFrame> branch_component_frames(const KTraceEntityBranch& branch,
 }
 
 bool lane_has_gap_before(SyncFrame lane_end, SyncFrame frame) {
+    return lane_end < frame;
+}
+
+bool lane_has_open_frame_before(SyncFrame lane_end, SyncFrame frame) {
     return lane_end < frame && frame - lane_end > 1U;
 }
 
@@ -898,62 +823,110 @@ void set_lane_end(std::vector<SyncFrame>& lane_ends, SyncFrame& component_end, i
     lane_ends[static_cast<std::size_t>(lane)] = frame;
 }
 
-int first_available_branch_lane(const std::vector<SyncFrame>& lane_ends, int first_lane, SyncFrame frame) {
+bool vertical_spans_overlap(int from_a, int to_a, int from_b, int to_b) {
+    const int min_a = std::min(from_a, to_a);
+    const int max_a = std::max(from_a, to_a);
+    const int min_b = std::min(from_b, to_b);
+    const int max_b = std::max(from_b, to_b);
+    return min_a < max_b && min_b < max_a;
+}
+
+bool vertical_span_available(
+    const std::vector<RunVerticalSpan>& spans,
+    SyncFrame frame,
+    int from_lane,
+    int to_lane) {
+    if (from_lane == to_lane) {
+        return true;
+    }
+    for (const RunVerticalSpan& span : spans) {
+        if (span.frame == frame && vertical_spans_overlap(from_lane, to_lane, span.from_lane, span.to_lane)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void reserve_vertical_span(
+    std::vector<RunVerticalSpan>& spans,
+    SyncFrame frame,
+    int from_lane,
+    int to_lane) {
+    if (from_lane == to_lane) {
+        return;
+    }
+    spans.push_back(RunVerticalSpan{frame, from_lane, to_lane});
+}
+
+int first_available_run_lane(
+    const std::vector<SyncFrame>& lane_ends,
+    const std::vector<RunVerticalSpan>& spans,
+    int first_lane,
+    SyncFrame frame,
+    int parent_lane) {
     int lane = std::max(0, first_lane);
     for (; lane < static_cast<int>(lane_ends.size()); ++lane) {
-        if (lane_has_gap_before(lane_ends[static_cast<std::size_t>(lane)], frame)) {
+        if (lane_has_gap_before(lane_ends[static_cast<std::size_t>(lane)], frame) &&
+            vertical_span_available(spans, frame, parent_lane, lane)) {
             return lane;
         }
     }
     return lane;
 }
 
-int branch_lane_at_frame(const BranchRenderItem& item, SyncFrame frame);
-int branch_parent_lane(const std::vector<BranchRenderItem>& branches, std::size_t branch_index);
+int run_lane_at_frame(const RunRenderItem& item, SyncFrame frame);
+int run_parent_lane(const std::vector<RunRenderItem>& runs, std::size_t run_index);
 
-BranchLaneLayout pack_branch_lanes(const KTraceEntityRow& entity, const KTraceComponentRow& component) {
-    BranchLaneLayout layout;
-    for (const KTraceEntityBranch& branch : entity.rollback_branches) {
-        if (find_branch_component(branch, component.component) == nullptr) {
+RunLaneLayout pack_run_lanes(const KTraceComponentRow& component) {
+    RunLaneLayout layout;
+    for (std::size_t run_index = 1; run_index < component.runs.size(); ++run_index) {
+        const KTraceFrameRun& run = component.runs[run_index];
+        if (run.frames.empty()) {
             continue;
         }
-        layout.items.push_back(BranchRenderItem{
-            &branch,
+        layout.items.push_back(RunRenderItem{
+            &run,
+            static_cast<KTraceRunId>(run_index),
             0,
-            branch_component_end_frame(branch, component.component, branch.from_frame),
+            run_end_frame(run),
             {}});
     }
-    std::sort(layout.items.begin(), layout.items.end(), [](const BranchRenderItem& lhs, const BranchRenderItem& rhs) {
-        if (lhs.branch->from_frame != rhs.branch->from_frame) {
-            return lhs.branch->from_frame < rhs.branch->from_frame;
+    std::sort(layout.items.begin(), layout.items.end(), [](const RunRenderItem& lhs, const RunRenderItem& rhs) {
+        if (lhs.run->start_frame != rhs.run->start_frame) {
+            return lhs.run->start_frame < rhs.run->start_frame;
         }
         return lhs.end_frame < rhs.end_frame;
     });
 
     std::vector<SyncFrame> lane_ends;
-    SyncFrame component_end = component_end_frame(component, 0);
-    for (BranchRenderItem& item : layout.items) {
-        const std::vector<SyncFrame> frames = branch_component_frames(*item.branch, component.component);
+    std::vector<RunVerticalSpan> vertical_spans;
+    SyncFrame component_end = component.runs.empty() ? 0 : run_end_frame(component.runs[0]);
+    for (RunRenderItem& item : layout.items) {
+        const std::vector<SyncFrame> frames = run_frames_for_layout(*item.run);
         int current_lane = unassigned_lane;
         item.frame_lanes.reserve(frames.size());
         const std::size_t item_index = static_cast<std::size_t>(&item - layout.items.data());
-        const int parent_lane = branch_parent_lane(layout.items, item_index);
+        const int parent_lane = run_parent_lane(layout.items, item_index);
         for (SyncFrame frame : frames) {
             int lane = unassigned_lane;
             if (current_lane == unassigned_lane) {
-                lane = first_available_branch_lane(lane_ends, parent_lane + 1, frame);
+                lane = first_available_run_lane(lane_ends, vertical_spans, parent_lane + 1, frame, parent_lane);
+                reserve_vertical_span(vertical_spans, frame, parent_lane, lane);
             } else {
                 for (int candidate = component_lane; candidate < current_lane; ++candidate) {
                     if (candidate >= static_cast<int>(lane_ends.size())) {
                         break;
                     }
-                    if (lane_has_gap_before(lane_end_at(lane_ends, component_end, candidate), frame)) {
+                    if (lane_has_open_frame_before(lane_end_at(lane_ends, component_end, candidate), frame) &&
+                        vertical_span_available(vertical_spans, frame, current_lane, candidate)) {
                         lane = candidate;
                         break;
                     }
                 }
                 if (lane == unassigned_lane) {
                     lane = current_lane;
+                } else {
+                    reserve_vertical_span(vertical_spans, frame, current_lane, lane);
                 }
             }
             if (lane != component_lane && lane == static_cast<int>(lane_ends.size())) {
@@ -970,7 +943,7 @@ BranchLaneLayout pack_branch_lanes(const KTraceEntityRow& entity, const KTraceCo
     return layout;
 }
 
-int branch_lane_at_frame(const BranchRenderItem& item, SyncFrame frame) {
+int run_lane_at_frame(const RunRenderItem& item, SyncFrame frame) {
     for (const auto& frame_lane : item.frame_lanes) {
         if (frame_lane.first == frame) {
             return frame_lane.second;
@@ -979,36 +952,27 @@ int branch_lane_at_frame(const BranchRenderItem& item, SyncFrame frame) {
     return unassigned_lane;
 }
 
-int branch_parent_lane(const std::vector<BranchRenderItem>& branches, std::size_t branch_index) {
-    const BranchRenderItem& branch = branches[branch_index];
+int run_parent_lane(const std::vector<RunRenderItem>& runs, std::size_t run_index) {
+    const RunRenderItem& run = runs[run_index];
+    if (run.run == nullptr || run.run->prev == invalid_trace_run || run.run->prev == 0) {
+        return component_lane;
+    }
     int parent_lane = component_lane;
-    SyncFrame parent_from = 0;
-    for (std::size_t index = 0; index < branches.size(); ++index) {
-        if (index == branch_index) {
+    for (std::size_t index = 0; index < runs.size(); ++index) {
+        if (index == run_index) {
             continue;
         }
-        const BranchRenderItem& candidate = branches[index];
-        const int candidate_lane = branch_lane_at_frame(candidate, branch.branch->from_frame);
-        if (candidate.branch->from_frame >= branch.branch->from_frame || candidate_lane == unassigned_lane) {
-            continue;
-        }
-        if (parent_lane == component_lane || candidate.branch->from_frame > parent_from) {
-            parent_lane = candidate_lane;
-            parent_from = candidate.branch->from_frame;
+        const RunRenderItem& candidate = runs[index];
+        if (candidate.run_id == run.run->prev) {
+            parent_lane = run_lane_at_frame(candidate, run.run->start_frame);
+            break;
         }
     }
     return parent_lane;
 }
 
-int packed_branch_lane_count(const KTraceEntityRow& entity, ecs::Entity component_id) {
-    for (const KTraceComponentRow& component : entity.components) {
-        if (component.component == component_id) {
-            return pack_branch_lanes(entity, component).lane_count;
-        }
-    }
-    KTraceComponentRow component;
-    component.component = component_id;
-    return pack_branch_lanes(entity, component).lane_count;
+int packed_run_lane_count(const KTraceComponentRow& component) {
+    return pack_run_lanes(component).lane_count;
 }
 
 std::string event_name(SyncTraceEventType type) {
@@ -1711,7 +1675,7 @@ void draw_timeline_step_link(ImDrawList* draw, const ImVec2& a, const ImVec2& b,
 
 void draw_consecutive_cell_links(
     ImDrawList* draw,
-    const KTraceComponentRow& component,
+    const KTraceFrameRun& run,
     const ImVec2& origin,
     float scroll_x,
     float scroll_y,
@@ -1721,9 +1685,9 @@ void draw_consecutive_cell_links(
     int row,
     const ImVec2& clip_min,
     const ImVec2& clip_max) {
-    for (std::size_t index = 1; index < component.cells.size(); ++index) {
-        const SyncFrame previous = component.cells[index - 1U].frame;
-        const SyncFrame current = component.cells[index].frame;
+    for (std::size_t index = 1; index < run.frames.size(); ++index) {
+        const SyncFrame previous = run.frames[index - 1U].frame;
+        const SyncFrame current = run.frames[index].frame;
         if (current < first_visible_frame) {
             continue;
         }
@@ -1743,22 +1707,24 @@ void draw_consecutive_cell_links(
     }
 }
 
-void draw_branch_component_links(
+void draw_run_links(
     ImDrawList* draw,
-    const BranchRenderItem& item,
-    const KTraceComponentRow& component,
+    const RunRenderItem& item,
     const ImVec2& origin,
     float scroll_x,
     float scroll_y,
     SyncFrame min_frame,
     SyncFrame first_visible_frame,
     SyncFrame last_visible_frame,
-    int branch_base_row,
+    int run_base_row,
     const ImVec2& clip_min,
     const ImVec2& clip_max) {
-    for (std::size_t index = 1; index < component.cells.size(); ++index) {
-        const SyncFrame previous = component.cells[index - 1U].frame;
-        const SyncFrame current = component.cells[index].frame;
+    if (item.run == nullptr) {
+        return;
+    }
+    for (std::size_t index = 1; index < item.run->frames.size(); ++index) {
+        const SyncFrame previous = item.run->frames[index - 1U].frame;
+        const SyncFrame current = item.run->frames[index].frame;
         if (current < first_visible_frame) {
             continue;
         }
@@ -1768,21 +1734,21 @@ void draw_branch_component_links(
         if (current != previous + 1U) {
             continue;
         }
-        const int previous_lane = branch_lane_at_frame(item, previous);
-        const int current_lane = branch_lane_at_frame(item, current);
+        const int previous_lane = run_lane_at_frame(item, previous);
+        const int current_lane = run_lane_at_frame(item, current);
         if (previous_lane == unassigned_lane || current_lane == unassigned_lane) {
             continue;
         }
         draw_timeline_step_link(
             draw,
-            ImVec2(frame_center_x(origin, scroll_x, min_frame, previous), row_center_y(origin, scroll_y, branch_base_row + previous_lane)),
-            ImVec2(frame_center_x(origin, scroll_x, min_frame, current), row_center_y(origin, scroll_y, branch_base_row + current_lane)),
+            ImVec2(frame_center_x(origin, scroll_x, min_frame, previous), row_center_y(origin, scroll_y, run_base_row + previous_lane)),
+            ImVec2(frame_center_x(origin, scroll_x, min_frame, current), row_center_y(origin, scroll_y, run_base_row + current_lane)),
             clip_min,
             clip_max);
     }
 }
 
-void draw_branch_drop_link(
+void draw_run_drop_link(
     ImDrawList* draw,
     const ImVec2& origin,
     float scroll_x,
@@ -1790,14 +1756,14 @@ void draw_branch_drop_link(
     SyncFrame min_frame,
     SyncFrame frame,
     int parent_row,
-    int branch_row,
+    int run_row,
     const ImVec2& clip_min,
     const ImVec2& clip_max) {
     const float x = frame_center_x(origin, scroll_x, min_frame, frame);
     draw_timeline_link(
         draw,
         ImVec2(x, row_center_y(origin, scroll_y, parent_row)),
-        ImVec2(x, row_center_y(origin, scroll_y, branch_row)),
+        ImVec2(x, row_center_y(origin, scroll_y, run_row)),
         clip_min,
         clip_max);
 }
@@ -1813,7 +1779,7 @@ void draw_cell(
     int row,
     const KTraceEntityRow& entity,
     ecs::Entity component,
-    bool branch,
+    KTraceRunId run,
     int source_index,
     ViewerState& state,
     bool force_predicted_visual = false) {
@@ -1849,7 +1815,7 @@ void draw_cell(
         state.selected.network_id == entity.client_network_id &&
         state.selected.component == component &&
         state.selected.frame == cell.frame &&
-        state.selected.branch == branch &&
+        state.selected.run == run &&
         state.selected.event_indices == cell.event_indices;
     if (selected) {
         draw->AddRect(ImVec2(min.x - 2.0f, min.y - 2.0f), ImVec2(max.x + 2.0f, max.y + 2.0f), IM_COL32(255, 230, 155, 255), 0.0f, 0, 2.0f);
@@ -1859,7 +1825,7 @@ void draw_cell(
     if (hovered) {
         ImGui::SetTooltip("%s frame %u", visual.label, cell.frame);
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-            SelectedCell selected{source_index, entity.client_network_id, component, cell.frame, branch, cell.event_indices};
+            SelectedCell selected{source_index, entity.client_network_id, component, cell.frame, run, cell.event_indices};
             if (state.selected != selected) {
                 state.selected = selected;
                 state.details_dirty = true;
@@ -1880,16 +1846,11 @@ bool component_expanded(
     return state.expanded_components.count(ComponentExpansionKey{source_index, entity.client_network_id, component}) != 0U;
 }
 
-bool component_has_resim(const KTraceEntityRow& entity, ecs::Entity component_id) {
-    for (const KTraceEntityBranch& branch : entity.rollback_branches) {
-        for (const KTraceComponentRow& component : branch.components) {
-            if (component.component != component_id) {
-                continue;
-            }
-            for (const KTraceFrameCell& cell : component.cells) {
-                if (has_state(cell, KTraceCellState::Resimulated)) {
-                    return true;
-                }
+bool component_has_resim(const KTraceComponentRow& component) {
+    for (std::size_t run_index = 1; run_index < component.runs.size(); ++run_index) {
+        for (const KTraceFrameCell& cell : component.runs[run_index].frames) {
+            if (has_state(cell, KTraceCellState::Resimulated)) {
+                return true;
             }
         }
     }
@@ -1977,7 +1938,10 @@ void draw_component_toggle(
     const KTraceEntityRow& entity,
     ecs::Entity component,
     const ImVec2& pos) {
-    const bool enabled = component_has_resim(entity, component);
+    const auto found = std::find_if(entity.components.begin(), entity.components.end(), [component](const KTraceComponentRow& row) {
+        return row.component == component;
+    });
+    const bool enabled = found != entity.components.end() && component_has_resim(*found);
     if (!enabled) {
         return;
     }
@@ -2029,26 +1993,34 @@ void aggregate_component_cell(SummaryState& summary, const KTraceFrameCell& cell
     }
 }
 
+template <typename Fn>
+void for_each_component_cell(const KTraceComponentRow& component, Fn&& fn) {
+    for (KTraceRunId run_id = 0; run_id < component.runs.size(); ++run_id) {
+        const KTraceFrameRun& run = component.runs[run_id];
+        for (const KTraceFrameCell& cell : run.frames) {
+            fn(run_id, cell);
+        }
+    }
+}
+
+template <typename Fn>
+void for_each_entity_cell(const KTraceEntityRow& entity, Fn&& fn) {
+    for (const KTraceComponentRow& component : entity.components) {
+        for_each_component_cell(component, [&](KTraceRunId run_id, const KTraceFrameCell& cell) {
+            fn(component.component, run_id, cell);
+        });
+    }
+}
+
 void append_entity_frame_event_indices(
     const KTraceEntityRow& entity,
     SyncFrame frame,
     std::vector<std::uint32_t>& out) {
-    for (const KTraceComponentRow& component : entity.components) {
-        for (const KTraceFrameCell& cell : component.cells) {
-            if (cell.frame == frame) {
-                out.insert(out.end(), cell.event_indices.begin(), cell.event_indices.end());
-            }
+    for_each_entity_cell(entity, [&](ecs::Entity, KTraceRunId, const KTraceFrameCell& cell) {
+        if (cell.frame == frame) {
+            out.insert(out.end(), cell.event_indices.begin(), cell.event_indices.end());
         }
-    }
-    for (const KTraceEntityBranch& branch : entity.rollback_branches) {
-        for (const KTraceComponentRow& component : branch.components) {
-            for (const KTraceFrameCell& cell : component.cells) {
-                if (cell.frame == frame) {
-                    out.insert(out.end(), cell.event_indices.begin(), cell.event_indices.end());
-                }
-            }
-        }
-    }
+    });
 }
 
 void append_component_frame_event_indices(
@@ -2060,23 +2032,11 @@ void append_component_frame_event_indices(
         if (component.component != component_id) {
             continue;
         }
-        for (const KTraceFrameCell& cell : component.cells) {
+        for_each_component_cell(component, [&](KTraceRunId, const KTraceFrameCell& cell) {
             if (cell.frame == frame) {
                 out.insert(out.end(), cell.event_indices.begin(), cell.event_indices.end());
             }
-        }
-    }
-    for (const KTraceEntityBranch& branch : entity.rollback_branches) {
-        for (const KTraceComponentRow& component : branch.components) {
-            if (component.component != component_id) {
-                continue;
-            }
-            for (const KTraceFrameCell& cell : component.cells) {
-                if (cell.frame == frame) {
-                    out.insert(out.end(), cell.event_indices.begin(), cell.event_indices.end());
-                }
-            }
-        }
+        });
     }
 }
 
@@ -2120,26 +2080,15 @@ int draw_entity_summary_cells(
     int drawn = 0;
     for (SyncFrame frame = first_visible_frame; frame <= last_visible_frame; ++frame) {
         SummaryState summary = SummaryState::None;
-        for (const KTraceComponentRow& component : entity.components) {
-            for (const KTraceFrameCell& cell : component.cells) {
-                if (cell.frame == frame) {
-                    aggregate_entity_cell(summary, cell);
-                }
+        for_each_entity_cell(entity, [&](ecs::Entity, KTraceRunId, const KTraceFrameCell& cell) {
+            if (cell.frame == frame) {
+                aggregate_entity_cell(summary, cell);
             }
-        }
-        for (const KTraceEntityBranch& branch : entity.rollback_branches) {
-            for (const KTraceComponentRow& component : branch.components) {
-                for (const KTraceFrameCell& cell : component.cells) {
-                    if (cell.frame == frame) {
-                        aggregate_entity_cell(summary, cell);
-                    }
-                }
-            }
-        }
+        });
         if (summary != SummaryState::None) {
             KTraceFrameCell cell = summary_cell(frame, summary);
             append_entity_frame_event_indices(entity, frame, cell.event_indices);
-            draw_cell(draw, source, cell, origin, scroll_x, scroll_y, min_frame, row, entity, ecs::Entity{}, false, source_index, state);
+            draw_cell(draw, source, cell, origin, scroll_x, scroll_y, min_frame, row, entity, ecs::Entity{}, 0, source_index, state);
             ++drawn;
         }
     }
@@ -2163,27 +2112,15 @@ int draw_component_summary_cells(
     int drawn = 0;
     for (SyncFrame frame = first_visible_frame; frame <= last_visible_frame; ++frame) {
         SummaryState summary = SummaryState::None;
-        for (const KTraceFrameCell& cell : component.cells) {
+        for_each_component_cell(component, [&](KTraceRunId, const KTraceFrameCell& cell) {
             if (cell.frame == frame) {
                 aggregate_component_cell(summary, cell);
             }
-        }
-        for (const KTraceEntityBranch& branch : entity.rollback_branches) {
-            for (const KTraceComponentRow& branch_component : branch.components) {
-                if (branch_component.component != component.component) {
-                    continue;
-                }
-                for (const KTraceFrameCell& cell : branch_component.cells) {
-                    if (cell.frame == frame) {
-                        aggregate_component_cell(summary, cell);
-                    }
-                }
-            }
-        }
+        });
         if (summary != SummaryState::None) {
             KTraceFrameCell cell = summary_cell(frame, summary);
             append_component_frame_event_indices(entity, component.component, frame, cell.event_indices);
-            draw_cell(draw, source, cell, origin, scroll_x, scroll_y, min_frame, row, entity, component.component, false, source_index, state);
+            draw_cell(draw, source, cell, origin, scroll_x, scroll_y, min_frame, row, entity, component.component, 0, source_index, state);
             ++drawn;
         }
     }
@@ -2192,22 +2129,11 @@ int draw_component_summary_cells(
 
 SummaryState entity_summary_at_frame(const KTraceEntityRow& entity, SyncFrame frame) {
     SummaryState summary = SummaryState::None;
-    for (const KTraceComponentRow& component : entity.components) {
-        for (const KTraceFrameCell& cell : component.cells) {
-            if (cell.frame == frame) {
-                aggregate_entity_cell(summary, cell);
-            }
+    for_each_entity_cell(entity, [&](ecs::Entity, KTraceRunId, const KTraceFrameCell& cell) {
+        if (cell.frame == frame) {
+            aggregate_entity_cell(summary, cell);
         }
-    }
-    for (const KTraceEntityBranch& branch : entity.rollback_branches) {
-        for (const KTraceComponentRow& component : branch.components) {
-            for (const KTraceFrameCell& cell : component.cells) {
-                if (cell.frame == frame) {
-                    aggregate_entity_cell(summary, cell);
-                }
-            }
-        }
-    }
+    });
     return summary;
 }
 
@@ -2216,40 +2142,20 @@ SummaryState component_summary_at_frame(
     const KTraceComponentRow& component,
     SyncFrame frame) {
     SummaryState summary = SummaryState::None;
-    for (const KTraceFrameCell& cell : component.cells) {
+    (void)entity;
+    for_each_component_cell(component, [&](KTraceRunId, const KTraceFrameCell& cell) {
         if (cell.frame == frame) {
             aggregate_component_cell(summary, cell);
         }
-    }
-    for (const KTraceEntityBranch& branch : entity.rollback_branches) {
-        for (const KTraceComponentRow& branch_component : branch.components) {
-            if (branch_component.component != component.component) {
-                continue;
-            }
-            for (const KTraceFrameCell& cell : branch_component.cells) {
-                if (cell.frame == frame) {
-                    aggregate_component_cell(summary, cell);
-                }
-            }
-        }
-    }
+    });
     return summary;
 }
 
 std::vector<SyncFrame> entity_summary_frames(const KTraceEntityRow& entity) {
     std::vector<SyncFrame> frames;
-    for (const KTraceComponentRow& component : entity.components) {
-        for (const KTraceFrameCell& cell : component.cells) {
-            frames.push_back(cell.frame);
-        }
-    }
-    for (const KTraceEntityBranch& branch : entity.rollback_branches) {
-        for (const KTraceComponentRow& component : branch.components) {
-            for (const KTraceFrameCell& cell : component.cells) {
-                frames.push_back(cell.frame);
-            }
-        }
-    }
+    for_each_entity_cell(entity, [&](ecs::Entity, KTraceRunId, const KTraceFrameCell& cell) {
+        frames.push_back(cell.frame);
+    });
     std::sort(frames.begin(), frames.end());
     frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
     return frames;
@@ -2261,19 +2167,9 @@ std::vector<SyncFrame> component_summary_frames(const KTraceEntityRow& entity, e
         if (component.component != component_id) {
             continue;
         }
-        for (const KTraceFrameCell& cell : component.cells) {
+        for_each_component_cell(component, [&](KTraceRunId, const KTraceFrameCell& cell) {
             frames.push_back(cell.frame);
-        }
-    }
-    for (const KTraceEntityBranch& branch : entity.rollback_branches) {
-        for (const KTraceComponentRow& component : branch.components) {
-            if (component.component != component_id) {
-                continue;
-            }
-            for (const KTraceFrameCell& cell : component.cells) {
-                frames.push_back(cell.frame);
-            }
-        }
+        });
     }
     std::sort(frames.begin(), frames.end());
     frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
@@ -2286,10 +2182,10 @@ void append_nav_cell(
     const KTraceEntityRow& entity,
     ecs::Entity component,
     const KTraceFrameCell& cell,
-    bool branch,
+    KTraceRunId run,
     int row) {
     out.push_back(TimelineNavCell{
-        SelectedCell{source_index, entity.client_network_id, component, cell.frame, branch, cell.event_indices},
+        SelectedCell{source_index, entity.client_network_id, component, cell.frame, run, cell.event_indices},
         row});
 }
 
@@ -2308,14 +2204,14 @@ std::vector<TimelineNavCell> collect_timeline_nav_cells(
                 }
                 KTraceFrameCell cell = summary_cell(frame, summary);
                 append_entity_frame_event_indices(entity, frame, cell.event_indices);
-                append_nav_cell(cells, source_index, entity, ecs::Entity{}, cell, false, row);
+                append_nav_cell(cells, source_index, entity, ecs::Entity{}, cell, 0, row);
             }
             ++row;
             continue;
         }
         ++row;
         for (const KTraceComponentRow& component : entity.components) {
-            const bool collapsible_component = component_has_resim(entity, component.component);
+            const bool collapsible_component = component_has_resim(component);
             const bool expanded_component =
                 !collapsible_component || component_expanded(state, source_index, entity, component.component);
             if (!expanded_component) {
@@ -2326,31 +2222,31 @@ std::vector<TimelineNavCell> collect_timeline_nav_cells(
                     }
                     KTraceFrameCell cell = summary_cell(frame, summary);
                     append_component_frame_event_indices(entity, component.component, frame, cell.event_indices);
-                    append_nav_cell(cells, source_index, entity, component.component, cell, false, row);
+                    append_nav_cell(cells, source_index, entity, component.component, cell, 0, row);
                 }
                 ++row;
                 continue;
             }
-            for (const KTraceFrameCell& cell : component.cells) {
-                append_nav_cell(cells, source_index, entity, component.component, cell, false, row);
+            if (!component.runs.empty()) {
+                for (const KTraceFrameCell& cell : component.runs[0].frames) {
+                    append_nav_cell(cells, source_index, entity, component.component, cell, 0, row);
+                }
             }
             ++row;
-            const int branch_base_row = row;
-            const BranchLaneLayout branch_layout = pack_branch_lanes(entity, component);
-            for (const BranchRenderItem& item : branch_layout.items) {
-                for (const KTraceComponentRow& branch_component : item.branch->components) {
-                    if (branch_component.component != component.component) {
-                        continue;
-                    }
-                    for (const KTraceFrameCell& cell : branch_component.cells) {
-                        const int cell_lane = branch_lane_at_frame(item, cell.frame);
-                        if (cell_lane != unassigned_lane) {
-                            append_nav_cell(cells, source_index, entity, branch_component.component, cell, true, branch_base_row + cell_lane);
-                        }
+            const int run_base_row = row;
+            const RunLaneLayout run_layout = pack_run_lanes(component);
+            for (const RunRenderItem& item : run_layout.items) {
+                if (item.run == nullptr) {
+                    continue;
+                }
+                for (const KTraceFrameCell& cell : item.run->frames) {
+                    const int cell_lane = run_lane_at_frame(item, cell.frame);
+                    if (cell_lane != unassigned_lane) {
+                        append_nav_cell(cells, source_index, entity, component.component, cell, item.run_id, run_base_row + cell_lane);
                     }
                 }
             }
-            row += branch_layout.lane_count;
+            row += run_layout.lane_count;
         }
     }
     std::sort(cells.begin(), cells.end(), [](const TimelineNavCell& lhs, const TimelineNavCell& rhs) {
@@ -2640,6 +2536,14 @@ void stream_trace_directory(
 }
 
 void load_directory(ViewerState& state) {
+    state.directory_has_ktrace_files = directory_contains_ktrace_files(state.directory.data());
+    if (!state.directory_has_ktrace_files) {
+        stop_loading_directory(state);
+        reset_loaded_trace(state);
+        state.status = "choose a directory containing .ktrace files";
+        return;
+    }
+
     stop_loading_directory(state);
     reset_loaded_trace(state);
     state.loader.bytes_read = 0;
@@ -2664,6 +2568,23 @@ void set_char_buffer(std::array<char, 1024>& buffer, const std::string& value) {
     std::snprintf(buffer.data(), buffer.size(), "%s", value.c_str());
 }
 
+bool directory_contains_ktrace_files(const std::filesystem::path& path) {
+    namespace fs = std::filesystem;
+    std::error_code error;
+    if (!fs::is_directory(path, error) || error) {
+        return false;
+    }
+
+    const fs::directory_options options = fs::directory_options::skip_permission_denied;
+    for (fs::directory_iterator it(path, options, error), end; !error && it != end; it.increment(error)) {
+        std::error_code entry_error;
+        if (it->is_regular_file(entry_error) && !entry_error && it->path().extension() == ".ktrace") {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::filesystem::path current_picker_path(const ViewerState& state) {
     std::filesystem::path path = state.picker_path.data();
     if (path.empty()) {
@@ -2680,6 +2601,7 @@ void refresh_directory_picker(ViewerState& state) {
     state.picker_entries.clear();
     state.picker_error.clear();
     state.picker_selected = -1;
+    state.picker_path_has_ktrace_files = false;
 
     std::error_code error;
     fs::path path = current_picker_path(state);
@@ -2693,6 +2615,7 @@ void refresh_directory_picker(ViewerState& state) {
     }
 
     set_char_buffer(state.picker_path, path_to_string(path));
+    state.picker_path_has_ktrace_files = directory_contains_ktrace_files(path);
     fs::directory_options options = fs::directory_options::skip_permission_denied;
     for (fs::directory_iterator it(path, options, error), end; !error && it != end; it.increment(error)) {
         std::error_code entry_error;
@@ -2705,6 +2628,7 @@ void refresh_directory_picker(ViewerState& state) {
         if (entry.name.empty()) {
             entry.name = entry.path;
         }
+        entry.has_ktrace_files = directory_contains_ktrace_files(it->path());
         state.picker_entries.push_back(std::move(entry));
     }
     if (error) {
@@ -2780,7 +2704,17 @@ void render_directory_picker(ViewerState& state) {
         for (int index = clipper.DisplayStart; index < clipper.DisplayEnd; ++index) {
             const DirectoryPickerEntry& entry = state.picker_entries[static_cast<std::size_t>(index)];
             const bool selected = state.picker_selected == index;
-            if (ImGui::Selectable(entry.name.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick)) {
+            const std::string label = entry.has_ktrace_files
+                ? std::string("[trace] ") + entry.name
+                : entry.name;
+            if (entry.has_ktrace_files) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.58f, 0.86f, 0.66f, 1.0f));
+            }
+            const bool clicked = ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick);
+            if (entry.has_ktrace_files) {
+                ImGui::PopStyleColor();
+            }
+            if (clicked) {
                 state.picker_selected = index;
                 if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                     set_char_buffer(state.picker_path, entry.path);
@@ -2791,12 +2725,13 @@ void render_directory_picker(ViewerState& state) {
     }
     ImGui::EndChild();
 
-    const bool can_choose = state.picker_error.empty();
+    const bool can_choose = state.picker_error.empty() && state.picker_path_has_ktrace_files;
     if (!can_choose) {
         ImGui::BeginDisabled();
     }
     if (ImGui::Button("Open This Directory", ImVec2(150.0f, 0.0f))) {
         set_char_buffer(state.directory, path_to_string(current_picker_path(state)));
+        state.directory_has_ktrace_files = state.picker_path_has_ktrace_files;
         load_directory(state);
         ImGui::CloseCurrentPopup();
     }
@@ -2804,16 +2739,21 @@ void render_directory_picker(ViewerState& state) {
         ImGui::EndDisabled();
     }
     ImGui::SameLine();
-    if (state.picker_selected < 0 || state.picker_selected >= static_cast<int>(state.picker_entries.size())) {
+    const bool has_selected =
+        state.picker_selected >= 0 && state.picker_selected < static_cast<int>(state.picker_entries.size());
+    const bool can_choose_selected =
+        has_selected && state.picker_entries[static_cast<std::size_t>(state.picker_selected)].has_ktrace_files;
+    if (!can_choose_selected) {
         ImGui::BeginDisabled();
     }
     if (ImGui::Button("Open Selected", ImVec2(126.0f, 0.0f))) {
         const DirectoryPickerEntry& entry = state.picker_entries[static_cast<std::size_t>(state.picker_selected)];
         set_char_buffer(state.directory, entry.path);
+        state.directory_has_ktrace_files = entry.has_ktrace_files;
         load_directory(state);
         ImGui::CloseCurrentPopup();
     }
-    if (state.picker_selected < 0 || state.picker_selected >= static_cast<int>(state.picker_entries.size())) {
+    if (!can_choose_selected) {
         ImGui::EndDisabled();
     }
     ImGui::SameLine();
@@ -2849,11 +2789,11 @@ int row_count(const KTraceSourceHistory& source, const ViewerState& state, int s
         }
         for (const KTraceComponentRow& component : entity.components) {
             rows += 1;
-            if (component_has_resim(entity, component.component) &&
+            if (component_has_resim(component) &&
                 !component_expanded(state, source_index, entity, component.component)) {
                 continue;
             }
-            rows += packed_branch_lane_count(entity, component.component);
+            rows += packed_run_lane_count(component);
         }
     }
     return rows;
@@ -2863,11 +2803,8 @@ int cell_count(const KTraceSourceHistory& source) {
     int cells = 0;
     for (const KTraceEntityRow& entity : source.entities) {
         for (const KTraceComponentRow& component : entity.components) {
-            cells += static_cast<int>(component.cells.size());
-        }
-        for (const KTraceEntityBranch& branch : entity.rollback_branches) {
-            for (const KTraceComponentRow& component : branch.components) {
-                cells += static_cast<int>(component.cells.size());
+            for (const KTraceFrameRun& run : component.runs) {
+                cells += static_cast<int>(run.frames.size());
             }
         }
     }
@@ -2878,11 +2815,13 @@ SourceMetrics compute_source_metrics(const KTraceSourceHistory& source, const Vi
     SourceMetrics metrics;
     frame_range(source, metrics.min_frame, metrics.max_frame);
     for (const KTraceEntityRow& entity : source.entities) {
-        for (const KTraceEntityBranch& branch : entity.rollback_branches) {
-            const SyncFrame end = branch_end_frame(branch);
-            metrics.max_frame = std::max(metrics.max_frame, end);
-            if (end != std::numeric_limits<SyncFrame>::max()) {
-                metrics.max_frame = std::max(metrics.max_frame, end + 1U);
+        for (const KTraceComponentRow& component : entity.components) {
+            for (const KTraceFrameRun& run : component.runs) {
+                const SyncFrame end = run_end_frame(run);
+                metrics.max_frame = std::max(metrics.max_frame, end);
+                if (end != std::numeric_limits<SyncFrame>::max()) {
+                    metrics.max_frame = std::max(metrics.max_frame, end + 1U);
+                }
             }
         }
     }
@@ -2900,16 +2839,10 @@ void rebuild_source_metrics(ViewerState& state) {
         state.source_metrics.push_back(compute_source_metrics(source, state, source_index));
         for (const KTraceEntityRow& entity : source.entities) {
             for (const KTraceComponentRow& component : entity.components) {
-                for (const KTraceFrameCell& cell : component.cells) {
-                    state.benchmark_candidates.push_back(
-                        SelectedCell{source_index, entity.client_network_id, component.component, cell.frame, false});
-                }
-            }
-            for (const KTraceEntityBranch& branch : entity.rollback_branches) {
-                for (const KTraceComponentRow& component : branch.components) {
-                    for (const KTraceFrameCell& cell : component.cells) {
+                for (KTraceRunId run_id = 0; run_id < component.runs.size(); ++run_id) {
+                    for (const KTraceFrameCell& cell : component.runs[run_id].frames) {
                         state.benchmark_candidates.push_back(
-                            SelectedCell{source_index, entity.client_network_id, component.component, cell.frame, true});
+                            SelectedCell{source_index, entity.client_network_id, component.component, cell.frame, run_id});
                     }
                 }
             }
@@ -3462,7 +3395,7 @@ void render_timeline(ViewerState& state, int source_index) {
             const bool selected_row = state.selected.source_index == source_index &&
                 state.selected.network_id == entity.client_network_id &&
                 !state.selected.component &&
-                !state.selected.branch;
+                state.selected.run == 0;
             draw_row_background(row, selected_row);
             const float label_y = body_origin.y + static_cast<float>(row) * row_height - scroll_y + 4.0f;
             const std::string label = entity_label(entity);
@@ -3500,14 +3433,14 @@ void render_timeline(ViewerState& state, int source_index) {
             continue;
         }
         for (const KTraceComponentRow& component : entity.components) {
-            const bool collapsible_component = component_has_resim(entity, component.component);
+            const bool collapsible_component = component_has_resim(component);
             const bool expanded_component =
                 !collapsible_component || component_expanded(state, source_index, entity, component.component);
             if (row_visible(row)) {
                 const bool selected_row = state.selected.source_index == source_index &&
                     state.selected.network_id == entity.client_network_id &&
                     state.selected.component == component.component &&
-                    !state.selected.branch;
+                    state.selected.run == 0;
                 draw_row_background(row, selected_row);
                 const float y = body_origin.y + static_cast<float>(row) * row_height - scroll_y + 4.0f;
                 const std::string label = "  " + component_label(source, component.component);
@@ -3524,27 +3457,29 @@ void render_timeline(ViewerState& state, int source_index) {
                 ++drawn_rows;
                 if (expanded_component) {
                     draw->PushClipRect(ImVec2(frame_clip_min_x, clip_min.y), clip_max, true);
-                    draw_consecutive_cell_links(
-                        draw,
-                        component,
-                        body_origin,
-                        scroll_x,
-                        scroll_y,
-                        min_frame,
-                        first_visible_frame,
-                        last_visible_frame,
-                        row,
-                        clip_min,
-                        clip_max);
-                    for (const KTraceFrameCell& cell : component.cells) {
-                        if (cell.frame < first_visible_frame) {
-                            continue;
+                    if (!component.runs.empty()) {
+                        draw_consecutive_cell_links(
+                            draw,
+                            component.runs[0],
+                            body_origin,
+                            scroll_x,
+                            scroll_y,
+                            min_frame,
+                            first_visible_frame,
+                            last_visible_frame,
+                            row,
+                            clip_min,
+                            clip_max);
+                        for (const KTraceFrameCell& cell : component.runs[0].frames) {
+                            if (cell.frame < first_visible_frame) {
+                                continue;
+                            }
+                            if (cell.frame > last_visible_frame) {
+                                break;
+                            }
+                            draw_cell(draw, source, cell, body_origin, scroll_x, scroll_y, min_frame, row, entity, component.component, 0, source_index, state);
+                            ++drawn_cells;
                         }
-                        if (cell.frame > last_visible_frame) {
-                            break;
-                        }
-                        draw_cell(draw, source, cell, body_origin, scroll_x, scroll_y, min_frame, row, entity, component.component, false, source_index, state);
-                        ++drawn_cells;
                     }
                     draw->PopClipRect();
                 } else {
@@ -3570,108 +3505,99 @@ void render_timeline(ViewerState& state, int source_index) {
             if (!expanded_component) {
                 continue;
             }
-            const BranchLaneLayout branch_layout = pack_branch_lanes(entity, component);
-            const int branch_base_row = row;
-            for (int lane = 0; lane < branch_layout.lane_count; ++lane) {
-                const int branch_row = branch_base_row + lane;
-                if (row_visible(branch_row)) {
+            const RunLaneLayout run_layout = pack_run_lanes(component);
+            const int run_base_row = row;
+            for (int lane = 0; lane < run_layout.lane_count; ++lane) {
+                const int run_row = run_base_row + lane;
+                if (row_visible(run_row)) {
                     bool selected_row = false;
                     if (state.selected.source_index == source_index &&
                         state.selected.network_id == entity.client_network_id &&
                         state.selected.component == component.component &&
-                        state.selected.branch) {
-                        for (const BranchRenderItem& item : branch_layout.items) {
-                            if (branch_lane_at_frame(item, state.selected.frame) == lane) {
+                        state.selected.run != 0) {
+                        for (const RunRenderItem& item : run_layout.items) {
+                            if (item.run_id == state.selected.run &&
+                                run_lane_at_frame(item, state.selected.frame) == lane) {
                                 selected_row = true;
                                 break;
                             }
                         }
                     }
-                    draw_row_background(branch_row, selected_row);
-                    const float y = body_origin.y + static_cast<float>(branch_row) * row_height - scroll_y + 4.0f;
-                    const std::string label = "    rollback lane " + std::to_string(lane + 1);
+                    draw_row_background(run_row, selected_row);
+                    const float y = body_origin.y + static_cast<float>(run_row) * row_height - scroll_y + 4.0f;
+                    const std::string label = "    run lane " + std::to_string(lane + 1);
                     draw->AddText(ImVec2(sticky_label_x + 32.0f, y), IM_COL32(237, 183, 112, 255), label.c_str());
                     ++drawn_rows;
                 }
             }
             draw->PushClipRect(ImVec2(frame_clip_min_x, clip_min.y), clip_max, true);
-            for (std::size_t branch_index = 0; branch_index < branch_layout.items.size(); ++branch_index) {
-                const BranchRenderItem& item = branch_layout.items[branch_index];
-                const int parent_lane = branch_parent_lane(branch_layout.items, branch_index);
-                const int parent_row = parent_lane < 0 ? branch_base_row - 1 : branch_base_row + parent_lane;
-                const int start_lane = branch_lane_at_frame(item, item.branch->from_frame);
+            for (std::size_t run_index = 0; run_index < run_layout.items.size(); ++run_index) {
+                const RunRenderItem& item = run_layout.items[run_index];
+                if (item.run == nullptr) {
+                    continue;
+                }
+                const int parent_lane = run_parent_lane(run_layout.items, run_index);
+                const int parent_row = parent_lane < 0 ? run_base_row - 1 : run_base_row + parent_lane;
+                const int start_lane = run_lane_at_frame(item, item.run->start_frame);
                 if (start_lane != unassigned_lane) {
-                    draw_branch_drop_link(
+                    draw_run_drop_link(
                         draw,
                         body_origin,
                         scroll_x,
                         scroll_y,
                         min_frame,
-                        item.branch->from_frame,
+                        item.run->start_frame,
                         parent_row,
-                        branch_base_row + start_lane,
+                        run_base_row + start_lane,
                         clip_min,
                         clip_max);
                 }
-                for (const KTraceComponentRow& branch_component : item.branch->components) {
-                    if (branch_component.component != component.component) {
+                draw_run_links(
+                    draw,
+                    item,
+                    body_origin,
+                    scroll_x,
+                    scroll_y,
+                    min_frame,
+                    first_visible_frame,
+                    last_visible_frame,
+                    run_base_row,
+                    clip_min,
+                    clip_max);
+                for (const KTraceFrameCell& cell : item.run->frames) {
+                    if (cell.frame < first_visible_frame) {
                         continue;
                     }
-                    draw_branch_component_links(
+                    if (cell.frame > last_visible_frame) {
+                        break;
+                    }
+                    const int cell_lane = run_lane_at_frame(item, cell.frame);
+                    if (cell_lane == unassigned_lane) {
+                        continue;
+                    }
+                    const int cell_row = run_base_row + cell_lane;
+                    if (!row_visible(cell_row)) {
+                        continue;
+                    }
+                    draw_cell(
                         draw,
-                        item,
-                        branch_component,
+                        source,
+                        cell,
                         body_origin,
                         scroll_x,
                         scroll_y,
                         min_frame,
-                        first_visible_frame,
-                        last_visible_frame,
-                        branch_base_row,
-                        clip_min,
-                        clip_max);
-                    for (const KTraceFrameCell& cell : branch_component.cells) {
-                        if (cell.frame < first_visible_frame) {
-                            continue;
-                        }
-                        if (cell.frame > last_visible_frame) {
-                            break;
-                        }
-                        const int cell_lane = branch_lane_at_frame(item, cell.frame);
-                        if (cell_lane == unassigned_lane) {
-                            continue;
-                        }
-                        const int cell_row = branch_base_row + cell_lane;
-                        if (!row_visible(cell_row)) {
-                            continue;
-                        }
-                        const bool force_predicted_visual =
-                            cell_lane != item.lane &&
-                            !has_state(cell, KTraceCellState::Mispredicted) &&
-                            !has_state(cell, KTraceCellState::Starved) &&
-                            !has_state(cell, KTraceCellState::Removed) &&
-                            !has_state(cell, KTraceCellState::EntityDestroyed);
-                        draw_cell(
-                            draw,
-                            source,
-                            cell,
-                            body_origin,
-                            scroll_x,
-                            scroll_y,
-                            min_frame,
-                            cell_row,
-                            entity,
-                            branch_component.component,
-                            true,
-                            source_index,
-                            state,
-                            force_predicted_visual);
-                        ++drawn_cells;
-                    }
+                        cell_row,
+                        entity,
+                        component.component,
+                        item.run_id,
+                        source_index,
+                        state);
+                    ++drawn_cells;
                 }
             }
             draw->PopClipRect();
-            row += branch_layout.lane_count;
+            row += run_layout.lane_count;
         }
     }
     draw->AddLine(ImVec2(frame_clip_min_x, origin.y), ImVec2(frame_clip_min_x, origin.y + height), IM_COL32(70, 80, 96, 230), 1.0f);
@@ -4195,18 +4121,26 @@ void render_app(ViewerState& state) {
     ImGui::TextColored(ImVec4(0.48f, 0.55f, 0.65f, 1.0f), "%zu sources", state.history.sources.size());
 
     ImGui::SetNextItemWidth(-252.0f);
-    ImGui::InputText("##trace_directory", state.directory.data(), state.directory.size());
+    if (ImGui::InputText("##trace_directory", state.directory.data(), state.directory.size())) {
+        state.directory_has_ktrace_files = directory_contains_ktrace_files(state.directory.data());
+    }
     ImGui::SameLine();
     if (ImGui::Button("Browse", ImVec2(84.0f, 0.0f))) {
         open_directory_picker(state);
     }
     ImGui::SameLine();
+    if (!state.directory_has_ktrace_files) {
+        ImGui::BeginDisabled();
+    }
     if (ImGui::Button("Load", ImVec2(70.0f, 0.0f))) {
         load_directory(state);
     }
     ImGui::SameLine();
     if (ImGui::Button("Reload", ImVec2(70.0f, 0.0f))) {
         load_directory(state);
+    }
+    if (!state.directory_has_ktrace_files) {
+        ImGui::EndDisabled();
     }
     if (state.loader.active || state.loader.bytes_read != 0U || state.loader.total_bytes != 0U) {
         const float progress = state.loader.total_bytes != 0U
@@ -4404,8 +4338,10 @@ bool parse_args(int argc, char** argv, ViewerState& state) {
                 if (!parse_int_arg(require_value(), "--benchmark-frames", state.benchmark.options.frames)) {
                     return false;
                 }
+#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
             } else if (arg == "--control-socket") {
                 state.control_socket_path = require_value();
+#endif
             } else if (arg.rfind("--", 0) == 0) {
                 std::fprintf(stderr, "unknown argument: %s\n", arg.c_str());
                 return false;
@@ -4467,6 +4403,7 @@ int main(int argc, char** argv) {
         load_directory(state);
     }
 
+#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
     ControlServer control_server;
     std::string control_error;
     if (!start_control_server(control_server, state.control_socket_path, control_error)) {
@@ -4483,6 +4420,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "control socket listening at %s\n", state.control_socket_path.c_str());
     }
     AutomationInput automation_input;
+#endif
 
     while (!glfwWindowShouldClose(window)) {
         if (state.benchmark.options.enabled && !state.history.sources.empty()) {
@@ -4498,13 +4436,19 @@ int main(int argc, char** argv) {
         glfwPollEvents();
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
+#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
         poll_control_server(control_server, state, automation_input, window);
+#endif
         process_loader_messages(state);
+#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
         apply_automation_input(automation_input);
+#endif
         ImGui::NewFrame();
+#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
         if (!state.benchmark.options.enabled && ImGui::IsKeyPressed(ImGuiKey_F12, false)) {
             request_screenshot(state);
         }
+#endif
 
         render_app(state);
         state.current_timing.total_ms = elapsed_ms(frame_start);
@@ -4517,6 +4461,7 @@ int main(int argc, char** argv) {
         glClearColor(0.08f, 0.08f, 0.09f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
         if (state.screenshot_requested) {
             const std::string path = screenshot_output_path(state);
             std::string error;
@@ -4531,6 +4476,7 @@ int main(int argc, char** argv) {
             }
             state.screenshot_requested = false;
         }
+#endif
         glfwSwapBuffers(window);
 
         if (state.benchmark.options.enabled) {
@@ -4548,12 +4494,18 @@ int main(int argc, char** argv) {
         write_benchmark_report(state);
     }
 
+#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
     stop_control_server(control_server);
+#endif
     stop_loading_directory(state);
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
     glfwDestroyWindow(window);
     glfwTerminate();
+#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
     return state.screenshot_failed ? 1 : 0;
+#else
+    return 0;
+#endif
 }

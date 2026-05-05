@@ -170,8 +170,6 @@ TEST_CASE("ktrace directory writer preserves every event and reader builds histo
         }) == 1);
     REQUIRE(client_source->entities.size() == 1);
     REQUIRE(client_source->entities[0].server_entity == server_entity);
-    REQUIRE(client_source->entities[0].rollback_branches.size() == 1);
-    REQUIRE(client_source->entities[0].rollback_branches[0].components.size() == 1);
 
     const auto component_row = std::find_if(
         client_source->entities[0].components.begin(),
@@ -180,25 +178,24 @@ TEST_CASE("ktrace directory writer preserves every event and reader builds histo
             return row.component == component;
         });
     REQUIRE(component_row != client_source->entities[0].components.end());
-    REQUIRE(component_row->cells.size() >= 40);
+    REQUIRE(component_row->runs.size() >= 2);
+    REQUIRE(component_row->runs[0].frames.size() >= 39);
     const auto conflict_cell = std::find_if(
-        component_row->cells.begin(),
-        component_row->cells.end(),
+        component_row->runs[0].frames.begin(),
+        component_row->runs[0].frames.end(),
         [](const kage::sync::KTraceFrameCell& cell) {
             return cell.frame == 6;
     });
-    REQUIRE(conflict_cell != component_row->cells.end());
+    REQUIRE(conflict_cell != component_row->runs[0].frames.end());
     REQUIRE((conflict_cell->state_mask & static_cast<std::uint16_t>(kage::sync::KTraceCellState::Mispredicted)) != 0U);
 
-    const kage::sync::KTraceComponentRow& branch_component =
-        client_source->entities[0].rollback_branches[0].components[0];
     const auto resimulated_cell = std::find_if(
-        branch_component.cells.begin(),
-        branch_component.cells.end(),
+        component_row->runs[1].frames.begin(),
+        component_row->runs[1].frames.end(),
         [](const kage::sync::KTraceFrameCell& cell) {
             return cell.frame == 7;
         });
-    REQUIRE(resimulated_cell != branch_component.cells.end());
+    REQUIRE(resimulated_cell != component_row->runs[1].frames.end());
     REQUIRE((resimulated_cell->state_mask & static_cast<std::uint16_t>(kage::sync::KTraceCellState::Resimulated)) != 0U);
 }
 
@@ -273,8 +270,8 @@ TEST_CASE("ktrace reader keeps complete records when final record is truncated")
     REQUIRE_FALSE(history.sources[0].records.empty());
     REQUIRE(history.sources[0].entities.size() == 1);
     REQUIRE(history.sources[0].entities[0].components.size() == 1);
-    REQUIRE(history.sources[0].entities[0].components[0].cells.size() == 1);
-    REQUIRE(history.sources[0].entities[0].components[0].cells[0].frame == 4);
+    REQUIRE(history.sources[0].entities[0].components[0].runs[0].frames.size() == 1);
+    REQUIRE(history.sources[0].entities[0].components[0].runs[0].frames[0].frame == 4);
 }
 
 TEST_CASE("ktrace stream reader exposes header metadata and streams records") {

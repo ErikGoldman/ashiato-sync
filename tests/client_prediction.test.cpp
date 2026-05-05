@@ -93,6 +93,63 @@ TEST_CASE("predicted client rolls back and resimulates mismatched frames") {
     REQUIRE(registry.get<PredictedPosition>(local).x == 3.0f);
 }
 
+#ifdef KAGE_SYNC_ENABLE_TRACING
+
+TEST_CASE("predicted client starts bundled authoritative rollback from latest received baseline") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    kage::sync::configure_client(registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+    options.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
+    kage::sync::ReplicationClient client(options);
+    client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
+        position.x += 1.0f;
+    });
+
+    std::vector<kage::sync::SyncTraceEvent> events;
+    kage::sync::SyncTracer tracer;
+    tracer.set_frame_data_enabled(true);
+    tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
+        [&](const kage::sync::SyncTraceEvent& event) { events.push_back(event); }});
+    client.set_tracer(&tracer);
+
+    const ecs::Entity server_entity = registry.create();
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+    REQUIRE(local);
+
+    REQUIRE(client.predict_tick(registry, 2));
+    REQUIRE(client.predict_tick(registry, 3));
+    REQUIRE(client.predict_tick(registry, 4));
+    REQUIRE(registry.get<PredictedPosition>(local).x == 3.0f);
+
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f}, 2)));
+    REQUIRE(client.receive(registry, make_predicted_position_packet(3, server_entity, PredictedPosition{3.0f, 0.0f}, 3)));
+    REQUIRE(client.predict_tick(registry, 5));
+
+    std::vector<kage::sync::SyncFrame> resim_frames;
+    for (const kage::sync::SyncTraceEvent& event : events) {
+        if (event.type == kage::sync::SyncTraceEventType::ResimulatedFrameComponent &&
+            event.component == position_component) {
+            resim_frames.push_back(event.frame);
+        }
+    }
+
+    REQUIRE(std::find(resim_frames.begin(), resim_frames.end(), 3) == resim_frames.end());
+    REQUIRE(std::count(resim_frames.begin(), resim_frames.end(), 4) == 1);
+    REQUIRE(registry.get<PredictedPosition>(local).x == 5.0f);
+}
+
+#endif
+
 TEST_CASE("predicted client rolls back locally predicted cues missing from authoritative frame") {
     ecs::Registry registry;
     const ecs::Entity position_component =

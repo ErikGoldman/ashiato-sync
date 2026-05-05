@@ -54,6 +54,13 @@ function(kage_sync_fetch_glfw)
         )
         FetchContent_MakeAvailable(glfw)
     endif()
+
+    FetchContent_GetProperties(glfw)
+    if(glfw_SOURCE_DIR)
+        set(glfw_SOURCE_DIR "${glfw_SOURCE_DIR}" PARENT_SCOPE)
+    elseif(GLFW_SOURCE_DIR)
+        set(glfw_SOURCE_DIR "${GLFW_SOURCE_DIR}" PARENT_SCOPE)
+    endif()
 endfunction()
 
 function(kage_sync_fetch_imgui)

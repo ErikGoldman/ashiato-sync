@@ -597,6 +597,7 @@ private:
         EntityState& state,
         SyncFrame frame,
         const QuantizedFrameData& authoritative) const;
+    void refresh_pending_prediction_rollback_frame() noexcept;
     void queue_prediction_rollback(EntityState& state, SyncFrame frame);
     bool apply_pending_prediction_rollback(ecs::Registry& registry, ecs::RunJobsOptions options);
     bool resimulate_all_predicted(ecs::Registry& registry, SyncFrame begin_frame, SyncFrame current_frame, ecs::RunJobsOptions options);

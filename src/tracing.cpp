@@ -241,19 +241,59 @@ ClientEntityNetworkId event_network_key(const SyncTraceEvent& event) {
     return invalid_client_entity_network_id;
 }
 
-void add_cell_state(KTraceComponentRow& row, SyncFrame frame, KTraceCellState state, std::uint32_t event_index) {
-    auto found = std::find_if(row.cells.begin(), row.cells.end(), [frame](const KTraceFrameCell& cell) {
-        return cell.frame == frame;
+KTraceFrameRun& root_run(KTraceComponentRow& row) {
+    if (row.runs.empty()) {
+        KTraceFrameRun run;
+        run.start_frame = 0;
+        row.runs.push_back(std::move(run));
+        row.active_run = 0;
+    }
+    if (row.active_run == invalid_trace_run || row.active_run >= row.runs.size()) {
+        row.active_run = 0;
+    }
+    return row.runs[0];
+}
+
+KTraceFrameRun& active_run(KTraceComponentRow& row) {
+    (void)root_run(row);
+    return row.runs[row.active_run];
+}
+
+void add_cell_state(KTraceFrameRun& run, SyncFrame frame, KTraceCellState state, std::uint32_t event_index) {
+    auto found = std::lower_bound(run.frames.begin(), run.frames.end(), frame, [](const KTraceFrameCell& cell, SyncFrame target) {
+        return cell.frame < target;
     });
-    if (found == row.cells.end()) {
-        row.cells.push_back(KTraceFrameCell{frame, 0, {}});
-        found = row.cells.end() - 1;
+    if (found == run.frames.end() || found->frame != frame) {
+        found = run.frames.insert(found, KTraceFrameCell{frame, 0, {}});
     }
     found->state_mask |= static_cast<std::uint32_t>(state);
-    if (std::find(found->event_indices.begin(), found->event_indices.end(), event_index) ==
+    if (event_index != std::numeric_limits<std::uint32_t>::max() &&
+        std::find(found->event_indices.begin(), found->event_indices.end(), event_index) ==
         found->event_indices.end()) {
         found->event_indices.push_back(event_index);
     }
+}
+
+void add_cell_state(KTraceComponentRow& row, SyncFrame frame, KTraceCellState state, std::uint32_t event_index) {
+    add_cell_state(active_run(row), frame, state, event_index);
+}
+
+KTraceFrameRun* run_containing_event(KTraceComponentRow& row, SyncFrame frame, std::uint32_t event_index) {
+    KTraceFrameRun* selected = nullptr;
+    for (KTraceFrameRun& run : row.runs) {
+        KTraceFrameCell* cell = nullptr;
+        auto found = std::find_if(run.frames.begin(), run.frames.end(), [frame](const KTraceFrameCell& candidate) {
+            return candidate.frame == frame;
+        });
+        if (found != run.frames.end()) {
+            cell = &*found;
+        }
+        if (cell != nullptr &&
+            std::find(cell->event_indices.begin(), cell->event_indices.end(), event_index) != cell->event_indices.end()) {
+            selected = &run;
+        }
+    }
+    return selected;
 }
 
 ecs::Entity cue_row_component() noexcept {
@@ -269,47 +309,69 @@ KTraceComponentRow& component_row(std::vector<KTraceComponentRow>& rows, ecs::En
         return row.component == component;
     });
     if (found == rows.end()) {
-        rows.push_back(KTraceComponentRow{component, {}});
+        KTraceComponentRow row;
+        row.component = component;
+        row.runs.push_back(KTraceFrameRun{});
+        row.active_run = 0;
+        rows.push_back(std::move(row));
         return rows.back();
     }
+    (void)root_run(*found);
     return *found;
 }
 
-KTraceComponentRow& branch_component_row(KTraceEntityBranch& branch, ecs::Entity component) {
-    return component_row(branch.components, component);
+const KTraceFrameCell* find_cell(const KTraceFrameRun& run, SyncFrame frame) {
+    const auto found = std::find_if(run.frames.begin(), run.frames.end(), [frame](const KTraceFrameCell& cell) {
+        return cell.frame == frame;
+    });
+    return found != run.frames.end() ? &*found : nullptr;
 }
 
-KTraceEntityBranch& create_rollback_branch(KTraceEntityRow& entity, SyncFrame frame, ecs::Entity component) {
-    KTraceEntityBranch branch;
-    branch.from_frame = frame;
-    branch.component = component;
-    entity.rollback_branches.push_back(std::move(branch));
-    return entity.rollback_branches.back();
-}
-
-KTraceEntityBranch* active_rollback_branch_for_conflict(KTraceEntityRow& entity, SyncFrame frame) {
-    KTraceEntityBranch* selected = nullptr;
-    for (KTraceEntityBranch& branch : entity.rollback_branches) {
-        if (branch.from_frame <= frame &&
-            (selected == nullptr || branch.from_frame >= selected->from_frame)) {
-            selected = &branch;
+void copy_split_frame_authoritative_state(
+    const KTraceComponentRow& row,
+    KTraceFrameRun& child,
+    SyncFrame frame,
+    const KTraceSourceHistory& source) {
+    if (row.active_run >= row.runs.size()) {
+        return;
+    }
+    const KTraceFrameRun& parent = row.runs[row.active_run];
+    const KTraceFrameCell* parent_cell = find_cell(parent, frame);
+    if (parent_cell == nullptr) {
+        return;
+    }
+    for (std::uint32_t event_index : parent_cell->event_indices) {
+        if (event_index >= source.records.size()) {
+            continue;
+        }
+        const SyncTraceEventType type = source.records[event_index].event.type;
+        if (type == SyncTraceEventType::ComponentReceived) {
+            add_cell_state(child, frame, KTraceCellState::ReceivedFromServer, event_index);
         }
     }
-    return selected;
 }
 
-KTraceEntityBranch& rollback_branch_for_resimulation(KTraceEntityRow& entity, SyncFrame frame, ecs::Entity fallback_component) {
-    KTraceEntityBranch* selected = nullptr;
-    for (KTraceEntityBranch& branch : entity.rollback_branches) {
-        if (branch.from_frame <= frame &&
-            (selected == nullptr || branch.from_frame >= selected->from_frame)) {
-            selected = &branch;
-        }
+KTraceFrameRun& ensure_resimulation_run(KTraceComponentRow& row, SyncFrame frame, const KTraceSourceHistory& source) {
+    (void)root_run(row);
+    if (!row.pending_run_split) {
+        return active_run(row);
     }
-    if (selected != nullptr) {
-        return *selected;
+    const KTraceRunId parent = row.active_run;
+    KTraceFrameRun child;
+    child.start_frame = row.pending_split_frame;
+    child.prev = parent;
+    row.runs.push_back(std::move(child));
+    const KTraceRunId child_id = static_cast<KTraceRunId>(row.runs.size() - 1U);
+    row.runs[parent].next.push_back(child_id);
+    copy_split_frame_authoritative_state(row, row.runs[child_id], row.pending_split_frame, source);
+    if (frame != row.pending_split_frame) {
+        copy_split_frame_authoritative_state(row, row.runs[child_id], frame, source);
     }
-    return create_rollback_branch(entity, frame, fallback_component);
+    add_cell_state(row.runs[child_id], row.pending_split_frame, KTraceCellState::Resimulated, std::numeric_limits<std::uint32_t>::max());
+    row.active_run = child_id;
+    row.pending_run_split = false;
+    row.pending_split_frame = 0;
+    return row.runs[child_id];
 }
 
 KTraceEntityRow& entity_row(std::vector<KTraceEntityRow>& rows, const SyncTraceEvent& event) {
@@ -971,28 +1033,19 @@ KTraceSourceHistory KTraceReader::build_source_history(KTraceFile file) {
             if (!event.component) {
                 break;
             }
-            if (KTraceEntityBranch* active_branch = active_rollback_branch_for_conflict(entity, event.frame)) {
-                KTraceComponentRow& row = branch_component_row(*active_branch, event.component);
-                add_cell_state(row, event.frame, KTraceCellState::Mispredicted, event_index);
-            } else {
-                KTraceComponentRow& row = component_row(entity.components, event.component);
-                add_cell_state(row, event.frame, KTraceCellState::Mispredicted, event_index);
-            }
+            KTraceComponentRow& row = component_row(entity.components, event.component);
+            add_cell_state(row, event.frame, KTraceCellState::Mispredicted, event_index);
+            row.pending_run_split = true;
+            row.pending_split_frame = event.frame;
             predicted_conflicts[key][(std::uint64_t{event.component.value} << 32U) | event.frame] = true;
-            create_rollback_branch(entity, event.frame, event.component);
             break;
         }
         case SyncTraceEventType::RollbackReason: {
             if (!event.component) {
                 break;
             }
-            if (KTraceEntityBranch* active_branch = active_rollback_branch_for_conflict(entity, event.frame)) {
-                KTraceComponentRow& row = branch_component_row(*active_branch, event.component);
-                add_cell_event(row, event.frame, event_index);
-            } else {
-                KTraceComponentRow& row = component_row(entity.components, event.component);
-                add_cell_event(row, event.frame, event_index);
-            }
+            KTraceComponentRow& row = component_row(entity.components, event.component);
+            add_cell_event(row, event.frame, event_index);
             break;
         }
         case SyncTraceEventType::ClockSkew: {
@@ -1034,9 +1087,9 @@ KTraceSourceHistory KTraceReader::build_source_history(KTraceFile file) {
             if (!event.component) {
                 break;
             }
-            KTraceEntityBranch& branch = rollback_branch_for_resimulation(entity, event.frame, event.component);
-            KTraceComponentRow& row = branch_component_row(branch, event.component);
-            add_cell_state(row, event.frame, KTraceCellState::Resimulated, event_index);
+            KTraceComponentRow& row = component_row(entity.components, event.component);
+            KTraceFrameRun& run = ensure_resimulation_run(row, event.frame, source);
+            add_cell_state(run, event.frame, KTraceCellState::Resimulated, event_index);
             break;
         }
         case SyncTraceEventType::FrameComponent: {
@@ -1076,7 +1129,10 @@ KTraceSourceHistory KTraceReader::build_source_history(KTraceFile file) {
             continue;
         }
         KTraceComponentRow& row = component_row(found_entity->components, event.component);
-        add_cell_state(row, event.frame, KTraceCellState::PredictedCorrect, static_cast<std::uint32_t>(index));
+        KTraceFrameRun* run = run_containing_event(row, event.frame, static_cast<std::uint32_t>(index));
+        if (run != nullptr) {
+            add_cell_state(*run, event.frame, KTraceCellState::PredictedCorrect, static_cast<std::uint32_t>(index));
+        }
     }
 
     return source;

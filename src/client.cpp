@@ -3271,6 +3271,24 @@ bool ReplicationClient::compare_predicted_frame(
     return false;
 }
 
+void ReplicationClient::refresh_pending_prediction_rollback_frame() noexcept {
+    has_pending_prediction_rollback_ = false;
+    pending_prediction_rollback_frame_ = 0;
+    for (const std::uint32_t entity_index : prediction_rollback_entities_) {
+        if (entity_index >= entities_.size()) {
+            continue;
+        }
+        const EntityState& state = entities_[entity_index];
+        if (!state.prediction_rollback_pending || state.prediction_rollback_frame == 0U) {
+            continue;
+        }
+        if (!has_pending_prediction_rollback_ || state.prediction_rollback_frame < pending_prediction_rollback_frame_) {
+            pending_prediction_rollback_frame_ = state.prediction_rollback_frame;
+            has_pending_prediction_rollback_ = true;
+        }
+    }
+}
+
 void ReplicationClient::queue_prediction_rollback(EntityState& state, SyncFrame frame) {
     const std::uint32_t entity_index = static_cast<std::uint32_t>(&state - entities_.data());
     if (!state.prediction_rollback_pending) {
@@ -3279,11 +3297,8 @@ void ReplicationClient::queue_prediction_rollback(EntityState& state, SyncFrame 
     state.prediction_rollback_pending = true;
     state.prediction_rollback_frame = state.prediction_rollback_frame == 0
         ? frame
-        : std::min(state.prediction_rollback_frame, frame);
-    if (!has_pending_prediction_rollback_ || frame < pending_prediction_rollback_frame_) {
-        pending_prediction_rollback_frame_ = frame;
-        has_pending_prediction_rollback_ = true;
-    }
+        : std::max(state.prediction_rollback_frame, frame);
+    refresh_pending_prediction_rollback_frame();
 }
 
 void ReplicationClient::collect_resimulated_prediction_entities(std::vector<std::uint32_t>& out) const {
@@ -3737,9 +3752,6 @@ bool ReplicationClient::resimulate_all_predicted(
                 return false;
             }
         }
-#ifdef KAGE_SYNC_ENABLE_TRACING
-        trace_frame_components(registry, settings, current_frame, true, false, TraceFrameComponentScope::Predicted);
-#endif
         return true;
     }
 
@@ -3814,9 +3826,6 @@ bool ReplicationClient::resimulate_affected_predicted(
                 return false;
             }
         }
-#ifdef KAGE_SYNC_ENABLE_TRACING
-        trace_frame_components(registry, settings, current_frame, true, true, TraceFrameComponentScope::Predicted);
-#endif
         return true;
     }
 

@@ -267,15 +267,23 @@ struct KTraceFrameCell {
     std::vector<std::uint32_t> event_indices;
 };
 
-struct KTraceComponentRow {
-    ecs::Entity component{};
-    std::vector<KTraceFrameCell> cells;
+using KTraceRunId = std::uint32_t;
+constexpr KTraceRunId invalid_trace_run = UINT32_MAX;
+
+struct KTraceFrameRun {
+    SyncFrame start_frame = 0;
+    std::vector<KTraceFrameCell> frames;
+    KTraceRunId prev = invalid_trace_run;
+    std::vector<KTraceRunId> next;
 };
 
-struct KTraceEntityBranch {
-    SyncFrame from_frame = 0;
+struct KTraceComponentRow {
     ecs::Entity component{};
-    std::vector<KTraceComponentRow> components;
+    std::vector<KTraceFrameRun> runs;
+    std::vector<KTraceRunId> run_skiplist;
+    KTraceRunId active_run = invalid_trace_run;
+    bool pending_run_split = false;
+    SyncFrame pending_split_frame = 0;
 };
 
 struct KTraceEntityRow {
@@ -286,7 +294,6 @@ struct KTraceEntityRow {
     ecs::Entity local_entity{};
     SyncArchetypeId archetype = invalid_sync_archetype_id;
     std::vector<KTraceComponentRow> components;
-    std::vector<KTraceEntityBranch> rollback_branches;
 };
 
 struct KTraceSourceHistory {

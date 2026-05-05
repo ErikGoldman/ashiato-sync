@@ -108,11 +108,13 @@ Build the Dear ImGui trace viewer with tracing enabled:
 cmake -S . -B build-viewer \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DKAGE_SYNC_BUILD_TRACE_VIEWER=ON \
-  -DKAGE_SYNC_ENABLE_TRACING=ON
+  -DKAGE_SYNC_ENABLE_TRACING=ON \
+  -DKAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION=ON
 cmake --build build-viewer --target kage_sync_trace_viewer
 ```
 
-For live automation, start the viewer with a local control socket:
+For live automation, build with `KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION=ON`
+and start the viewer with a local control socket:
 
 ```sh
 ./build-viewer/kage_sync_trace_viewer \
