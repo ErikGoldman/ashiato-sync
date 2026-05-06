@@ -1116,7 +1116,7 @@ void ReplicationServer::end_tick(ecs::Registry& registry) {
 }
 
 void ReplicationServer::publish_frame(ecs::Registry& registry) {
-    auto dirty_frame = registry.begin_dirty_frame();
+    auto dirty_frame = registry.dirty_scope();
     const ecs::Registry::DirtyView dirty = dirty_frame.view();
     replicate_frame(registry, dirty);
     emit_after_frame(registry, dirty);

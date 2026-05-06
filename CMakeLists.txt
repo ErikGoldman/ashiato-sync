@@ -11,6 +11,7 @@ include(cmake/KageSyncDependencies.cmake)
 
 option(KAGE_SYNC_BUILD_BENCHMARKS "Build kage-sync Google Benchmark suites" OFF)
 option(KAGE_SYNC_BUILD_EXAMPLES "Build kage-sync examples" OFF)
+option(KAGE_SYNC_BUILD_FUZZERS "Build kage-sync libFuzzer protocol fuzzers" OFF)
 option(KAGE_SYNC_BUILD_TRACE_VIEWER "Build the Dear ImGui ktrace viewer" OFF)
 option(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION "Build trace viewer socket automation and PNG screenshots" ON)
 option(KAGE_SYNC_ENABLE_COVERAGE "Build kage-sync targets with coverage instrumentation" OFF)
@@ -48,9 +49,30 @@ if(KAGE_SYNC_ENABLE_COVERAGE)
     endfunction()
 endif()
 
+if(KAGE_SYNC_BUILD_FUZZERS)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "KAGE_SYNC_BUILD_FUZZERS requires Clang/libFuzzer")
+    endif()
+
+    function(kage_sync_enable_fuzzer_instrumentation target_name)
+        target_compile_options(${target_name} PRIVATE
+            -g
+            -O1
+            -fno-omit-frame-pointer
+            -fsanitize=fuzzer-no-link,address,undefined
+        )
+    endfunction()
+endif()
+
 kage_sync_add_ecs_dependency()
 
 add_subdirectory(src)
+
+if(KAGE_SYNC_BUILD_FUZZERS)
+    kage_sync_enable_fuzzer_instrumentation(ecs)
+    kage_sync_enable_fuzzer_instrumentation(kage_sync)
+    add_subdirectory(fuzzers)
+endif()
 
 if(KAGE_SYNC_BUILD_TESTING)
     add_subdirectory(tests)

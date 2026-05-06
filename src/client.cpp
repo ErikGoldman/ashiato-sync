@@ -4286,7 +4286,8 @@ bool ReplicationClient::receive_connect_response(ecs::Registry& registry, ecs::B
             return false;
         }
         client_id_ = static_cast<ClientId>(packet.read_unsigned_bits(64U));
-        if (client_id_ == invalid_client_id) {
+        if (client_id_ == invalid_client_id || client_id_ > max_client_entity_network_id_client) {
+            client_id_ = invalid_client_id;
             return false;
         }
         connect_error_.clear();

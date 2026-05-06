@@ -63,6 +63,13 @@ TEST_CASE("replication client rejects malformed connect responses") {
     truncated_reject.push_bits(5, 16U);
     REQUIRE_FALSE(client.receive(registry, truncated_reject));
     REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Connecting);
+
+    ecs::BitBuffer invalid_client_id;
+    invalid_client_id.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
+    invalid_client_id.push_bool(true);
+    invalid_client_id.push_unsigned_bits(kage::sync::max_client_entity_network_id_client + 1U, 64U);
+    REQUIRE_FALSE(client.receive(registry, invalid_client_id));
+    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Connecting);
 }
 
 TEST_CASE("replication client stores rejected connect response errors") {
