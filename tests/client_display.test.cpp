@@ -310,6 +310,70 @@ TEST_CASE("client-owned fractional tick frame returns the previous valid sample 
     REQUIRE(sampled.x == Catch::Approx(10.0f));
 }
 
+TEST_CASE("fractional tick sampling freezes buffered entities from latest state when target data is missing") {
+    ecs::Registry client_registry;
+    const ecs::Entity client_position =
+        kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
+    REQUIRE(kage::sync::set_fractional_tick_sampled(client_registry, client_position));
+    REQUIRE(kage::sync::define_archetype(
+                client_registry,
+                "SmoothActor",
+                {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}})
+        .value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    options.interpolation_buffer_frames = 1;
+    options.interpolation_buffer_capacity_frames = 8;
+    options.fixed_dt_seconds = 1.0;
+    kage::sync::ReplicationClient client(options);
+    const ecs::Entity server_entity{42};
+
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{10.0f, 0.0f}}})));
+
+    kage::sync::FractionalTickSampleBuffer display;
+    REQUIRE(client.sample_fractional_tick_frame(client_registry, 10.0, display));
+    REQUIRE(display.entities.size() == 1);
+    REQUIRE(display.entities[0].client_entity_network_id == test_client_entity_network_id(1, server_entity));
+    REQUIRE(display.entities[0].frame == 1);
+    REQUIRE(display.entities[0].alpha == Catch::Approx(0.0f));
+
+    SmoothPosition sampled;
+    REQUIRE(display.entities[0].try_get_sampled_value(client_registry, sampled));
+    REQUIRE(sampled.x == Catch::Approx(10.0f));
+    REQUIRE(sampled.y == Catch::Approx(0.0f));
+}
+
+TEST_CASE("client-owned fractional tick frame does not freeze destroyed buffered entities") {
+    ecs::Registry client_registry;
+    const ecs::Entity client_position =
+        kage::sync::register_sync_component<SmoothPosition>(client_registry, "SmoothPosition");
+    REQUIRE(kage::sync::set_fractional_tick_sampled(client_registry, client_position));
+    REQUIRE(kage::sync::define_archetype(
+                client_registry,
+                "SmoothActor",
+                {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}})
+        .value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    options.interpolation_buffer_frames = 1;
+    options.interpolation_buffer_capacity_frames = 8;
+    options.fixed_dt_seconds = 1.0;
+    kage::sync::ReplicationClient client(options);
+    const ecs::Entity server_entity{42};
+
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{10.0f, 0.0f}}})));
+    REQUIRE(client.tick(client_registry, 2.0));
+    REQUIRE(client.fractional_tick_frame(client_registry).entities.size() == 1);
+
+    REQUIRE(client.receive(client_registry, make_destroy_packet(2, server_entity)));
+    REQUIRE(client.tick(client_registry, 1.0));
+    REQUIRE(client.fractional_tick_frame(client_registry).entities.empty());
+}
+
 TEST_CASE("client-owned fractional tick frame exposes snap and buffered entities in one loop") {
     ecs::Registry client_registry;
     const ecs::Entity smooth =

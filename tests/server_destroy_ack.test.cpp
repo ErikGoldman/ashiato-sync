@@ -16,7 +16,7 @@
 
 using namespace kage_sync_tests;
 
-TEST_CASE("replication server interleaves pending destroys with bandwidth-limited updates") {
+TEST_CASE("replication server sends pending destroys before bandwidth-limited updates") {
     ecs::Registry registry;
     const ecs::Entity position_component =
         kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
@@ -50,15 +50,16 @@ TEST_CASE("replication server interleaves pending destroys with bandwidth-limite
     REQUIRE(payloads.size() == 1);
     ServerUpdatePacket update = read_server_update(payloads.back());
     REQUIRE(update.entities.size() == 1);
-    REQUIRE_FALSE(update.entities[0].destroy);
+    REQUIRE(update.entities[0].destroy);
+    REQUIRE(update.entities[0].network_id != 0);
+    REQUIRE(server.process_packet(1, write_ack_packet(update.packet_id)));
     payloads.clear();
 
     server.tick(registry);
     REQUIRE(payloads.size() == 1);
     update = read_server_update(payloads.back());
     REQUIRE(update.entities.size() == 1);
-    REQUIRE(update.entities[0].destroy);
-    REQUIRE(update.entities[0].network_id != 0);
+    REQUIRE_FALSE(update.entities[0].destroy);
 }
 
 TEST_CASE("replication server resends pending destroys until ACKed") {

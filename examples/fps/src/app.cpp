@@ -49,6 +49,25 @@ void append_link_args(const AppConfig& config, std::vector<std::string>& args) {
     args.push_back(std::to_string(config.latency_ms));
     args.push_back("--jitter-ms");
     args.push_back(std::to_string(config.jitter_ms));
+    args.push_back("--loss-percent");
+    args.push_back(std::to_string(config.loss_percent));
+    args.push_back("--link-bandwidth-kbps");
+    args.push_back(std::to_string(config.link_bandwidth_kbps));
+    args.push_back("--link-queue-kb");
+    args.push_back(std::to_string(config.link_queue_kb));
+}
+
+void append_bandwidth_args(const AppConfig& config, std::vector<std::string>& args) {
+    args.push_back("--bandwidth-mode");
+    args.push_back(config.dynamic_bandwidth ? "dynamic" : "static");
+    args.push_back("--bandwidth-limit-kbps");
+    args.push_back(std::to_string(config.bandwidth_limit_kbps));
+    args.push_back("--bandwidth-min-kbps");
+    args.push_back(std::to_string(config.bandwidth_min_kbps));
+    args.push_back("--bandwidth-initial-kbps");
+    args.push_back(std::to_string(config.bandwidth_initial_kbps));
+    args.push_back("--bandwidth-max-kbps");
+    args.push_back(std::to_string(config.bandwidth_max_kbps));
 }
 
 void append_replay_args(const AppConfig& config, std::vector<std::string>& args) {
@@ -124,6 +143,8 @@ void run_launcher(const AppConfig& config) {
         to_string_port(config.port),
         "--bots",
         std::to_string(config.bots)};
+    append_link_args(config, server_args);
+    append_bandwidth_args(config, server_args);
     append_trace_args(config, server_args);
     append_replay_args(config, server_args);
     PROCESS_INFORMATION server = spawn_process(server_args);
@@ -203,6 +224,8 @@ void run_launcher(const AppConfig& config) {
         to_string_port(config.port),
         "--bots",
         std::to_string(config.bots)};
+    append_link_args(config, server_args);
+    append_bandwidth_args(config, server_args);
     append_trace_args(config, server_args);
     append_replay_args(config, server_args);
     const pid_t server = spawn_process(server_args);
@@ -301,6 +324,32 @@ AppConfig parse_args(int argc, char** argv) {
             config.latency_ms = std::max(0.0, std::stod(require_value()));
         } else if (arg == "--jitter-ms") {
             config.jitter_ms = std::max(0.0, std::stod(require_value()));
+        } else if (arg == "--loss-percent") {
+            config.loss_percent = std::clamp(std::stod(require_value()), 0.0, 100.0);
+        } else if (arg == "--link-bandwidth-kbps") {
+            config.link_bandwidth_kbps = std::max(0.0, std::stod(require_value()));
+        } else if (arg == "--link-queue-kb") {
+            config.link_queue_kb = std::max(0.0, std::stod(require_value()));
+        } else if (arg == "--bandwidth-mode") {
+            const std::string value = require_value();
+            if (value == "dynamic") {
+                config.dynamic_bandwidth = true;
+            } else if (value == "static") {
+                config.dynamic_bandwidth = false;
+            } else {
+                throw std::runtime_error("--bandwidth-mode must be dynamic or static");
+            }
+        } else if (arg == "--bandwidth-limit-kbps") {
+            config.bandwidth_limit_kbps = std::max(1.0, std::stod(require_value()));
+        } else if (arg == "--bandwidth-min-kbps") {
+            config.bandwidth_min_kbps = std::max(1.0, std::stod(require_value()));
+            config.dynamic_bandwidth = true;
+        } else if (arg == "--bandwidth-initial-kbps") {
+            config.bandwidth_initial_kbps = std::max(1.0, std::stod(require_value()));
+            config.dynamic_bandwidth = true;
+        } else if (arg == "--bandwidth-max-kbps") {
+            config.bandwidth_max_kbps = std::max(1.0, std::stod(require_value()));
+            config.dynamic_bandwidth = true;
         } else if (arg == "--trace-dir") {
 #ifdef KAGE_SYNC_ENABLE_TRACING
             config.trace_dir = require_value();

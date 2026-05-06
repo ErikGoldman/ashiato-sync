@@ -10,6 +10,7 @@
 #include "replay.hpp"
 
 #include <chrono>
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <memory>
@@ -56,21 +57,41 @@ void spawn_bots(ecs::Registry& registry, const SyncSchema& schema, int count) {
 
 kage::sync::ReplicationServerOptions make_fps_server_options(
     const AppConfig& config,
-    SocketHandle socket,
     std::unordered_map<kage::sync::ClientId, sockaddr_in>& peers,
+    std::unordered_map<kage::sync::ClientId, kage::sync::examples::NetworkSimulator<sockaddr_in>>& downstream_links,
+    double& link_time_seconds,
     std::vector<kage::sync::ClientId>& pending_spawns) {
     kage::sync::ReplicationServerOptions options;
-    options.bandwidth_limit_bytes_per_tick = 64 * 1024;
+    const auto bytes_per_second = [](double kbps) {
+        return static_cast<std::size_t>(std::max(1.0, kbps * 1000.0 / 8.0));
+    };
+    options.bandwidth_limit_bytes_per_tick =
+        static_cast<std::size_t>(std::max(1.0, config.bandwidth_limit_kbps * 1000.0 / 8.0 * fixed_dt));
     options.mtu_bytes = 1200;
+    options.bandwidth.enabled = config.dynamic_bandwidth;
+    options.bandwidth.min_bytes_per_second = bytes_per_second(config.bandwidth_min_kbps);
+    options.bandwidth.max_bytes_per_second = bytes_per_second(config.bandwidth_max_kbps);
+    options.bandwidth.initial_bytes_per_second = std::clamp(
+        bytes_per_second(config.bandwidth_initial_kbps),
+        options.bandwidth.min_bytes_per_second,
+        options.bandwidth.max_bytes_per_second);
+    options.bandwidth.max_burst_bytes = options.mtu_bytes * 4U;
     options.fixed_dt_seconds = fixed_dt;
     options.connect_handler = [&pending_spawns](const std::string&, kage::sync::ClientId& client, std::string&) {
         pending_spawns.push_back(client);
         return true;
     };
-    options.transport = [&peers, socket](kage::sync::ClientId peer, const ecs::BitBuffer& packet) {
+    const kage::sync::examples::NetworkSimulatorSettings link_settings{
+        std::max(0.0, config.latency_ms),
+        std::max(0.0, config.jitter_ms),
+        std::clamp(config.loss_percent, 0.0, 100.0),
+        std::max(0.0, config.link_bandwidth_kbps),
+        static_cast<std::size_t>(std::max(0.0, config.link_queue_kb) * 1024.0)};
+    options.transport = [&peers, &downstream_links, &link_time_seconds, link_settings](kage::sync::ClientId peer, const ecs::BitBuffer& packet) {
         const auto found = peers.find(peer);
         if (found != peers.end()) {
-            send_packet(socket, found->second, packet);
+            auto& link = downstream_links.try_emplace(peer, link_settings, static_cast<std::uint32_t>(peer)).first->second;
+            (void)link.enqueue(found->second, packet, link_time_seconds);
         }
     };
 #ifdef KAGE_SYNC_ENABLE_TRACING
@@ -164,10 +185,12 @@ void run_server_mode(const AppConfig& config, bool listen_mode) {
 
     SocketHandle socket = make_udp_socket(config.port);
     std::unordered_map<kage::sync::ClientId, sockaddr_in> peers;
+    std::unordered_map<kage::sync::ClientId, kage::sync::examples::NetworkSimulator<sockaddr_in>> downstream_links;
+    double link_time_seconds = 0.0;
     std::vector<kage::sync::ClientId> pending_spawns;
     std::vector<ServerPlayer> players;
 
-    kage::sync::ReplicationServer server(make_fps_server_options(config, socket, peers, pending_spawns));
+    kage::sync::ReplicationServer server(make_fps_server_options(config, peers, downstream_links, link_time_seconds, pending_spawns));
     replay_recorder.attach(server);
     auto replay_death_subscription = subscribe_replay_deaths(server, replay_server);
 
@@ -189,6 +212,7 @@ void run_server_mode(const AppConfig& config, bool listen_mode) {
         const auto now = std::chrono::steady_clock::now();
         const double dt = std::chrono::duration<double>(now - previous).count();
         previous = now;
+        link_time_seconds += dt;
 
         receive_server_packets(socket, peers, server);
 
@@ -197,6 +221,11 @@ void run_server_mode(const AppConfig& config, bool listen_mode) {
         }
 
         (void)server.tick(registry, dt);
+        for (auto& entry : downstream_links) {
+            entry.second.deliver_ready(link_time_seconds, [socket](const sockaddr_in& target, const ecs::BitBuffer& packet) {
+                send_packet(socket, target, packet);
+            });
+        }
         g_server_frame = server.frame();
 
         if (listen_mode) {

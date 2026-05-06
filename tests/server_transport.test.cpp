@@ -125,6 +125,170 @@ TEST_CASE("replication server respects per-client bandwidth limits") {
     REQUIRE(unsent_count == 2);
 }
 
+TEST_CASE("replication server dynamic bandwidth charges transport overhead") {
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_networked_position_archetype(registry);
+    const ecs::Entity entity = registry.create();
+    REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{}) != nullptr);
+    REQUIRE(start_sync(registry, entity, archetype));
+
+    std::vector<ecs::BitBuffer> payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 1024;
+    options.bandwidth.enabled = true;
+    options.bandwidth.min_bytes_per_second = 60;
+    options.bandwidth.initial_bytes_per_second = 60;
+    options.bandwidth.max_bytes_per_second = 60;
+    options.bandwidth.max_burst_bytes = 21;
+    options.bandwidth.transport_overhead_bytes_per_packet = 28;
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+        payloads.push_back(payload);
+    };
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+
+    server.tick(registry);
+
+    REQUIRE(payloads.empty());
+    REQUIRE(server.priority(1, entity) == 1);
+}
+
+TEST_CASE("replication server dynamic bandwidth sends when charged packet fits") {
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_networked_position_archetype(registry);
+    const ecs::Entity entity = registry.create();
+    REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{}) != nullptr);
+    REQUIRE(start_sync(registry, entity, archetype));
+
+    std::vector<ecs::BitBuffer> payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth.enabled = true;
+    options.bandwidth.min_bytes_per_second = 49;
+    options.bandwidth.initial_bytes_per_second = 49;
+    options.bandwidth.max_bytes_per_second = 49;
+    options.bandwidth.max_burst_bytes = 49;
+    options.bandwidth.transport_overhead_bytes_per_packet = 28;
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+        payloads.push_back(payload);
+    };
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+
+    server.tick(registry);
+
+    REQUIRE(payloads.size() == 1);
+    REQUIRE(read_server_update(payloads.back()).entities.size() == 1);
+    REQUIRE(server.priority(1, entity) == 0);
+}
+
+TEST_CASE("replication server prioritizes pending destroys over creates when bandwidth limited") {
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_networked_position_archetype(registry);
+    const ecs::Entity destroyed = registry.create();
+    REQUIRE(registry.add<NetworkedPosition>(destroyed, NetworkedPosition{}) != nullptr);
+    REQUIRE(start_sync(registry, destroyed, archetype));
+
+    std::vector<ecs::BitBuffer> payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 21;
+    options.prioritizer_interval_frames = 1;
+    options.prioritizer = [](
+        kage::sync::ClientId,
+        const std::vector<kage::sync::ReplicationPriorityObject>& objects,
+        std::vector<kage::sync::ReplicationPriorityDecision>& decisions) {
+        decisions.resize(objects.size());
+        for (kage::sync::ReplicationPriorityDecision& decision : decisions) {
+            decision.replicate = true;
+            decision.priority = 1000;
+            decision.component_mask = std::numeric_limits<std::uint64_t>::max();
+        }
+    };
+    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+        payloads.push_back(payload);
+    };
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+
+    server.tick(registry);
+    REQUIRE(payloads.size() == 1);
+    const ServerUpdatePacket initial = read_server_update(payloads.back());
+    REQUIRE(initial.entities.size() == 1);
+    REQUIRE(initial.entities[0].network_id == 1U);
+    REQUIRE(server.acknowledge_entity(1, destroyed, initial.frame));
+
+    REQUIRE(registry.destroy(destroyed));
+    const ecs::Entity created = registry.create();
+    REQUIRE(registry.add<NetworkedPosition>(created, NetworkedPosition{}) != nullptr);
+    REQUIRE(start_sync(registry, created, archetype));
+
+    payloads.clear();
+    server.tick(registry);
+
+    REQUIRE(payloads.size() == 1);
+    const ServerUpdatePacket update = read_server_update(payloads.back());
+    REQUIRE(update.entities.size() == 1);
+    REQUIRE(update.entities[0].destroy);
+    REQUIRE(update.entities[0].network_id == 1U);
+    REQUIRE(server.priority(1, created) == 1);
+}
+
+TEST_CASE("replication server parallel path prioritizes pending destroys over creates when bandwidth limited") {
+    ecs::Registry registry;
+    const kage::sync::SyncArchetypeId archetype = define_networked_position_archetype(registry);
+    const ecs::Entity destroyed = registry.create();
+    REQUIRE(registry.add<NetworkedPosition>(destroyed, NetworkedPosition{}) != nullptr);
+    REQUIRE(start_sync(registry, destroyed, archetype));
+
+    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 21;
+    options.serialized_worker_threads = 2;
+    options.prioritizer_interval_frames = 1;
+    options.prioritizer = [](
+        kage::sync::ClientId,
+        const std::vector<kage::sync::ReplicationPriorityObject>& objects,
+        std::vector<kage::sync::ReplicationPriorityDecision>& decisions) {
+        decisions.resize(objects.size());
+        for (kage::sync::ReplicationPriorityDecision& decision : decisions) {
+            decision.replicate = true;
+            decision.priority = 1000;
+            decision.component_mask = std::numeric_limits<std::uint64_t>::max();
+        }
+    };
+    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+        payloads.emplace_back(client, payload);
+    };
+    kage::sync::ReplicationServer server(options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(server.add_client(2));
+
+    server.tick(registry);
+    REQUIRE(payloads.size() == 2);
+    for (const kage::sync::ClientId client : {1ULL, 2ULL}) {
+        const ServerUpdatePacket initial = read_server_update(packet_for(payloads, client));
+        REQUIRE(initial.entities.size() == 1);
+        REQUIRE(initial.entities[0].network_id == 1U);
+        REQUIRE(server.acknowledge_entity(client, destroyed, initial.frame));
+    }
+
+    REQUIRE(registry.destroy(destroyed));
+    const ecs::Entity created = registry.create();
+    REQUIRE(registry.add<NetworkedPosition>(created, NetworkedPosition{}) != nullptr);
+    REQUIRE(start_sync(registry, created, archetype));
+
+    payloads.clear();
+    server.tick(registry);
+
+    REQUIRE(payloads.size() == 2);
+    for (const kage::sync::ClientId client : {1ULL, 2ULL}) {
+        const ServerUpdatePacket update = read_server_update(packet_for(payloads, client));
+        REQUIRE(update.entities.size() == 1);
+        REQUIRE(update.entities[0].destroy);
+        REQUIRE(update.entities[0].network_id == 1U);
+        REQUIRE(server.priority(client, created) == 1);
+    }
+}
+
 TEST_CASE("replication server parallel path applies bandwidth limits independently per client") {
     ecs::Registry registry;
     const kage::sync::SyncArchetypeId archetype = define_networked_position_archetype(registry);

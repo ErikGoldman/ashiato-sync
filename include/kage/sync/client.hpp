@@ -135,7 +135,7 @@ struct ReplicationClientOptions {
     SyncFrame interpolation_buffer_frames = 2;
     std::size_t interpolation_buffer_capacity_frames = 64;
     bool auto_interpolation_buffer_frames = true;
-    SyncFrame auto_interpolation_min_frames = 1;
+    SyncFrame auto_interpolation_min_frames = 2;
     float auto_interpolation_jitter_multiplier = 2.0f;
     float auto_interpolation_smoothing = 0.1f;
     float auto_interpolation_time_dilation_min = 0.95f;

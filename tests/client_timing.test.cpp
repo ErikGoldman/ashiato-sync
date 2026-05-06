@@ -185,6 +185,30 @@ TEST_CASE("auto interpolation buffer moves one frame when dilation creates headr
     REQUIRE(client.current_interpolation_buffer_frames() == 2);
 }
 
+TEST_CASE("auto interpolation default minimum preserves two buffered frames") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    options.interpolation_buffer_frames = 2;
+    options.interpolation_buffer_capacity_frames = 8;
+    options.auto_interpolation_jitter_multiplier = 0.0f;
+    options.auto_interpolation_smoothing = 1.0f;
+    options.auto_timing_warmup_samples = 1;
+    kage::sync::ReplicationClient client(options);
+
+    const ecs::Entity server_entity{42};
+    REQUIRE(record_ping_sample(client, client_registry, 0));
+    REQUIRE(client.receive(client_registry, make_position_packet(10, {{server_entity, Position{1.0f, 2.0f}}}), 11));
+
+    REQUIRE(client.timing_stats().desired_interpolation_buffer_frames == 2);
+    REQUIRE(client.timing_stats().target_interpolation_buffer_frames == 2);
+    REQUIRE(client.current_interpolation_buffer_frames() == 2);
+}
+
 TEST_CASE("auto interpolation target uses downstream update lag as a floor") {
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);

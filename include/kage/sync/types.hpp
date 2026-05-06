@@ -536,10 +536,25 @@ struct FractionalTickSampled {};
 struct NoResim {};
 struct NoSimulate {};
 
+struct ReplicationBandwidthOptions {
+    bool enabled = false;
+    std::size_t min_bytes_per_second = 8U * 1024U;
+    std::size_t initial_bytes_per_second = 32U * 1024U;
+    std::size_t max_bytes_per_second = 512U * 1024U;
+    std::size_t max_burst_bytes = 0;
+    std::size_t transport_overhead_bytes_per_packet = 28U;
+    SyncFrame sample_window_frames = 60;
+    float loss_decrease_threshold = 0.02f;
+    float rtt_inflation_decrease_threshold = 1.5f;
+    float multiplicative_decrease = 0.75f;
+    float additive_increase_bytes_per_second = 2400.0f;
+};
+
 struct ReplicationServerOptions {
     std::size_t bandwidth_limit_bytes_per_tick = 1024;
     std::size_t fixed_entity_replication_cost_bytes = 128;
     std::size_t mtu_bytes = 1200;
+    ReplicationBandwidthOptions bandwidth;
     std::size_t serialized_worker_threads = 1;
     protocol::Descriptor protocol = protocol::default_descriptor;
     double fixed_dt_seconds = 1.0 / 60.0;

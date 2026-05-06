@@ -1454,9 +1454,6 @@ bool ReplicationClient::run_prediction_frame(ecs::Registry& registry, SyncFrame 
 }
 
 bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame client_frame) {
-    if (!has_buffered_entities()) {
-        return true;
-    }
     const SyncFrame interpolation_buffer_frames = clock_.interpolation_buffer_frames();
     if (client_frame < interpolation_buffer_frames) {
         return false;
@@ -1465,8 +1462,12 @@ bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame client_fr
     const SyncFrame target_frame = client_frame - interpolation_buffer_frames;
     last_applied_buffered_frame_ = target_frame;
     has_applied_buffered_frame_ = true;
+    if (!has_buffered_entities()) {
+        return true;
+    }
     const SyncSettings& settings = registry.get<SyncSettings>();
     bool all_valid = true;
+    std::vector<std::uint32_t> applied_destroys;
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     std::uint64_t interpolation_checks = 0;
     std::uint64_t interpolation_starvations = 0;
@@ -1535,6 +1536,10 @@ bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame client_fr
             all_valid = false;
             continue;
         }
+        if (!sample.entity_present) {
+            applied_destroys.push_back(entity_index);
+            continue;
+        }
         for (const EntityCue& cue : sample.cues) {
             const SyncFrame late_frames = target_frame > cue.frame ? target_frame - cue.frame : 0U;
             (void)play_cue(
@@ -1545,6 +1550,9 @@ bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame client_fr
                 static_cast<float>(static_cast<double>(late_frames) * options_.fixed_dt_seconds),
                 true);
         }
+    }
+    for (const std::uint32_t entity_index : applied_destroys) {
+        erase_entity_state(registry, entity_index, false);
     }
 
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
@@ -2725,8 +2733,14 @@ bool ReplicationClient::apply_buffered_upsert(
     state.frame = frame;
     state.entity_present = true;
     remember_baseline(state);
+    if (has_applied_buffered_frame_ && frame <= last_applied_buffered_frame_) {
+        const std::size_t mask = state.buffered_frames.size() - 1U;
+        const EntityBufferedFrame& sample = state.buffered_frames[frame & mask];
+        if (!sample.valid || sample.frame != frame || !apply_buffered_sample(registry, settings, state, sample)) {
+            return false;
+        }
+    }
     sync_entity_memberships(state);
-    (void)registry;
     return true;
 }
 
@@ -2758,11 +2772,14 @@ bool ReplicationClient::apply_buffered_destroy(
     state.entity_present = false;
     remember_baseline(state);
     if (has_applied_buffered_frame_ && frame <= last_applied_buffered_frame_) {
+        const std::uint32_t entity_index = static_cast<std::uint32_t>(&state - entities_.data());
         const std::size_t mask = state.buffered_frames.size() - 1U;
         const EntityBufferedFrame& sample = state.buffered_frames[frame & mask];
         if (!sample.valid || sample.frame != frame || !apply_buffered_sample(registry, settings, state, sample)) {
             return false;
         }
+        erase_entity_state(registry, entity_index, false);
+        return true;
     }
     sync_entity_memberships(state);
     return true;
@@ -3933,6 +3950,98 @@ bool ReplicationClient::write_fractional_tick_samples(
         out.entities[sampled_count++] = *previous;
         return true;
     };
+    auto append_buffered_display = [&](
+                                       const EntityState& state,
+                                       const QuantizedFrameData& baseline,
+                                       SyncArchetypeId archetype_id,
+                                       SyncFrame display_frame,
+                                       float display_alpha,
+                                       const EntityBufferedFrame* next_sample) {
+        if (archetype_id.value >= settings.archetypes.size()) {
+            return false;
+        }
+        if (sampled_count == out.entities.size()) {
+            out.entities.emplace_back();
+        }
+        FractionalTickSample& display = out.entities[sampled_count];
+        display.client_entity_network_id = state.client_entity_network_id;
+        display.local_entity = state.local;
+        display.frame = display_frame;
+        display.alpha = next_sample != nullptr ? display_alpha : 0.0f;
+        display.components_.clear();
+        const SyncArchetype& display_archetype = settings.archetypes[archetype_id.value];
+        display.components_.reserve(display_archetype.components.size());
+
+        for (std::size_t component_index = 0; component_index < display_archetype.components.size(); ++component_index) {
+            const ecs::Entity component = display_archetype.components[component_index].component;
+            if (!frame_has_component(baseline, component_index) ||
+                !registry.has<FractionalTickSampled>(component)) {
+                continue;
+            }
+            if (component_index >= display_archetype.component_ops.size()) {
+                return false;
+            }
+
+            ReplicatedComponentUpdate value;
+            value.component = component;
+            const SyncComponentOps& ops = display_archetype.component_ops[component_index];
+            const std::uint8_t* baseline_bytes =
+                frame_component_data(display_archetype, baseline, component_index);
+            if (baseline_bytes == nullptr) {
+                return false;
+            }
+
+            if (next_sample != nullptr &&
+                next_sample->archetype == archetype_id &&
+                frame_has_component(next_sample->baseline, component_index) &&
+                display_archetype.components[component_index].interpolation == ComponentInterpolation::Interpolate) {
+                if (ops.interpolate == nullptr) {
+                    return false;
+                }
+                const std::uint8_t* next_bytes =
+                    frame_component_data(display_archetype, next_sample->baseline, component_index);
+                value.bytes.resize(ops.quantized_size);
+                if (next_bytes == nullptr || !ops.interpolate(baseline_bytes, next_bytes, display_alpha, value.bytes.data())) {
+                    return false;
+                }
+            } else {
+                value.bytes.assign(baseline_bytes, ops.quantized_size);
+            }
+            display.components_.push_back(std::move(value));
+        }
+
+        if (include_empty_buffered || !display.components_.empty()) {
+            ++sampled_count;
+        }
+        return true;
+    };
+    auto append_latest_buffered_display = [&](const EntityState& state) {
+        if (state.entity_present && state.archetype.value < settings.archetypes.size()) {
+            return append_buffered_display(state, state.baseline, state.archetype, state.frame, 0.0f, nullptr);
+        }
+
+        const EntityBufferedFrame* latest = nullptr;
+        for (const EntityBufferedFrame& sample : state.buffered_frames) {
+            if (!sample.valid || !sample.entity_present) {
+                continue;
+            }
+            if (latest == nullptr || sample.frame > latest->frame) {
+                latest = &sample;
+            }
+        }
+        return latest != nullptr
+            ? append_buffered_display(state, latest->baseline, latest->archetype, latest->frame, 0.0f, nullptr)
+            : false;
+    };
+    auto append_missing_buffered_display = [&](const EntityState& state) {
+        if (!state.entity_present && (!target_valid || floor_frame >= state.frame)) {
+            return false;
+        }
+        if (append_previous_display(state.client_entity_network_id)) {
+            return true;
+        }
+        return append_latest_buffered_display(state);
+    };
 
     const std::vector<std::uint32_t>& entity_indices = include_snap ? active_entities_ : buffered_entities_;
     for (const std::uint32_t entity_index : entity_indices) {
@@ -4086,7 +4195,7 @@ bool ReplicationClient::write_fractional_tick_samples(
         }
 
         if (state.buffered_frames.empty() || !target_valid) {
-            if (!include_empty_buffered || !append_previous_display(state.client_entity_network_id)) {
+            if (!append_missing_buffered_display(state)) {
                 all_valid = false;
             }
             continue;
@@ -4095,7 +4204,7 @@ bool ReplicationClient::write_fractional_tick_samples(
         const std::size_t mask = state.buffered_frames.size() - 1U;
         const EntityBufferedFrame& floor_sample = state.buffered_frames[floor_frame & mask];
         if (!floor_sample.valid || floor_sample.frame != floor_frame) {
-            if (!include_empty_buffered || !append_previous_display(state.client_entity_network_id)) {
+            if (!append_missing_buffered_display(state)) {
                 all_valid = false;
             }
             continue;
@@ -4113,55 +4222,8 @@ bool ReplicationClient::write_fractional_tick_samples(
             }
         }
 
-        if (sampled_count == out.entities.size()) {
-            out.entities.emplace_back();
-        }
-        FractionalTickSample& display = out.entities[sampled_count];
-        display.client_entity_network_id = state.client_entity_network_id;
-        display.local_entity = state.local;
-        display.frame = floor_frame;
-        display.alpha = alpha;
-        display.components_.clear();
-        const SyncArchetype& display_archetype = settings.archetypes[floor_sample.archetype.value];
-        display.components_.reserve(display_archetype.components.size());
-
-        for (std::size_t component_index = 0; component_index < display_archetype.components.size(); ++component_index) {
-            const ecs::Entity component = display_archetype.components[component_index].component;
-            if (!frame_has_component(floor_sample.baseline, component_index) ||
-                !registry.has<FractionalTickSampled>(component)) {
-                continue;
-            }
-
-            ReplicatedComponentUpdate value;
-            value.component = component;
-            const SyncComponentOps& ops = display_archetype.component_ops[component_index];
-            const std::uint8_t* baseline_bytes =
-                frame_component_data(display_archetype, floor_sample.baseline, component_index);
-            if (baseline_bytes == nullptr) {
-                return false;
-            }
-
-            if (next_sample != nullptr &&
-                frame_has_component(next_sample->baseline, component_index) &&
-                display_archetype.components[component_index].interpolation == ComponentInterpolation::Interpolate) {
-                if (component_index >= display_archetype.component_ops.size() ||
-                    ops.interpolate == nullptr) {
-                    return false;
-                }
-                const std::uint8_t* next_bytes =
-                    frame_component_data(display_archetype, next_sample->baseline, component_index);
-                value.bytes.resize(ops.quantized_size);
-                if (next_bytes == nullptr || !ops.interpolate(baseline_bytes, next_bytes, alpha, value.bytes.data())) {
-                    return false;
-                }
-            } else {
-                value.bytes.assign(baseline_bytes, ops.quantized_size);
-            }
-            display.components_.push_back(std::move(value));
-        }
-
-        if (include_empty_buffered || !display.components_.empty()) {
-            ++sampled_count;
+        if (!append_buffered_display(state, floor_sample.baseline, floor_sample.archetype, floor_frame, alpha, next_sample)) {
+            all_valid = false;
         }
     }
 

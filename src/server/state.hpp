@@ -1,6 +1,7 @@
 #pragma once
 
 #include "kage/sync/server.hpp"
+#include "server/bandwidth_controller.hpp"
 #include "server/input_buffer.hpp"
 
 namespace kage::sync {
@@ -78,6 +79,8 @@ struct ReplicationServer::PacketAckRecord {
 
 struct ReplicationServer::PendingPacketAck {
     std::uint32_t packet_id = 0;
+    SyncFrame sent_frame = 0;
+    std::size_t charged_bytes = 0;
     std::vector<PacketAckRecord> records;
 };
 
@@ -95,6 +98,7 @@ struct ReplicationServer::ClientState {
     std::vector<ClientEntityState> entity_states;
     std::vector<ClientDestroyState> pending_destroys;
     std::vector<PendingPacketAck> pending_packet_acks;
+    server_detail::BandwidthController bandwidth{ReplicationBandwidthOptions{}};
     server_detail::ServerInputBuffer input;
     struct NetworkIdEntry {
         std::uint32_t slot_or_next_free = 0;

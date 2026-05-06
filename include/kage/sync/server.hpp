@@ -28,6 +28,15 @@ public:
         SyncFrame latest_applied_input_frame = 0;
     };
 
+    struct ClientBandwidthStats {
+        bool dynamic = false;
+        double target_bytes_per_second = 0.0;
+        double available_bytes = 0.0;
+        std::size_t in_flight_bytes = 0;
+        std::uint64_t delivered_bytes_window = 0;
+        float loss_rate = 0.0f;
+    };
+
     explicit ReplicationServer(ReplicationServerOptions options = {});
     ~ReplicationServer();
     ReplicationServer(const ReplicationServer& other) = delete;
@@ -79,6 +88,7 @@ public:
     }
     bool set_local_input_bytes(ecs::Registry& registry, ecs::Entity component, const void* input);
     ClientInputStats input_stats(ClientId client) const noexcept;
+    ClientBandwidthStats bandwidth_stats(ClientId client) const noexcept;
     std::size_t retained_quantized_frame_count() const noexcept;
     std::size_t retained_quantized_frame_bytes() const noexcept;
     FrameDelegate& after_frame() noexcept {
@@ -180,6 +190,8 @@ private:
     void cleanup_packet_acks(ClientState& client);
     std::uint32_t allocate_packet_id(ClientState& client);
     void enforce_pending_packet_ack_limit(ClientState& client);
+    std::size_t begin_client_bandwidth_tick(ClientState& client);
+    std::size_t charged_packet_bytes(std::size_t payload_bytes) const noexcept;
     bool acknowledge_destroy(ClientState& client, ecs::Entity entity, SyncFrame frame);
     void acknowledge_cues(ClientEntityState& state, SyncFrame frame);
     bool same_quantized_frame_components(
@@ -211,6 +223,8 @@ private:
     static void track_packet_ack(
         ClientState& client,
         std::uint32_t packet_id,
+        SyncFrame sent_frame,
+        std::size_t charged_bytes,
         const std::vector<PacketAckRecord>& records);
 #ifdef KAGE_SYNC_ENABLE_TRACING
     void trace_frame_components(const ecs::Registry& registry, const SyncSettings& settings);

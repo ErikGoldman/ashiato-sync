@@ -28,7 +28,7 @@ void ReplicationServer::send_packet(
             client.input.ack_frame(),
             entity_count,
             records);
-    track_packet_ack(client, packet_id, ack_records);
+    track_packet_ack(client, packet_id, frame, charged_packet_bytes(packet.byte_size()), ack_records);
     enforce_pending_packet_ack_limit(client);
 #if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
     trace_outgoing_update_packet(client, frame, packet_id, client.input.ack_frame(), ack_records);

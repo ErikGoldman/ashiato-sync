@@ -1227,6 +1227,108 @@ TEST_CASE("buffered interpolation applies late destroys for already sampled targ
     REQUIRE(records[0].packet_id == 2);
 }
 
+TEST_CASE("buffered interpolation applies late creates for already sampled target frames") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        2,
+        8});
+    const ecs::Entity server_entity{42};
+
+    REQUIRE(client.apply_frame(client_registry, 3));
+    REQUIRE_FALSE(client.local_entity(test_client_entity_network_id(1, server_entity)));
+
+    REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{7.0f, 8.0f}}})));
+
+    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+    REQUIRE(local);
+    REQUIRE(client_registry.get<Position>(local).x == 7.0f);
+    REQUIRE(client_registry.get<Position>(local).y == 8.0f);
+
+    const std::vector<ecs::BitBuffer> acks = client.drain_ack_packets();
+    REQUIRE(acks.size() == 1);
+    const std::vector<AckRecord> records = read_acks(acks[0]);
+    REQUIRE(records.size() == 1);
+    REQUIRE(records[0].packet_id == 1);
+}
+
+TEST_CASE("buffered interpolation repopulates after destroy and create churn") {
+    ecs::Registry server_registry;
+    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
+
+    std::vector<ecs::BitBuffer> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.bandwidth_limit_bytes_per_tick = 64U * 1024U;
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype == server_archetype);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
+        1200,
+        kage::sync::ReplicationClientMode::BufferedInterpolation,
+        2,
+        128});
+
+    auto spawn_batch = [&](int begin) {
+        std::vector<ecs::Entity> entities;
+        entities.reserve(96);
+        for (int index = 0; index < 96; ++index) {
+            const ecs::Entity entity = server_registry.create();
+            REQUIRE(server_registry.add<Position>(
+                        entity,
+                        Position{static_cast<float>(begin + index), static_cast<float>(index)})
+                    != nullptr);
+            REQUIRE(start_sync(server_registry, entity, server_archetype));
+            entities.push_back(entity);
+        }
+        return entities;
+    };
+    auto deliver = [&]() {
+        for (const ecs::BitBuffer& packet : packets) {
+            REQUIRE(client.receive(client_registry, packet));
+        }
+        packets.clear();
+        for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
+            REQUIRE(server.process_packet(1, ack));
+        }
+    };
+    auto client_position_count = [&]() {
+        int count = 0;
+        client_registry.view<const Position>().each([&](ecs::Entity, const Position&) {
+            ++count;
+        });
+        return count;
+    };
+
+    std::vector<ecs::Entity> entities = spawn_batch(0);
+    server.tick(server_registry);
+    deliver();
+    REQUIRE(client.apply_frame(client_registry, 3));
+    REQUIRE(client_position_count() == 96);
+
+    for (ecs::Entity entity : entities) {
+        REQUIRE(server_registry.destroy(entity));
+    }
+    entities = spawn_batch(1000);
+    server.tick(server_registry);
+    deliver();
+
+    REQUIRE(client.apply_frame(client_registry, 4));
+    REQUIRE(client_position_count() == 96);
+}
+
 TEST_CASE("buffered interpolation keeps client entity network ids alive until destroy frame applies") {
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);

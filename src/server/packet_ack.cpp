@@ -5,6 +5,7 @@
 #include "server/state.hpp"
 
 #include <algorithm>
+#include <vector>
 
 namespace kage::sync {
 
@@ -43,6 +44,9 @@ bool ReplicationServer::acknowledge_packet(ClientState& client, std::uint32_t pa
             : acknowledge_entity(client.id, record.entity, record.frame);
         all_valid = accepted && all_valid;
     }
+    if (options_.bandwidth.enabled) {
+        client.bandwidth.packet_acked(options_.bandwidth, found->sent_frame, frame_, found->charged_bytes);
+    }
     client.pending_packet_acks.erase(found);
     return all_valid;
 }
@@ -80,37 +84,81 @@ void ReplicationServer::cleanup_packet_acks(ClientState& client) {
             client.pending_packet_acks.begin(),
             client.pending_packet_acks.end(),
             [&](const PendingPacketAck& pending_packet) {
-                return std::none_of(
+                const bool stale = std::none_of(
                     pending_packet.records.begin(),
                     pending_packet.records.end(),
                     [&](const PacketAckRecord& record) {
                         return packet_ack_record_pending(client, record);
                     });
+                if (stale && options_.bandwidth.enabled) {
+                    client.bandwidth.packet_lost(options_.bandwidth, frame_, pending_packet.charged_bytes);
+                }
+                return stale;
             }),
         client.pending_packet_acks.end());
 }
 
 std::uint32_t ReplicationServer::allocate_packet_id(ClientState& client) {
-    return server_detail::allocate_tracked_packet_id(
-        client.next_packet_id,
-        client.pending_packet_acks,
-        options_.protocol.max_pending_packet_acks_per_client);
+    const server_detail::ServerPacketIdAllocator allocator(options_.protocol.max_pending_packet_acks_per_client);
+    const std::uint32_t packet_id = allocator.allocate(client.next_packet_id);
+    client.pending_packet_acks.erase(
+        std::remove_if(
+            client.pending_packet_acks.begin(),
+            client.pending_packet_acks.end(),
+            [&](const PendingPacketAck& pending) {
+                if (pending.packet_id != packet_id) {
+                    return false;
+                }
+                if (options_.bandwidth.enabled) {
+                    client.bandwidth.packet_lost(options_.bandwidth, frame_, pending.charged_bytes);
+                }
+                return true;
+            }),
+        client.pending_packet_acks.end());
+    return packet_id;
 }
 
 void ReplicationServer::enforce_pending_packet_ack_limit(ClientState& client) {
-    server_detail::enforce_pending_packet_ack_limit(
-        client.pending_packet_acks,
-        options_.protocol.max_pending_packet_acks_per_client);
+    const std::size_t max_pending = options_.protocol.max_pending_packet_acks_per_client;
+    if (client.pending_packet_acks.size() <= max_pending) {
+        return;
+    }
+    const std::size_t drop_count = client.pending_packet_acks.size() - max_pending;
+    if (options_.bandwidth.enabled) {
+        for (std::size_t index = 0; index < drop_count; ++index) {
+            client.bandwidth.packet_lost(options_.bandwidth, frame_, client.pending_packet_acks[index].charged_bytes);
+        }
+    }
+    client.pending_packet_acks.erase(
+        client.pending_packet_acks.begin(),
+        client.pending_packet_acks.begin() +
+            static_cast<std::vector<PendingPacketAck>::difference_type>(drop_count));
+}
+
+std::size_t ReplicationServer::begin_client_bandwidth_tick(ClientState& client) {
+    if (!options_.bandwidth.enabled) {
+        return options_.bandwidth_limit_bytes_per_tick;
+    }
+    return client.bandwidth.begin_tick(options_.bandwidth, options_.fixed_dt_seconds);
+}
+
+std::size_t ReplicationServer::charged_packet_bytes(std::size_t payload_bytes) const noexcept {
+    return payload_bytes + (options_.bandwidth.enabled ? options_.bandwidth.transport_overhead_bytes_per_packet : 0U);
 }
 
 void ReplicationServer::track_packet_ack(
     ClientState& client,
     std::uint32_t packet_id,
+    SyncFrame sent_frame,
+    std::size_t charged_bytes,
     const std::vector<PacketAckRecord>& records) {
     if (records.empty()) {
         return;
     }
-    server_detail::track_packet_ack(client.pending_packet_acks, packet_id, records);
+    server_detail::track_packet_ack(client.pending_packet_acks, packet_id, sent_frame, charged_bytes, records);
+    if (charged_bytes != 0U) {
+        client.bandwidth.packet_sent(charged_bytes);
+    }
 }
 
 }  // namespace kage::sync

@@ -2,8 +2,9 @@
 
 #include "game/constants.hpp"
 
-#include "kage/sync/simulated_link.hpp"
 #include "kage/sync/sync.hpp"
+
+#include "../../network_simulator.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -11,7 +12,7 @@
 
 namespace fps {
 
-using ClientLinkSimulator = kage::sync::SimulatedLink<ecs::BitBuffer, int>;
+using ClientLinkSimulator = kage::sync::examples::NetworkSimulator<int>;
 
 struct AppConfig {
     bool server = false;
@@ -30,6 +31,14 @@ struct AppConfig {
     std::uint16_t replay_port = 0;
     double latency_ms = 100.0;
     double jitter_ms = 30.0;
+    double loss_percent = 0.0;
+    double link_bandwidth_kbps = 0.0;
+    double link_queue_kb = 64.0;
+    bool dynamic_bandwidth = true;
+    double bandwidth_limit_kbps = 64.0 * 1024.0 * 8.0 / 1000.0;
+    double bandwidth_min_kbps = 512.0;
+    double bandwidth_initial_kbps = 2048.0;
+    double bandwidth_max_kbps = 8192.0;
     int bots = 0;
     int clients = 0;
 };

@@ -161,7 +161,11 @@ int main() {
     ecs::Entity entity = registry.create();
 
     kage::sync::ReplicationServerOptions server_options;
-    server_options.bandwidth_limit_bytes_per_tick = 1024;
+    server_options.bandwidth.enabled = true;
+    server_options.bandwidth.min_bytes_per_second = 8 * 1024;
+    server_options.bandwidth.initial_bytes_per_second = 32 * 1024;
+    server_options.bandwidth.max_bytes_per_second = 512 * 1024;
+    server_options.bandwidth.max_burst_bytes = server_options.mtu_bytes * 4;
     server_options.transport =
         [](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
             // Enqueue `packet` for `client` on your UDP/socket transport here.

@@ -1,5 +1,6 @@
 #include "kage/sync/sync.hpp"
-#include "kage/sync/simulated_link.hpp"
+
+#include "network_simulator.hpp"
 
 #include <raylib.h>
 
@@ -350,8 +351,8 @@ struct SyncSchema {
     ecs::Entity bounced;
 };
 
-using LinkSettings = kage::sync::SimulatedLinkSettings;
-using LinkSimulator = kage::sync::SimulatedLink<ecs::BitBuffer, sockaddr_in>;
+using LinkSettings = kage::sync::examples::NetworkSimulatorSettings;
+using LinkSimulator = kage::sync::examples::NetworkSimulator<sockaddr_in>;
 
 struct SampleHistory {
     static constexpr std::size_t capacity = 180;
@@ -390,6 +391,7 @@ struct RuntimeStats {
     int server_packets = 0;
     int client_packets = 0;
     int dropped_packets = 0;
+    int rendered_entities = 0;
     int server_entities = 0;
     int client_entities = 0;
     kage::sync::SyncFrame frame = 0;
@@ -791,14 +793,28 @@ void update_hotkeys(LinkSettings& settings) {
 void update_client_mode_hotkeys(
     kage::sync::ReplicationClient& client,
     ecs::Registry& client_registry,
-    const std::vector<kage::sync::ClientEntityNetworkId>& known_entities,
+    std::vector<kage::sync::ClientEntityNetworkId>& known_entities,
     kage::sync::ReplicationClientMode& client_mode) {
     auto set_mode = [&](kage::sync::ReplicationClientMode mode) {
         client_mode = mode;
         (void)client.set_default_entity_mode(mode);
-        for (const kage::sync::ClientEntityNetworkId network_id : known_entities) {
-            (void)client.set_entity_mode(client_registry, network_id, mode);
-        }
+        known_entities.erase(
+            std::remove_if(
+                known_entities.begin(),
+                known_entities.end(),
+                [&](kage::sync::ClientEntityNetworkId network_id) {
+                    try {
+                        client.set_entity_mode(client_registry, network_id, mode);
+                        return false;
+                    } catch (const kage::sync::ClientError& error) {
+                        if (error.status() == kage::sync::ClientStatus::EntityNotFound ||
+                            error.status() == kage::sync::ClientStatus::EntityUnavailable) {
+                            return true;
+                        }
+                        throw;
+                    }
+                }),
+            known_entities.end());
     };
 
     if (IsKeyPressed(KEY_M)) {
@@ -956,6 +972,7 @@ void draw_stats_overlay(
     kage::sync::ReplicationClientMode client_mode,
     int target_ball_count,
     kage::sync::SyncFrame buffer_frames,
+    const kage::sync::ReplicationServer::ClientBandwidthStats& bandwidth,
     const kage::sync::ReplicationClientTimingStats& timing
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     ,
@@ -963,9 +980,9 @@ void draw_stats_overlay(
 #endif
 ) {
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
-    const Rectangle panel{16.0f, 16.0f, 500.0f, 286.0f};
+    const Rectangle panel{16.0f, 16.0f, 560.0f, 306.0f};
 #else
-    const Rectangle panel{16.0f, 16.0f, 460.0f, 260.0f};
+    const Rectangle panel{16.0f, 16.0f, 560.0f, 280.0f};
 #endif
     DrawRectangleRec(panel, Color{16, 18, 22, 220});
     DrawRectangleLinesEx(panel, 1.0f, Color{90, 96, 110, 255});
@@ -988,6 +1005,12 @@ void draw_stats_overlay(
         16,
         Color{215, 220, 230, 255});
     DrawText(
+        TextFormat("rendered %d", stats.rendered_entities),
+        430,
+        56,
+        16,
+        Color{215, 220, 230, 255});
+    DrawText(
         TextFormat(
             "latency %.0f ms  [ / ]   jitter %.0f ms  ; / '",
             link.latency_ms,
@@ -997,7 +1020,10 @@ void draw_stats_overlay(
         16,
         Color{215, 220, 230, 255});
     DrawText(
-        TextFormat("loss %.1f%%  - / =", link.loss_percent),
+        TextFormat("loss %.1f%%  - / =   link %.0f kbps queue %.0f KB",
+            link.loss_percent,
+            link.bandwidth_kbps,
+            static_cast<double>(link.max_queue_bytes) / 1024.0),
         28,
         100,
         16,
@@ -1018,9 +1044,21 @@ void draw_stats_overlay(
         16,
         Color{215, 220, 230, 255});
     DrawText(
-        TextFormat("packets down %d  up %d  dropped %d", stats.server_packets, stats.client_packets, stats.dropped_packets),
+        TextFormat(
+            "%s target %.0f kbps  avail %.0f KB  inflight %.0f KB  loss %.1f%%",
+            bandwidth.dynamic ? "dynamic" : "static",
+            bandwidth.target_bytes_per_second * 8.0 / 1000.0,
+            bandwidth.available_bytes / 1024.0,
+            static_cast<double>(bandwidth.in_flight_bytes) / 1024.0,
+            bandwidth.loss_rate * 100.0f),
         28,
         164,
+        16,
+        Color{215, 220, 230, 255});
+    DrawText(
+        TextFormat("packets down %d  up %d  dropped %d", stats.server_packets, stats.client_packets, stats.dropped_packets),
+        28,
+        184,
         16,
         Color{215, 220, 230, 255});
     DrawText(
@@ -1031,7 +1069,7 @@ void draw_stats_overlay(
             buffer_frames,
             timing.target_interpolation_buffer_frames),
         28,
-        184,
+        204,
         16,
         Color{215, 220, 230, 255});
     DrawText(
@@ -1041,7 +1079,7 @@ void draw_stats_overlay(
             timing.jitter_frames,
             timing.time_dilation),
         28,
-        204,
+        224,
         16,
         Color{215, 220, 230, 255});
 
@@ -1055,16 +1093,16 @@ void draw_stats_overlay(
             static_cast<unsigned long long>(
                 interpolation_diagnostics.window_interpolated_entity_frame_checks)),
         28,
-        224,
+        244,
         16,
         Color{215, 220, 230, 255});
 #endif
 
     const float scale = std::max(stats.down_kbps.max_value(), stats.up_kbps.max_value());
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
-    const Rectangle graph{28.0f, 246.0f, 404.0f, 34.0f};
+    const Rectangle graph{28.0f, 266.0f, 404.0f, 34.0f};
 #else
-    const Rectangle graph{28.0f, 226.0f, 404.0f, 34.0f};
+    const Rectangle graph{28.0f, 246.0f, 404.0f, 34.0f};
 #endif
     draw_graph(graph, stats.down_kbps, Color{76, 190, 255, 255}, scale);
     draw_graph(graph, stats.up_kbps, Color{255, 190, 76, 255}, scale);
@@ -1076,6 +1114,8 @@ void draw_stats_overlay(
 }  // namespace
 
 int main(int argc, char** argv) {
+    constexpr double server_fixed_dt_seconds = 1.0 / 30.0;
+    constexpr float server_fixed_dt = static_cast<float>(server_fixed_dt_seconds);
     kage::sync::ReplicationClientMode client_mode = kage::sync::ReplicationClientMode::Snap;
     kage::sync::SyncFrame interpolation_buffer_frames = 2;
     bool auto_interpolation_buffer_frames = true;
@@ -1083,6 +1123,11 @@ int main(int argc, char** argv) {
     float time_dilation_max = 1.05f;
     float time_dilation_gain = 0.05f;
     LinkSettings link_settings;
+    bool dynamic_bandwidth = true;
+    std::size_t static_bandwidth_limit_bytes_per_tick = 32U * 1024U;
+    std::size_t bandwidth_min_bytes_per_second = 64U * 1024U;
+    std::size_t bandwidth_initial_bytes_per_second = 512U * 1024U;
+    std::size_t bandwidth_max_bytes_per_second = 2U * 1024U * 1024U;
     int target_ball_count = 96;
     std::string trace_dir;
     bool trace_frame_data = true;
@@ -1114,6 +1159,36 @@ int main(int argc, char** argv) {
             link_settings.jitter_ms = std::stof(require_value());
         } else if (arg == "--loss-percent") {
             link_settings.loss_percent = std::stof(require_value());
+        } else if (arg == "--link-bandwidth-kbps") {
+            link_settings.bandwidth_kbps = std::max(0.0, std::stod(require_value()));
+        } else if (arg == "--link-queue-kb") {
+            link_settings.max_queue_bytes =
+                static_cast<std::size_t>(std::max(0.0, std::stod(require_value())) * 1024.0);
+        } else if (arg == "--bandwidth-mode") {
+            const std::string value = require_value();
+            if (value == "dynamic") {
+                dynamic_bandwidth = true;
+            } else if (value == "static") {
+                dynamic_bandwidth = false;
+            } else {
+                throw std::runtime_error("--bandwidth-mode must be dynamic or static");
+            }
+        } else if (arg == "--bandwidth-limit-kbps") {
+            const double kbps = std::stod(require_value());
+            static_bandwidth_limit_bytes_per_tick =
+                static_cast<std::size_t>(std::max(1.0, kbps * 1000.0 / 8.0 * server_fixed_dt_seconds));
+        } else if (arg == "--bandwidth-min-kbps") {
+            bandwidth_min_bytes_per_second =
+                static_cast<std::size_t>(std::max(1.0, std::stod(require_value()) * 1000.0 / 8.0));
+            dynamic_bandwidth = true;
+        } else if (arg == "--bandwidth-initial-kbps") {
+            bandwidth_initial_bytes_per_second =
+                static_cast<std::size_t>(std::max(1.0, std::stod(require_value()) * 1000.0 / 8.0));
+            dynamic_bandwidth = true;
+        } else if (arg == "--bandwidth-max-kbps") {
+            bandwidth_max_bytes_per_second =
+                static_cast<std::size_t>(std::max(1.0, std::stod(require_value()) * 1000.0 / 8.0));
+            dynamic_bandwidth = true;
         } else if (arg == "--entities") {
             target_ball_count = std::clamp(std::stoi(require_value()), min_ball_count, max_ball_count);
         } else if (arg == "--trace-dir") {
@@ -1191,8 +1266,19 @@ int main(int argc, char** argv) {
     RuntimeStats stats;
 
     kage::sync::ReplicationServerOptions server_options;
-    server_options.bandwidth_limit_bytes_per_tick = 32 * 1024;
+    bandwidth_initial_bytes_per_second =
+        std::clamp(bandwidth_initial_bytes_per_second, bandwidth_min_bytes_per_second, bandwidth_max_bytes_per_second);
+    server_options.bandwidth_limit_bytes_per_tick = static_bandwidth_limit_bytes_per_tick;
     server_options.mtu_bytes = 1200;
+    server_options.fixed_dt_seconds = server_fixed_dt_seconds;
+    server_options.bandwidth.enabled = dynamic_bandwidth;
+    server_options.bandwidth.min_bytes_per_second = bandwidth_min_bytes_per_second;
+    server_options.bandwidth.initial_bytes_per_second = bandwidth_initial_bytes_per_second;
+    server_options.bandwidth.max_bytes_per_second = bandwidth_max_bytes_per_second;
+    server_options.bandwidth.max_burst_bytes = std::max(
+        server_options.mtu_bytes * 4U,
+        static_cast<std::size_t>(
+            std::ceil(static_cast<double>(server_options.bandwidth.max_bytes_per_second) * server_fixed_dt_seconds)));
     server_options.prioritizer = make_sphere_prioritizer(server_registry);
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         if (client_connected) {
@@ -1217,7 +1303,6 @@ int main(int argc, char** argv) {
     client_options.interpolation_buffer_frames = interpolation_buffer_frames;
     client_options.interpolation_buffer_capacity_frames = 64;
     client_options.auto_interpolation_buffer_frames = auto_interpolation_buffer_frames;
-    client_options.auto_interpolation_min_frames = 1;
     client_options.auto_interpolation_jitter_multiplier = 2.0f;
     client_options.auto_interpolation_smoothing = 0.1f;
     client_options.auto_interpolation_time_dilation_min = time_dilation_min;
@@ -1285,18 +1370,18 @@ int main(int argc, char** argv) {
             }
         }
 
-        while (server_accumulator >= 1.0f / 30.0f) {
-            server_accumulator -= 1.0f / 30.0f;
+        while (server_accumulator >= server_fixed_dt) {
+            server_accumulator -= server_fixed_dt;
             ++server_frame;
             update_server_world(
                 server_registry,
                 balls,
                 server_schema,
                 server_frame,
-                1.0f / 30.0f,
+                server_fixed_dt,
                 spawn_index,
                 target_ball_count);
-            server.tick(server_registry, 1.0f / 30.0f);
+            server.tick(server_registry, server_fixed_dt);
         }
         stats.server_entities = static_cast<int>(balls.size());
 
@@ -1419,6 +1504,7 @@ int main(int argc, char** argv) {
                     Color{255, 245, 150, static_cast<unsigned char>(alpha * 220.0f)});
             }
         }
+        stats.rendered_entities = static_cast<int>(rendered_balls.size());
         EndMode3D();
         draw_stats_overlay(
             stats,
@@ -1426,6 +1512,7 @@ int main(int argc, char** argv) {
             client_mode,
             target_ball_count,
             interpolation_buffer_frames,
+            server.bandwidth_stats(client_id),
             client.timing_stats()
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
                 ,

@@ -44,11 +44,13 @@ template <typename PendingPacketAck, typename PacketAckRecord>
 void track_packet_ack(
     std::vector<PendingPacketAck>& pending_packet_acks,
     std::uint32_t packet_id,
+    kage::sync::SyncFrame sent_frame,
+    std::size_t charged_bytes,
     const std::vector<PacketAckRecord>& records) {
     if (records.empty()) {
         return;
     }
-    pending_packet_acks.push_back(PendingPacketAck{packet_id, records});
+    pending_packet_acks.push_back(PendingPacketAck{packet_id, sent_frame, charged_bytes, records});
 }
 
 }  // namespace kage::sync::server_detail

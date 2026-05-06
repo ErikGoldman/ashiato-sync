@@ -88,10 +88,12 @@ void run_client(const AppConfig& config) {
 
     FpsInput current_input{};
     MouseLookState look;
-    const kage::sync::SimulatedLinkSettings initial_link_settings{
+    const kage::sync::examples::NetworkSimulatorSettings initial_link_settings{
         std::max(0.0, config.latency_ms),
         std::max(0.0, config.jitter_ms),
-        0.0};
+        std::clamp(config.loss_percent, 0.0, 100.0),
+        std::max(0.0, config.link_bandwidth_kbps),
+        static_cast<std::size_t>(std::max(0.0, config.link_queue_kb) * 1024.0)};
     ClientLinkSimulator incoming_link{initial_link_settings, 0x13572468U};
     ClientLinkSimulator outgoing_link{initial_link_settings, 0x24681357U};
     double link_time_seconds = 0.0;

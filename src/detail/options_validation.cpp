@@ -48,6 +48,12 @@ void require_finite_at_least_one(float value, const char* message) {
     }
 }
 
+void require_finite_positive(float value, const char* message) {
+    if (value <= 0.0f || !std::isfinite(value)) {
+        throw std::invalid_argument(message);
+    }
+}
+
 void require_valid_max_pending_packet_acks(std::size_t value) {
     if (value == 0U || value > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
         throw std::invalid_argument("max pending packet ACKs per client must be in [1, 2^32 - 1]");
@@ -206,6 +212,28 @@ ReplicationServerOptions validate_server_options(ReplicationServerOptions option
     require_positive_bytes(options.bandwidth_limit_bytes_per_tick, "bandwidth limit bytes per tick must be greater than zero");
     require_positive_bytes(options.fixed_entity_replication_cost_bytes, "fixed entity replication cost bytes must be greater than zero");
     require_positive_bytes(options.mtu_bytes, "MTU bytes must be greater than zero");
+    require_positive_bytes(options.bandwidth.min_bytes_per_second, "minimum bandwidth bytes per second must be greater than zero");
+    require_positive_bytes(options.bandwidth.initial_bytes_per_second, "initial bandwidth bytes per second must be greater than zero");
+    require_positive_bytes(options.bandwidth.max_bytes_per_second, "maximum bandwidth bytes per second must be greater than zero");
+    if (options.bandwidth.min_bytes_per_second > options.bandwidth.initial_bytes_per_second ||
+        options.bandwidth.initial_bytes_per_second > options.bandwidth.max_bytes_per_second) {
+        throw std::invalid_argument("bandwidth byte rates must satisfy min <= initial <= max");
+    }
+    if (options.bandwidth.sample_window_frames == 0U) {
+        throw std::invalid_argument("bandwidth sample window frames must be greater than zero");
+    }
+    require_finite_non_negative(
+        options.bandwidth.loss_decrease_threshold,
+        "bandwidth loss decrease threshold must be finite and non-negative");
+    require_finite_at_least_one(
+        options.bandwidth.rtt_inflation_decrease_threshold,
+        "bandwidth RTT inflation decrease threshold must be finite and at least 1");
+    require_finite_unit_min(
+        options.bandwidth.multiplicative_decrease,
+        "bandwidth multiplicative decrease must be finite and in the range (0, 1]");
+    require_finite_positive(
+        options.bandwidth.additive_increase_bytes_per_second,
+        "bandwidth additive increase bytes per second must be finite and positive");
     if (options.serialized_worker_threads == 0U) {
         throw std::invalid_argument("serialized worker threads must be greater than zero");
     }

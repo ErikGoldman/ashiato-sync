@@ -21,6 +21,7 @@ add_executable(kage_sync_tests
     options_validation.test.cpp
     quantized_bytes.test.cpp
     server_connection.test.cpp
+    server_bandwidth_controller.test.cpp
     server_destroy_ack.test.cpp
     server_input_buffer.test.cpp
     server_input.test.cpp

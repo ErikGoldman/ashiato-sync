@@ -216,6 +216,7 @@ TEST_CASE("client clock downstream lag floor can use legacy warmup behavior") {
 TEST_CASE("client clock interpolation buffer shrinks one frame at a time") {
     kage::sync::ReplicationClientClockConfig config = test_config();
     config.interpolation_buffer_frames = 4;
+    config.auto_interpolation_min_frames = 1;
     config.auto_interpolation_jitter_multiplier = 0.0f;
     config.auto_timing_warmup_samples = 1;
     config.auto_timing_fast_recovery = false;
