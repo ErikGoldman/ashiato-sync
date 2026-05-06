@@ -1,6 +1,6 @@
 #pragma once
 
-#include "kage/sync/frame_delegate.hpp"
+#include "kage/sync/server_frame_consumer.hpp"
 
 #include <functional>
 #include <memory>
@@ -29,7 +29,7 @@ struct SnapshotWriterOptions {
     std::function<void(const SnapshotWriterFrame&)> write;
 };
 
-class SnapshotWriter {
+class SnapshotWriter : public ServerFrameConsumer {
 public:
     explicit SnapshotWriter(SnapshotWriterOptions options = {});
     ~SnapshotWriter();
@@ -43,11 +43,13 @@ public:
     void detach();
     bool attached() const noexcept;
 
+    void accumulate_frame_delta(const ServerFrameDelta& frame) override;
+
 private:
-    void record(const ServerFrameContext& context);
+    void record(const ServerFrameDelta& frame);
 
     SnapshotWriterOptions options_;
-    FrameDelegate::Subscription subscription_;
+    ServerFrameConsumerSubscription subscription_;
     std::unique_ptr<ecs::Registry::Snapshot> last_full_;
     std::unique_ptr<ecs::Registry::DeltaSnapshot> last_delta_;
 };

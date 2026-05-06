@@ -30,10 +30,10 @@ void BM_ServerTickFullBudget(benchmark::State& state) {
     kage::sync::ReplicationServer server(options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
-    server.refresh_replicated(registry);
+    server.rediscover_all_replicated_entities(registry);
 
     for (auto _ : state) {
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
     }
 
     state.SetItemsProcessed(
@@ -60,10 +60,10 @@ void BM_ServerTickBudgetLimited(benchmark::State& state) {
     kage::sync::ReplicationServer server(options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
-    server.refresh_replicated(registry);
+    server.rediscover_all_replicated_entities(registry);
 
     for (auto _ : state) {
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
     }
 
     state.SetItemsProcessed(
@@ -87,11 +87,11 @@ void BM_ServerRefreshReplicatedChanges(benchmark::State& state) {
                 entity,
                 kage::sync::Replicated{archetype}));
         }
-        server.refresh_replicated(registry);
+        server.rediscover_all_replicated_entities(registry);
         for (const ecs::Entity entity : entities) {
             benchmark::DoNotOptimize(registry.remove<kage::sync::Replicated>(entity));
         }
-        server.refresh_replicated(registry);
+        server.rediscover_all_replicated_entities(registry);
     }
 
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(entity_count) * 2);
@@ -108,14 +108,14 @@ void BM_ServerAddClientsAfterReplicated(benchmark::State& state) {
     for (auto _ : state) {
         kage::sync::ReplicationServer server;
         add_replication_configs(registry, entities, archetype);
-        server.refresh_replicated(registry);
+        server.rediscover_all_replicated_entities(registry);
         for (int i = 0; i < client_count; ++i) {
             benchmark::DoNotOptimize(server.add_client(static_cast<kage::sync::ClientId>(i + 1)));
         }
         for (const ecs::Entity entity : entities) {
             registry.remove<kage::sync::Replicated>(entity);
         }
-        server.refresh_replicated(registry);
+        server.rediscover_all_replicated_entities(registry);
     }
 
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(entity_count) * client_count);
@@ -140,10 +140,10 @@ void BM_ServerTickSerializedFullBudget(benchmark::State& state) {
     kage::sync::ReplicationServer server(options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
-    server.refresh_replicated(registry);
+    server.rediscover_all_replicated_entities(registry);
 
     for (auto _ : state) {
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
     }
 
     state.SetItemsProcessed(
@@ -174,10 +174,10 @@ void BM_ServerTickTracingRuntimeDisabled(benchmark::State& state) {
     server.set_tracer(&tracer);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
-    server.refresh_replicated(registry);
+    server.rediscover_all_replicated_entities(registry);
 
     for (auto _ : state) {
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
     }
 
     state.SetItemsProcessed(
@@ -212,10 +212,10 @@ void BM_ServerTickTracingCallbacks(benchmark::State& state) {
     server.set_tracer(&tracer);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
-    server.refresh_replicated(registry);
+    server.rediscover_all_replicated_entities(registry);
 
     for (auto _ : state) {
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
     }
 
     state.SetItemsProcessed(
@@ -251,10 +251,10 @@ void BM_ServerTickTracingFrameData(benchmark::State& state) {
     server.set_tracer(&tracer);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
-    server.refresh_replicated(registry);
+    server.rediscover_all_replicated_entities(registry);
 
     for (auto _ : state) {
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
     }
 
     state.SetItemsProcessed(
@@ -281,10 +281,10 @@ void BM_ServerTickSerializedDelta(benchmark::State& state) {
     kage::sync::ReplicationServer server(options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     for (auto _ : state) {
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
     }
 
     state.SetItemsProcessed(
@@ -311,10 +311,10 @@ void BM_ServerTickSerializedBudgetLimited(benchmark::State& state) {
     kage::sync::ReplicationServer server(options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
-    server.refresh_replicated(registry);
+    server.rediscover_all_replicated_entities(registry);
 
     for (auto _ : state) {
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
     }
 
     state.SetItemsProcessed(
@@ -341,10 +341,10 @@ void BM_ServerTickPackedFullBudget(benchmark::State& state) {
     kage::sync::ReplicationServer server(options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
-    server.refresh_replicated(registry);
+    server.rediscover_all_replicated_entities(registry);
 
     for (auto _ : state) {
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
     }
 
     state.SetItemsProcessed(
@@ -375,12 +375,12 @@ void BM_ServerTickPackedAckedDeltaShared(benchmark::State& state) {
     kage::sync::ReplicationServer server(options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
-    server.tick(registry);
-    ack_packets(server, packets);
+    server.tick(registry, server.options().fixed_dt_seconds);
+    ack_packets(server, registry, packets);
     packets.clear();
 
     for (auto _ : state) {
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
         packets.clear();
     }
 
@@ -408,10 +408,10 @@ void BM_ServerTickPackedMtuLimited(benchmark::State& state) {
     kage::sync::ReplicationServer server(options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
-    server.refresh_replicated(registry);
+    server.rediscover_all_replicated_entities(registry);
 
     for (auto _ : state) {
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
     }
 
     state.SetItemsProcessed(
@@ -440,7 +440,7 @@ void BM_ServerProcessAckPacket(benchmark::State& state) {
         kage::sync::ReplicationServer server(server_options);
         server.add_client(1);
         add_replication_configs(server_registry, entities, archetype);
-        server.tick(server_registry);
+        server.tick(server_registry, server.options().fixed_dt_seconds);
 
         ecs::Registry client_registry;
         define_client_delta_schema(client_registry, false);
@@ -456,7 +456,7 @@ void BM_ServerProcessAckPacket(benchmark::State& state) {
         state.ResumeTiming();
 
         for (const ecs::BitBuffer& ack : acks) {
-            processed += server.process_packet(1, ack) ? 1 : 0;
+            processed += server.process_packet(server_registry, 1, ack) ? 1 : 0;
         }
         benchmark::DoNotOptimize(processed);
     }
@@ -486,15 +486,15 @@ void BM_ServerTickDestroyBurst(benchmark::State& state) {
         kage::sync::ReplicationServer server(options);
         server.add_client(1);
         add_replication_configs(registry, entities, archetype);
-        server.tick(registry);
-        ack_packets(server, packets);
+        server.tick(registry, server.options().fixed_dt_seconds);
+        ack_packets(server, registry, packets);
         packets.clear();
         for (const ecs::Entity entity : entities) {
             registry.destroy(entity);
         }
         state.ResumeTiming();
 
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
         benchmark::DoNotOptimize(sent);
     }
 
@@ -521,14 +521,14 @@ void BM_ServerTickPendingDestroysBudgetLimited(benchmark::State& state) {
     kage::sync::ReplicationServer server(options);
     server.add_client(1);
     add_replication_configs(registry, entities, archetype);
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     for (const ecs::Entity entity : entities) {
         registry.destroy(entity);
     }
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     for (auto _ : state) {
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
     }
 
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(destroys_per_tick));
@@ -578,7 +578,7 @@ void BM_ServerTickMutatingAckedDelta(benchmark::State& state) {
         ++tick;
 
         packets.clear();
-        server.tick(server_registry);
+        server.tick(server_registry, server.options().fixed_dt_seconds);
         consumed += consume_packets(packets);
         for (const auto& packet : packets) {
             const std::size_t client_index = static_cast<std::size_t>(packet.first - 1U);
@@ -588,7 +588,7 @@ void BM_ServerTickMutatingAckedDelta(benchmark::State& state) {
             const auto id = static_cast<kage::sync::ClientId>(client_index + 1);
             for (const ecs::BitBuffer& ack :
                  clients[static_cast<std::size_t>(client_index)].drain_ack_packets()) {
-                benchmark::DoNotOptimize(server.process_packet(id, ack));
+                benchmark::DoNotOptimize(server.process_packet(server_registry, id, ack));
             }
         }
         benchmark::DoNotOptimize(consumed);
@@ -618,10 +618,10 @@ void BM_ServerTickOwnerAudienceMixed(benchmark::State& state) {
     kage::sync::ReplicationServer server(options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
-    server.refresh_replicated(registry);
+    server.rediscover_all_replicated_entities(registry);
 
     for (auto _ : state) {
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
     }
 
     state.SetItemsProcessed(
@@ -653,7 +653,7 @@ void BM_ServerTickTaggedOwnerMixed(benchmark::State& state) {
     kage::sync::ReplicationServer server(options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, schema.archetype);
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     for (int client_index = 0; client_index < client_count; ++client_index) {
         const auto client = static_cast<kage::sync::ClientId>(client_index + 1);
         for (const ecs::Entity entity : entities) {
@@ -673,7 +673,7 @@ void BM_ServerTickTaggedOwnerMixed(benchmark::State& state) {
             }
         }
         ++tick;
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
         packets.clear();
     }
 
@@ -701,10 +701,10 @@ void BM_ServerTickArchetypeDiversity(benchmark::State& state) {
     kage::sync::ReplicationServer server(options);
     add_clients(server, client_count);
     add_diverse_replication_configs(registry, entities, archetypes);
-    server.refresh_replicated(registry);
+    server.rediscover_all_replicated_entities(registry);
 
     for (auto _ : state) {
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
     }
 
     state.SetItemsProcessed(
@@ -733,14 +733,14 @@ void BM_ServerTickStressScheduler(benchmark::State& state) {
     kage::sync::ReplicationServer server(options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
-    server.refresh_replicated(registry);
+    server.rediscover_all_replicated_entities(registry);
 
     for (auto _ : state) {
         for (int index = 0; index < entity_count; ++index) {
             registry.write<DeltaPosition>(entities[static_cast<std::size_t>(index)]) =
                 DeltaPosition{index + static_cast<int>(state.iterations()), index + 1};
         }
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
     }
 
     state.SetItemsProcessed(
@@ -912,7 +912,7 @@ void BM_ServerTickInputUpsert(benchmark::State& state) {
     }
 
     for (auto _ : state) {
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
     }
 
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(entity_count));

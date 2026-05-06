@@ -54,7 +54,7 @@ void FractionalTickSampler::capture_server_frame(ecs::Registry& registry) {
     if (source_ != Source::Server || server_ == nullptr) {
         return;
     }
-    server_->refresh_replicated(registry);
+    server_->rediscover_all_replicated_entities(registry);
 
     Snapshot next;
     next.frame = server_->frame_;

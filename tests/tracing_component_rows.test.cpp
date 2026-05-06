@@ -226,7 +226,7 @@ TEST_CASE("client frame component tracing records once per fixed receive frame")
     kage::sync::ReplicationServer server(server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
 
     ecs::Registry client_registry;
@@ -294,7 +294,7 @@ TEST_CASE("predicted client frame component tracing records predicted mode once"
     kage::sync::ReplicationServer server(server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
 
     ecs::Registry client_registry;

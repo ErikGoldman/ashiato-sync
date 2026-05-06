@@ -53,7 +53,7 @@ TEST_CASE("replication server decodes client input, upserts owned entities, and 
     REQUIRE(input_packet != input_packets.end());
 
     REQUIRE(server.process_packet(server_registry, 1, *input_packet));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
 
     REQUIRE(server_registry.contains<NetworkedPosition>(owned));
     REQUIRE(server_registry.get<NetworkedPosition>(owned).x == 5.0f);
@@ -96,7 +96,7 @@ TEST_CASE("replication server applies local client input without packets") {
     REQUIRE(start_sync(registry, owned, archetype));
 
     REQUIRE(server.set_local_input(registry, NetworkedPosition{7.0f, 8.0f}));
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     REQUIRE(registry.get<NetworkedPosition>(owned).x == 7.0f);
     REQUIRE(registry.get<NetworkedPosition>(owned).y == 8.0f);
@@ -104,34 +104,6 @@ TEST_CASE("replication server applies local client input without packets") {
     REQUIRE(stats.latest_received_input_frame == 1);
     REQUIRE(stats.latest_applied_input_frame == 1);
     REQUIRE(stats.input_frames_applied == 1);
-}
-
-TEST_CASE("replication server can advance frame without applying queued input") {
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
-    kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
-    kage::sync::configure_server(registry);
-    REQUIRE(kage::sync::set_client_input_component<NetworkedPosition>(registry));
-
-    kage::sync::ReplicationServer server;
-    const kage::sync::ClientId local = server.add_local_client();
-    REQUIRE(local != kage::sync::invalid_client_id);
-
-    const ecs::Entity owned = registry.create();
-    REQUIRE(registry.add<NetworkedPosition>(owned, NetworkedPosition{}) != nullptr);
-    REQUIRE(kage::sync::set_owner(registry, owned, local));
-    REQUIRE(start_sync(registry, owned, archetype));
-
-    REQUIRE(server.set_local_input(registry, NetworkedPosition{7.0f, 8.0f}));
-    server.advance_frame_without_simulating(registry);
-
-    REQUIRE(registry.get<NetworkedPosition>(owned).x == 0.0f);
-    REQUIRE(registry.get<NetworkedPosition>(owned).y == 0.0f);
-    REQUIRE(server.frame() == 1);
-    const kage::sync::ReplicationServer::ClientInputStats stats = server.input_stats(local);
-    REQUIRE(stats.latest_received_input_frame == 1);
-    REQUIRE(stats.latest_applied_input_frame == 0);
-    REQUIRE(stats.input_frames_applied == 0);
 }
 
 TEST_CASE("replication server phased tick replicates post-input simulation state") {
@@ -178,9 +150,7 @@ TEST_CASE("replication server phased tick replicates post-input simulation state
     REQUIRE(input_packet != input_packets.end());
 
     REQUIRE(server.process_packet(server_registry, 1, *input_packet));
-    server.begin_tick(server_registry);
-    server_registry.run_jobs();
-    server.end_tick(server_registry);
+    REQUIRE(server.tick(server_registry, server.options().fixed_dt_seconds));
 
     REQUIRE(server_registry.get<kage_sync_tests::Position>(owned).x == 1.0f);
     REQUIRE(server_registry.get<kage_sync_tests::Position>(owned).y == 1.0f);
@@ -212,6 +182,39 @@ TEST_CASE("replication server skips old explicit input frames and keeps useful f
     ecs::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::client_input_message, 8U);
     packet.push_bits(0, 16U);
+    packet.push_bits(2, 32U);
+    packet.push_bits(4, 16U);
+    packet.push_bool(true);
+    packet.push_bits(1, 32U);
+    packet.push_bool(false);
+    packet.push_bits(10, 8U);
+    packet.push_bits(10, 8U);
+    for (int frame = 2; frame <= 4; ++frame) {
+        packet.push_bool(true);
+        packet.push_bits(1, 8U);
+        packet.push_bits(1, 8U);
+    }
+
+    REQUIRE(server.process_packet(server_registry, 1, packet));
+    REQUIRE(server.input_stats(1).latest_received_input_frame == 4);
+}
+
+TEST_CASE("replication server accepts input packets with stale piggybacked ACKs") {
+    ecs::Registry server_registry;
+    kage_sync_tests::define_position_archetype(server_registry);
+    kage::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
+    kage::sync::configure_server(server_registry);
+    REQUIRE(kage::sync::set_client_input_component<NetworkedPosition>(server_registry));
+
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+
+    ecs::BitBuffer packet;
+    packet.push_bits(kage::sync::protocol::client_input_message, 8U);
+    packet.push_bits(1, 16U);
+    packet.push_bits(42, kage::sync::protocol::server_packet_id_bits);
     packet.push_bits(2, 32U);
     packet.push_bits(4, 16U);
     packet.push_bool(true);
@@ -266,22 +269,22 @@ TEST_CASE("replication server applies future client inputs only when their frame
     REQUIRE(read_client_input_header(*input_packet).input_count == 3);
     REQUIRE(server.process_packet(server_registry, 1, *input_packet));
 
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(server.input_stats(1).latest_applied_input_frame == 1);
     REQUIRE(server.input_stats(1).input_frames_applied == 1);
     REQUIRE(server.input_stats(1).input_starvation_frames == 0);
 
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(server.input_stats(1).latest_applied_input_frame == 2);
     REQUIRE(server.input_stats(1).input_frames_applied == 2);
     REQUIRE(server.input_stats(1).input_starvation_frames == 0);
 
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(server.input_stats(1).latest_applied_input_frame == 3);
     REQUIRE(server.input_stats(1).input_frames_applied == 3);
     REQUIRE(server.input_stats(1).input_starvation_frames == 0);
 
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(server.input_stats(1).latest_applied_input_frame == 3);
     REQUIRE(server.input_stats(1).input_frames_applied == 3);
     REQUIRE(server.input_stats(1).input_starvation_frames == 1);
@@ -331,13 +334,13 @@ TEST_CASE("replication server treats received client input frames as immutable")
     REQUIRE(refreshed_input != refreshed_packets.end());
     REQUIRE(server.process_packet(server_registry, 1, *refreshed_input));
 
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(server_registry.contains<NetworkedPosition>(owned));
     REQUIRE(server_registry.get<NetworkedPosition>(owned).x == 1.0f);
     REQUIRE(server_registry.get<NetworkedPosition>(owned).y == 2.0f);
     REQUIRE(server.input_stats(1).latest_applied_input_frame == 1);
 
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(server_registry.get<NetworkedPosition>(owned).x == 9.0f);
     REQUIRE(server_registry.get<NetworkedPosition>(owned).y == 10.0f);
     REQUIRE(server.input_stats(1).latest_applied_input_frame == 2);
@@ -428,7 +431,7 @@ TEST_CASE("two token clients move owned players with fresh input frames every ti
 
     drain_client_to_server(first_peer, first_client);
     drain_client_to_server(second_peer, second_client);
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     deliver_server_packets(first_peer, first_client, first_client_registry);
     deliver_server_packets(second_peer, second_client, second_client_registry);
     REQUIRE(first_client.connection_state() == kage::sync::ReplicationClientConnectionState::Ready);
@@ -487,7 +490,7 @@ TEST_CASE("two token clients move owned players with fresh input frames every ti
         drain_client_to_server(first_peer, first_client);
         drain_client_to_server(second_peer, second_client);
 
-        server.tick(server_registry);
+        server.tick(server_registry, server.options().fixed_dt_seconds);
         apply_movement_for_fresh_input(0, 1, first_owned, first_target.x);
         apply_movement_for_fresh_input(1, 2, second_owned, second_target.x);
         deliver_server_packets(first_peer, first_client, first_client_registry);
@@ -569,13 +572,13 @@ TEST_CASE("client input packets reserve room for input when server ack backlog i
     drain_client_to_server();
     deliver_server_packets();
     drain_client_to_server();
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     deliver_server_packets();
     REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Ready);
 
     for (int tick = 0; tick < 40; ++tick) {
         server_registry.write<kage_sync_tests::Position>(owned).x = static_cast<float>(tick + 1);
-        server.tick(server_registry);
+        server.tick(server_registry, server.options().fixed_dt_seconds);
         deliver_server_packets();
     }
 
@@ -632,13 +635,13 @@ TEST_CASE("client fills input frame gap when prediction starts from a later serv
     REQUIRE(server.process_packet(server_registry, 1, *initial_input));
 
     for (int tick = 0; tick < 33; ++tick) {
-        server.tick(server_registry);
+        server.tick(server_registry, server.options().fixed_dt_seconds);
     }
     const ecs::Entity owned = server_registry.create();
     REQUIRE(server_registry.add<PredictedPosition>(owned, PredictedPosition{1.0f, 2.0f}) != nullptr);
     REQUIRE(kage::sync::set_owner(server_registry, owned, 1));
     REQUIRE(start_sync(server_registry, owned, server_archetype));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE_FALSE(updates.empty());
     REQUIRE(client.receive(client_registry, updates.back()));
 
@@ -709,7 +712,7 @@ TEST_CASE("auto timing initializes prediction and interpolation quickly under re
         });
 
         server_registry.write<Position>(replicated).x += 1.0f;
-        server.tick(server_registry);
+        server.tick(server_registry, server.options().fixed_dt_seconds);
 
         downstream.deliver_ready(now, [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
             ecs::BitBuffer copy = packet;
@@ -829,7 +832,7 @@ TEST_CASE("auto timing recovers prediction and interpolation quickly after packe
         });
 
         server_registry.write<Position>(replicated).x += 1.0f;
-        server.tick(server_registry);
+        server.tick(server_registry, server.options().fixed_dt_seconds);
 
         downstream.deliver_ready(now, [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
             ecs::BitBuffer copy = packet;

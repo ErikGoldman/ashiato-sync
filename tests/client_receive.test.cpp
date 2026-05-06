@@ -50,7 +50,7 @@ TEST_CASE("replication client applies full updates and queues ACKs") {
     kage::sync::ReplicationServer server(server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
 
     ecs::Registry client_registry;
@@ -73,7 +73,7 @@ TEST_CASE("replication client applies full updates and queues ACKs") {
     std::vector<AckRecord> acks = read_acks(ack_packets[0]);
     REQUIRE(acks.size() == 1);
     REQUIRE(acks[0].packet_id != 0);
-    REQUIRE(server.process_packet(1, ack_packets[0]));
+    REQUIRE(server.process_packet(server_registry, 1, ack_packets[0]));
 }
 
 TEST_CASE("replication client exposes server timing estimates after updates") {
@@ -90,7 +90,7 @@ TEST_CASE("replication client exposes server timing estimates after updates") {
     kage::sync::ReplicationServer server(server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
 
     ecs::Registry client_registry;
@@ -140,14 +140,14 @@ TEST_CASE("replication client decodes ACKed delta updates") {
     kage::sync::configure_client(client_registry, 1);
 
     kage::sync::ReplicationClient client;
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(client.receive(client_registry, packets.back()));
     for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
-        REQUIRE(server.process_packet(1, ack));
+        REQUIRE(server.process_packet(server_registry, 1, ack));
     }
 
     server_registry.write<NetworkedPosition>(server_entity) = NetworkedPosition{2.0f, 3.0f};
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(client.receive(client_registry, packets.back()));
 
     const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
@@ -187,19 +187,19 @@ TEST_CASE("replication client decodes deltas against the encoded baseline frame"
     kage::sync::configure_client(client_registry, 1);
 
     kage::sync::ReplicationClient client;
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(client.receive(client_registry, packets.back()));
     for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
-        REQUIRE(server.process_packet(1, ack));
+        REQUIRE(server.process_packet(server_registry, 1, ack));
     }
 
     server_registry.write<NetworkedPosition>(server_entity) = NetworkedPosition{2.0f, 3.0f};
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(client.receive(client_registry, packets.back()));
     REQUIRE(client.drain_ack_packets().size() == 1);
 
     server_registry.write<NetworkedPosition>(server_entity) = NetworkedPosition{3.0f, 4.0f};
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(client.receive(client_registry, packets.back()));
 
     const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
@@ -285,7 +285,7 @@ TEST_CASE("replication client decodes mixed-baseline deltas in one packet") {
     kage::sync::configure_client(client_registry, 1);
 
     kage::sync::ReplicationClient client;
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
     const UpdatePacket full_update = read_update(packets.back());
     REQUIRE(full_update.records.size() == 2);
@@ -297,13 +297,13 @@ TEST_CASE("replication client decodes mixed-baseline deltas in one packet") {
     REQUIRE(second_network_id != 0);
     REQUIRE(client.receive(client_registry, packets.back()));
     for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
-        REQUIRE(server.process_packet(1, ack));
+        REQUIRE(server.process_packet(server_registry, 1, ack));
     }
 
     server_registry.write<NetworkedPosition>(first) = NetworkedPosition{2.0f, 2.0f};
     server_registry.write<NetworkedPosition>(second) = NetworkedPosition{11.0f, 11.0f};
     packets.clear();
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
     const UpdatePacket frame83 = read_update(packets.back());
     REQUIRE(frame83.records.size() == 2);
@@ -315,7 +315,7 @@ TEST_CASE("replication client decodes mixed-baseline deltas in one packet") {
     server_registry.write<NetworkedPosition>(first) = NetworkedPosition{3.0f, 3.0f};
     server_registry.write<NetworkedPosition>(second) = NetworkedPosition{12.0f, 12.0f};
     packets.clear();
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
     const UpdatePacket frame84 = read_update(packets.back());
     REQUIRE(frame84.records.size() == 2);
@@ -492,16 +492,16 @@ TEST_CASE("replication client applies destroy records and ACKs tombstones") {
     kage::sync::configure_client(client_registry, 1);
     kage::sync::ReplicationClient client;
 
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(client.receive(client_registry, packets.back()));
     const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(local);
     for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
-        REQUIRE(server.process_packet(1, ack));
+        REQUIRE(server.process_packet(server_registry, 1, ack));
     }
 
     REQUIRE(server_registry.destroy(server_entity));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(client.receive(client_registry, packets.back()));
     REQUIRE_FALSE(client_registry.alive(local));
 
@@ -511,10 +511,10 @@ TEST_CASE("replication client applies destroy records and ACKs tombstones") {
     REQUIRE(acks.size() == 1);
     REQUIRE(acks[0].packet_id != 0);
 
-    server.tick(server_registry);
-    REQUIRE(server.process_packet(1, destroy_acks[0]));
+    server.tick(server_registry, server.options().fixed_dt_seconds);
+    REQUIRE(server.process_packet(server_registry, 1, destroy_acks[0]));
     const std::size_t packets_after_ack = packets.size();
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == packets_after_ack);
 }
 
@@ -539,7 +539,7 @@ TEST_CASE("replication client packs ACKs within the configured MTU") {
     };
     kage::sync::ReplicationServer server(server_options);
     REQUIRE(server.add_client(1));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
 
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
@@ -573,7 +573,7 @@ TEST_CASE("replication client retains ACKs that cannot fit the configured MTU") 
     kage::sync::ReplicationServer server(server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
 
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
@@ -600,7 +600,7 @@ TEST_CASE("replication client rejects duplicate full updates without ACKing agai
     kage::sync::ReplicationServer server(server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
 
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
@@ -659,18 +659,18 @@ TEST_CASE("replication clients recover independently when one misses ACK process
     kage::sync::ReplicationClient client_one;
     kage::sync::ReplicationClient client_two;
 
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 2);
     REQUIRE(client_one.receive(client_one_registry, packet_for(packets, 1)));
     REQUIRE(client_two.receive(client_two_registry, packet_for(packets, 2)));
     for (const ecs::BitBuffer& ack : client_one.drain_ack_packets()) {
-        REQUIRE(server.process_packet(1, ack));
+        REQUIRE(server.process_packet(server_registry, 1, ack));
     }
     REQUIRE(client_two.drain_ack_packets().size() == 1);
 
     server_registry.write<NetworkedPosition>(server_entity) = NetworkedPosition{2.0f, 3.0f};
     packets.clear();
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 2);
 
     const UpdatePacket client_one_update = read_update(packet_for(packets, 1));
@@ -683,10 +683,10 @@ TEST_CASE("replication clients recover independently when one misses ACK process
     REQUIRE(client_two.receive(client_two_registry, packet_for(packets, 2)));
 
     for (const ecs::BitBuffer& ack : client_one.drain_ack_packets()) {
-        REQUIRE(server.process_packet(1, ack));
+        REQUIRE(server.process_packet(server_registry, 1, ack));
     }
     for (const ecs::BitBuffer& ack : client_two.drain_ack_packets()) {
-        REQUIRE(server.process_packet(2, ack));
+        REQUIRE(server.process_packet(server_registry, 2, ack));
     }
 
     const ecs::Entity client_one_local = client_one.local_entity(first_allocated_client_entity_network_id(1));
@@ -698,7 +698,7 @@ TEST_CASE("replication clients recover independently when one misses ACK process
 
     server_registry.write<NetworkedPosition>(server_entity) = NetworkedPosition{4.0f, 5.0f};
     packets.clear();
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 2);
     REQUIRE_FALSE(read_update(packet_for(packets, 1)).records[0].full);
     REQUIRE_FALSE(read_update(packet_for(packets, 2)).records[0].full);
@@ -736,7 +736,7 @@ TEST_CASE("replication clients ACK destroy records independently") {
     kage::sync::ReplicationClient client_one;
     kage::sync::ReplicationClient client_two;
 
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 2);
     REQUIRE(client_one.receive(client_one_registry, packet_for(packets, 1)));
     REQUIRE(client_two.receive(client_two_registry, packet_for(packets, 2)));
@@ -745,15 +745,15 @@ TEST_CASE("replication clients ACK destroy records independently") {
     REQUIRE(client_one_local);
     REQUIRE(client_two_local);
     for (const ecs::BitBuffer& ack : client_one.drain_ack_packets()) {
-        REQUIRE(server.process_packet(1, ack));
+        REQUIRE(server.process_packet(server_registry, 1, ack));
     }
     for (const ecs::BitBuffer& ack : client_two.drain_ack_packets()) {
-        REQUIRE(server.process_packet(2, ack));
+        REQUIRE(server.process_packet(server_registry, 2, ack));
     }
 
     REQUIRE(server_registry.destroy(server_entity));
     packets.clear();
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 2);
     REQUIRE(client_one.receive(client_one_registry, packet_for(packets, 1)));
     REQUIRE(client_two.receive(client_two_registry, packet_for(packets, 2)));
@@ -766,16 +766,16 @@ TEST_CASE("replication clients ACK destroy records independently") {
     REQUIRE(client_two_acks.size() == 1);
     REQUIRE(read_acks(client_one_acks[0]).size() == 1);
     REQUIRE(read_acks(client_two_acks[0]).size() == 1);
-    REQUIRE(server.process_packet(1, client_one_acks[0]));
+    REQUIRE(server.process_packet(server_registry, 1, client_one_acks[0]));
 
     packets.clear();
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
     REQUIRE(packets[0].first == 2);
-    REQUIRE(server.process_packet(2, client_two_acks[0]));
+    REQUIRE(server.process_packet(server_registry, 2, client_two_acks[0]));
 
     packets.clear();
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.empty());
 }
 
@@ -837,7 +837,7 @@ TEST_CASE("replication client reconciles components when owner visibility change
     kage::sync::ReplicationClient client_one;
     kage::sync::ReplicationClient client_two;
 
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 2);
     for (const auto& sent : packets) {
         if (sent.first == 1) {
@@ -847,10 +847,10 @@ TEST_CASE("replication client reconciles components when owner visibility change
         }
     }
     for (const ecs::BitBuffer& ack : client_one.drain_ack_packets()) {
-        REQUIRE(server.process_packet(1, ack));
+        REQUIRE(server.process_packet(server_registry, 1, ack));
     }
     for (const ecs::BitBuffer& ack : client_two.drain_ack_packets()) {
-        REQUIRE(server.process_packet(2, ack));
+        REQUIRE(server.process_packet(server_registry, 2, ack));
     }
 
     const ecs::Entity client_one_local = client_one.local_entity(first_allocated_client_entity_network_id(1));
@@ -860,7 +860,7 @@ TEST_CASE("replication client reconciles components when owner visibility change
 
     REQUIRE(kage::sync::set_owner(server_registry, server_entity, 2));
     packets.clear();
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 2);
     for (const auto& sent : packets) {
         if (sent.first == 1) {
@@ -937,7 +937,7 @@ TEST_CASE("replication client applies synced tags and owner-filtered tag visibil
 
     kage::sync::ReplicationClient owner_client;
     kage::sync::ReplicationClient non_owner_client;
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(owner_client.receive(owner_registry, packet_for(packets, 1)));
     REQUIRE(non_owner_client.receive(non_owner_registry, packet_for(packets, 2)));
 
@@ -949,15 +949,15 @@ TEST_CASE("replication client applies synced tags and owner-filtered tag visibil
     REQUIRE_FALSE(non_owner_registry.has(non_owner_local, non_owner_secret));
 
     for (const ecs::BitBuffer& ack : owner_client.drain_ack_packets()) {
-        REQUIRE(server.process_packet(1, ack));
+        REQUIRE(server.process_packet(server_registry, 1, ack));
     }
     for (const ecs::BitBuffer& ack : non_owner_client.drain_ack_packets()) {
-        REQUIRE(server.process_packet(2, ack));
+        REQUIRE(server.process_packet(server_registry, 2, ack));
     }
 
     REQUIRE(kage::sync::set_owner(server_registry, server_entity, 2));
     packets.clear();
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(owner_client.receive(owner_registry, packet_for(packets, 1)));
     REQUIRE(non_owner_client.receive(non_owner_registry, packet_for(packets, 2)));
     REQUIRE(owner_registry.has(owner_local, owner_visible));
@@ -992,7 +992,7 @@ TEST_CASE("buffered interpolation rejects stale duplicate packets without ACKing
         1,
         8});
 
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     const ecs::BitBuffer full_packet = packets.back();
     REQUIRE(client.receive(client_registry, full_packet));
     REQUIRE(client.drain_ack_packets().size() == 1);
@@ -1001,7 +1001,7 @@ TEST_CASE("buffered interpolation rejects stale duplicate packets without ACKing
 
     server_registry.write<Position>(server_entity) = Position{3.0f, 4.0f};
     packets.clear();
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     const ecs::BitBuffer stale_full_packet = full_packet;
     REQUIRE(client.receive(client_registry, packets.back()));
     REQUIRE(client.drain_ack_packets().size() == 1);
@@ -1010,7 +1010,7 @@ TEST_CASE("buffered interpolation rejects stale duplicate packets without ACKing
 
     REQUIRE(server_registry.destroy(server_entity));
     packets.clear();
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     const ecs::BitBuffer destroy_packet = packets.back();
     REQUIRE(client.receive(client_registry, destroy_packet));
     REQUIRE(client.drain_ack_packets().size() == 1);
@@ -1038,14 +1038,14 @@ TEST_CASE("replication client rejects stale full after destroy and accepts reuse
 
     auto process_client_acks = [&]() {
         for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
-            REQUIRE(server.process_packet(1, ack));
+            REQUIRE(server.process_packet(server_registry, 1, ack));
         }
     };
 
     const ecs::Entity first = server_registry.create();
     REQUIRE(server_registry.add<Position>(first, Position{1.0f, 2.0f}) != nullptr);
     REQUIRE(start_sync(server_registry, first, server_archetype));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     const ecs::BitBuffer first_full = packets.back();
     const UpdatePacket first_update = read_update(first_full);
     REQUIRE(first_update.records.size() == 1);
@@ -1055,7 +1055,7 @@ TEST_CASE("replication client rejects stale full after destroy and accepts reuse
 
     packets.clear();
     REQUIRE(server_registry.destroy(first));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     const ecs::BitBuffer destroy = packets.back();
     REQUIRE(client.receive(client_registry, destroy));
     process_client_acks();
@@ -1066,7 +1066,7 @@ TEST_CASE("replication client rejects stale full after destroy and accepts reuse
     const ecs::Entity second = server_registry.create();
     REQUIRE(server_registry.add<Position>(second, Position{3.0f, 4.0f}) != nullptr);
     REQUIRE(start_sync(server_registry, second, server_archetype));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     const UpdatePacket second_update = read_update(packets.back());
     REQUIRE(second_update.records.size() == 1);
     REQUIRE(second_update.records[0].network_id == reused_network_id);

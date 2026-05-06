@@ -14,10 +14,10 @@ struct ServerInputPacketTrace {
     SyncFrame last_input_frame = 0;
 };
 
-struct ServerDueInput {
+struct ServerInputForFrame {
     const std::vector<std::uint8_t>* bytes = nullptr;
-    SyncFrame frame = 0;
-    bool counted = false;
+    SyncFrame input_frame = 0;
+    bool cached = false;
 };
 
 class ServerInputBuffer {
@@ -34,7 +34,7 @@ public:
         std::size_t capacity_frames,
         ServerInputPacketTrace* trace);
 
-    ServerDueInput select_due_input(SyncFrame due_frame, std::size_t quantized_size);
+    ServerInputForFrame select_input_for_frame(SyncFrame due_frame, std::size_t quantized_size);
 
     SyncFrame ack_frame() const noexcept {
         return input_ack_frame_;

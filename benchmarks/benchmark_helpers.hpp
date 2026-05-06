@@ -392,6 +392,7 @@ inline void add_diverse_replication_configs(
 
 inline void ack_packets(
     ReplicationServer& server,
+    ecs::Registry& registry,
     const std::vector<std::pair<ClientId, ecs::BitBuffer>>& packets) {
     for (const auto& sent : packets) {
         ecs::BitBuffer packet = sent.second;
@@ -402,7 +403,7 @@ inline void ack_packets(
         ack.push_bits(protocol::client_ack_message, 8U);
         ack.push_bits(1, 16U);
         ack.push_bits(packet_id, protocol::server_packet_id_bits);
-        benchmark::DoNotOptimize(server.process_packet(sent.first, ack));
+        benchmark::DoNotOptimize(server.process_packet(registry, sent.first, ack));
     }
 }
 
@@ -437,8 +438,8 @@ inline std::vector<ecs::BitBuffer> make_client_receive_packets(int entity_count,
             registry.write<DeltaPosition>(entities[static_cast<std::size_t>(index)]) =
                 DeltaPosition{index + frame, index + frame + 1};
         }
-        server.tick(registry);
-        ack_packets(server, sent);
+        server.tick(registry, server.options().fixed_dt_seconds);
+        ack_packets(server, registry, sent);
     }
 
     std::vector<ecs::BitBuffer> packets;
@@ -474,8 +475,8 @@ inline std::vector<ecs::BitBuffer> make_large_payload_client_receive_packets(int
                 payload.values[value] = entity_index + frame + value;
             }
         }
-        server.tick(registry);
-        ack_packets(server, sent);
+        server.tick(registry, server.options().fixed_dt_seconds);
+        ack_packets(server, registry, sent);
     }
 
     std::vector<ecs::BitBuffer> packets;
@@ -502,7 +503,7 @@ inline DestroyPackets make_destroy_packets(int entity_count) {
     ReplicationServer server(options);
     server.add_client(1);
     add_replication_configs(registry, entities, archetype);
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     DestroyPackets packets;
     packets.initial.reserve(sent.size());
@@ -510,12 +511,12 @@ inline DestroyPackets make_destroy_packets(int entity_count) {
         packets.initial.push_back(packet.second);
     }
 
-    ack_packets(server, sent);
+    ack_packets(server, registry, sent);
     sent.clear();
     for (const ecs::Entity entity : entities) {
         registry.destroy(entity);
     }
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     packets.destroys.reserve(sent.size());
     for (const auto& packet : sent) {
         packets.destroys.push_back(packet.second);
@@ -539,7 +540,7 @@ inline ChurnPackets make_churn_packets(int entity_count) {
     ReplicationServer server(options);
     server.add_client(1);
     add_replication_configs(registry, entities, archetype);
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     ChurnPackets packets;
     packets.initial.reserve(sent.size());
@@ -547,22 +548,22 @@ inline ChurnPackets make_churn_packets(int entity_count) {
         packets.initial.push_back(packet.second);
     }
 
-    ack_packets(server, sent);
+    ack_packets(server, registry, sent);
     sent.clear();
     for (const ecs::Entity entity : entities) {
         registry.destroy(entity);
     }
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     packets.destroys.reserve(sent.size());
     for (const auto& packet : sent) {
         packets.destroys.push_back(packet.second);
     }
 
-    ack_packets(server, sent);
+    ack_packets(server, registry, sent);
     sent.clear();
     entities = create_delta_entities(registry, entity_count);
     add_replication_configs(registry, entities, archetype);
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     packets.respawns.reserve(sent.size());
     for (const auto& packet : sent) {
         packets.respawns.push_back(packet.second);

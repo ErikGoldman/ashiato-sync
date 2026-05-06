@@ -9,133 +9,136 @@
 
 namespace kage::sync {
 
-bool ReplicationServer::acknowledge_destroy(ClientState& client, ecs::Entity entity, SyncFrame frame) {
-    const auto found = std::find_if(
-        client.pending_destroys.begin(),
-        client.pending_destroys.end(),
-        [entity, frame](const ClientDestroyState& pending) {
-            return pending.entity == entity && frame <= pending.frame;
-        });
-    if (found == client.pending_destroys.end()) {
-        return false;
-    }
-
-    const std::uint32_t network_id = found->network_id;
-    client.pending_destroys.erase(found);
-    free_network_id(client, network_id);
-    return true;
+bool server_detail::ServerClientReplicator::AckTracker::client_acknowledged_destroy(
+    ReplicationServer& server,
+    ServerClientReplicator& client,
+    ecs::Entity entity,
+    SyncFrame frame) {
+    (void)server;
+    return client.destroys.acknowledge(client, entity, frame);
 }
 
-bool ReplicationServer::acknowledge_packet(ClientState& client, std::uint32_t packet_id) {
+bool server_detail::ServerClientReplicator::AckTracker::acknowledge_packet(
+    ReplicationServer& server,
+    ServerClientReplicator& client,
+    std::uint32_t packet_id) {
     const auto found = std::find_if(
-        client.pending_packet_acks.begin(),
-        client.pending_packet_acks.end(),
+        pending_packet_acks.begin(),
+        pending_packet_acks.end(),
         [packet_id](const PendingPacketAck& pending) {
             return pending.packet_id == packet_id;
         });
-    if (found == client.pending_packet_acks.end()) {
+    if (found == pending_packet_acks.end()) {
         return false;
     }
 
     bool all_valid = true;
     for (const PacketAckRecord& record : found->records) {
         const bool accepted = record.destroy
-            ? acknowledge_destroy(client, record.entity, record.frame)
-            : acknowledge_entity(client.id, record.entity, record.frame);
+            ? client_acknowledged_destroy(server, client, record.entity, record.frame)
+            : server.acknowledge_entity(client.id, record.entity, record.frame);
         all_valid = accepted && all_valid;
     }
-    if (options_.bandwidth.enabled) {
-        client.bandwidth.packet_acked(options_.bandwidth, found->sent_frame, frame_, found->charged_bytes);
+    if (server.options().bandwidth.enabled) {
+        client.bandwidth.packet_acked(server.options().bandwidth, found->sent_frame, server.frame(), found->charged_bytes);
     }
-    client.pending_packet_acks.erase(found);
+    pending_packet_acks.erase(found);
     return all_valid;
 }
 
-bool ReplicationServer::packet_ack_record_pending(const ClientState& client, const PacketAckRecord& record) const {
+bool server_detail::ServerClientReplicator::AckTracker::packet_ack_record_pending(
+    const ReplicationServer& server,
+    const ServerClientReplicator& client,
+    const PacketAckRecord& record) const {
     if (record.destroy) {
-        return std::any_of(
-            client.pending_destroys.begin(),
-            client.pending_destroys.end(),
-            [&](const ClientDestroyState& pending) {
-                return pending.entity == record.entity && record.frame <= pending.frame;
-            });
+        return client.destroys.contains_ack_record(record.entity, record.frame);
     }
 
-    const auto found_slot = entity_to_slot_.find(record.entity.value);
-    if (found_slot == entity_to_slot_.end()) {
+    const std::uint32_t slot = server.replicated_slot_for_entity(record.entity);
+    if (slot == server_detail::invalid_quantized_frame_id) {
         return false;
     }
-    const std::uint32_t slot = found_slot->second;
-    if (slot >= client.entity_states.size()) {
+    const ClientEntityState* state = client.entities.try_get(slot);
+    if (state == nullptr) {
         return false;
     }
-    const ClientEntityState& state = client.entity_states[slot];
     return std::any_of(
-        state.pending.begin(),
-        state.pending.end(),
+        state->pending.begin(),
+        state->pending.end(),
         [&](const ClientEntityState::PendingQuantizedFrame& pending) {
             return pending.frame == record.frame;
         });
 }
 
-void ReplicationServer::cleanup_packet_acks(ClientState& client) {
-    client.pending_packet_acks.erase(
+void server_detail::ServerClientReplicator::AckTracker::cleanup_packet_acks(
+    ReplicationServer& server,
+    ServerClientReplicator& client) {
+    pending_packet_acks.erase(
         std::remove_if(
-            client.pending_packet_acks.begin(),
-            client.pending_packet_acks.end(),
+            pending_packet_acks.begin(),
+            pending_packet_acks.end(),
             [&](const PendingPacketAck& pending_packet) {
                 const bool stale = std::none_of(
                     pending_packet.records.begin(),
                     pending_packet.records.end(),
                     [&](const PacketAckRecord& record) {
-                        return packet_ack_record_pending(client, record);
+                        return packet_ack_record_pending(server, client, record);
                     });
-                if (stale && options_.bandwidth.enabled) {
-                    client.bandwidth.packet_lost(options_.bandwidth, frame_, pending_packet.charged_bytes);
+                if (stale && server.options().bandwidth.enabled) {
+                    client.bandwidth.packet_lost(server.options().bandwidth, server.frame(), pending_packet.charged_bytes);
                 }
                 return stale;
             }),
-        client.pending_packet_acks.end());
+        pending_packet_acks.end());
 }
 
-std::uint32_t ReplicationServer::allocate_packet_id(ClientState& client) {
-    const server_detail::ServerPacketIdAllocator allocator(options_.protocol.max_pending_packet_acks_per_client);
-    const std::uint32_t packet_id = allocator.allocate(client.next_packet_id);
-    client.pending_packet_acks.erase(
+std::uint32_t server_detail::ServerClientReplicator::AckTracker::allocate_packet_id(
+    ReplicationServer& server,
+    ServerClientReplicator& client) {
+    const ReplicationServerOptions& options = server.options();
+    const server_detail::ServerPacketIdAllocator allocator(options.protocol.max_pending_packet_acks_per_client);
+    const std::uint32_t packet_id = allocator.allocate(next_packet_id);
+    pending_packet_acks.erase(
         std::remove_if(
-            client.pending_packet_acks.begin(),
-            client.pending_packet_acks.end(),
+            pending_packet_acks.begin(),
+            pending_packet_acks.end(),
             [&](const PendingPacketAck& pending) {
                 if (pending.packet_id != packet_id) {
                     return false;
                 }
-                if (options_.bandwidth.enabled) {
-                    client.bandwidth.packet_lost(options_.bandwidth, frame_, pending.charged_bytes);
+                if (options.bandwidth.enabled) {
+                    client.bandwidth.packet_lost(options.bandwidth, server.frame(), pending.charged_bytes);
                 }
                 return true;
             }),
-        client.pending_packet_acks.end());
+        pending_packet_acks.end());
     return packet_id;
 }
 
-void ReplicationServer::enforce_pending_packet_ack_limit(ClientState& client) {
-    const std::size_t max_pending = options_.protocol.max_pending_packet_acks_per_client;
-    if (client.pending_packet_acks.size() <= max_pending) {
+void server_detail::ServerClientReplicator::AckTracker::enforce_pending_packet_ack_limit(
+    ReplicationServer& server,
+    ServerClientReplicator& client) {
+    const ReplicationServerOptions& options = server.options();
+    const std::size_t max_pending = options.protocol.max_pending_packet_acks_per_client;
+    if (pending_packet_acks.size() <= max_pending) {
         return;
     }
-    const std::size_t drop_count = client.pending_packet_acks.size() - max_pending;
-    if (options_.bandwidth.enabled) {
+    const std::size_t drop_count = pending_packet_acks.size() - max_pending;
+    if (options.bandwidth.enabled) {
         for (std::size_t index = 0; index < drop_count; ++index) {
-            client.bandwidth.packet_lost(options_.bandwidth, frame_, client.pending_packet_acks[index].charged_bytes);
+            client.bandwidth.packet_lost(
+                options.bandwidth,
+                server.frame(),
+                pending_packet_acks[index].charged_bytes);
         }
     }
-    client.pending_packet_acks.erase(
-        client.pending_packet_acks.begin(),
-        client.pending_packet_acks.begin() +
+    pending_packet_acks.erase(
+        pending_packet_acks.begin(),
+        pending_packet_acks.begin() +
             static_cast<std::vector<PendingPacketAck>::difference_type>(drop_count));
 }
 
-std::size_t ReplicationServer::begin_client_bandwidth_tick(ClientState& client) {
+std::size_t ReplicationServer::begin_client_bandwidth_tick(ServerClientReplicator& client) {
     if (!options_.bandwidth.enabled) {
         return options_.bandwidth_limit_bytes_per_tick;
     }
@@ -146,8 +149,8 @@ std::size_t ReplicationServer::charged_packet_bytes(std::size_t payload_bytes) c
     return payload_bytes + (options_.bandwidth.enabled ? options_.bandwidth.transport_overhead_bytes_per_packet : 0U);
 }
 
-void ReplicationServer::track_packet_ack(
-    ClientState& client,
+void server_detail::ServerClientReplicator::AckTracker::track_packet_ack(
+    ServerClientReplicator& client,
     std::uint32_t packet_id,
     SyncFrame sent_frame,
     std::size_t charged_bytes,
@@ -155,7 +158,7 @@ void ReplicationServer::track_packet_ack(
     if (records.empty()) {
         return;
     }
-    server_detail::track_packet_ack(client.pending_packet_acks, packet_id, sent_frame, charged_bytes, records);
+    server_detail::track_packet_ack(pending_packet_acks, packet_id, sent_frame, charged_bytes, records);
     if (charged_bytes != 0U) {
         client.bandwidth.packet_sent(charged_bytes);
     }

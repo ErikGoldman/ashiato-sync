@@ -1,0 +1,286 @@
+#include "kage/sync/server.hpp"
+
+#include "server/detail.hpp"
+#include "server/packet.hpp"
+#include "server/state.hpp"
+
+#include "kage/sync/protocol.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+namespace kage::sync {
+
+void server_detail::ServerClientReplicator::UpdateScheduler::send_client(
+    ReplicationServer& server,
+    ecs::Registry& registry,
+    const SyncSettings& settings,
+    ServerClientReplicator& replication,
+    std::uint32_t completed_frames) {
+    (void)completed_frames;
+    ++replication.epoch;
+    replication.expire_pending_cues(server.frame());
+
+    const ReplicationServerOptions& options = server.options();
+    std::size_t remaining = server.begin_client_bandwidth_tick(replication);
+    std::uint16_t packet_entities = 0;
+    candidates_.clear();
+    candidates_.reserve(replication.dirty_queue.dirty_replicated_indices.size() + replication.destroys.size());
+    update_candidates_.clear();
+    update_candidates_.reserve(replication.dirty_queue.dirty_replicated_indices.size());
+    destroy_order_.clear();
+    destroy_order_.reserve(replication.destroys.size());
+    records_.clear();
+    records_.reserve_bytes(options.mtu_bytes);
+    packet_ack_records_.clear();
+    packet_ack_records_.reserve(options.mtu_bytes / 8U);
+
+    replication.ensure_capacity(server.replicated_slot_count());
+    for (const std::uint32_t slot : replication.dirty_queue.dirty_replicated_indices) {
+        if (slot >= replication.dirty_queue.entries.size()) {
+            continue;
+        }
+        ClientDirtyQueue::Entry& entry = replication.dirty_queue.entries[slot];
+        if (!entry.queued || entry.baseline_frame >= entry.dirty_frame) {
+            continue;
+        }
+        if (!server.replicated_slot_is_replicable(registry, slot)) {
+            if (server.replicated_slot_active(slot)) {
+                server.deactivate_replicated_slot(slot);
+            }
+            continue;
+        }
+        refresh_priority_if_due(server, replication, slot, entry);
+        if (std::isnan(entry.last_priority)) {
+            continue;
+        }
+        if (std::numeric_limits<float>::max() - entry.priority_accumulator < entry.last_priority) {
+            entry.priority_accumulator = std::numeric_limits<float>::max();
+        } else {
+            entry.priority_accumulator += entry.last_priority;
+        }
+        const ClientEntityState* entity_state = replication.entities.try_get(slot);
+        if (entity_state == nullptr) {
+            continue;
+        }
+        update_candidates_.push_back(SerializedCandidate{
+            SerializedCandidate::Kind::Update,
+            slot,
+            0,
+            server_detail::boosted_candidate_priority(
+                entry.priority_accumulator,
+                0.0f,
+                entity_state->reference_priority_boost_pending),
+            entry.component_mask});
+    }
+    std::stable_sort(
+        update_candidates_.begin(),
+        update_candidates_.end(),
+        [](const SerializedCandidate& lhs, const SerializedCandidate& rhs) {
+            return lhs.priority > rhs.priority;
+        });
+
+    if (replication.destroys.empty()) {
+        candidates_.insert(candidates_.end(), update_candidates_.begin(), update_candidates_.end());
+    } else {
+        for (std::size_t index = 0; index < replication.destroys.size(); ++index) {
+            destroy_order_.push_back(index);
+        }
+        std::stable_sort(
+            destroy_order_.begin(),
+            destroy_order_.end(),
+            [&](std::size_t lhs, std::size_t rhs) {
+                const ClientDestroyState& left = replication.destroys.at(lhs);
+                const ClientDestroyState& right = replication.destroys.at(rhs);
+                if (left.reset_epoch != right.reset_epoch) {
+                    return left.reset_epoch < right.reset_epoch;
+                }
+                return lhs < rhs;
+            });
+
+        for (const std::size_t destroy_index : destroy_order_) {
+            const ClientDestroyState& destroy = replication.destroys.at(destroy_index);
+            candidates_.push_back(SerializedCandidate{
+                SerializedCandidate::Kind::Destroy,
+                0,
+                destroy_index,
+                static_cast<float>(replication.epoch - destroy.reset_epoch)});
+        }
+        candidates_.insert(candidates_.end(), update_candidates_.begin(), update_candidates_.end());
+    }
+
+    const std::size_t update_header_bits = server_detail::server_update_header_bits(options);
+    for (const SerializedCandidate& candidate : candidates_) {
+        if (candidate.kind == SerializedCandidate::Kind::Destroy) {
+            if (candidate.destroy_index >= replication.destroys.size()) {
+                continue;
+            }
+            ClientDestroyState& destroy = replication.destroys.at(candidate.destroy_index);
+            const std::size_t destroy_bits =
+                server_detail::destroy_record_bits(
+                    destroy.network_id,
+                    options.protocol.network_entity_id_tier0_bits);
+            const std::size_t next_packet_bits =
+                update_header_bits + records_.bit_size() + destroy_bits;
+            if (!records_.empty() && protocol::bytes_for_bits(next_packet_bits) > options.mtu_bytes) {
+                const std::size_t packet_bytes =
+                    protocol::bytes_for_bits(update_header_bits + records_.bit_size());
+                const std::size_t charged_bytes = server.charged_packet_bytes(packet_bytes);
+                if (charged_bytes > remaining) {
+                    break;
+                }
+                server.send_server_update_packet(replication, server.frame(), packet_entities, records_, packet_ack_records_);
+                remaining -= charged_bytes;
+                records_.clear();
+                packet_ack_records_.clear();
+                packet_entities = 0;
+            }
+
+            const std::size_t packet_bytes =
+                protocol::bytes_for_bits(update_header_bits + records_.bit_size() + destroy_bits);
+            const std::size_t charged_bytes = server.charged_packet_bytes(packet_bytes);
+            if (packet_bytes > options.mtu_bytes || charged_bytes > remaining) {
+                continue;
+            }
+
+            destroy.frame = server.frame();
+            destroy.reset_epoch = replication.epoch;
+            records_.push_bool(true);
+            protocol::write_network_entity_id(
+                records_,
+                destroy.network_id,
+                options.protocol.network_entity_id_tier0_bits);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+            server.trace_entity_destroyed(replication.id, destroy.entity, destroy.network_id, destroy.network_version);
+#endif
+            packet_ack_records_.push_back(PacketAckRecord{destroy.entity, server.frame(), true});
+            ++packet_entities;
+            continue;
+        }
+
+        const std::uint32_t slot = candidate.slot;
+        if (!server.replicated_slot_is_replicable(registry, slot)) {
+            continue;
+        }
+
+        serialized_.payload.clear();
+        serialized_.quantized_frame = server_detail::invalid_quantized_frame_id;
+        if (!writer_.serialize_entity(
+                server,
+                registry,
+                settings,
+                replication,
+                slot,
+                server.frame(),
+                candidate.component_mask,
+                serialized_)) {
+            continue;
+        }
+
+        const std::size_t next_packet_bits =
+            update_header_bits + records_.bit_size() + 1U + serialized_.payload.bit_size();
+        if (!records_.empty() && protocol::bytes_for_bits(next_packet_bits) > options.mtu_bytes) {
+            const std::size_t packet_bytes =
+                protocol::bytes_for_bits(update_header_bits + records_.bit_size());
+            const std::size_t charged_bytes = server.charged_packet_bytes(packet_bytes);
+            if (charged_bytes > remaining) {
+                server.release_server_quantized_frame(serialized_.quantized_frame);
+                continue;
+            }
+            server.send_server_update_packet(replication, server.frame(), packet_entities, records_, packet_ack_records_);
+            remaining -= charged_bytes;
+            records_.clear();
+            packet_ack_records_.clear();
+            packet_entities = 0;
+        }
+
+        const std::size_t single_packet_bits =
+            update_header_bits + records_.bit_size() + 1U + serialized_.payload.bit_size();
+        const std::size_t packet_bytes = protocol::bytes_for_bits(single_packet_bits);
+        const std::size_t charged_bytes = server.charged_packet_bytes(packet_bytes);
+        if (packet_bytes > options.mtu_bytes || charged_bytes > remaining) {
+            server.release_server_quantized_frame(serialized_.quantized_frame);
+            continue;
+        }
+
+        records_.push_bool(false);
+        records_.push_buffer_bits(serialized_.payload);
+        PacketAckRecord ack_record{server.replicated_slot_entity(slot), server.frame(), false};
+#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+        if (const ClientEntityState* entity_state = replication.entities.try_get(slot)) {
+            server.append_server_packet_ack_cues(settings, *entity_state, ack_record);
+        }
+#endif
+        packet_ack_records_.push_back(std::move(ack_record));
+        ++packet_entities;
+        if (slot < replication.dirty_queue.entries.size()) {
+            ClientDirtyQueue::Entry& entry = replication.dirty_queue.entries[slot];
+            entry.dirty_frame = server.frame();
+            entry.priority_accumulator = 0.0f;
+        }
+        ClientEntityState* entity_state = replication.entities.try_get(slot);
+        if (entity_state == nullptr) {
+            server.release_server_quantized_frame(serialized_.quantized_frame);
+            continue;
+        }
+        entity_state->reference_priority_boost_pending = false;
+        entity_state->pending.push_back(ClientEntityState::PendingQuantizedFrame{serialized_.quantized_frame, server.frame()});
+        server.retain_server_quantized_frame(serialized_.quantized_frame);
+        while (entity_state->pending.size() > server_detail::max_pending_quantized_frames_per_entity) {
+            server.release_server_quantized_frame(entity_state->pending.front().quantized_frame);
+            entity_state->pending.erase(entity_state->pending.begin());
+        }
+    }
+
+    if (!records_.empty()) {
+        const std::size_t packet_bytes =
+            protocol::bytes_for_bits(update_header_bits + records_.bit_size());
+        const std::size_t charged_bytes = server.charged_packet_bytes(packet_bytes);
+        if (charged_bytes <= remaining) {
+            server.send_server_update_packet(replication, server.frame(), packet_entities, records_, packet_ack_records_);
+            remaining -= charged_bytes;
+        }
+    }
+    cleanup_dirty_queue(replication);
+}
+
+void server_detail::ServerClientReplicator::UpdateScheduler::refresh_priority_if_due(
+    ReplicationServer& server,
+    ServerClientReplicator& replication,
+    std::uint32_t slot,
+    ClientDirtyQueue::Entry& entry) {
+    const SyncFrame interval = server.options().prioritizer_interval_frames;
+    const bool bucket_due = interval == 0U || slot % interval == server.frame() % interval;
+    if (!std::isnan(entry.last_priority) && !bucket_due) {
+        return;
+    }
+
+    const ReplicationPriorityDecision decision =
+        server.options().prioritizer(replication.id, ReplicationPriorityObject{server.replicated_slot_entity(slot)});
+    entry.last_priority = decision.priority;
+    entry.component_mask = decision.component_mask;
+    if (ClientEntityState* entity_state = replication.entities.try_get(slot)) {
+        entity_state->last_priority = entry.last_priority;
+        entity_state->component_mask = entry.component_mask;
+    }
+}
+
+void server_detail::ServerClientReplicator::UpdateScheduler::cleanup_dirty_queue(
+    ServerClientReplicator& replication) {
+    replication.dirty_queue.dirty_replicated_indices.erase(
+        std::remove_if(
+            replication.dirty_queue.dirty_replicated_indices.begin(),
+            replication.dirty_queue.dirty_replicated_indices.end(),
+            [&](std::uint32_t slot) {
+                const bool remove = slot >= replication.dirty_queue.entries.size() ||
+                    !replication.dirty_queue.entries[slot].queued;
+                if (remove && slot < replication.dirty_queue.entries.size()) {
+                    replication.dirty_queue.entries[slot].listed = false;
+                }
+                return remove;
+            }),
+        replication.dirty_queue.dirty_replicated_indices.end());
+}
+
+}  // namespace kage::sync

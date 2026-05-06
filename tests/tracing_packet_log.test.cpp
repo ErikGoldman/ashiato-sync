@@ -51,7 +51,7 @@ TEST_CASE("packet log tracing is opt-in and records client and server packet det
     server.set_tracer(&server_tracer);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(server_packets.size() == 1);
     REQUIRE(std::any_of(server_events.begin(), server_events.end(), [&](const kage::sync::SyncTraceEvent& event) {
         return event.type == kage::sync::SyncTraceEventType::PacketLog &&
@@ -87,7 +87,7 @@ TEST_CASE("packet log tracing is opt-in and records client and server packet det
             event.data.find("message=client_ack") != std::string::npos &&
             event.data.find("acks=[1]") != std::string::npos;
     }));
-    REQUIRE(server.process_packet(1, ack_packets[0]));
+    REQUIRE(server.process_packet(server_registry, 1, ack_packets[0]));
     REQUIRE(std::any_of(server_events.begin(), server_events.end(), [](const kage::sync::SyncTraceEvent& event) {
         return event.type == kage::sync::SyncTraceEventType::PacketLog &&
             event.role == kage::sync::SyncTraceRole::Server &&
@@ -112,7 +112,7 @@ TEST_CASE("packet log tracing records ACK-only traffic as client ACK packets") {
     kage::sync::ReplicationServer server(server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(server_packets.size() == 1);
 
     ecs::Registry client_registry;
@@ -176,7 +176,7 @@ TEST_CASE("packet log tracing records cue summaries and cue payload data") {
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     REQUIRE(kage::sync::emit_cue(server_registry, server_entity, 1, kage_sync_tests::TestCue{7}, 1.0f));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
     REQUIRE(std::any_of(server_events.begin(), server_events.end(), [](const kage::sync::SyncTraceEvent& event) {
         return event.type == kage::sync::SyncTraceEventType::PacketLog &&

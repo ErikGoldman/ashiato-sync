@@ -25,26 +25,33 @@ kage::sync::SyncArchetypeId define_networked_position_archetype(ecs::Registry& r
         {{position_component, kage::sync::ReplicationAudience::All}});
 }
 
+void run_server_tick(kage::sync::ReplicationServer& server, ecs::Registry& registry) {
+    REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
+}
+
 TEST_CASE("replication server rejects malformed ACK packets") {
+    ecs::Registry registry;
+    kage::sync::configure_server(registry);
+
     kage::sync::ReplicationServer server;
     REQUIRE(server.add_client(1));
 
     ecs::BitBuffer empty;
-    REQUIRE_FALSE(server.process_packet(1, empty));
+    REQUIRE_FALSE(server.process_packet(registry, 1, empty));
 
     ecs::BitBuffer wrong_message;
     wrong_message.push_bits(kage::sync::protocol::server_update_message, 8U);
     wrong_message.push_bits(0, 16U);
-    REQUIRE_FALSE(server.process_packet(1, wrong_message));
+    REQUIRE_FALSE(server.process_packet(registry, 1, wrong_message));
 
     ecs::BitBuffer truncated_record;
     truncated_record.push_bits(kage::sync::protocol::client_ack_message, 8U);
     truncated_record.push_bits(1, 16U);
     truncated_record.push_bool(false);
-    REQUIRE_FALSE(server.process_packet(1, truncated_record));
+    REQUIRE_FALSE(server.process_packet(registry, 1, truncated_record));
 
-    REQUIRE_FALSE(server.process_packet(99, write_ack_packet(42)));
-    REQUIRE_FALSE(server.process_packet(1, write_ack_packet(42)));
+    REQUIRE_FALSE(server.process_packet(registry, 99, write_ack_packet(42)));
+    REQUIRE_FALSE(server.process_packet(registry, 1, write_ack_packet(42)));
 }
 
 TEST_CASE("replication server rejects malformed connect ack and input packets") {
@@ -68,10 +75,6 @@ TEST_CASE("replication server rejects malformed connect ack and input packets") 
     wrong_connect_ack.push_bits(kage::sync::protocol::client_connect_ack_message, 8U);
     wrong_connect_ack.push_unsigned_bits(2, 64U);
     REQUIRE_FALSE(server.process_packet(registry, 1, wrong_connect_ack));
-
-    ecs::BitBuffer input_without_registry;
-    input_without_registry.push_bits(kage::sync::protocol::client_input_message, 8U);
-    REQUIRE_FALSE(server.process_packet(1, input_without_registry));
 
     ecs::BitBuffer truncated_input;
     truncated_input.push_bits(kage::sync::protocol::client_input_message, 8U);
@@ -102,7 +105,7 @@ TEST_CASE("replication server respects per-client bandwidth limits") {
         REQUIRE(start_sync(registry, entity, archetype));
     }
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     REQUIRE(payloads.size() == 1);
     const ServerUpdatePacket update = read_server_update(payloads.back());
@@ -111,15 +114,10 @@ TEST_CASE("replication server respects per-client bandwidth limits") {
     for (const EntityRecord& record : update.entities) {
         sent.push_back(entities[record.network_id - 1U]);
     }
-    for (const ecs::Entity entity : sent) {
-        REQUIRE(server.priority(1, entity) == 0);
-    }
-
     std::size_t unsent_count = 0;
     for (const ecs::Entity entity : entities) {
         if (std::find(sent.begin(), sent.end(), entity) == sent.end()) {
             ++unsent_count;
-            REQUIRE(server.priority(1, entity) == 1);
         }
     }
     REQUIRE(unsent_count == 2);
@@ -147,10 +145,9 @@ TEST_CASE("replication server dynamic bandwidth charges transport overhead") {
     kage::sync::ReplicationServer server(options);
     REQUIRE(server.add_client(1));
 
-    server.tick(registry);
+    run_server_tick(server, registry);
 
     REQUIRE(payloads.empty());
-    REQUIRE(server.priority(1, entity) == 1);
 }
 
 TEST_CASE("replication server dynamic bandwidth sends when charged packet fits") {
@@ -174,11 +171,10 @@ TEST_CASE("replication server dynamic bandwidth sends when charged packet fits")
     kage::sync::ReplicationServer server(options);
     REQUIRE(server.add_client(1));
 
-    server.tick(registry);
+    run_server_tick(server, registry);
 
     REQUIRE(payloads.size() == 1);
     REQUIRE(read_server_update(payloads.back()).entities.size() == 1);
-    REQUIRE(server.priority(1, entity) == 0);
 }
 
 TEST_CASE("replication server prioritizes pending destroys over creates when bandwidth limited") {
@@ -192,16 +188,11 @@ TEST_CASE("replication server prioritizes pending destroys over creates when ban
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 21;
     options.prioritizer_interval_frames = 1;
-    options.prioritizer = [](
-        kage::sync::ClientId,
-        const std::vector<kage::sync::ReplicationPriorityObject>& objects,
-        std::vector<kage::sync::ReplicationPriorityDecision>& decisions) {
-        decisions.resize(objects.size());
-        for (kage::sync::ReplicationPriorityDecision& decision : decisions) {
-            decision.replicate = true;
-            decision.priority = 1000;
-            decision.component_mask = std::numeric_limits<std::uint64_t>::max();
-        }
+    options.prioritizer = [](kage::sync::ClientId, kage::sync::ReplicationPriorityObject) {
+        kage::sync::ReplicationPriorityDecision decision;
+        decision.priority = 1000.0f;
+        decision.component_mask = std::numeric_limits<std::uint64_t>::max();
+        return decision;
     };
     options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
@@ -209,7 +200,7 @@ TEST_CASE("replication server prioritizes pending destroys over creates when ban
     kage::sync::ReplicationServer server(options);
     REQUIRE(server.add_client(1));
 
-    server.tick(registry);
+    run_server_tick(server, registry);
     REQUIRE(payloads.size() == 1);
     const ServerUpdatePacket initial = read_server_update(payloads.back());
     REQUIRE(initial.entities.size() == 1);
@@ -222,14 +213,13 @@ TEST_CASE("replication server prioritizes pending destroys over creates when ban
     REQUIRE(start_sync(registry, created, archetype));
 
     payloads.clear();
-    server.tick(registry);
+    run_server_tick(server, registry);
 
     REQUIRE(payloads.size() == 1);
     const ServerUpdatePacket update = read_server_update(payloads.back());
     REQUIRE(update.entities.size() == 1);
     REQUIRE(update.entities[0].destroy);
     REQUIRE(update.entities[0].network_id == 1U);
-    REQUIRE(server.priority(1, created) == 1);
 }
 
 TEST_CASE("replication server parallel path prioritizes pending destroys over creates when bandwidth limited") {
@@ -244,16 +234,11 @@ TEST_CASE("replication server parallel path prioritizes pending destroys over cr
     options.bandwidth_limit_bytes_per_tick = 21;
     options.serialized_worker_threads = 2;
     options.prioritizer_interval_frames = 1;
-    options.prioritizer = [](
-        kage::sync::ClientId,
-        const std::vector<kage::sync::ReplicationPriorityObject>& objects,
-        std::vector<kage::sync::ReplicationPriorityDecision>& decisions) {
-        decisions.resize(objects.size());
-        for (kage::sync::ReplicationPriorityDecision& decision : decisions) {
-            decision.replicate = true;
-            decision.priority = 1000;
-            decision.component_mask = std::numeric_limits<std::uint64_t>::max();
-        }
+    options.prioritizer = [](kage::sync::ClientId, kage::sync::ReplicationPriorityObject) {
+        kage::sync::ReplicationPriorityDecision decision;
+        decision.priority = 1000.0f;
+        decision.component_mask = std::numeric_limits<std::uint64_t>::max();
+        return decision;
     };
     options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         payloads.emplace_back(client, payload);
@@ -262,7 +247,7 @@ TEST_CASE("replication server parallel path prioritizes pending destroys over cr
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
 
-    server.tick(registry);
+    run_server_tick(server, registry);
     REQUIRE(payloads.size() == 2);
     for (const kage::sync::ClientId client : {1ULL, 2ULL}) {
         const ServerUpdatePacket initial = read_server_update(packet_for(payloads, client));
@@ -277,7 +262,7 @@ TEST_CASE("replication server parallel path prioritizes pending destroys over cr
     REQUIRE(start_sync(registry, created, archetype));
 
     payloads.clear();
-    server.tick(registry);
+    run_server_tick(server, registry);
 
     REQUIRE(payloads.size() == 2);
     for (const kage::sync::ClientId client : {1ULL, 2ULL}) {
@@ -285,7 +270,6 @@ TEST_CASE("replication server parallel path prioritizes pending destroys over cr
         REQUIRE(update.entities.size() == 1);
         REQUIRE(update.entities[0].destroy);
         REQUIRE(update.entities[0].network_id == 1U);
-        REQUIRE(server.priority(client, created) == 1);
     }
 }
 
@@ -311,7 +295,7 @@ TEST_CASE("replication server parallel path applies bandwidth limits independent
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     REQUIRE(packets.size() == 2);
     for (const kage::sync::ClientId client : {1ULL, 2ULL}) {
@@ -322,7 +306,6 @@ TEST_CASE("replication server parallel path applies bandwidth limits independent
         for (const ecs::Entity entity : entities) {
             if (entity != entities[update.entities[0].network_id - 1U]) {
                 ++unsent_count;
-                REQUIRE(server.priority(client, entity) == 1);
             }
         }
         REQUIRE(unsent_count == 2);
@@ -349,7 +332,7 @@ TEST_CASE("replication server parallel path batches records when budget allows")
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     REQUIRE(packets.size() == 2);
     for (const kage::sync::ClientId client : {1ULL, 2ULL}) {
@@ -382,7 +365,7 @@ TEST_CASE("replication server rotates budget-limited sends by priority") {
 
     std::vector<ecs::Entity> sent;
     for (int i = 0; i < 3; ++i) {
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
         const ServerUpdatePacket update = read_server_update(payloads.back());
         REQUIRE(update.entities.size() == 1);
         sent.push_back(entities[update.entities[0].network_id - 1U]);
@@ -391,11 +374,10 @@ TEST_CASE("replication server rotates budget-limited sends by priority") {
     REQUIRE(sent.size() == 3);
     for (const ecs::Entity entity : entities) {
         REQUIRE(std::find(sent.begin(), sent.end(), entity) != sent.end());
-        REQUIRE(server.priority(1, entity) <= 2);
     }
 }
 
-TEST_CASE("replication server keeps per-client priorities independent") {
+TEST_CASE("replication server keeps per-client dirty queues independent") {
     ecs::Registry registry;
     const kage::sync::SyncArchetypeId archetype = define_networked_position_archetype(registry);
     const ecs::Entity first = registry.create();
@@ -415,7 +397,7 @@ TEST_CASE("replication server keeps per-client priorities independent") {
     REQUIRE(start_sync(registry, second, archetype));
     REQUIRE(server.add_client(2));
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     for (const auto& [client, payload] : payloads) {
         const ServerUpdatePacket update = read_server_update(payload);
         REQUIRE((client == 1 || client == 2));
@@ -423,10 +405,6 @@ TEST_CASE("replication server keeps per-client priorities independent") {
     }
 
     REQUIRE(payloads.size() == 2);
-    REQUIRE(server.priority(1, first) == 0);
-    REQUIRE(server.priority(2, first) == 0);
-    REQUIRE(server.priority(1, second) == 1);
-    REQUIRE(server.priority(2, second) == 1);
 }
 
 TEST_CASE("replication server skips destroyed and externally unmarked entities") {
@@ -454,7 +432,7 @@ TEST_CASE("replication server skips destroyed and externally unmarked entities")
     REQUIRE(registry.destroy(destroyed));
     REQUIRE(registry.remove<kage::sync::Replicated>(unmarked));
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     REQUIRE(payloads.size() == 1);
     const ServerUpdatePacket update = read_server_update(payloads.back());
@@ -482,10 +460,9 @@ TEST_CASE("replication server sends nothing when bandwidth cannot cover a serial
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, entity, archetype));
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     REQUIRE(sends == 0);
-    REQUIRE(server.priority(1, entity) == 1);
 }
 
 TEST_CASE("replication server parallel path releases quantized frames for unsent records") {
@@ -506,7 +483,7 @@ TEST_CASE("replication server parallel path releases quantized frames for unsent
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     REQUIRE(packets.empty());
     REQUIRE(server.retained_quantized_frame_count() == 0U);
@@ -536,7 +513,7 @@ TEST_CASE("replication server serializes full and delta component payloads throu
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, entity, archetype));
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 1);
     ServerUpdatePacket update = read_server_update(payloads[0]);
     REQUIRE(update.entities.size() == 1);
@@ -549,7 +526,7 @@ TEST_CASE("replication server serializes full and delta component payloads throu
     REQUIRE(server.acknowledge_entity(1, entity, update.frame));
 
     registry.write<NetworkedPosition>(entity) = NetworkedPosition{2.0f, 3.0f};
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     REQUIRE(payloads.size() == 2);
     update = read_server_update(payloads[1]);
@@ -593,7 +570,7 @@ TEST_CASE("replication server sends a full update after archetype replacement") 
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, entity, position_archetype));
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     ServerUpdatePacket update = read_server_update(payloads.back());
     REQUIRE(update.entities.size() == 1);
     REQUIRE(update.entities[0].full);
@@ -601,7 +578,7 @@ TEST_CASE("replication server sends a full update after archetype replacement") 
     REQUIRE(server.acknowledge_entity(1, entity, update.frame));
 
     REQUIRE(start_sync(registry, entity, actor_archetype));
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     update = read_server_update(payloads.back(), 3U);
     REQUIRE(update.entities.size() == 1);
@@ -635,25 +612,21 @@ TEST_CASE("replication server applies bandwidth limits to actual serialized byte
     REQUIRE(start_sync(registry, first, archetype));
     REQUIRE(start_sync(registry, second, archetype));
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     REQUIRE(payloads.size() == 1);
     NetworkedPayload fields = read_first_networked_payload(payloads[0]);
     REQUIRE_FALSE(fields.delta);
     REQUIRE(fields.x == 10);
     REQUIRE(fields.y == 10);
-    REQUIRE(server.priority(1, first) == 0);
-    REQUIRE(server.priority(1, second) == 1);
-
     registry.write<NetworkedPosition>(second) = NetworkedPosition{7.0f, 8.0f};
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     REQUIRE(payloads.size() == 2);
     fields = read_first_networked_payload(payloads[1]);
     REQUIRE_FALSE(fields.delta);
     REQUIRE(fields.x == 70);
     REQUIRE(fields.y == 80);
-    REQUIRE(server.priority(1, second) == 0);
 }
 
 TEST_CASE("replication server filters owner-only serialized components") {
@@ -685,7 +658,7 @@ TEST_CASE("replication server filters owner-only serialized components") {
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(registry, entity, archetype));
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     REQUIRE(sends.size() == 2);
     REQUIRE(sends[0] == std::pair<kage::sync::ClientId, std::size_t>{1, 21});
@@ -724,7 +697,7 @@ TEST_CASE("replication server serializes compact synced tag masks per client") {
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(registry, entity, archetype));
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 2);
     for (auto sent : payloads) {
         ecs::BitBuffer packet = sent.second;
@@ -752,7 +725,7 @@ TEST_CASE("replication server serializes compact synced tag masks per client") {
 
     REQUIRE(registry.remove_tag(entity, visible));
     payloads.clear();
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 2);
     for (auto sent : payloads) {
         ecs::BitBuffer packet = sent.second;
@@ -775,7 +748,7 @@ TEST_CASE("replication server serializes compact synced tag masks per client") {
     }
 }
 
-TEST_CASE("replication server batches sphere filtering and component LOD masks") {
+TEST_CASE("replication server applies sphere priorities and component LOD masks") {
     ecs::Registry registry;
     const ecs::Entity health_component = kage::sync::register_sync_component<Health>(registry, "Health");
     const ecs::Entity position_component =
@@ -801,18 +774,14 @@ TEST_CASE("replication server batches sphere filtering and component LOD masks")
     kage::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
     options.prioritizer_interval_frames = 1;
-    options.prioritizer = [&](kage::sync::ClientId client,
-                              const std::vector<kage::sync::ReplicationPriorityObject>& objects,
-                              std::vector<kage::sync::ReplicationPriorityDecision>& decisions) {
+    options.prioritizer = [&](kage::sync::ClientId client, kage::sync::ReplicationPriorityObject object) {
         REQUIRE(client == 1);
         ++prioritizer_calls;
-        REQUIRE(decisions.size() == objects.size());
-        for (std::size_t index = 0; index < objects.size(); ++index) {
-            const NetworkedPosition& position = registry.get<NetworkedPosition>(objects[index].entity);
-            decisions[index].replicate = position.x <= 2.0f;
-            decisions[index].priority = decisions[index].replicate ? 100U : 0U;
-            decisions[index].component_mask = std::uint64_t{1} << 0U;
-        }
+        const NetworkedPosition& position = registry.get<NetworkedPosition>(object.entity);
+        kage::sync::ReplicationPriorityDecision decision;
+        decision.priority = position.x <= 2.0f ? 100.0f : 0.0f;
+        decision.component_mask = std::uint64_t{1} << 0U;
+        return decision;
     };
     options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
@@ -820,12 +789,12 @@ TEST_CASE("replication server batches sphere filtering and component LOD masks")
 
     kage::sync::ReplicationServer server(options);
     REQUIRE(server.add_client(1));
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
-    REQUIRE(prioritizer_calls == 1);
+    REQUIRE(prioritizer_calls == 2);
     REQUIRE(payloads.size() == 1);
     const ServerUpdatePacket update = read_server_update(payloads[0], 2U);
-    REQUIRE(update.entities.size() == 1);
+    REQUIRE(update.entities.size() == 2);
     REQUIRE(update.entities[0].network_id != 0);
     REQUIRE(update.entities[0].components.size() == 1);
     REQUIRE(update.entities[0].components[0].component_index == 1);
@@ -857,7 +826,7 @@ TEST_CASE("replication server packs entity records up to the configured mtu") {
     REQUIRE(start_sync(registry, first, archetype));
     REQUIRE(start_sync(registry, second, archetype));
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     REQUIRE(payloads.size() == 1);
     REQUIRE(payloads[0].byte_size() == 29);
@@ -891,7 +860,7 @@ TEST_CASE("replication server splits packed updates at the mtu boundary") {
     REQUIRE(start_sync(registry, first, archetype));
     REQUIRE(start_sync(registry, second, archetype));
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     REQUIRE(payloads.size() == 2);
     for (const ecs::BitBuffer& payload : payloads) {

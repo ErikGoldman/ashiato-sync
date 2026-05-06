@@ -18,6 +18,7 @@ add_executable(kage_sync_tests
     components.test.cpp
     display.test.cpp
     header_api.test.cpp
+    integration_smoke.test.cpp
     options_validation.test.cpp
     quantized_bytes.test.cpp
     server_connection.test.cpp

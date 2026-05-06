@@ -41,24 +41,24 @@ TEST_CASE("ServerInputBuffer decodes full input frames and selects due inputs") 
     REQUIRE(trace.first_input_frame == 3);
     REQUIRE(trace.last_input_frame == 4);
 
-    kage::sync::server_detail::ServerDueInput due = buffer.select_due_input(3, 1);
+    kage::sync::server_detail::ServerInputForFrame due = buffer.select_input_for_frame(3, 1);
     REQUIRE(due.bytes != nullptr);
     REQUIRE((*due.bytes)[0] == 10);
-    REQUIRE(due.frame == 3);
+    REQUIRE(due.input_frame == 3);
     REQUIRE(buffer.stats().latest_applied_input_frame == 3);
     REQUIRE(buffer.stats().input_frames_applied == 1);
     REQUIRE(buffer.stats().input_starvation_frames == 0);
 
-    due = buffer.select_due_input(4, 1);
+    due = buffer.select_input_for_frame(4, 1);
     REQUIRE(due.bytes != nullptr);
     REQUIRE((*due.bytes)[0] == 11);
-    REQUIRE(due.frame == 4);
+    REQUIRE(due.input_frame == 4);
     REQUIRE(buffer.stats().input_frames_applied == 2);
 
-    due = buffer.select_due_input(5, 1);
+    due = buffer.select_input_for_frame(5, 1);
     REQUIRE(due.bytes != nullptr);
     REQUIRE((*due.bytes)[0] == 11);
-    REQUIRE(due.frame == 4);
+    REQUIRE(due.input_frame == 4);
     REQUIRE(buffer.stats().input_starvation_frames == 1);
     REQUIRE(buffer.stats().input_reused_frames == 1);
 }

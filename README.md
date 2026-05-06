@@ -175,7 +175,7 @@ int main() {
     server.add_client(1);
     registry.add<kage::sync::Replicated>(entity, {actor});
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 }
 ```
 

@@ -47,15 +47,15 @@ TEST_CASE("fractional tick sampling samples fractional frames without mutating E
         kage::sync::ReplicationClientMode::BufferedInterpolation,
         1,
         8});
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(client.receive(client_registry, packets.back()));
     for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
-        REQUIRE(server.process_packet(1, ack));
+        REQUIRE(server.process_packet(server_registry, 1, ack));
     }
 
     packets.clear();
     server_registry.write<SmoothPosition>(server_entity) = SmoothPosition{10.0f, 0.0f};
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     const UpdatePacket update = read_update(packets.back(), 1U);
     REQUIRE(update.records.size() == 1);
     const kage::sync::ClientEntityNetworkId client_entity_network_id =
@@ -171,10 +171,10 @@ TEST_CASE("fractional tick samples throw for non-sampled components instead of f
     kage::sync::ReplicationServer server(server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     server_registry.write<SmoothPosition>(server_entity) = SmoothPosition{10.0f, 0.0f};
     server_registry.write<Health>(server_entity) = Health{0};
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 2);
 
     ecs::Registry client_registry;

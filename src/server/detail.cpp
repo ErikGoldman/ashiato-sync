@@ -13,11 +13,11 @@ SyncTraceEvent make_server_trace_event(SyncTraceEventType type, ClientId client,
 }
 #endif
 
-std::uint64_t boosted_candidate_priority(
-    std::uint64_t age,
-    std::uint64_t priority,
+float boosted_candidate_priority(
+    float age,
+    float priority,
     bool reference_boost_pending) noexcept {
-    const std::uint64_t max = std::numeric_limits<std::uint64_t>::max();
+    const float max = std::numeric_limits<float>::max();
     if (max - age < priority) {
         age = max;
     } else {

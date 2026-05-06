@@ -41,12 +41,12 @@ TEST_CASE("replication server sends pending destroys before bandwidth-limited up
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, destroyed, archetype));
     REQUIRE(start_sync(registry, live, archetype));
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 1);
     payloads.clear();
 
     REQUIRE(registry.destroy(destroyed));
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 1);
     ServerUpdatePacket update = read_server_update(payloads.back());
     REQUIRE(update.entities.size() == 1);
@@ -55,7 +55,7 @@ TEST_CASE("replication server sends pending destroys before bandwidth-limited up
     REQUIRE(server.process_packet(1, write_ack_packet(update.packet_id)));
     payloads.clear();
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 1);
     update = read_server_update(payloads.back());
     REQUIRE(update.entities.size() == 1);
@@ -79,18 +79,18 @@ TEST_CASE("replication server resends pending destroys until ACKed") {
     kage::sync::ReplicationServer server(options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, entity, archetype));
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     payloads.clear();
 
     REQUIRE(registry.destroy(entity));
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 1);
     ServerUpdatePacket first_destroy = read_server_update(payloads.back());
     REQUIRE(first_destroy.entities.size() == 1);
     REQUIRE(first_destroy.entities[0].destroy);
     payloads.clear();
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 1);
     ServerUpdatePacket resent_destroy = read_server_update(payloads.back());
     REQUIRE(resent_destroy.entities.size() == 1);
@@ -98,9 +98,9 @@ TEST_CASE("replication server resends pending destroys until ACKed") {
     REQUIRE(resent_destroy.entities[0].network_id == first_destroy.entities[0].network_id);
     REQUIRE(resent_destroy.frame > first_destroy.frame);
 
-    REQUIRE(server.process_packet(1, write_ack_packet(resent_destroy.packet_id)));
+    REQUIRE(server.process_packet(registry, 1, write_ack_packet(resent_destroy.packet_id)));
     payloads.clear();
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.empty());
 }
 
@@ -125,7 +125,7 @@ TEST_CASE("replication server does not reuse client-local network ids before des
     };
 
     const ecs::Entity first = spawn(1.0f);
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 1);
     const ServerUpdatePacket first_update =
         read_server_update(payloads.back(), 2U, sizeof(kage_sync_tests::Position) * 8U);
@@ -135,7 +135,7 @@ TEST_CASE("replication server does not reuse client-local network ids before des
 
     payloads.clear();
     REQUIRE(registry.destroy(first));
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 1);
     const ServerUpdatePacket destroy_update =
         read_server_update(payloads.back(), 2U, sizeof(kage_sync_tests::Position) * 8U);
@@ -144,7 +144,7 @@ TEST_CASE("replication server does not reuse client-local network ids before des
 
     payloads.clear();
     spawn(2.0f);
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 1);
     const ServerUpdatePacket second_update =
         read_server_update(payloads.back(), 2U, sizeof(kage_sync_tests::Position) * 8U);
@@ -216,7 +216,7 @@ TEST_CASE("replication server reuses client-local network ids after each client'
     };
 
     const ecs::Entity first = spawn(1.0f);
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     ServerUpdatePacket first_update = update_for(1);
     REQUIRE(first_update.entities.size() == 1);
     const std::uint32_t reusable_network_id = first_update.entities[0].network_id;
@@ -224,16 +224,16 @@ TEST_CASE("replication server reuses client-local network ids after each client'
 
     payloads.clear();
     REQUIRE(registry.destroy(first));
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     ServerUpdatePacket client_one_destroy = destroy_for(1, reusable_network_id);
     ServerUpdatePacket client_two_destroy = destroy_for(2, reusable_network_id);
     REQUIRE(client_one_destroy.entities.size() == 1);
     REQUIRE(client_two_destroy.entities.size() == 1);
-    REQUIRE(server.process_packet(1, write_ack_packet(client_one_destroy.packet_id)));
+    REQUIRE(server.process_packet(registry, 1, write_ack_packet(client_one_destroy.packet_id)));
 
     payloads.clear();
     spawn(2.0f);
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     ServerUpdatePacket second_update = update_for(1);
     REQUIRE(second_update.entities.size() == 1);
     REQUIRE(second_update.entities[0].network_id == reusable_network_id);
@@ -249,11 +249,11 @@ TEST_CASE("replication server reuses client-local network ids after each client'
     REQUIRE(client_two_second->network_id != reusable_network_id);
 
     for (const auto& sent : payloads) {
-        REQUIRE(server.process_packet(sent.first, write_ack_packet(packet_id(sent.second))));
+        REQUIRE(server.process_packet(registry, sent.first, write_ack_packet(packet_id(sent.second))));
     }
     payloads.clear();
     spawn(3.0f);
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     ServerUpdatePacket third_update = update_for(2);
     const auto third_record = std::find_if(
         third_update.entities.begin(),
@@ -285,15 +285,15 @@ TEST_CASE("replication server reuses network ids immediately when no clients hav
     const ecs::Entity first = registry.create();
     REQUIRE(registry.add<kage_sync_tests::Position>(first, kage_sync_tests::Position{1.0f, 1.0f}) != nullptr);
     REQUIRE(start_sync(registry, first, archetype));
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(registry.destroy(first));
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     const ecs::Entity second = registry.create();
     REQUIRE(registry.add<kage_sync_tests::Position>(second, kage_sync_tests::Position{2.0f, 2.0f}) != nullptr);
     REQUIRE(start_sync(registry, second, archetype));
     REQUIRE(server.add_client(1));
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     REQUIRE(payloads.size() == 1);
     const ServerUpdatePacket update = read_server_update(payloads.back());
@@ -323,10 +323,10 @@ TEST_CASE("replication server accepts delayed entity ACKs for retained quantized
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, entity, archetype));
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     const kage::sync::SyncFrame first_frame = read_server_update(payloads.back()).frame;
     registry.write<NetworkedPosition>(entity) = NetworkedPosition{2.0f, 3.0f};
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(read_first_networked_payload(payloads.back()).delta == false);
     REQUIRE(server.acknowledge_entity(1, entity, first_frame));
     REQUIRE_FALSE(server.acknowledge_entity(1, entity, first_frame));
@@ -336,7 +336,7 @@ TEST_CASE("replication server accepts delayed entity ACKs for retained quantized
     REQUIRE_FALSE(server.acknowledge_entity(1, entity, second_frame));
 
     registry.write<NetworkedPosition>(entity) = NetworkedPosition{3.0f, 4.0f};
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(read_first_networked_payload(payloads.back()).delta);
 }
 
@@ -363,7 +363,7 @@ TEST_CASE("replication server shares ACKed quantized frames across clients and f
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(registry, entity, archetype));
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 2);
     REQUIRE(server.retained_quantized_frame_count() == 1);
     REQUIRE(server.retained_quantized_frame_bytes() == sizeof(kage_sync_tests::QuantizedNetworkedPosition));
@@ -404,7 +404,7 @@ TEST_CASE("replication server trims unacked pending quantized frames per entity"
     for (int frame = 0; frame < 70; ++frame) {
         registry.write<NetworkedPosition>(entity) =
             NetworkedPosition{static_cast<float>(frame), static_cast<float>(frame)};
-        server.tick(registry);
+        server.tick(registry, server.options().fixed_dt_seconds);
     }
 
     REQUIRE(payloads.size() == 70U);
@@ -435,7 +435,7 @@ TEST_CASE("replication server keeps swapped clients addressable after removal") 
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(registry, entity, archetype));
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 2);
 
     std::uint32_t client_two_packet_id = 0;
@@ -448,7 +448,7 @@ TEST_CASE("replication server keeps swapped clients addressable after removal") 
 
     REQUIRE(server.remove_client(1));
     REQUIRE(server.has_client(2));
-    REQUIRE(server.process_packet(2, write_ack_packet(client_two_packet_id)));
+    REQUIRE(server.process_packet(registry, 2, write_ack_packet(client_two_packet_id)));
 }
 
 TEST_CASE("replication server records bandwidth savings for ACKed delta updates") {
@@ -473,12 +473,12 @@ TEST_CASE("replication server records bandwidth savings for ACKed delta updates"
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, entity, archetype));
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.back().byte_size() == 23);
     REQUIRE(server.acknowledge_entity(1, entity, read_server_update(payloads.back()).frame));
 
     registry.write<BandwidthProbe>(entity) = BandwidthProbe{105};
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
 
     const std::size_t expected_delta_bits = kage::sync::protocol::server_update_header_bits +
         1U + kage::sync::protocol::network_entity_id_encoded_bits(1U) + 1U +

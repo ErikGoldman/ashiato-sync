@@ -499,7 +499,7 @@ Report run(const Config& config) {
             for (const ecs::BitBuffer& packet : client.drain_packets()) {
                 ++report.client_packets;
                 report.client_bytes += packet.byte_size();
-                server.process_packet(1, packet);
+                server.process_packet(server_registry, 1, packet);
             }
         }
 
@@ -520,7 +520,7 @@ Report run(const Config& config) {
 
         {
             ScopedTimer timer(report.timing.server_replication_seconds);
-            server.tick(server_registry);
+            server.tick(server_registry, server.options().fixed_dt_seconds);
         }
     }
 

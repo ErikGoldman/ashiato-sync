@@ -1986,7 +1986,7 @@ bool ReplicationClient::apply_upsert(
                 return false;
             }
             const SyncComponentOps& ops = definition.component_ops[component_index];
-            if (ops.deserialize == nullptr || ops.apply == nullptr) {
+            if (ops.deserialize == nullptr || ops.push_to_ecs == nullptr) {
                 return false;
             }
 
@@ -2072,7 +2072,7 @@ bool ReplicationClient::apply_upsert(
                 return false;
             }
             const SyncComponentOps& ops = definition.component_ops[component_index];
-            if (ops.deserialize == nullptr || ops.apply == nullptr) {
+            if (ops.deserialize == nullptr || ops.push_to_ecs == nullptr) {
                 return false;
             }
 
@@ -3108,7 +3108,7 @@ bool ReplicationClient::apply_buffered_sample(
         if (bytes == nullptr) {
             return false;
         }
-        if (ops.apply == nullptr || !ops.apply(registry, state.local, bytes)) {
+        if (ops.push_to_ecs == nullptr || !ops.push_to_ecs(registry, state.local, bytes)) {
             return false;
         }
     }
@@ -3532,7 +3532,7 @@ bool ReplicationClient::apply_snap_sample(
         if (bytes == nullptr) {
             return false;
         }
-        if (ops.apply == nullptr || !ops.apply(registry, state.local, bytes)) {
+        if (ops.push_to_ecs == nullptr || !ops.push_to_ecs(registry, state.local, bytes)) {
             return false;
         }
         const std::uint8_t* previous_bytes = frame_component_data(archetype, state.baseline, component_index);

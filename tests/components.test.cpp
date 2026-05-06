@@ -219,7 +219,7 @@ TEST_CASE("sync component traits provide type-erased quantization and serializat
     REQUIRE(dequantized.y == 2.0f);
 
     const ecs::Entity entity = registry.create();
-    REQUIRE(ops->apply(registry, entity, decoded.data()));
+    REQUIRE(ops->push_to_ecs(registry, entity, decoded.data()));
     REQUIRE(registry.contains<NetworkedPosition>(entity));
     REQUIRE(registry.remove(entity, position_component));
     REQUIRE_FALSE(registry.contains<NetworkedPosition>(entity));

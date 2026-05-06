@@ -36,15 +36,11 @@ struct ReplicationPriorityObject {
 };
 
 struct ReplicationPriorityDecision {
-    bool replicate = true;
-    std::uint64_t priority = 0;
+    float priority = 0.0f;
     std::uint64_t component_mask = std::numeric_limits<std::uint64_t>::max();
 };
 
-using ReplicationPrioritizerFn = std::function<void(
-    ClientId,
-    const std::vector<ReplicationPriorityObject>&,
-    std::vector<ReplicationPriorityDecision>&)>;
+using ReplicationPrioritizerFn = std::function<ReplicationPriorityDecision(ClientId, ReplicationPriorityObject)>;
 
 inline constexpr ClientId invalid_client_id = std::numeric_limits<ClientId>::max();
 inline constexpr ClientEntityNetworkId invalid_client_entity_network_id = 0;
@@ -379,7 +375,7 @@ struct SyncComponentOps {
     using QuantizedBytes = kage::sync::QuantizedBytes;
     using QuantizeFn = void (*)(const void*, std::uint8_t*);
     using DequantizeFn = void (*)(const std::uint8_t*, void*);
-    using ApplyFn = bool (*)(ecs::Registry&, ecs::Entity, const std::uint8_t*);
+    using PushToEcsFn = bool (*)(ecs::Registry&, ecs::Entity, const std::uint8_t*);
     using SerializeFn = void (*)(const std::uint8_t*, const std::uint8_t*, ecs::BitBuffer&, EntityReferenceContext*);
     using DeserializeFn = bool (*)(ecs::BitBuffer&, const std::uint8_t*, std::uint8_t*, EntityReferenceContext*);
     using InterpolateFn = bool (*)(const std::uint8_t*, const std::uint8_t*, float, std::uint8_t*);
@@ -396,7 +392,7 @@ struct SyncComponentOps {
     std::size_t error_size = 0;
     QuantizeFn quantize = nullptr;
     DequantizeFn dequantize = nullptr;
-    ApplyFn apply = nullptr;
+    PushToEcsFn push_to_ecs = nullptr;
     SerializeFn serialize = nullptr;
     DeserializeFn deserialize = nullptr;
     bool references_entities = false;

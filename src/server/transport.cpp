@@ -9,7 +9,7 @@
 namespace kage::sync {
 
 void ReplicationServer::send_packet(
-    ClientState& client,
+    ServerClientReplicator& client,
     SyncFrame frame,
     std::uint16_t entity_count,
     const ecs::BitBuffer& records,
@@ -18,20 +18,22 @@ void ReplicationServer::send_packet(
         return;
     }
 
-    const std::uint32_t packet_id = allocate_packet_id(client);
+    const std::uint32_t packet_id = client.ack_tracker.allocate_packet_id(*this, client);
     ecs::BitBuffer packet =
         server_detail::make_server_packet(
             options_.mtu_bytes,
             server_detail::configured_packet_id_bits(options_),
             frame,
             packet_id,
-            client.input.ack_frame(),
+            client.input_ack_frame,
             entity_count,
             records);
-    track_packet_ack(client, packet_id, frame, charged_packet_bytes(packet.byte_size()), ack_records);
-    enforce_pending_packet_ack_limit(client);
+    const std::size_t charged_bytes = charged_packet_bytes(packet.byte_size());
+    client.ack_tracker.track_packet_ack(client, packet_id, frame, charged_bytes, ack_records);
+    client.bandwidth.spend(charged_bytes);
+    client.ack_tracker.enforce_pending_packet_ack_limit(*this, client);
 #if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
-    trace_outgoing_update_packet(client, frame, packet_id, client.input.ack_frame(), ack_records);
+    trace_outgoing_update_packet(client, frame, packet_id, client.input_ack_frame, ack_records);
 #endif
     options_.transport(client.peer, packet);
 }
@@ -46,6 +48,7 @@ void ReplicationServer::send_connect_response(ClientState& client) {
     packet.push_bool(true);
     packet.push_unsigned_bits(client.id, 64U);
     options_.transport(client.peer, packet);
+    client.connect_resend_accumulator_seconds = 0.0;
 }
 
 void ReplicationServer::send_pong(

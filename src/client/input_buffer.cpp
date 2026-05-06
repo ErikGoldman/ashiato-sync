@@ -19,7 +19,7 @@ bool ClientInputBuffer::set_latest(
     if (found_ops == settings.component_ops.end() ||
         found_ops->second.quantize == nullptr ||
         found_ops->second.serialize == nullptr ||
-        found_ops->second.apply == nullptr ||
+        found_ops->second.push_to_ecs == nullptr ||
         found_ops->second.quantized_size == 0U) {
         return false;
     }
@@ -113,12 +113,12 @@ bool ClientInputBuffer::apply_frame(ecs::Registry& registry, const SyncSettings&
     if (!stored.valid || stored.frame != frame || stored.bytes.size() != ops_.quantized_size) {
         return true;
     }
-    if (settings.local_client == invalid_client_id || ops_.apply == nullptr) {
+    if (settings.local_client == invalid_client_id || ops_.push_to_ecs == nullptr) {
         return true;
     }
     registry.view<const NetworkOwner>().each([&](ecs::Entity entity, const NetworkOwner& owner) {
         if (owner.client == settings.local_client) {
-            (void)ops_.apply(registry, entity, stored.bytes.data());
+            (void)ops_.push_to_ecs(registry, entity, stored.bytes.data());
         }
     });
     return true;
@@ -143,12 +143,12 @@ void ClientInputBuffer::acknowledge_frame(SyncFrame frame) {
 }
 
 void ClientInputBuffer::apply_latest_to_owned_entities(ecs::Registry& registry, const SyncSettings& settings) const {
-    if (settings.local_client == invalid_client_id || latest_.empty() || ops_.apply == nullptr) {
+    if (settings.local_client == invalid_client_id || latest_.empty() || ops_.push_to_ecs == nullptr) {
         return;
     }
     registry.view<const NetworkOwner>().each([&](ecs::Entity entity, const NetworkOwner& owner) {
         if (owner.client == settings.local_client) {
-            (void)ops_.apply(registry, entity, latest_.data());
+            (void)ops_.push_to_ecs(registry, entity, latest_.data());
         }
     });
 }

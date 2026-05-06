@@ -32,11 +32,11 @@ TEST_CASE("server-backed fractional tick frame interpolates between fixed simula
     kage::sync::ReplicationServer server(options);
     kage::sync::FractionalTickSampler display(server);
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     display.capture_server_frame(registry);
 
     registry.write<SmoothPosition>(entity) = SmoothPosition{10.0f, 20.0f};
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     display.capture_server_frame(registry);
 
     REQUIRE(server.tick(registry, 0.5));
@@ -62,7 +62,7 @@ TEST_CASE("server-backed fractional tick frame uses current snapshot without a p
     kage::sync::ReplicationServer server;
     kage::sync::FractionalTickSampler display(server);
 
-    server.tick(registry);
+    server.tick(registry, server.options().fixed_dt_seconds);
     display.capture_server_frame(registry);
 
     const std::vector<kage::sync::FractionalTickSample>& entities = display.entities(registry);

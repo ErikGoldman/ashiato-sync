@@ -48,7 +48,7 @@ TEST_CASE("sync tracing records server send client receive and apply events") {
 
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
     REQUIRE(has_event(server_events, kage::sync::SyncTraceEventType::ClientConnected));
     REQUIRE(has_event(server_events, kage::sync::SyncTraceEventType::EntityStartedSyncing));
@@ -101,7 +101,7 @@ TEST_CASE("cue tracing records lifecycle events and uses frame data gating") {
         REQUIRE(server.add_client(1));
         REQUIRE(start_sync(server_registry, server_entity, server_archetype));
         REQUIRE(kage::sync::emit_cue(server_registry, server_entity, 1, kage_sync_tests::TestCue{7}, 1.0f));
-        server.tick(server_registry);
+        server.tick(server_registry, server.options().fixed_dt_seconds);
         REQUIRE(packets.size() == 1);
         REQUIRE(has_cue_event(server_events, kage::sync::SyncTraceEventType::CueEmitted, cue_type));
         REQUIRE(has_cue_event(server_events, kage::sync::SyncTraceEventType::CueSent, cue_type));
@@ -219,7 +219,7 @@ TEST_CASE("client tracing records clock skew timing decisions") {
     kage::sync::ReplicationServer server(server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
 
     ecs::Registry client_registry;
@@ -378,10 +378,10 @@ TEST_CASE("server input tracing records input components and stale input starvat
     REQUIRE(input_packet != input_packets.end());
 
     REQUIRE(server.process_packet(server_registry, 1, *input_packet));
-    server.tick(server_registry);
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     server_tracer.set_frame_data_enabled(false);
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
 
     REQUIRE(std::any_of(server_events.begin(), server_events.end(), [&](const kage::sync::SyncTraceEvent& event) {
         return event.type == kage::sync::SyncTraceEventType::FrameComponent &&
@@ -447,7 +447,7 @@ TEST_CASE("server input tracing records starvation before any input arrives") {
     server.set_tracer(&server_tracer);
     REQUIRE(server.add_client(1));
 
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
 
     REQUIRE(std::any_of(server_events.begin(), server_events.end(), [&](const kage::sync::SyncTraceEvent& event) {
         return event.type == kage::sync::SyncTraceEventType::InputStarved &&
@@ -518,7 +518,7 @@ TEST_CASE("token client bootstraps input packets that server traces after first 
         REQUIRE(server.process_packet(server_registry, 1, packet));
     }
 
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE_FALSE(server_packets.empty());
     for (const ecs::BitBuffer& packet : server_packets) {
         (void)client.receive(client_registry, packet);
@@ -532,7 +532,7 @@ TEST_CASE("token client bootstraps input packets that server traces after first 
     REQUIRE(input_packet != client_packets.end());
     REQUIRE(server.process_packet(server_registry, 1, *input_packet));
 
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(std::any_of(server_events.begin(), server_events.end(), [&](const kage::sync::SyncTraceEvent& event) {
         return event.type == kage::sync::SyncTraceEventType::FrameComponent &&
             event.role == kage::sync::SyncTraceRole::Server &&

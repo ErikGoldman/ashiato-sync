@@ -875,37 +875,30 @@ inline void validate_config(const StressConfig& config) {
 inline ReplicationPrioritizerFn make_sphere_prioritizer(ecs::Registry& registry) {
     static constexpr float inner_filter_radius_sq = 0.75f * 0.75f;
     static constexpr float priority_radius_sq = 12.0f * 12.0f;
-    static constexpr std::uint64_t priority_scale = 1000;
+    static constexpr float priority_scale = 1000.0f;
 
-    return [&registry](
-               ClientId,
-               const std::vector<ReplicationPriorityObject>& objects,
-               std::vector<ReplicationPriorityDecision>& decisions) {
-        decisions.resize(objects.size());
-        for (std::size_t index = 0; index < objects.size(); ++index) {
-            ReplicationPriorityDecision& decision = decisions[index];
-            decision.replicate = true;
-            decision.component_mask = std::numeric_limits<std::uint64_t>::max();
+    return [&registry](ClientId, ReplicationPriorityObject object) {
+        ReplicationPriorityDecision decision;
+        decision.component_mask = std::numeric_limits<std::uint64_t>::max();
 
-            const BallPosition* position = registry.try_get<BallPosition>(objects[index].entity);
-            if (position == nullptr) {
-                decision.priority = 0;
-                continue;
-            }
-
-            const float distance_sq =
-                position->x * position->x + position->y * position->y + position->z * position->z;
-            if (distance_sq <= inner_filter_radius_sq) {
-                decision.replicate = false;
-                decision.priority = 0;
-                continue;
-            }
-
-            const float clamped_distance_sq = distance_sq < priority_radius_sq ? distance_sq : priority_radius_sq;
-            const float normalized = (priority_radius_sq - clamped_distance_sq) /
-                (priority_radius_sq - inner_filter_radius_sq);
-            decision.priority = 1U + static_cast<std::uint64_t>(normalized * static_cast<float>(priority_scale));
+        const BallPosition* position = registry.try_get<BallPosition>(object.entity);
+        if (position == nullptr) {
+            decision.priority = 0.0f;
+            return decision;
         }
+
+        const float distance_sq =
+            position->x * position->x + position->y * position->y + position->z * position->z;
+        if (distance_sq <= inner_filter_radius_sq) {
+            decision.priority = 0.0f;
+            return decision;
+        }
+
+        const float clamped_distance_sq = distance_sq < priority_radius_sq ? distance_sq : priority_radius_sq;
+        const float normalized = (priority_radius_sq - clamped_distance_sq) /
+            (priority_radius_sq - inner_filter_radius_sq);
+        decision.priority = 1.0f + normalized * priority_scale;
+        return decision;
     };
 }
 
@@ -1235,7 +1228,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
                 }
             }
             deliver_ready(clients_to_server, report.clients_to_server, now, [&](ClientId client_id, const ecs::BitBuffer& packet) {
-                server.process_packet(client_id, packet);
+                server.process_packet(server_registry, client_id, packet);
             });
         }
 
@@ -1246,7 +1239,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
 
         {
             ScopedTimer timer(report.timing.server_replication_seconds);
-            server.tick(server_registry);
+            server.tick(server_registry, server.options().fixed_dt_seconds);
         }
 
         if ((tick % 16U) == 0U) {
@@ -1276,7 +1269,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
         }
     }
     deliver_ready(clients_to_server, report.clients_to_server, end_time + 60.0, [&](ClientId client_id, const ecs::BitBuffer& packet) {
-        server.process_packet(client_id, packet);
+        server.process_packet(server_registry, client_id, packet);
     });
 
     const auto wall_end = std::chrono::steady_clock::now();

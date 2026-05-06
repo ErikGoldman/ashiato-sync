@@ -11,7 +11,7 @@
 
 using namespace kage_sync_tests;
 
-TEST_CASE("replicated snap cues play once with late time and ACK-driven resend") {
+TEST_CASE("replicated snap cues play once with late time and stop resending after ACK") {
     ecs::Registry server_registry;
     const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
     kage::sync::register_sync_cue<TestCue>(server_registry);
@@ -27,7 +27,7 @@ TEST_CASE("replicated snap cues play once with late time and ACK-driven resend")
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     REQUIRE(kage::sync::emit_cue(server_registry, server_entity, 1, TestCue{7}, 1.0f));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
 
     ecs::Registry client_registry;
@@ -47,7 +47,7 @@ TEST_CASE("replicated snap cues play once with late time and ACK-driven resend")
             Catch::Approx(9.0 / 60.0f));
 
     packets.clear();
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE_FALSE(packets.empty());
     REQUIRE(client.receive(client_registry, packets.back(), 11));
     REQUIRE(client_registry.get<CuePlayback>(local).plays == 1);
@@ -55,13 +55,11 @@ TEST_CASE("replicated snap cues play once with late time and ACK-driven resend")
     std::vector<ecs::BitBuffer> acks = client.drain_ack_packets();
     REQUIRE_FALSE(acks.empty());
     for (const ecs::BitBuffer& ack : acks) {
-        REQUIRE(server.process_packet(1, ack));
+        REQUIRE(server.process_packet(server_registry, 1, ack));
     }
     packets.clear();
-    server.tick(server_registry);
-    REQUIRE_FALSE(packets.empty());
-    REQUIRE(client.receive(client_registry, packets.back(), 12));
-    REQUIRE(client_registry.get<CuePlayback>(local).plays == 1);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
+    REQUIRE(packets.empty());
 }
 
 TEST_CASE("owner-only cues replicate only to the cue owner") {
@@ -82,7 +80,7 @@ TEST_CASE("owner-only cues replicate only to the cue owner") {
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     REQUIRE(kage::sync::emit_cue(server_registry, server_entity, 1, TestCue{11}, 1.0f, true));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
 
     ecs::Registry owner_registry;
     REQUIRE(kage_sync_tests::define_position_archetype(owner_registry) == server_archetype);
@@ -125,7 +123,7 @@ TEST_CASE("default cues still replicate to all clients") {
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     REQUIRE(kage::sync::emit_cue(server_registry, server_entity, 1, TestCue{12}, 1.0f));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
 
     ecs::Registry first_registry;
     REQUIRE(kage_sync_tests::define_position_archetype(first_registry) == server_archetype);
@@ -174,7 +172,7 @@ TEST_CASE("cue entity references resolve to client-local entities") {
         ReferenceCue{kage::sync::EntityReference{target}},
         1.0f,
         true));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
 
     ecs::Registry client_registry;
@@ -238,7 +236,7 @@ TEST_CASE("entity references serialize as client-local network ids") {
     };
     kage::sync::ReplicationServer server(server_options);
     REQUIRE(server.add_client(1));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
 
     ecs::Registry client_registry;
@@ -317,7 +315,7 @@ TEST_CASE("entity references remain resolvable when the referenced entity arrive
     };
     kage::sync::ReplicationServer server(server_options);
     REQUIRE(server.add_client(1));
-    server.tick(server_registry);
+    server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
 
     ecs::Registry client_registry;

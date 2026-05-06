@@ -2,8 +2,6 @@
 
 #include "network_simulator.hpp"
 
-#include <raylib.h>
-
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -17,7 +15,18 @@
 #include <vector>
 
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
+#ifndef NOGDI
+#define NOGDI
+#endif
+#ifndef NOUSER
+#define NOUSER
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 using SocketHandle = SOCKET;
@@ -31,6 +40,8 @@ inline constexpr SocketHandle invalid_socket_handle = INVALID_SOCKET;
 using SocketHandle = int;
 inline constexpr SocketHandle invalid_socket_handle = -1;
 #endif
+
+#include <raylib.h>
 
 namespace {
 
@@ -616,7 +627,7 @@ void update_ball_contacts(ecs::Registry& registry, std::vector<ServerBall>& ball
     std::array<BallPosition, max_ball_count> positions{};
     heads.fill(-1);
 
-    auto cell_axis = [](float value, float min_value, int cells) {
+    auto cell_axis = [&](float value, float min_value, int cells) {
         const int cell = static_cast<int>((value - min_value) * inverse_cell_size);
         return std::clamp(cell, 0, cells - 1);
     };
@@ -626,7 +637,7 @@ void update_ball_contacts(ecs::Registry& registry, std::vector<ServerBall>& ball
         const int z = cell_axis(position.z, grid_min_z, grid_z);
         return x + y * grid_x + z * grid_x * grid_y;
     };
-    auto cell_index_from_axes = [](int x, int y, int z) {
+    auto cell_index_from_axes = [&](int x, int y, int z) {
         return x + y * grid_x + z * grid_x * grid_y;
     };
 
@@ -798,21 +809,20 @@ void update_client_mode_hotkeys(
     auto set_mode = [&](kage::sync::ReplicationClientMode mode) {
         client_mode = mode;
         (void)client.set_default_entity_mode(mode);
+        for (const kage::sync::ClientEntityNetworkId network_id : known_entities) {
+            const ecs::Entity local = client.local_entity(network_id);
+            if (!local || !client_registry.alive(local)) {
+                continue;
+            }
+            (void)client.set_entity_mode(client_registry, network_id, mode);
+        }
         known_entities.erase(
             std::remove_if(
                 known_entities.begin(),
                 known_entities.end(),
                 [&](kage::sync::ClientEntityNetworkId network_id) {
-                    try {
-                        client.set_entity_mode(client_registry, network_id, mode);
-                        return false;
-                    } catch (const kage::sync::ClientError& error) {
-                        if (error.status() == kage::sync::ClientStatus::EntityNotFound ||
-                            error.status() == kage::sync::ClientStatus::EntityUnavailable) {
-                            return true;
-                        }
-                        throw;
-                    }
+                    const ecs::Entity local = client.local_entity(network_id);
+                    return !local || !client_registry.alive(local);
                 }),
             known_entities.end());
     };
@@ -874,37 +884,30 @@ void update_entity_count_hotkeys(int& target_ball_count) {
 kage::sync::ReplicationPrioritizerFn make_sphere_prioritizer(ecs::Registry& registry) {
     static constexpr float inner_filter_radius_sq = 0.75f * 0.75f;
     static constexpr float priority_radius_sq = 12.0f * 12.0f;
-    static constexpr std::uint64_t priority_scale = 1000;
+    static constexpr float priority_scale = 1000.0f;
 
-    return [&registry](
-               kage::sync::ClientId,
-               const std::vector<kage::sync::ReplicationPriorityObject>& objects,
-               std::vector<kage::sync::ReplicationPriorityDecision>& decisions) {
-        decisions.resize(objects.size());
-        for (std::size_t index = 0; index < objects.size(); ++index) {
-            kage::sync::ReplicationPriorityDecision& decision = decisions[index];
-            decision.replicate = true;
-            decision.component_mask = std::numeric_limits<std::uint64_t>::max();
+    return [&registry](kage::sync::ClientId, kage::sync::ReplicationPriorityObject object) {
+        kage::sync::ReplicationPriorityDecision decision;
+        decision.component_mask = std::numeric_limits<std::uint64_t>::max();
 
-            const BallPosition* position = registry.try_get<BallPosition>(objects[index].entity);
-            if (position == nullptr) {
-                decision.priority = 0;
-                continue;
-            }
-
-            const float distance_sq =
-                position->x * position->x + position->y * position->y + position->z * position->z;
-            if (distance_sq <= inner_filter_radius_sq) {
-                decision.replicate = false;
-                decision.priority = 0;
-                continue;
-            }
-
-            const float clamped_distance_sq = distance_sq < priority_radius_sq ? distance_sq : priority_radius_sq;
-            const float normalized = (priority_radius_sq - clamped_distance_sq) /
-                (priority_radius_sq - inner_filter_radius_sq);
-            decision.priority = 1U + static_cast<std::uint64_t>(normalized * static_cast<float>(priority_scale));
+        const BallPosition* position = registry.try_get<BallPosition>(object.entity);
+        if (position == nullptr) {
+            decision.priority = 0.0f;
+            return decision;
         }
+
+        const float distance_sq =
+            position->x * position->x + position->y * position->y + position->z * position->z;
+        if (distance_sq <= inner_filter_radius_sq) {
+            decision.priority = 0.0f;
+            return decision;
+        }
+
+        const float clamped_distance_sq = distance_sq < priority_radius_sq ? distance_sq : priority_radius_sq;
+        const float normalized = (priority_radius_sq - clamped_distance_sq) /
+            (priority_radius_sq - inner_filter_radius_sq);
+        decision.priority = 1.0f + normalized * priority_scale;
+        return decision;
     };
 }
 

@@ -248,6 +248,13 @@ ReplicationServerOptions validate_server_options(ReplicationServerOptions option
     if (!is_power_of_two(options.input_buffer_capacity_frames)) {
         throw std::invalid_argument("input buffer capacity must be a nonzero power of two");
     }
+    if (!options.prioritizer) {
+        options.prioritizer = [](ClientId, ReplicationPriorityObject) {
+            ReplicationPriorityDecision decision;
+            decision.priority = 1.0f;
+            return decision;
+        };
+    }
     return options;
 }
 

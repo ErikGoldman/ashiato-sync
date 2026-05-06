@@ -9,6 +9,8 @@ add_library(kage_sync
     detail/options_validation.cpp
     display.cpp
     server.cpp
+    server/client_update_scheduler.cpp
+    server/server_client_replicator.cpp
     server/detail.cpp
     server/input_buffer.cpp
     server/packet.cpp

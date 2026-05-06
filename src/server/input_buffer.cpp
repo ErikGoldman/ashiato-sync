@@ -118,8 +118,8 @@ bool ServerInputBuffer::process_packet_payload(
     return true;
 }
 
-ServerDueInput ServerInputBuffer::select_due_input(SyncFrame due_frame, std::size_t quantized_size) {
-    ServerDueInput due;
+ServerInputForFrame ServerInputBuffer::select_input_for_frame(SyncFrame due_frame, std::size_t quantized_size) {
+    ServerInputForFrame due;
     SyncFrame best_frame = 0;
     const std::vector<std::uint8_t>* best_bytes = nullptr;
     if (!input_frames_.empty()) {
@@ -143,19 +143,19 @@ ServerDueInput ServerInputBuffer::select_due_input(SyncFrame due_frame, std::siz
         stats_.latest_applied_input_frame = best_frame;
         ++stats_.input_frames_applied;
         due.bytes = &latest_applied_input_;
-        due.frame = best_frame;
+        due.input_frame = best_frame;
         if (best_frame < due_frame) {
             ++stats_.input_starvation_frames;
         }
     } else if (has_latest_applied_input_ && latest_applied_input_.size() == quantized_size) {
         due.bytes = &latest_applied_input_;
-        due.frame = latest_applied_input_frame_;
+        due.input_frame = latest_applied_input_frame_;
         ++stats_.input_starvation_frames;
         ++stats_.input_reused_frames;
     } else {
         ++stats_.input_starvation_frames;
     }
-    due.counted = true;
+    due.cached = true;
     return due;
 }
 
