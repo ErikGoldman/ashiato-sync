@@ -70,6 +70,25 @@ TEST_CASE("replication client rejects malformed connect responses") {
     invalid_client_id.push_unsigned_bits(kage::sync::max_client_entity_network_id_client + 1U, 64U);
     REQUIRE_FALSE(client.receive(registry, invalid_client_id));
     REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Connecting);
+
+    std::vector<std::uint8_t> fuzz_crash_packet{
+        0xffU,
+        0xffU,
+        0xffU,
+        0xffU,
+        0xffU,
+        0xffU,
+        0x00U,
+        0x00U,
+        0x00U,
+        0x05U,
+        0x2dU,
+    };
+    fuzz_crash_packet[0] = kage::sync::protocol::server_connect_response_message;
+    ecs::BitBuffer fuzz_crash;
+    fuzz_crash.assign_bytes(std::move(fuzz_crash_packet), 11U * 8U);
+    REQUIRE_FALSE(client.receive(registry, fuzz_crash));
+    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Connecting);
 }
 
 TEST_CASE("replication client stores rejected connect response errors") {

@@ -9,6 +9,7 @@ target_link_libraries(kage_sync_protocol_fuzzer
 
 target_include_directories(kage_sync_protocol_fuzzer
     PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
         ${PROJECT_SOURCE_DIR}/tests
 )
 
