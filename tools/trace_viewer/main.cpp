@@ -199,15 +199,18 @@ struct BenchmarkState {
 struct TraceLoadMessage {
     enum class Type {
         SourceBegin,
-        Records,
+        Progress,
+        SourceReady,
         Finished,
         Failed
     };
 
-    Type type = Type::Records;
+    Type type = Type::Progress;
     int source_index = -1;
     KTraceFileHeader source;
-    std::vector<KTraceRecord> records;
+    KTraceSourceHistory history;
+    SourceMetrics metrics;
+    std::vector<SelectedCell> benchmark_candidates;
     std::uint64_t bytes_read = 0;
     std::uint64_t total_bytes = 0;
     double load_ms = 0.0;
@@ -286,6 +289,7 @@ struct ViewerState {
     std::vector<PacketClientTimeline> packet_clients;
     std::uint64_t packet_log_min_us = 0;
     std::uint64_t packet_log_max_us = 0;
+    std::unordered_map<ClientEntityNetworkId, ecs::Entity> server_entities_by_network_id;
     int selected_packet_client = 0;
     std::array<char, 1024> picker_path{};
     std::vector<DirectoryPickerEntry> picker_entries;
@@ -308,6 +312,7 @@ struct ViewerState {
     bool selected_source_dirty = true;
     bool details_dirty = true;
     bool packet_details_dirty = true;
+    bool packet_log_dirty = false;
     TraceLoadState loader;
 };
 
@@ -1383,6 +1388,14 @@ void rebuild_packet_log_rows(ViewerState& state) {
         state.selected_packet_client,
         std::max(0, static_cast<int>(state.packet_clients.size()) - 1));
     assign_packet_lanes(state);
+    state.packet_log_dirty = false;
+}
+
+void ensure_packet_log_rows(ViewerState& state) {
+    if (state.packet_log_dirty) {
+        rebuild_packet_log_rows(state);
+        state.packet_details_dirty = true;
+    }
 }
 
 const PacketEventInfo* selected_packet_event(const ViewerState& state) {
@@ -2260,6 +2273,7 @@ std::vector<TimelineNavCell> collect_timeline_nav_cells(
 
 SourceMetrics compute_source_metrics(const KTraceSourceHistory& source, const ViewerState& state, int source_index);
 void rebuild_source_metrics(ViewerState& state);
+void update_source_metrics(ViewerState& state, int source_index);
 
 void apply_server_entity_links(SyncTraceHistory& history) {
     std::unordered_map<ClientEntityNetworkId, ecs::Entity> server_entities_by_network_id;
@@ -2292,6 +2306,79 @@ void apply_server_entity_links(SyncTraceHistory& history) {
     }
 }
 
+void link_client_source_to_server_entities(ViewerState& state, int source_index) {
+    if (source_index < 0 || source_index >= static_cast<int>(state.history.sources.size()) ||
+        state.server_entities_by_network_id.empty()) {
+        return;
+    }
+    KTraceSourceHistory& source = state.history.sources[static_cast<std::size_t>(source_index)];
+    if (source.role != SyncTraceRole::Client) {
+        return;
+    }
+    for (KTraceEntityRow& entity : source.entities) {
+        const auto found = state.server_entities_by_network_id.find(entity.client_network_id);
+        if (found != state.server_entities_by_network_id.end()) {
+            entity.server_entity = found->second;
+        }
+    }
+}
+
+void publish_loaded_source(
+    ViewerState& state,
+    int source_index,
+    KTraceSourceHistory&& source,
+    const SourceMetrics& metrics,
+    std::vector<SelectedCell>&& benchmark_candidates) {
+    if (source_index < 0) {
+        return;
+    }
+    if (static_cast<int>(state.history.sources.size()) <= source_index) {
+        state.history.sources.resize(static_cast<std::size_t>(source_index + 1));
+    }
+    state.history.sources[static_cast<std::size_t>(source_index)] = std::move(source);
+
+    KTraceSourceHistory& published = state.history.sources[static_cast<std::size_t>(source_index)];
+    if (published.role == SyncTraceRole::Server) {
+        for (const KTraceRecord& record : published.records) {
+            const SyncTraceEvent& event = record.event;
+            if (event.type == SyncTraceEventType::EntityStartedSyncing &&
+                event.client_network_id != invalid_client_entity_network_id &&
+                event.server_entity) {
+                state.server_entities_by_network_id[event.client_network_id] = event.server_entity;
+            }
+        }
+        for (int index = 0; index < static_cast<int>(state.history.sources.size()); ++index) {
+            link_client_source_to_server_entities(state, index);
+        }
+    } else {
+        link_client_source_to_server_entities(state, source_index);
+    }
+
+    if (state.source_metrics.size() < state.history.sources.size()) {
+        state.source_metrics.resize(state.history.sources.size());
+    }
+    state.source_metrics[static_cast<std::size_t>(source_index)] = metrics;
+    state.benchmark_candidates.erase(
+        std::remove_if(
+            state.benchmark_candidates.begin(),
+            state.benchmark_candidates.end(),
+            [source_index](const SelectedCell& cell) {
+                return cell.source_index == source_index;
+            }),
+        state.benchmark_candidates.end());
+    state.benchmark_candidates.insert(
+        state.benchmark_candidates.end(),
+        std::make_move_iterator(benchmark_candidates.begin()),
+        std::make_move_iterator(benchmark_candidates.end()));
+    state.packet_log_dirty = true;
+    state.details_dirty = true;
+    state.packet_details_dirty = true;
+    state.cached_details.clear();
+    if (state.selected_source < 0) {
+        state.selected_source = 0;
+    }
+}
+
 void push_loader_message(TraceLoadState& loader, TraceLoadMessage message) {
     std::lock_guard<std::mutex> lock(loader.mutex);
     loader.messages.push_back(std::move(message));
@@ -2313,6 +2400,8 @@ void reset_loaded_trace(ViewerState& state) {
     state.packet_clients.clear();
     state.packet_log_min_us = 0;
     state.packet_log_max_us = 0;
+    state.server_entities_by_network_id.clear();
+    state.packet_log_dirty = false;
     state.selected_source = 0;
     state.selected_source_dirty = true;
 }
@@ -2332,27 +2421,19 @@ void stop_loading_directory(ViewerState& state) {
     state.loader.active = false;
 }
 
-void rebuild_streamed_source(ViewerState& state, int source_index) {
-    if (source_index < 0 || source_index >= static_cast<int>(state.history.sources.size())) {
-        return;
-    }
-    KTraceSourceHistory& current = state.history.sources[static_cast<std::size_t>(source_index)];
-    KTraceFile file;
-    file.path = current.path;
-    file.role = current.role;
-    file.client = current.client;
-    file.recorded_unix_ns = current.recorded_unix_ns;
-    file.flags = current.flags;
-    file.records = std::move(current.records);
-    current = KTraceReader::build_source_history(std::move(file));
-}
-
 void process_loader_messages(ViewerState& state) {
-    constexpr std::size_t max_messages_per_frame = 8;
+    constexpr std::size_t max_messages_per_frame = 64;
     std::deque<TraceLoadMessage> messages;
     {
         std::lock_guard<std::mutex> lock(state.loader.mutex);
+        bool source_ready_queued = false;
         while (!state.loader.messages.empty() && messages.size() < max_messages_per_frame) {
+            if (state.loader.messages.front().type == TraceLoadMessage::Type::SourceReady) {
+                if (source_ready_queued) {
+                    break;
+                }
+                source_ready_queued = true;
+            }
             messages.push_back(std::move(state.loader.messages.front()));
             state.loader.messages.pop_front();
         }
@@ -2361,7 +2442,6 @@ void process_loader_messages(ViewerState& state) {
         return;
     }
 
-    bool data_changed = false;
     for (TraceLoadMessage& message : messages) {
         state.loader.bytes_read = message.bytes_read;
         state.loader.total_bytes = message.total_bytes;
@@ -2382,20 +2462,20 @@ void process_loader_messages(ViewerState& state) {
             source.flags = message.source.flags;
             state.selected_source = std::min(state.selected_source, static_cast<int>(state.history.sources.size()) - 1);
             state.selected_source_dirty = true;
-            data_changed = true;
             break;
         }
-        case TraceLoadMessage::Type::Records: {
-            if (message.source_index < 0 || message.source_index >= static_cast<int>(state.history.sources.size())) {
+        case TraceLoadMessage::Type::Progress:
+            break;
+        case TraceLoadMessage::Type::SourceReady: {
+            if (message.source_index < 0) {
                 break;
             }
-            KTraceSourceHistory& source = state.history.sources[static_cast<std::size_t>(message.source_index)];
-            source.records.insert(
-                source.records.end(),
-                std::make_move_iterator(message.records.begin()),
-                std::make_move_iterator(message.records.end()));
-            rebuild_streamed_source(state, message.source_index);
-            data_changed = true;
+            publish_loaded_source(
+                state,
+                message.source_index,
+                std::move(message.history),
+                message.metrics,
+                std::move(message.benchmark_candidates));
             break;
         }
         case TraceLoadMessage::Type::Finished:
@@ -2413,25 +2493,57 @@ void process_loader_messages(ViewerState& state) {
             break;
         }
     }
+}
 
-    if (data_changed) {
-        apply_server_entity_links(state.history);
-        rebuild_source_metrics(state);
-        rebuild_packet_log_rows(state);
-        state.details_dirty = true;
-        state.packet_details_dirty = true;
-        state.cached_details.clear();
-        if (state.selected_source < 0) {
-            state.selected_source = 0;
+SourceMetrics compute_collapsed_source_metrics(const KTraceSourceHistory& source) {
+    SourceMetrics metrics;
+    bool initialized = false;
+    for (const KTraceRecord& record : source.records) {
+        if (!initialized) {
+            metrics.min_frame = record.event.frame;
+            metrics.max_frame = record.event.frame;
+            initialized = true;
+        } else {
+            metrics.min_frame = std::min(metrics.min_frame, record.event.frame);
+            metrics.max_frame = std::max(metrics.max_frame, record.event.frame);
         }
     }
+    for (const KTraceEntityRow& entity : source.entities) {
+        for (const KTraceComponentRow& component : entity.components) {
+            for (const KTraceFrameRun& run : component.runs) {
+                const SyncFrame end = run_end_frame(run);
+                metrics.max_frame = std::max(metrics.max_frame, end);
+                if (end != std::numeric_limits<SyncFrame>::max()) {
+                    metrics.max_frame = std::max(metrics.max_frame, end + 1U);
+                }
+                metrics.cells += static_cast<int>(run.frames.size());
+            }
+        }
+    }
+    metrics.rows = static_cast<int>(source.entities.size());
+    return metrics;
+}
+
+std::vector<SelectedCell> collect_benchmark_candidates(const KTraceSourceHistory& source, int source_index) {
+    std::vector<SelectedCell> candidates;
+    for (const KTraceEntityRow& entity : source.entities) {
+        for (const KTraceComponentRow& component : entity.components) {
+            for (KTraceRunId run_id = 0; run_id < component.runs.size(); ++run_id) {
+                for (const KTraceFrameCell& cell : component.runs[run_id].frames) {
+                    candidates.push_back(
+                        SelectedCell{source_index, entity.client_network_id, component.component, cell.frame, run_id});
+                }
+            }
+        }
+    }
+    return candidates;
 }
 
 void stream_trace_directory(
     const std::string directory,
     TraceLoadState& loader,
     std::shared_ptr<std::atomic_bool> cancel) {
-    constexpr std::size_t records_per_chunk = 2048;
+    constexpr std::size_t records_per_progress_update = 2048;
     const auto start = Clock::now();
     try {
         std::vector<KTraceFileHeader> sources;
@@ -2470,38 +2582,53 @@ void stream_trace_directory(
                 source_index,
                 source,
                 {},
+                {},
+                {},
                 completed_file_bytes,
                 total_bytes,
                 0.0,
                 {}});
 
             KTraceStreamReader reader(source.path);
-            std::vector<KTraceRecord> chunk;
-            chunk.reserve(records_per_chunk);
+            KTraceFile file;
+            file.path = source.path;
+            file.version = source.version;
+            file.role = source.role;
+            file.recorded_unix_ns = source.recorded_unix_ns;
+            file.client = source.client;
+            file.flags = source.flags;
+            std::size_t records_since_progress_update = 0;
             KTraceRecord record;
             while (!cancel->load() && reader.read_next(record)) {
-                chunk.push_back(std::move(record));
-                if (chunk.size() >= records_per_chunk) {
+                file.records.push_back(std::move(record));
+                ++records_since_progress_update;
+                if (records_since_progress_update >= records_per_progress_update) {
+                    records_since_progress_update = 0;
                     push_loader_message(loader, TraceLoadMessage{
-                        TraceLoadMessage::Type::Records,
+                        TraceLoadMessage::Type::Progress,
                         source_index,
                         {},
-                        std::move(chunk),
+                        {},
+                        {},
+                        {},
                         completed_file_bytes + std::min(reader.position(), source.file_size),
                         total_bytes,
                         0.0,
                         {}});
-                    chunk.clear();
-                    chunk.reserve(records_per_chunk);
                 }
             }
-            if (!chunk.empty() && !cancel->load()) {
+            if (!cancel->load()) {
+                KTraceSourceHistory history = KTraceReader::build_source_history(std::move(file));
+                SourceMetrics metrics = compute_collapsed_source_metrics(history);
+                std::vector<SelectedCell> benchmark_candidates = collect_benchmark_candidates(history, source_index);
                 push_loader_message(loader, TraceLoadMessage{
-                    TraceLoadMessage::Type::Records,
+                    TraceLoadMessage::Type::SourceReady,
                     source_index,
                     {},
-                    std::move(chunk),
-                    completed_file_bytes + std::min(reader.position(), source.file_size),
+                    std::move(history),
+                    metrics,
+                    std::move(benchmark_candidates),
+                    completed_file_bytes + source.file_size,
                     total_bytes,
                     0.0,
                     {}});
@@ -2515,6 +2642,8 @@ void stream_trace_directory(
                 -1,
                 {},
                 {},
+                {},
+                {},
                 total_bytes,
                 total_bytes,
                 elapsed_ms(start),
@@ -2525,6 +2654,8 @@ void stream_trace_directory(
             push_loader_message(loader, TraceLoadMessage{
                 TraceLoadMessage::Type::Failed,
                 -1,
+                {},
+                {},
                 {},
                 {},
                 0,
@@ -2844,6 +2975,37 @@ void rebuild_source_metrics(ViewerState& state) {
                         state.benchmark_candidates.push_back(
                             SelectedCell{source_index, entity.client_network_id, component.component, cell.frame, run_id});
                     }
+                }
+            }
+        }
+    }
+}
+
+void update_source_metrics(ViewerState& state, int source_index) {
+    if (source_index < 0 || source_index >= static_cast<int>(state.history.sources.size())) {
+        return;
+    }
+    if (state.source_metrics.size() < state.history.sources.size()) {
+        state.source_metrics.resize(state.history.sources.size());
+    }
+    state.benchmark_candidates.erase(
+        std::remove_if(
+            state.benchmark_candidates.begin(),
+            state.benchmark_candidates.end(),
+            [source_index](const SelectedCell& cell) {
+                return cell.source_index == source_index;
+            }),
+        state.benchmark_candidates.end());
+
+    const KTraceSourceHistory& source = state.history.sources[static_cast<std::size_t>(source_index)];
+    state.source_metrics[static_cast<std::size_t>(source_index)] =
+        compute_source_metrics(source, state, source_index);
+    for (const KTraceEntityRow& entity : source.entities) {
+        for (const KTraceComponentRow& component : entity.components) {
+            for (KTraceRunId run_id = 0; run_id < component.runs.size(); ++run_id) {
+                for (const KTraceFrameCell& cell : component.runs[run_id].frames) {
+                    state.benchmark_candidates.push_back(
+                        SelectedCell{source_index, entity.client_network_id, component.component, cell.frame, run_id});
                 }
             }
         }
@@ -4142,19 +4304,48 @@ void render_app(ViewerState& state) {
     if (!state.directory_has_ktrace_files) {
         ImGui::EndDisabled();
     }
-    if (state.loader.active || state.loader.bytes_read != 0U || state.loader.total_bytes != 0U) {
+    if (state.loader.active) {
         const float progress = state.loader.total_bytes != 0U
             ? std::min(1.0f, static_cast<float>(
                   static_cast<double>(state.loader.bytes_read) / static_cast<double>(state.loader.total_bytes)))
             : 0.0f;
-        ImGui::SameLine();
-        ImGui::TextColored(
-            ImVec4(0.48f, 0.55f, 0.65f, 1.0f),
-            "%.0f%% loaded",
+        char progress_text[96];
+        std::snprintf(
+            progress_text,
+            sizeof(progress_text),
+            "loading trace data... %.0f%% complete",
             static_cast<double>(progress) * 100.0);
-    }
-    if (!state.status.empty()) {
-        ImGui::TextColored(ImVec4(0.58f, 0.66f, 0.76f, 1.0f), "%s", state.status.c_str());
+        const ImVec2 bar_pos = ImGui::GetCursorScreenPos();
+        const float bar_width = ImGui::GetContentRegionAvail().x;
+        const float bar_height = ImGui::GetFrameHeight();
+        const ImVec2 bar_size{bar_width, bar_height};
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        const ImU32 background_color = ImGui::GetColorU32(ImGuiCol_FrameBg);
+        const ImU32 fill_color = IM_COL32(31, 107, 224, 255);
+        const ImU32 text_color = IM_COL32(222, 232, 245, 255);
+        const float rounding = ImGui::GetStyle().FrameRounding;
+        draw_list->AddRectFilled(bar_pos, ImVec2(bar_pos.x + bar_size.x, bar_pos.y + bar_size.y), background_color, rounding);
+        draw_list->AddRectFilled(
+            bar_pos,
+            ImVec2(bar_pos.x + bar_size.x * progress, bar_pos.y + bar_size.y),
+            fill_color,
+            rounding);
+        const ImVec2 text_pos{
+            bar_pos.x + ImGui::GetStyle().FramePadding.x,
+            bar_pos.y + (bar_size.y - ImGui::GetTextLineHeight()) * 0.5f};
+        draw_list->AddText(text_pos, text_color, progress_text);
+        ImGui::Dummy(bar_size);
+    } else if (!state.status.empty()) {
+        const ImVec2 status_pos = ImGui::GetCursorScreenPos();
+        const ImVec2 status_size{ImGui::GetContentRegionAvail().x, ImGui::GetFrameHeight()};
+        const ImVec2 text_pos{
+            status_pos.x,
+            status_pos.y + (status_size.y - ImGui::GetTextLineHeight()) * 0.5f};
+        ImGui::GetWindowDrawList()->AddText(
+            text_pos,
+            ImGui::GetColorU32(ImVec4(0.58f, 0.66f, 0.76f, 1.0f)),
+            state.status.c_str());
+        ImGui::Dummy(status_size);
     }
     render_directory_picker(state);
     render_legend();
@@ -4187,6 +4378,7 @@ void render_app(ViewerState& state) {
     }
 
     if (state.mode == ViewerMode::EventLog) {
+        ensure_packet_log_rows(state);
         render_event_log(state);
     } else if (ImGui::BeginTabBar("sources")) {
         for (int i = 0; i < static_cast<int>(state.history.sources.size()); ++i) {

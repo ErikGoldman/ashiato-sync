@@ -138,7 +138,7 @@ void run_client(const AppConfig& config) {
             }
         }
         if (dropping_packets) {
-            incoming_link.deliver_ready(link_time_seconds, [](int, const ecs::BitBuffer&) {});
+            (void)incoming_link.drop_queued(link_time_seconds);
         } else {
             incoming_link.deliver_ready(link_time_seconds, [&client](int, const ecs::BitBuffer& packet) {
                 client.receive_packet(packet);
@@ -146,7 +146,7 @@ void run_client(const AppConfig& config) {
         }
         (void)client.tick(registry, dt);
         if (dropping_packets) {
-            outgoing_link.deliver_ready(link_time_seconds, [](int, const ecs::BitBuffer&) {});
+            (void)outgoing_link.drop_queued(link_time_seconds);
         } else {
             outgoing_link.deliver_ready(link_time_seconds, [socket, server_address](int, const ecs::BitBuffer& packet) {
                 send_packet(socket, server_address, packet);

@@ -1,5 +1,7 @@
 #include "test_components.hpp"
 
+#include "../examples/network_simulator.hpp"
+
 #include "kage/sync/detail/type_name.hpp"
 #include "kage/sync/simulated_link.hpp"
 
@@ -125,4 +127,24 @@ TEST_CASE("simulated link loss and clamped negative latency are deterministic at
     REQUIRE(clamped.enqueue(2, std::string{"ready"}, 4.0));
     REQUIRE(clamped.size() == 1U);
     REQUIRE(clamped.queued_packets().front().deliver_at == 4.0);
+}
+
+TEST_CASE("example network simulator drops queued packets without preserving bandwidth delay") {
+    kage::sync::examples::NetworkSimulator<int> link;
+    link.settings.latency_ms = 100.0;
+    link.settings.bandwidth_kbps = 1.0;
+
+    ecs::BitBuffer packet;
+    packet.push_bits(1, 8U);
+    REQUIRE(link.enqueue(1, packet, 1.0));
+    REQUIRE(link.size() == 1U);
+
+    REQUIRE(link.drop_queued(1.5) == 1U);
+    REQUIRE(link.empty());
+    REQUIRE(link.queued_bytes() == 0U);
+
+    REQUIRE(link.enqueue(1, packet, 1.5));
+    REQUIRE(link.size() == 1U);
+    REQUIRE(link.queued_packets().front().deliver_at >= 1.5);
+    REQUIRE(link.queued_packets().front().deliver_at < 2.0);
 }

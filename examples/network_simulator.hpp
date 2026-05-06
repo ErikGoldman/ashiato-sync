@@ -81,6 +81,14 @@ public:
         return delivered;
     }
 
+    std::size_t drop_queued(double now_seconds) noexcept {
+        const std::size_t dropped = queued_.size();
+        queued_.clear();
+        queued_bytes_ = 0;
+        bandwidth_available_at_seconds_ = now_seconds;
+        return dropped;
+    }
+
     const std::deque<QueuedPacket>& queued_packets() const noexcept {
         return queued_;
     }
