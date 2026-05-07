@@ -1,0 +1,488 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/display.cpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/display.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/display.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#include "kage/sync/display.hpp"
+        -:    2:
+        -:    3:#include "server/state.hpp"
+        -:    4:
+        -:    5:#include <algorithm>
+        -:    6:#include <cmath>
+        -:    7:
+        -:    8:namespace kage::sync {
+        -:    9:namespace {
+        -:   10:
+function _ZN4kage4sync12_GLOBAL__N_114find_componentERKSt6vectorINS0_25ReplicatedComponentUpdateESaIS3_EEN3ecs6EntityE called 1 returned 100% blocks executed 92%
+        1:   11:const ReplicatedComponentUpdate* find_component(
+        -:   12:    const std::vector<ReplicatedComponentUpdate>& components,
+        -:   13:    ecs::Entity component) {
+        1:   14:    const auto found = std::find_if(
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+branch  3 taken 1 (fallthrough)
+branch  4 taken 0 (throw)
+        -:   15:        components.begin(),
+        -:   16:        components.end(),
+function _ZZN4kage4sync12_GLOBAL__N_114find_componentERKSt6vectorINS0_25ReplicatedComponentUpdateESaIS3_EEN3ecs6EntityEENKUlRKS3_E_clESB_ called 1 returned 100% blocks executed 100%
+        1:   17:        [component](const ReplicatedComponentUpdate& update) {
+        1:   18:            return update.component == component;
+call    0 returned 1
+        -:   19:        });
+       1*:   20:    return found == components.end() ? nullptr : &*found;
+call    0 returned 1
+call    1 returned 1
+branch  2 taken 0 (fallthrough)
+branch  3 taken 1
+call    4 returned 1
+        -:   21:}
+        -:   22:
+        -:   23:}  // namespace
+        -:   24:
+function _ZN4kage4sync21FractionalTickSamplerC2ERNS0_17ReplicationClientE called 0 returned 0% blocks executed 0%
+    #####:   25:FractionalTickSampler::FractionalTickSampler(ReplicationClient& client)
+    #####:   26:    : source_(Source::Client), client_(&client) {}
+call    0 never executed
+call    1 never executed
+call    2 never executed
+        -:   27:
+function _ZN4kage4sync21FractionalTickSamplerC2ERNS0_17ReplicationServerE called 2 returned 100% blocks executed 100%
+        2:   28:FractionalTickSampler::FractionalTickSampler(ReplicationServer& server)
+        2:   29:    : source_(Source::Server), server_(&server) {}
+call    0 returned 2
+call    1 returned 2
+call    2 returned 2
+        -:   30:
+function _ZNK4kage4sync21FractionalTickSampler12local_clientEv called 0 returned 0% blocks executed 0%
+    #####:   31:ClientId FractionalTickSampler::local_client() const noexcept {
+    #####:   32:    return source_ == Source::Client
+    #####:   33:        ? (client_ != nullptr ? client_->client_id() : invalid_client_id)
+branch  0 never executed (fallthrough)
+branch  1 never executed
+branch  2 never executed (fallthrough)
+branch  3 never executed
+call    4 never executed
+    #####:   34:        : (server_ != nullptr ? server_->local_client() : invalid_client_id);
+branch  0 never executed (fallthrough)
+branch  1 never executed
+call    2 never executed
+        -:   35:}
+        -:   36:
+function _ZNK4kage4sync21FractionalTickSampler12target_frameEv called 1 returned 100% blocks executed 59%
+        1:   37:double FractionalTickSampler::target_frame() const noexcept {
+        1:   38:    if (source_ == Source::Client) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:   39:        return client_ != nullptr ? client_->fractional_tick_target_frame() : 0.0;
+branch  0 never executed (fallthrough)
+branch  1 never executed
+call    2 never executed
+        -:   40:    }
+        1:   41:    if (server_ == nullptr) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:   42:        return 0.0;
+        -:   43:    }
+        2:   44:    const double alpha = server_->options_.fixed_dt_seconds > 0.0
+       1*:   45:        ? server_->tick_accumulator_seconds_ / server_->options_.fixed_dt_seconds
+branch  0 taken 1 (fallthrough)
+branch  1 taken 0
+        -:   46:        : 0.0;
+        1:   47:    if (server_->frame_ == 0U) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:   48:        return alpha;
+        -:   49:    }
+        1:   50:    return static_cast<double>(server_->frame_ - 1U) + std::clamp(alpha, 0.0, 1.0);
+call    0 returned 1
+        -:   51:}
+        -:   52:
+function _ZN4kage4sync21FractionalTickSampler20capture_server_frameERN3ecs8RegistryE called 3 returned 100% blocks executed 75%
+        3:   53:void FractionalTickSampler::capture_server_frame(ecs::Registry& registry) {
+        3:   54:    if (source_ != Source::Server || server_ == nullptr) {
+branch  0 taken 3 (fallthrough)
+branch  1 taken 0
+branch  2 taken 0 (fallthrough)
+branch  3 taken 3
+    #####:   55:        return;
+        -:   56:    }
+        3:   57:    server_->rediscover_all_replicated_entities(registry);
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+        -:   58:
+        3:   59:    Snapshot next;
+call    0 returned 3
+        3:   60:    next.frame = server_->frame_;
+        3:   61:    next.valid = true;
+        -:   62:
+        3:   63:    const SyncSettings& settings = registry.get<SyncSettings>();
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+        3:   64:    next.entities.reserve(server_->active_replicated_count_);
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+        6:   65:    for (const ReplicationServer::ReplicatedSlot& slot : server_->replicated_) {
+call    0 returned 3
+call    1 returned 3
+call    2 returned 3
+call    3 returned 3
+call    4 returned 6
+branch  5 taken 3
+branch  6 taken 3 (fallthrough)
+       3*:   66:        if (!slot.active || slot.archetype.value >= settings.archetypes.size() || !registry.alive(slot.entity)) {
+branch  0 taken 3 (fallthrough)
+branch  1 taken 0
+call    2 returned 3
+branch  3 taken 3 (fallthrough)
+branch  4 taken 0
+call    5 returned 3
+branch  6 taken 0 (fallthrough)
+branch  7 taken 3
+branch  8 taken 0 (fallthrough)
+branch  9 taken 3
+    #####:   67:            continue;
+        -:   68:        }
+        3:   69:        const SyncArchetype& archetype = settings.archetypes[slot.archetype.value];
+call    0 returned 3
+        3:   70:        FractionalTickSampler::SnapshotEntity entity;
+call    0 returned 3
+        3:   71:        entity.archetype = slot.archetype;
+        3:   72:        entity.sample.local_entity = slot.entity;
+        3:   73:        entity.sample.frame = next.frame;
+        3:   74:        entity.sample.components_.reserve(archetype.components.size());
+call    0 returned 3
+call    1 returned 3
+branch  2 taken 3 (fallthrough)
+branch  3 taken 0 (throw)
+        3:   75:        const NetworkOwner* owner = registry.try_get<NetworkOwner>(slot.entity);
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+        6:   76:        for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
+call    0 returned 6
+branch  1 taken 3
+branch  2 taken 3 (fallthrough)
+        3:   77:            const ComponentReplication& replication = archetype.components[component_index];
+call    0 returned 3
+       3*:   78:            if (replication.audience == ReplicationAudience::Owner &&
+branch  0 taken 0 (fallthrough)
+branch  1 taken 3
+branch  2 never executed (fallthrough)
+branch  3 never executed
+    #####:   79:                (owner == nullptr || owner->client != server_->local_client_)) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:   80:                continue;
+        -:   81:            }
+       3*:   82:            if (!registry.has<FractionalTickSampled>(replication.component)) {
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+branch  3 taken 0 (fallthrough)
+branch  4 taken 3
+    #####:   83:                continue;
+        -:   84:            }
+        3:   85:            const void* value = registry.get(slot.entity, replication.component);
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+       3*:   86:            if (value == nullptr || component_index >= archetype.component_ops.size()) {
+branch  0 taken 3 (fallthrough)
+branch  1 taken 0
+call    2 returned 3
+branch  3 taken 0 (fallthrough)
+branch  4 taken 3
+branch  5 taken 0 (fallthrough)
+branch  6 taken 3
+    #####:   87:                continue;
+        -:   88:            }
+        3:   89:            const SyncComponentOps& ops = archetype.component_ops[component_index];
+call    0 returned 3
+       3*:   90:            if (ops.quantize == nullptr || ops.quantized_size == 0U) {
+branch  0 taken 3 (fallthrough)
+branch  1 taken 0
+branch  2 taken 0 (fallthrough)
+branch  3 taken 3
+    #####:   91:                continue;
+        -:   92:            }
+        3:   93:            ReplicatedComponentUpdate update;
+        3:   94:            update.component = replication.component;
+        3:   95:            update.bytes.resize(ops.quantized_size);
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+        3:   96:            ops.quantize(value, update.bytes.data());
+call    0 returned 3
+call    1 returned 3
+branch  2 taken 3 (fallthrough)
+branch  3 taken 0 (throw)
+        3:   97:            entity.sample.components_.push_back(std::move(update));
+call    0 returned 3
+call    1 returned 3
+branch  2 taken 3 (fallthrough)
+branch  3 taken 0 (throw)
+        3:   98:        }
+call    0 returned 3
+call    1 never executed
+        3:   99:        next.entities.push_back(std::move(entity));
+call    0 returned 3
+call    1 returned 3
+branch  2 taken 3 (fallthrough)
+branch  3 taken 0 (throw)
+        3:  100:    }
+call    0 returned 3
+call    1 never executed
+        -:  101:
+        3:  102:    previous_ = std::move(current_);
+call    0 returned 3
+call    1 returned 3
+        3:  103:    current_ = std::move(next);
+call    0 returned 3
+call    1 returned 3
+        3:  104:}
+call    0 returned 3
+call    1 never executed
+        -:  105:
+function _ZN4kage4sync21FractionalTickSampler19rebuild_from_clientERKN3ecs8RegistryE called 0 returned 0% blocks executed 0%
+    #####:  106:void FractionalTickSampler::rebuild_from_client(const ecs::Registry& registry) {
+    #####:  107:    samples_.clear();
+call    0 never executed
+    #####:  108:    if (client_ == nullptr) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  109:        return;
+        -:  110:    }
+    #####:  111:    const FractionalTickSampleBuffer& samples = client_->fractional_tick_frame(registry);
+call    0 never executed
+    #####:  112:    samples_.reserve(samples.entities.size());
+call    0 never executed
+call    1 never executed
+    #####:  113:    for (const FractionalTickSample& sample : samples.entities) {
+call    0 never executed
+call    1 never executed
+call    2 never executed
+call    3 never executed
+call    4 never executed
+branch  5 never executed
+branch  6 never executed (fallthrough)
+    #####:  114:        samples_.push_back(sample);
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+        -:  115:    }
+        -:  116:}
+        -:  117:
+function _ZN4kage4sync21FractionalTickSampler19rebuild_from_serverERKN3ecs8RegistryE called 2 returned 100% blocks executed 82%
+        2:  118:void FractionalTickSampler::rebuild_from_server(const ecs::Registry& registry) {
+        2:  119:    samples_.clear();
+call    0 returned 2
+        2:  120:    if (!current_.valid) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 2
+    #####:  121:        return;
+        -:  122:    }
+        2:  123:    const SyncSettings& settings = registry.get<SyncSettings>();
+call    0 returned 2
+        2:  124:    const float alpha = server_ != nullptr && server_->options_.fixed_dt_seconds > 0.0
+branch  0 taken 2 (fallthrough)
+branch  1 taken 0
+       4*:  125:        ? static_cast<float>(std::clamp(
+branch  0 taken 2 (fallthrough)
+branch  1 taken 0
+    #####:  126:              server_->tick_accumulator_seconds_ / server_->options_.fixed_dt_seconds,
+    #####:  127:              0.0,
+        2:  128:              1.0))
+call    0 returned 2
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 never executed
+        2:  129:        : 0.0f;
+        2:  130:    samples_.reserve(current_.entities.size());
+call    0 returned 2
+call    1 returned 2
+        4:  131:    for (const FractionalTickSampler::SnapshotEntity& current : current_.entities) {
+call    0 returned 2
+call    1 returned 2
+call    2 returned 2
+call    3 returned 2
+call    4 returned 4
+branch  5 taken 2
+branch  6 taken 2 (fallthrough)
+        2:  132:        FractionalTickSample display = current.sample;
+call    0 returned 2
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0 (throw)
+        2:  133:        display.alpha = alpha;
+        2:  134:        const auto found_previous = previous_.valid
+        2:  135:            ? std::find_if(
+branch  0 taken 1 (fallthrough)
+branch  1 taken 1
+call    2 returned 1
+call    3 returned 1
+call    4 returned 1
+branch  5 taken 1 (fallthrough)
+branch  6 taken 0 (throw)
+        -:  136:                  previous_.entities.begin(),
+        -:  137:                  previous_.entities.end(),
+function _ZZN4kage4sync21FractionalTickSampler19rebuild_from_serverERKN3ecs8RegistryEENKUlRKNS1_14SnapshotEntityEE_clES8_ called 1 returned 100% blocks executed 88%
+        1:  138:                  [&](const FractionalTickSampler::SnapshotEntity& previous) {
+       2*:  139:                      return previous.sample.local_entity == current.sample.local_entity &&
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0
+branch  3 taken 1 (fallthrough)
+branch  4 taken 0
+        2:  140:                          previous.archetype == current.archetype;
+call    0 returned 1
+        -:  141:                  })
+        1:  142:            : previous_.entities.end();
+call    0 returned 1
+        2:  143:        if (found_previous == previous_.entities.end()) {
+call    0 returned 2
+call    1 returned 2
+branch  2 taken 1 (fallthrough)
+branch  3 taken 1
+        1:  144:            samples_.push_back(std::move(display));
+call    0 returned 1
+call    1 returned 1
+branch  2 taken 1 (fallthrough)
+branch  3 taken 0 (throw)
+        1:  145:            continue;
+        -:  146:        }
+        -:  147:
+        2:  148:        for (ReplicatedComponentUpdate& component : display.components_) {
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+call    4 returned 2
+branch  5 taken 1
+branch  6 taken 1 (fallthrough)
+        -:  149:            const ReplicatedComponentUpdate* previous_component =
+        1:  150:                find_component(found_previous->sample.components_, component.component);
+call    0 returned 1
+call    1 returned 1
+branch  2 taken 1 (fallthrough)
+branch  3 taken 0 (throw)
+       1*:  151:            if (previous_component == nullptr) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:  152:                continue;
+        -:  153:            }
+       1*:  154:            if (current.archetype.value >= settings.archetypes.size()) {
+call    0 returned 1
+branch  1 taken 0 (fallthrough)
+branch  2 taken 1
+    #####:  155:                continue;
+        -:  156:            }
+        1:  157:            const SyncArchetype& archetype = settings.archetypes[current.archetype.value];
+call    0 returned 1
+        1:  158:            const auto found_replication = std::find_if(
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+branch  3 taken 1 (fallthrough)
+branch  4 taken 0 (throw)
+        -:  159:                archetype.components.begin(),
+        -:  160:                archetype.components.end(),
+function _ZZN4kage4sync21FractionalTickSampler19rebuild_from_serverERKN3ecs8RegistryEENKUlRKNS0_20ComponentReplicationEE_clES8_ called 1 returned 100% blocks executed 100%
+        1:  161:                [&](const ComponentReplication& replication) {
+        1:  162:                    return replication.component == component.component;
+call    0 returned 1
+        -:  163:                });
+       2*:  164:            if (found_replication == archetype.components.end() ||
+call    0 returned 1
+call    1 returned 1
+branch  2 taken 1 (fallthrough)
+branch  3 taken 0
+branch  4 taken 0 (fallthrough)
+branch  5 taken 1
+        1:  165:                found_replication->interpolation != ComponentInterpolation::Interpolate) {
+call    0 returned 1
+branch  1 taken 0 (fallthrough)
+branch  2 taken 1
+    #####:  166:                continue;
+        -:  167:            }
+        1:  168:            const auto found_ops = settings.component_ops.find(component.component.value);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+       2*:  169:            if (found_ops == settings.component_ops.end() || found_ops->second.interpolate == nullptr ||
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+branch  3 taken 1 (fallthrough)
+branch  4 taken 0
+       3*:  170:                component.bytes.size() != found_ops->second.quantized_size ||
+branch  0 taken 1 (fallthrough)
+branch  1 taken 0
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0
+branch  6 taken 0 (fallthrough)
+branch  7 taken 1
+        1:  171:                previous_component->bytes.size() != found_ops->second.quantized_size) {
+call    0 returned 1
+call    1 returned 1
+branch  2 taken 0 (fallthrough)
+branch  3 taken 1
+    #####:  172:                continue;
+        -:  173:            }
+        1:  174:            SyncComponentOps::QuantizedBytes blended;
+        1:  175:            blended.resize(found_ops->second.quantized_size);
+call    0 returned 1
+call    1 returned 1
+branch  2 taken 1 (fallthrough)
+branch  3 taken 0 (throw)
+        2:  176:            if (found_ops->second.interpolate(
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+branch  6 taken 1 (fallthrough)
+branch  7 taken 0
+        -:  177:                    previous_component->bytes.data(),
+        1:  178:                    component.bytes.data(),
+call    0 returned 1
+        -:  179:                    alpha,
+        -:  180:                    blended.data())) {
+        1:  181:                component.bytes = std::move(blended);
+call    0 returned 1
+call    1 returned 1
+        -:  182:            }
+        1:  183:        }
+call    0 returned 1
+call    1 never executed
+        1:  184:        samples_.push_back(std::move(display));
+call    0 returned 1
+call    1 returned 1
+branch  2 taken 1 (fallthrough)
+branch  3 taken 0 (throw)
+        2:  185:    }
+call    0 returned 2
+branch  1 taken 1 (fallthrough)
+branch  2 taken 1
+call    3 never executed
+        -:  186:}
+        -:  187:
+function _ZN4kage4sync21FractionalTickSampler8entitiesERKN3ecs8RegistryE called 2 returned 100% blocks executed 80%
+        2:  188:const std::vector<FractionalTickSample>& FractionalTickSampler::entities(const ecs::Registry& registry) {
+        2:  189:    if (source_ == Source::Client) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 2
+    #####:  190:        rebuild_from_client(registry);
+call    0 never executed
+        -:  191:    } else {
+        2:  192:        rebuild_from_server(registry);
+call    0 returned 2
+        -:  193:    }
+        2:  194:    return samples_;
+        -:  195:}
+        -:  196:
+        -:  197:}  // namespace kage::sync

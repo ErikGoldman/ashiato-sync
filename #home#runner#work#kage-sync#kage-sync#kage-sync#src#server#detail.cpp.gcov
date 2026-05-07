@@ -1,0 +1,47 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/server/detail.cpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/server/detail.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/server/detail.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#include "server/detail.hpp"
+        -:    2:
+        -:    3:namespace kage::sync::server_detail {
+        -:    4:
+        -:    5:#ifdef KAGE_SYNC_ENABLE_TRACING
+        -:    6:SyncTraceEvent make_server_trace_event(SyncTraceEventType type, ClientId client, SyncFrame frame) {
+        -:    7:    SyncTraceEvent event;
+        -:    8:    event.type = type;
+        -:    9:    event.role = SyncTraceRole::Server;
+        -:   10:    event.client = client;
+        -:   11:    event.frame = frame;
+        -:   12:    return event;
+        -:   13:}
+        -:   14:#endif
+        -:   15:
+function _ZN4kage4sync13server_detail26boosted_candidate_priorityEffb called 101140 returned 100% blocks executed 78%
+   101140:   16:float boosted_candidate_priority(
+        -:   17:    float age,
+        -:   18:    float priority,
+        -:   19:    bool reference_boost_pending) noexcept {
+   101140:   20:    const float max = std::numeric_limits<float>::max();
+   101140:   21:    if (max - age < priority) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 101140
+    #####:   22:        age = max;
+        -:   23:    } else {
+   101140:   24:        age += priority;
+        -:   25:    }
+   101140:   26:    if (reference_boost_pending) {
+branch  0 taken 2 (fallthrough)
+branch  1 taken 101138
+        2:   27:        if (max - age < reference_priority_boost) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 2
+    #####:   28:            age = max;
+        -:   29:        } else {
+        2:   30:            age += reference_priority_boost;
+        -:   31:        }
+        -:   32:    }
+   101140:   33:    return age;
+        -:   34:}
+        -:   35:
+        -:   36:}  // namespace kage::sync::server_detail

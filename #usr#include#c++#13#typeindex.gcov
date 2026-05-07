@@ -1,0 +1,140 @@
+        -:    0:Source:/usr/include/c++/13/typeindex
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_lifecycle.test.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_lifecycle.test.cpp.gcda
+        -:    0:Runs:310
+        -:    1:// C++11 <typeindex> -*- C++ -*-
+        -:    2:
+        -:    3:// Copyright (C) 2010-2023 Free Software Foundation, Inc.
+        -:    4://
+        -:    5:// This file is part of the GNU ISO C++ Library.  This library is free
+        -:    6:// software; you can redistribute it and/or modify it under the
+        -:    7:// terms of the GNU General Public License as published by the
+        -:    8:// Free Software Foundation; either version 3, or (at your option)
+        -:    9:// any later version.
+        -:   10:
+        -:   11:// This library is distributed in the hope that it will be useful,
+        -:   12:// but WITHOUT ANY WARRANTY; without even the implied warranty of
+        -:   13:// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+        -:   14:// GNU General Public License for more details.
+        -:   15:
+        -:   16:// Under Section 7 of GPL version 3, you are granted additional
+        -:   17:// permissions described in the GCC Runtime Library Exception, version
+        -:   18:// 3.1, as published by the Free Software Foundation.
+        -:   19:
+        -:   20:// You should have received a copy of the GNU General Public License and
+        -:   21:// a copy of the GCC Runtime Library Exception along with this program;
+        -:   22:// see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
+        -:   23:// <http://www.gnu.org/licenses/>.
+        -:   24:
+        -:   25:/** @file include/typeindex
+        -:   26: *  This is a Standard C++ Library header.
+        -:   27: */
+        -:   28:
+        -:   29:#ifndef _GLIBCXX_TYPEINDEX
+        -:   30:#define _GLIBCXX_TYPEINDEX 1
+        -:   31:
+        -:   32:#pragma GCC system_header
+        -:   33:
+        -:   34:#if __cplusplus < 201103L
+        -:   35:# include <bits/c++0x_warning.h>
+        -:   36:#else
+        -:   37:
+        -:   38:#include <typeinfo>
+        -:   39:#if __cplusplus > 201703L
+        -:   40:# include <compare>
+        -:   41:#endif
+        -:   42:
+        -:   43:namespace std _GLIBCXX_VISIBILITY(default)
+        -:   44:{
+        -:   45:_GLIBCXX_BEGIN_NAMESPACE_VERSION
+        -:   46:
+        -:   47:  /**
+        -:   48:   * @brief Class type_index
+        -:   49:   * @ingroup utilities
+        -:   50:   *
+        -:   51:   *  The class type_index provides a simple wrapper for type_info
+        -:   52:   *  which can be used as an index type in associative containers
+        -:   53:   *  (23.6) and in unordered associative containers (23.7).
+        -:   54:   */
+        -:   55:  struct type_index
+        -:   56:  {
+function _ZNSt10type_indexC2ERKSt9type_info called 0 returned 0% blocks executed 0%
+    #####:   57:    type_index(const type_info& __rhs) noexcept
+    #####:   58:    : _M_target(&__rhs) { }
+        -:   59:
+        -:   60:    bool
+function _ZNKSt10type_indexeqERKS_ called 0 returned 0% blocks executed 0%
+    #####:   61:    operator==(const type_index& __rhs) const noexcept
+    #####:   62:    { return *_M_target == *__rhs._M_target; }
+call    0 never executed
+        -:   63:
+        -:   64:#if ! __cpp_lib_three_way_comparison
+        -:   65:    bool
+        -:   66:    operator!=(const type_index& __rhs) const noexcept
+        -:   67:    { return *_M_target != *__rhs._M_target; }
+        -:   68:#endif
+        -:   69:
+        -:   70:    bool
+        -:   71:    operator<(const type_index& __rhs) const noexcept
+        -:   72:    { return _M_target->before(*__rhs._M_target); }
+        -:   73:
+        -:   74:    bool
+        -:   75:    operator<=(const type_index& __rhs) const noexcept
+        -:   76:    { return !__rhs._M_target->before(*_M_target); }
+        -:   77:
+        -:   78:    bool
+        -:   79:    operator>(const type_index& __rhs) const noexcept
+        -:   80:    { return __rhs._M_target->before(*_M_target); }
+        -:   81:
+        -:   82:    bool
+        -:   83:    operator>=(const type_index& __rhs) const noexcept
+        -:   84:    { return !_M_target->before(*__rhs._M_target); }
+        -:   85:
+        -:   86:#if __cpp_lib_three_way_comparison
+        -:   87:    strong_ordering
+        -:   88:    operator<=>(const type_index& __rhs) const noexcept
+        -:   89:    {
+        -:   90:      if (*_M_target == *__rhs._M_target)
+        -:   91:	return strong_ordering::equal;
+        -:   92:      if (_M_target->before(*__rhs._M_target))
+        -:   93:	return strong_ordering::less;
+        -:   94:      return strong_ordering::greater;
+        -:   95:    }
+        -:   96:#endif
+        -:   97:
+        -:   98:    size_t
+function _ZNKSt10type_index9hash_codeEv called 0 returned 0% blocks executed 0%
+    #####:   99:    hash_code() const noexcept
+    #####:  100:    { return _M_target->hash_code(); }
+call    0 never executed
+        -:  101:
+        -:  102:    const char*
+        -:  103:    name() const noexcept
+        -:  104:    { return _M_target->name(); }
+        -:  105:
+        -:  106:  private:
+        -:  107:    const type_info* _M_target;
+        -:  108:  };
+        -:  109:
+        -:  110:  template<typename _Tp> struct hash;
+        -:  111:
+        -:  112:  /// std::hash specialization for type_index.
+        -:  113:  template<>
+        -:  114:    struct hash<type_index>
+        -:  115:    {
+        -:  116:      typedef size_t        result_type;
+        -:  117:      typedef type_index  argument_type;
+        -:  118:
+        -:  119:      size_t
+function _ZNKSt4hashISt10type_indexEclERKS0_ called 0 returned 0% blocks executed 0%
+    #####:  120:      operator()(const type_index& __ti) const noexcept
+    #####:  121:      { return __ti.hash_code(); }
+call    0 never executed
+        -:  122:    };
+        -:  123:
+        -:  124:_GLIBCXX_END_NAMESPACE_VERSION
+        -:  125:} // namespace std
+        -:  126:
+        -:  127:#endif  // C++11
+        -:  128:
+        -:  129:#endif  // _GLIBCXX_TYPEINDEX

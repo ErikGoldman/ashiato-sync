@@ -1,0 +1,344 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/server/input_buffer.cpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/server/input_buffer.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/server/input_buffer.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#include "server/input_buffer.hpp"
+        -:    2:
+        -:    3:#include <algorithm>
+        -:    4:
+        -:    5:namespace kage::sync::server_detail {
+        -:    6:
+function _ZN4kage4sync13server_detail17ServerInputBuffer15set_local_frameEjPKhmm called 1 returned 100% blocks executed 89%
+        1:    7:bool ServerInputBuffer::set_local_frame(
+        -:    8:    SyncFrame frame,
+        -:    9:    const std::uint8_t* bytes,
+        -:   10:    std::size_t quantized_size,
+        -:   11:    std::size_t capacity_frames) {
+        1:   12:    if (frame == 0U || bytes == nullptr || quantized_size == 0U || capacity_frames == 0U) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 0
+branch  2 taken 1 (fallthrough)
+branch  3 taken 0
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0
+branch  6 taken 0 (fallthrough)
+branch  7 taken 1
+    #####:   13:        return false;
+        -:   14:    }
+        1:   15:    if (input_frames_.empty()) {
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0
+        1:   16:        input_frames_.resize(capacity_frames);
+call    0 returned 1
+        -:   17:    }
+        1:   18:    if (input_frames_.empty()) {
+call    0 returned 1
+branch  1 taken 0 (fallthrough)
+branch  2 taken 1
+    #####:   19:        return false;
+        -:   20:    }
+        -:   21:
+        1:   22:    InputFrame& stored = input_frames_[frame & (input_frames_.size() - 1U)];
+call    0 returned 1
+call    1 returned 1
+        1:   23:    stored.frame = frame;
+        1:   24:    stored.valid = true;
+        1:   25:    stored.bytes.assign(bytes, bytes + quantized_size);
+call    0 returned 1
+        1:   26:    latest_input_ = stored.bytes;
+call    0 returned 1
+        1:   27:    input_ack_frame_ = std::max(input_ack_frame_, frame);
+call    0 returned 1
+        1:   28:    has_latest_input_ = true;
+        1:   29:    stats_.latest_received_input_frame = std::max(stats_.latest_received_input_frame, frame);
+call    0 returned 1
+        1:   30:    return true;
+        -:   31:}
+        -:   32:
+function _ZN4kage4sync13server_detail17ServerInputBuffer22process_packet_payloadERN3ecs9BitBufferERKNS0_16SyncComponentOpsEmPNS1_22ServerInputPacketTraceE called 138 returned 100% blocks executed 77%
+      138:   33:bool ServerInputBuffer::process_packet_payload(
+        -:   34:    ecs::BitBuffer& packet,
+        -:   35:    const SyncComponentOps& ops,
+        -:   36:    std::size_t capacity_frames,
+        -:   37:    ServerInputPacketTrace* trace) {
+      138:   38:    if (trace != nullptr) {
+branch  0 taken 138 (fallthrough)
+branch  1 taken 0
+      138:   39:        *trace = {};
+        -:   40:    }
+      138:   41:    if (packet.remaining_bits() < 49U) {
+call    0 returned 138
+branch  1 taken 0 (fallthrough)
+branch  2 taken 138
+    #####:   42:        return false;
+        -:   43:    }
+      138:   44:    const auto baseline_frame = static_cast<SyncFrame>(packet.read_bits(32U));
+call    0 returned 138
+branch  1 taken 138 (fallthrough)
+branch  2 taken 0 (throw)
+      138:   45:    const auto input_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+call    0 returned 138
+branch  1 taken 138 (fallthrough)
+branch  2 taken 0 (throw)
+      138:   46:    const bool first_input_full = packet.read_bool();
+call    0 returned 138
+branch  1 taken 138 (fallthrough)
+branch  2 taken 0 (throw)
+     138*:   47:    SyncFrame first_input_frame = input_count == 0U ? 0U : baseline_frame + 1U;
+branch  0 taken 138 (fallthrough)
+branch  1 taken 0
+      138:   48:    if (first_input_full) {
+branch  0 taken 3 (fallthrough)
+branch  1 taken 135
+        3:   49:        if (packet.remaining_bits() < 32U) {
+call    0 returned 3
+branch  1 taken 0 (fallthrough)
+branch  2 taken 3
+    #####:   50:            return false;
+        -:   51:        }
+        3:   52:        const auto explicit_first_input_frame = static_cast<SyncFrame>(packet.read_bits(32U));
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+        3:   53:        if (input_count != 0U) {
+branch  0 taken 3 (fallthrough)
+branch  1 taken 0
+        3:   54:            first_input_frame = explicit_first_input_frame;
+        -:   55:        }
+        -:   56:    }
+      138:   57:    if (trace != nullptr) {
+branch  0 taken 138 (fallthrough)
+branch  1 taken 0
+      138:   58:        trace->baseline_frame = baseline_frame;
+        -:   59:    }
+        -:   60:
+      138:   61:    std::vector<std::uint8_t> previous(ops.quantized_size, 0U);
+call    0 returned 138
+branch  1 taken 138 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 returned 138
+      138:   62:    if (baseline_frame > input_ack_frame_) {
+branch  0 taken 3 (fallthrough)
+branch  1 taken 135
+        3:   63:        input_ack_frame_ = baseline_frame;
+        -:   64:    }
+      138:   65:    if (baseline_frame != 0U && !first_input_full) {
+branch  0 taken 106 (fallthrough)
+branch  1 taken 32
+branch  2 taken 104 (fallthrough)
+branch  3 taken 2
+      104:   66:        bool found_baseline = false;
+      104:   67:        if (!input_frames_.empty()) {
+call    0 returned 104
+branch  1 taken 103 (fallthrough)
+branch  2 taken 1
+      103:   68:            const InputFrame& baseline = input_frames_[baseline_frame & (input_frames_.size() - 1U)];
+call    0 returned 103
+call    1 returned 103
+     206*:   69:            if (baseline.valid && baseline.frame == baseline_frame &&
+branch  0 taken 103 (fallthrough)
+branch  1 taken 0
+branch  2 taken 103 (fallthrough)
+branch  3 taken 0
+branch  4 taken 103 (fallthrough)
+branch  5 taken 0
+      103:   70:                baseline.bytes.size() == ops.quantized_size) {
+call    0 returned 103
+branch  1 taken 103 (fallthrough)
+branch  2 taken 0
+      103:   71:                previous = baseline.bytes;
+call    0 returned 103
+branch  1 taken 103 (fallthrough)
+branch  2 taken 0 (throw)
+      103:   72:                found_baseline = true;
+        -:   73:            }
+        -:   74:        }
+     104*:   75:        if (!found_baseline && has_latest_input_ && baseline_frame == input_ack_frame_ &&
+branch  0 taken 1 (fallthrough)
+branch  1 taken 103
+branch  2 taken 0 (fallthrough)
+branch  3 taken 1
+branch  4 never executed (fallthrough)
+branch  5 never executed
+branch  6 taken 0 (fallthrough)
+branch  7 taken 104
+    #####:   76:            latest_input_.size() == ops.quantized_size) {
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed
+    #####:   77:            previous = latest_input_;
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+    #####:   78:            found_baseline = true;
+        -:   79:        }
+      104:   80:        if (!found_baseline) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 103
+        1:   81:            return true;
+        -:   82:        }
+        -:   83:    }
+      137:   84:    if (input_count == 0U || first_input_frame == 0U) {
+branch  0 taken 137 (fallthrough)
+branch  1 taken 0
+branch  2 taken 0 (fallthrough)
+branch  3 taken 137
+    #####:   85:        return true;
+        -:   86:    }
+        -:   87:
+      137:   88:    if (input_frames_.empty()) {
+call    0 returned 137
+branch  1 taken 13 (fallthrough)
+branch  2 taken 124
+       13:   89:        input_frames_.resize(capacity_frames);
+call    0 returned 13
+branch  1 taken 13 (fallthrough)
+branch  2 taken 0 (throw)
+        -:   90:    }
+        -:   91:
+      137:   92:    std::vector<std::uint8_t> decoded(ops.quantized_size, 0U);
+call    0 returned 137
+branch  1 taken 137 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 returned 137
+     1150:   93:    for (std::uint16_t index = 0; index < input_count; ++index) {
+branch  0 taken 1013
+branch  1 taken 137 (fallthrough)
+     1013:   94:        const SyncFrame frame = first_input_frame + static_cast<SyncFrame>(index);
+     1013:   95:        const std::uint8_t* previous_bytes = index == 0U && first_input_full ? nullptr : previous.data();
+branch  0 taken 137 (fallthrough)
+branch  1 taken 876
+branch  2 taken 134 (fallthrough)
+branch  3 taken 3
+call    4 returned 1010
+     1013:   96:        if (!ops.deserialize(packet, previous_bytes, decoded.data(), nullptr)) {
+call    0 returned 1013
+call    1 returned 1013
+branch  2 taken 1013 (fallthrough)
+branch  3 taken 0 (throw)
+branch  4 taken 0 (fallthrough)
+branch  5 taken 1013
+    #####:   97:            return false;
+        -:   98:        }
+     1013:   99:        if (trace != nullptr) {
+branch  0 taken 1013 (fallthrough)
+branch  1 taken 0
+     1013:  100:            if (index == 0U) {
+branch  0 taken 137 (fallthrough)
+branch  1 taken 876
+      137:  101:                trace->first_input_frame = frame;
+        -:  102:            }
+     1013:  103:            trace->last_input_frame = frame;
+        -:  104:        }
+        -:  105:
+     1013:  106:        if (frame > input_ack_frame_) {
+branch  0 taken 200 (fallthrough)
+branch  1 taken 813
+      200:  107:            InputFrame& stored = input_frames_[frame & (input_frames_.size() - 1U)];
+call    0 returned 200
+call    1 returned 200
+      200:  108:            stored.frame = frame;
+      200:  109:            stored.valid = true;
+      200:  110:            stored.bytes = decoded;
+call    0 returned 200
+branch  1 taken 200 (fallthrough)
+branch  2 taken 0 (throw)
+      200:  111:            latest_input_ = decoded;
+call    0 returned 200
+branch  1 taken 200 (fallthrough)
+branch  2 taken 0 (throw)
+      200:  112:            input_ack_frame_ = frame;
+      200:  113:            has_latest_input_ = true;
+      200:  114:            stats_.latest_received_input_frame = frame;
+        -:  115:        }
+     1013:  116:        previous = decoded;
+call    0 returned 1013
+branch  1 taken 1013 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  117:    }
+      137:  118:    return true;
+      138:  119:}
+call    0 returned 137
+call    1 returned 138
+call    2 never executed
+call    3 never executed
+        -:  120:
+function _ZN4kage4sync13server_detail17ServerInputBuffer22select_input_for_frameEjm called 230 returned 100% blocks executed 100%
+      230:  121:ServerInputForFrame ServerInputBuffer::select_input_for_frame(SyncFrame due_frame, std::size_t quantized_size) {
+      230:  122:    ServerInputForFrame due;
+      230:  123:    SyncFrame best_frame = 0;
+      230:  124:    const std::vector<std::uint8_t>* best_bytes = nullptr;
+      230:  125:    if (!input_frames_.empty()) {
+call    0 returned 230
+branch  1 taken 177 (fallthrough)
+branch  2 taken 53
+      177:  126:        const SyncFrame capacity_window_begin = due_frame > input_frames_.size()
+call    0 returned 177
+      177:  127:            ? due_frame - static_cast<SyncFrame>(input_frames_.size()) + 1U
+branch  0 taken 73 (fallthrough)
+branch  1 taken 104
+call    2 returned 73
+      177:  128:            : 1U;
+      177:  129:        const SyncFrame begin = std::max(latest_applied_input_frame_ + 1U, capacity_window_begin);
+call    0 returned 177
+     1221:  130:        for (SyncFrame frame = begin; frame <= due_frame; ++frame) {
+branch  0 taken 1044
+branch  1 taken 177 (fallthrough)
+     1044:  131:            const InputFrame& input = input_frames_[frame & (input_frames_.size() - 1U)];
+call    0 returned 1044
+call    1 returned 1044
+     1044:  132:            if (input.valid && input.frame == frame && input.bytes.size() == quantized_size) {
+branch  0 taken 929 (fallthrough)
+branch  1 taken 115
+branch  2 taken 188 (fallthrough)
+branch  3 taken 741
+call    4 returned 188
+branch  5 taken 188 (fallthrough)
+branch  6 taken 0
+branch  7 taken 188 (fallthrough)
+branch  8 taken 856
+      188:  133:                best_frame = frame;
+      188:  134:                best_bytes = &input.bytes;
+        -:  135:            }
+        -:  136:        }
+        -:  137:    }
+        -:  138:
+      230:  139:    if (best_bytes != nullptr) {
+branch  0 taken 135 (fallthrough)
+branch  1 taken 95
+      135:  140:        latest_applied_input_ = *best_bytes;
+call    0 returned 135
+branch  1 taken 135 (fallthrough)
+branch  2 taken 0 (throw)
+      135:  141:        latest_applied_input_frame_ = best_frame;
+      135:  142:        has_latest_applied_input_ = true;
+      135:  143:        stats_.latest_applied_input_frame = best_frame;
+      135:  144:        ++stats_.input_frames_applied;
+      135:  145:        due.bytes = &latest_applied_input_;
+      135:  146:        due.input_frame = best_frame;
+      135:  147:        if (best_frame < due_frame) {
+branch  0 taken 14 (fallthrough)
+branch  1 taken 121
+       14:  148:            ++stats_.input_starvation_frames;
+        -:  149:        }
+       95:  150:    } else if (has_latest_applied_input_ && latest_applied_input_.size() == quantized_size) {
+branch  0 taken 42 (fallthrough)
+branch  1 taken 53
+call    2 returned 42
+branch  3 taken 42 (fallthrough)
+branch  4 taken 0
+branch  5 taken 42 (fallthrough)
+branch  6 taken 53
+       42:  151:        due.bytes = &latest_applied_input_;
+       42:  152:        due.input_frame = latest_applied_input_frame_;
+       42:  153:        ++stats_.input_starvation_frames;
+       42:  154:        ++stats_.input_reused_frames;
+        -:  155:    } else {
+       53:  156:        ++stats_.input_starvation_frames;
+        -:  157:    }
+      230:  158:    due.cached = true;
+      230:  159:    return due;
+        -:  160:}
+        -:  161:
+        -:  162:}  // namespace kage::sync::server_detail

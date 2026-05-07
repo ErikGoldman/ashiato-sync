@@ -1,0 +1,419 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/include/kage/sync/detail/component_trait_adapters.hpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include "kage/sync/component_traits.hpp"
+        -:    4:
+        -:    5:#include <cstdint>
+        -:    6:#include <cstring>
+        -:    7:#include <type_traits>
+        -:    8:#include <utility>
+        -:    9:
+        -:   10:namespace kage::sync::detail {
+        -:   11:
+        -:   12:template <typename T, typename = void>
+        -:   13:struct has_context_cue_serialize : std::false_type {};
+        -:   14:
+        -:   15:template <typename T>
+        -:   16:struct has_context_cue_serialize<
+        -:   17:    T,
+        -:   18:    std::void_t<decltype(SyncCueTraits<T>::serialize(
+        -:   19:        std::declval<const T&>(),
+        -:   20:        std::declval<ecs::BitBuffer&>(),
+        -:   21:        std::declval<EntityReferenceContext&>()))>> : std::true_type {};
+        -:   22:
+        -:   23:template <typename T, typename = void>
+        -:   24:struct has_context_cue_deserialize : std::false_type {};
+        -:   25:
+        -:   26:template <typename T>
+        -:   27:struct has_context_cue_deserialize<
+        -:   28:    T,
+        -:   29:    std::void_t<decltype(SyncCueTraits<T>::deserialize(
+        -:   30:        std::declval<ecs::BitBuffer&>(),
+        -:   31:        std::declval<T&>(),
+        -:   32:        std::declval<EntityReferenceContext&>()))>> : std::true_type {};
+        -:   33:
+        -:   34:template <typename T, typename = void>
+        -:   35:struct has_frame_cue_play : std::false_type {};
+        -:   36:
+        -:   37:template <typename T>
+        -:   38:struct has_frame_cue_play<
+        -:   39:    T,
+        -:   40:    std::void_t<decltype(SyncCueTraits<T>::play(
+        -:   41:        std::declval<ecs::Registry&>(),
+        -:   42:        std::declval<ecs::Entity>(),
+        -:   43:        std::declval<const T&>(),
+        -:   44:        std::declval<float>(),
+        -:   45:        std::declval<SyncFrame>()))>> : std::true_type {};
+        -:   46:
+        -:   47:template <typename T>
+        -:   48:void serialize_cue_payload(const T& cue, ecs::BitBuffer& out, EntityReferenceContext* references) {
+        -:   49:    if constexpr (has_context_cue_serialize<T>::value) {
+        -:   50:        EntityReferenceContext empty_references;
+        -:   51:        SyncCueTraits<T>::serialize(cue, out, references != nullptr ? *references : empty_references);
+        -:   52:    } else {
+        -:   53:        (void)references;
+        -:   54:        SyncCueTraits<T>::serialize(cue, out);
+        -:   55:    }
+        -:   56:}
+        -:   57:
+        -:   58:template <typename T>
+        -:   59:bool read_cue_payload(const ecs::BitBuffer& payload, T& out, EntityReferenceContext* references = nullptr) {
+        -:   60:    ecs::BitBuffer copy = payload;
+        -:   61:    if constexpr (has_context_cue_deserialize<T>::value) {
+        -:   62:        EntityReferenceContext empty_references;
+        -:   63:        return SyncCueTraits<T>::deserialize(copy, out, references != nullptr ? *references : empty_references);
+        -:   64:    } else {
+        -:   65:        (void)references;
+        -:   66:        return SyncCueTraits<T>::deserialize(copy, out);
+        -:   67:    }
+        -:   68:}
+        -:   69:
+        -:   70:template <typename T>
+        -:   71:bool play_cue_payload(
+        -:   72:    ecs::Registry& registry,
+        -:   73:    ecs::Entity owner,
+        -:   74:    const ecs::BitBuffer& payload,
+        -:   75:    float late_seconds,
+        -:   76:    SyncFrame frame,
+        -:   77:    EntityReferenceContext* references) {
+        -:   78:    T value{};
+        -:   79:    if (!read_cue_payload(payload, value, references)) {
+        -:   80:        return false;
+        -:   81:    }
+        -:   82:    if constexpr (has_frame_cue_play<T>::value) {
+        -:   83:        return SyncCueTraits<T>::play(registry, owner, value, late_seconds, frame);
+        -:   84:    } else {
+        -:   85:        (void)frame;
+        -:   86:        return SyncCueTraits<T>::play(registry, owner, value, late_seconds);
+        -:   87:    }
+        -:   88:}
+        -:   89:
+        -:   90:template <typename T>
+        -:   91:bool rollback_cue_payload(
+        -:   92:    ecs::Registry& registry,
+        -:   93:    ecs::Entity owner,
+        -:   94:    const ecs::BitBuffer& payload,
+        -:   95:    EntityReferenceContext* references) {
+        -:   96:    T value{};
+        -:   97:    if (!read_cue_payload(payload, value, references)) {
+        -:   98:        return false;
+        -:   99:    }
+        -:  100:    return SyncCueTraits<T>::rollback(registry, owner, value);
+        -:  101:}
+        -:  102:
+        -:  103:template <typename T>
+        -:  104:bool equal_cue_payloads(
+        -:  105:    const ecs::BitBuffer& lhs_payload,
+        -:  106:    const ecs::BitBuffer& rhs_payload,
+        -:  107:    EntityReferenceContext* references) {
+        -:  108:    T lhs{};
+        -:  109:    T rhs{};
+        -:  110:    if (!read_cue_payload(lhs_payload, lhs, references) || !read_cue_payload(rhs_payload, rhs, references)) {
+        -:  111:        return lhs_payload == rhs_payload;
+        -:  112:    }
+        -:  113:    return SyncCueTraits<T>::equals_cue(lhs, rhs);
+        -:  114:}
+        -:  115:
+        -:  116:template <typename Traits, typename Quantized, typename = void>
+        -:  117:struct has_context_serialize : std::false_type {};
+        -:  118:
+        -:  119:template <typename Traits, typename Quantized>
+        -:  120:struct has_context_serialize<
+        -:  121:    Traits,
+        -:  122:    Quantized,
+        -:  123:    std::void_t<decltype(Traits::serialize(
+        -:  124:        std::declval<const Quantized*>(),
+        -:  125:        std::declval<const Quantized&>(),
+        -:  126:        std::declval<ecs::BitBuffer&>(),
+        -:  127:        std::declval<EntityReferenceContext&>()))>> : std::true_type {};
+        -:  128:
+        -:  129:template <typename Traits, typename Quantized>
+    #####:  130:void serialize_quantized(
+        -:  131:    const Quantized* previous,
+        -:  132:    const Quantized& current,
+        -:  133:    ecs::BitBuffer& out,
+        -:  134:    EntityReferenceContext* references) {
+        -:  135:    if constexpr (has_context_serialize<Traits, Quantized>::value) {
+        -:  136:        EntityReferenceContext empty_references;
+        -:  137:        Traits::serialize(previous, current, out, references != nullptr ? *references : empty_references);
+        -:  138:    } else {
+        -:  139:        (void)references;
+    #####:  140:        Traits::serialize(previous, current, out);
+        -:  141:    }
+    #####:  142:}
+------------------
+_ZN4kage4sync6detail19serialize_quantizedINS0_19SyncComponentTraitsIN15kage_sync_tests6HealthEEES5_EEvPKT0_RS8_RN3ecs9BitBufferEPNS0_22EntityReferenceContextE:
+function _ZN4kage4sync6detail19serialize_quantizedINS0_19SyncComponentTraitsIN15kage_sync_tests6HealthEEES5_EEvPKT0_RS8_RN3ecs9BitBufferEPNS0_22EntityReferenceContextE called 0 returned 0% blocks executed 0%
+    #####:  130:void serialize_quantized(
+        -:  131:    const Quantized* previous,
+        -:  132:    const Quantized& current,
+        -:  133:    ecs::BitBuffer& out,
+        -:  134:    EntityReferenceContext* references) {
+        -:  135:    if constexpr (has_context_serialize<Traits, Quantized>::value) {
+        -:  136:        EntityReferenceContext empty_references;
+        -:  137:        Traits::serialize(previous, current, out, references != nullptr ? *references : empty_references);
+        -:  138:    } else {
+        -:  139:        (void)references;
+    #####:  140:        Traits::serialize(previous, current, out);
+call    0 never executed
+        -:  141:    }
+    #####:  142:}
+------------------
+_ZN4kage4sync6detail19serialize_quantizedINS0_19SyncComponentTraitsIN15kage_sync_tests17NetworkedPositionEEENS4_26QuantizedNetworkedPositionEEEvPKT0_RS9_RN3ecs9BitBufferEPNS0_22EntityReferenceContextE:
+function _ZN4kage4sync6detail19serialize_quantizedINS0_19SyncComponentTraitsIN15kage_sync_tests17NetworkedPositionEEENS4_26QuantizedNetworkedPositionEEEvPKT0_RS9_RN3ecs9BitBufferEPNS0_22EntityReferenceContextE called 0 returned 0% blocks executed 0%
+    #####:  130:void serialize_quantized(
+        -:  131:    const Quantized* previous,
+        -:  132:    const Quantized& current,
+        -:  133:    ecs::BitBuffer& out,
+        -:  134:    EntityReferenceContext* references) {
+        -:  135:    if constexpr (has_context_serialize<Traits, Quantized>::value) {
+        -:  136:        EntityReferenceContext empty_references;
+        -:  137:        Traits::serialize(previous, current, out, references != nullptr ? *references : empty_references);
+        -:  138:    } else {
+        -:  139:        (void)references;
+    #####:  140:        Traits::serialize(previous, current, out);
+call    0 never executed
+        -:  141:    }
+    #####:  142:}
+------------------
+        -:  143:
+        -:  144:template <typename Traits, typename Quantized, typename = void>
+        -:  145:struct has_context_deserialize : std::false_type {};
+        -:  146:
+        -:  147:template <typename Traits, typename Quantized>
+        -:  148:struct has_context_deserialize<
+        -:  149:    Traits,
+        -:  150:    Quantized,
+        -:  151:    std::void_t<decltype(Traits::deserialize(
+        -:  152:        std::declval<ecs::BitBuffer&>(),
+        -:  153:        std::declval<const Quantized*>(),
+        -:  154:        std::declval<Quantized&>(),
+        -:  155:        std::declval<EntityReferenceContext&>()))>> : std::true_type {};
+        -:  156:
+        -:  157:template <typename Traits, typename Quantized>
+    #####:  158:bool deserialize_quantized(
+        -:  159:    ecs::BitBuffer& in,
+        -:  160:    const Quantized* previous,
+        -:  161:    Quantized& out,
+        -:  162:    EntityReferenceContext* references) {
+        -:  163:    if constexpr (has_context_deserialize<Traits, Quantized>::value) {
+        -:  164:        EntityReferenceContext empty_references;
+        -:  165:        return Traits::deserialize(in, previous, out, references != nullptr ? *references : empty_references);
+        -:  166:    } else {
+        -:  167:        (void)references;
+    #####:  168:        return Traits::deserialize(in, previous, out);
+        -:  169:    }
+        -:  170:}
+        -:  171:
+        -:  172:template <typename Traits, typename Quantized, typename = void>
+        -:  173:struct has_interpolate : std::false_type {};
+        -:  174:
+        -:  175:template <typename Traits, typename Quantized>
+        -:  176:struct has_interpolate<
+        -:  177:    Traits,
+        -:  178:    Quantized,
+        -:  179:    std::void_t<decltype(Traits::interpolate(
+        -:  180:        std::declval<const Quantized&>(),
+        -:  181:        std::declval<const Quantized&>(),
+        -:  182:        std::declval<float>()))>> : std::true_type {};
+        -:  183:
+        -:  184:template <typename Traits, typename Quantized>
+        -:  185:typename std::enable_if<has_interpolate<Traits, Quantized>::value, bool>::type interpolate_quantized(
+        -:  186:    const std::uint8_t* from_bytes,
+        -:  187:    const std::uint8_t* to_bytes,
+        -:  188:    float alpha,
+        -:  189:    std::uint8_t* out) {
+        -:  190:    Quantized from{};
+        -:  191:    Quantized to{};
+        -:  192:    std::memcpy(&from, from_bytes, sizeof(Quantized));
+        -:  193:    std::memcpy(&to, to_bytes, sizeof(Quantized));
+        -:  194:    const Quantized interpolated = Traits::interpolate(from, to, alpha);
+        -:  195:    std::memcpy(out, &interpolated, sizeof(Quantized));
+        -:  196:    return true;
+        -:  197:}
+        -:  198:
+        -:  199:template <typename Traits, typename Quantized>
+        -:  200:typename std::enable_if<!has_interpolate<Traits, Quantized>::value, bool>::type interpolate_quantized(
+        -:  201:    const std::uint8_t*,
+        -:  202:    const std::uint8_t*,
+        -:  203:    float,
+        -:  204:    std::uint8_t*) {
+        -:  205:    return false;
+        -:  206:}
+        -:  207:
+        -:  208:template <typename Traits, typename Quantized, typename = void>
+        -:  209:struct has_error_blending : std::false_type {};
+        -:  210:
+        -:  211:template <typename Traits, typename Quantized>
+        -:  212:struct has_error_blending<
+        -:  213:    Traits,
+        -:  214:    Quantized,
+        -:  215:    std::void_t<
+        -:  216:        typename Traits::Error,
+        -:  217:        decltype(Traits::compute_error(std::declval<const Quantized&>(), std::declval<const Quantized&>())),
+        -:  218:        decltype(Traits::apply_error(
+        -:  219:            std::declval<const Quantized&>(),
+        -:  220:            std::declval<const typename Traits::Error&>())),
+        -:  221:        decltype(Traits::blend_out_error(
+        -:  222:            std::declval<const typename Traits::Error&>(),
+        -:  223:            std::declval<float>()))>> : std::true_type {};
+        -:  224:
+        -:  225:template <typename Traits, typename Quantized>
+        -:  226:typename std::enable_if<has_error_blending<Traits, Quantized>::value, bool>::type compute_error_quantized(
+        -:  227:    const std::uint8_t* current_bytes,
+        -:  228:    const std::uint8_t* previous_bytes,
+        -:  229:    SyncComponentOps::QuantizedBytes& out) {
+        -:  230:    using Error = typename Traits::Error;
+        -:  231:    static_assert(
+        -:  232:        std::is_trivially_copyable<Error>::value,
+        -:  233:        "SyncComponentTraits<T>::Error must be trivially copyable");
+        -:  234:
+        -:  235:    Quantized current{};
+        -:  236:    Quantized previous{};
+        -:  237:    std::memcpy(&current, current_bytes, sizeof(Quantized));
+        -:  238:    std::memcpy(&previous, previous_bytes, sizeof(Quantized));
+        -:  239:    const Error error = Traits::compute_error(current, previous);
+        -:  240:
+        -:  241:    out.resize(sizeof(Error));
+        -:  242:    std::memcpy(out.data(), &error, sizeof(Error));
+        -:  243:    return true;
+        -:  244:}
+        -:  245:
+        -:  246:template <typename Traits, typename Quantized>
+        -:  247:typename std::enable_if<!has_error_blending<Traits, Quantized>::value, bool>::type compute_error_quantized(
+        -:  248:    const std::uint8_t*,
+        -:  249:    const std::uint8_t*,
+        -:  250:    SyncComponentOps::QuantizedBytes&) {
+        -:  251:    return false;
+        -:  252:}
+        -:  253:
+        -:  254:template <typename Traits, typename Quantized>
+        -:  255:typename std::enable_if<has_error_blending<Traits, Quantized>::value, bool>::type apply_error_quantized(
+        -:  256:    const std::uint8_t* current_bytes,
+        -:  257:    const SyncComponentOps::QuantizedBytes& error_bytes,
+        -:  258:    SyncComponentOps::QuantizedBytes& out) {
+        -:  259:    using Error = typename Traits::Error;
+        -:  260:    if (error_bytes.size() != sizeof(Error)) {
+        -:  261:        return false;
+        -:  262:    }
+        -:  263:
+        -:  264:    Quantized current{};
+        -:  265:    Error error{};
+        -:  266:    std::memcpy(&current, current_bytes, sizeof(Quantized));
+        -:  267:    std::memcpy(&error, error_bytes.data(), sizeof(Error));
+        -:  268:    const Quantized display = Traits::apply_error(current, error);
+        -:  269:
+        -:  270:    out.resize(sizeof(Quantized));
+        -:  271:    std::memcpy(out.data(), &display, sizeof(Quantized));
+        -:  272:    return true;
+        -:  273:}
+        -:  274:
+        -:  275:template <typename Traits, typename Quantized>
+        -:  276:typename std::enable_if<!has_error_blending<Traits, Quantized>::value, bool>::type apply_error_quantized(
+        -:  277:    const std::uint8_t*,
+        -:  278:    const SyncComponentOps::QuantizedBytes&,
+        -:  279:    SyncComponentOps::QuantizedBytes&) {
+        -:  280:    return false;
+        -:  281:}
+        -:  282:
+        -:  283:template <typename Traits, typename Quantized>
+        -:  284:typename std::enable_if<has_error_blending<Traits, Quantized>::value, bool>::type blend_out_error_quantized(
+        -:  285:    const SyncComponentOps::QuantizedBytes& error_bytes,
+        -:  286:    float dt_seconds,
+        -:  287:    SyncComponentOps::QuantizedBytes& out) {
+        -:  288:    using Error = typename Traits::Error;
+        -:  289:    if (error_bytes.size() != sizeof(Error)) {
+        -:  290:        return false;
+        -:  291:    }
+        -:  292:
+        -:  293:    Error error{};
+        -:  294:    std::memcpy(&error, error_bytes.data(), sizeof(Error));
+        -:  295:    const Error blended = Traits::blend_out_error(error, dt_seconds);
+        -:  296:
+        -:  297:    out.resize(sizeof(Error));
+        -:  298:    std::memcpy(out.data(), &blended, sizeof(Error));
+        -:  299:    return true;
+        -:  300:}
+        -:  301:
+        -:  302:template <typename Traits, typename Quantized>
+        -:  303:typename std::enable_if<!has_error_blending<Traits, Quantized>::value, bool>::type blend_out_error_quantized(
+        -:  304:    const SyncComponentOps::QuantizedBytes&,
+        -:  305:    float,
+        -:  306:    SyncComponentOps::QuantizedBytes&) {
+        -:  307:    return false;
+        -:  308:}
+        -:  309:
+        -:  310:template <typename Traits, typename Quantized, typename = void>
+        -:  311:struct has_should_roll_back : std::false_type {};
+        -:  312:
+        -:  313:template <typename Traits, typename Quantized>
+        -:  314:struct has_should_roll_back<
+        -:  315:    Traits,
+        -:  316:    Quantized,
+        -:  317:    std::void_t<decltype(Traits::should_roll_back(
+        -:  318:        std::declval<const Quantized&>(),
+        -:  319:        std::declval<const Quantized&>()))>> : std::true_type {};
+        -:  320:
+        -:  321:template <typename Traits, typename Quantized>
+        -:  322:typename std::enable_if<has_should_roll_back<Traits, Quantized>::value, bool>::type should_roll_back_quantized(
+        -:  323:    const std::uint8_t* predicted_bytes,
+        -:  324:    const std::uint8_t* authoritative_bytes) {
+        -:  325:    Quantized predicted{};
+        -:  326:    Quantized authoritative{};
+        -:  327:    std::memcpy(&predicted, predicted_bytes, sizeof(Quantized));
+        -:  328:    std::memcpy(&authoritative, authoritative_bytes, sizeof(Quantized));
+        -:  329:    return Traits::should_roll_back(predicted, authoritative);
+        -:  330:}
+        -:  331:
+        -:  332:template <typename Traits, typename Quantized>
+        -:  333:typename std::enable_if<!has_should_roll_back<Traits, Quantized>::value, bool>::type should_roll_back_quantized(
+        -:  334:    const std::uint8_t*,
+        -:  335:    const std::uint8_t*) {
+        -:  336:    return false;
+        -:  337:}
+        -:  338:
+        -:  339:#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+        -:  340:template <typename Traits, typename Quantized, typename = void>
+        -:  341:struct has_trace_component : std::false_type {};
+        -:  342:
+        -:  343:template <typename Traits, typename Quantized>
+        -:  344:struct has_trace_component<
+        -:  345:    Traits,
+        -:  346:    Quantized,
+        -:  347:    std::void_t<decltype(Traits::trace(
+        -:  348:        std::declval<const Quantized&>(),
+        -:  349:        std::declval<SyncTraceStringBuilder&>()))>> : std::true_type {};
+        -:  350:
+        -:  351:template <typename Traits, typename Quantized>
+        -:  352:void trace_component_quantized(const std::uint8_t* quantized_bytes, SyncTraceStringBuilder& out) {
+        -:  353:    Quantized quantized{};
+        -:  354:    std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
+        -:  355:    Traits::trace(quantized, out);
+        -:  356:}
+        -:  357:
+        -:  358:template <typename Traits, typename Cue, typename = void>
+        -:  359:struct has_trace_cue : std::false_type {};
+        -:  360:
+        -:  361:template <typename Traits, typename Cue>
+        -:  362:struct has_trace_cue<
+        -:  363:    Traits,
+        -:  364:    Cue,
+        -:  365:    std::void_t<decltype(Traits::trace(
+        -:  366:        std::declval<const Cue&>(),
+        -:  367:        std::declval<SyncTraceStringBuilder&>()))>> : std::true_type {};
+        -:  368:
+        -:  369:template <typename T>
+        -:  370:bool trace_cue_payload(const ecs::BitBuffer& payload, SyncTraceStringBuilder& out) {
+        -:  371:    T value{};
+        -:  372:    if (!read_cue_payload(payload, value)) {
+        -:  373:        return false;
+        -:  374:    }
+        -:  375:    SyncCueTraits<T>::trace(value, out);
+        -:  376:    return true;
+        -:  377:}
+        -:  378:#endif
+        -:  379:
+        -:  380:}  // namespace kage::sync::detail

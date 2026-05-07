@@ -1,0 +1,3348 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/tests/bit_buffer.test.cpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/bit_buffer.test.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/bit_buffer.test.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#include "ecs/bit_buffer.hpp"
+        -:    2:#include "kage/sync/delta.hpp"
+        -:    3:#include "kage/sync/protocol.hpp"
+        -:    4:
+        -:    5:#include <catch2/catch_approx.hpp>
+        -:    6:#include <catch2/catch_test_macros.hpp>
+        -:    7:
+        -:    8:#include <cstdint>
+        -:    9:#include <random>
+        -:   10:#include <stdexcept>
+        -:   11:#include <string>
+        -:   12:#include <vector>
+        -:   13:
+function _ZL22CATCH2_INTERNAL_TEST_0v called 1 returned 100% blocks executed 48%
+        1:   14:TEST_CASE("bit buffer pushes and reads bits, bytes, and bools") {
+        1:   15:    ecs::BitBuffer buffer;
+call    0 returned 1
+        1:   16:    buffer.push_bool(true);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:   17:    buffer.push_bits(0b101, 3U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:   18:    buffer.push_bytes("AZ", 2U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        -:   19:
+        1:   20:    REQUIRE(buffer.bit_size() == 20);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        1:   21:    REQUIRE(buffer.byte_size() == 3);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        1:   22:    REQUIRE(buffer.read_bool());
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 never executed
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+call   27 never executed
+        1:   23:    REQUIRE(buffer.read_bits(3U) == 0b101);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        -:   24:
+        1:   25:    char bytes[2]{};
+        1:   26:    buffer.read_bytes(bytes, 2U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:   27:    REQUIRE(bytes[0] == 'A');
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+call   16 returned 1
+branch 17 taken 1 (fallthrough)
+branch 18 taken 0 (throw)
+call   19 returned 1
+call   20 never executed
+call   21 never executed
+call   22 never executed
+branch 23 never executed (fallthrough)
+branch 24 never executed (throw)
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+call   29 never executed
+        1:   28:    REQUIRE(bytes[1] == 'Z');
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+call   16 returned 1
+branch 17 taken 1 (fallthrough)
+branch 18 taken 0 (throw)
+call   19 returned 1
+call   20 never executed
+call   21 never executed
+call   22 never executed
+branch 23 never executed (fallthrough)
+branch 24 never executed (throw)
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+call   29 never executed
+       1*:   29:    REQUIRE_THROWS_AS(buffer.read_bool(), std::out_of_range);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+branch  9 taken 1 (fallthrough)
+branch 10 taken 0
+call   11 returned 1
+branch 12 taken 0 (fallthrough)
+branch 13 taken 1 (throw)
+call   14 never executed
+branch 15 never executed (fallthrough)
+branch 16 never executed (throw)
+call   17 never executed
+branch 18 never executed (fallthrough)
+branch 19 never executed (throw)
+call   20 returned 1
+branch 21 taken 1 (fallthrough)
+branch 22 taken 0 (throw)
+call   23 returned 1
+branch 24 taken 1
+branch 25 taken 0
+call   26 returned 1
+call   27 returned 1
+branch 28 taken 1 (fallthrough)
+branch 29 taken 0 (throw)
+call   30 returned 1
+call   31 never executed
+call   32 never executed
+branch 33 never executed (fallthrough)
+branch 34 never executed (throw)
+call   35 never executed
+branch 36 never executed (fallthrough)
+branch 37 never executed (throw)
+call   38 never executed
+call   39 never executed
+call   40 never executed
+        1:   30:}
+call    0 returned 1
+call    1 never executed
+        -:   31:
+function _ZL22CATCH2_INTERNAL_TEST_2v called 1 returned 100% blocks executed 48%
+        1:   32:TEST_CASE("bit buffer handles unaligned byte payloads") {
+        1:   33:    ecs::BitBuffer buffer;
+call    0 returned 1
+        1:   34:    buffer.push_bits(0b11, 2U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:   35:    buffer.push_bytes("BC", 2U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        -:   36:
+        1:   37:    REQUIRE(buffer.bit_size() == 18);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        1:   38:    REQUIRE(buffer.read_bits(2U) == 0b11);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        -:   39:
+        1:   40:    char bytes[2]{};
+        1:   41:    buffer.read_bytes(bytes, 2U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:   42:    REQUIRE(bytes[0] == 'B');
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+call   16 returned 1
+branch 17 taken 1 (fallthrough)
+branch 18 taken 0 (throw)
+call   19 returned 1
+call   20 never executed
+call   21 never executed
+call   22 never executed
+branch 23 never executed (fallthrough)
+branch 24 never executed (throw)
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+call   29 never executed
+        1:   43:    REQUIRE(bytes[1] == 'C');
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+call   16 returned 1
+branch 17 taken 1 (fallthrough)
+branch 18 taken 0 (throw)
+call   19 returned 1
+call   20 never executed
+call   21 never executed
+call   22 never executed
+branch 23 never executed (fallthrough)
+branch 24 never executed (throw)
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+call   29 never executed
+        1:   44:    REQUIRE(buffer.remaining_bits() == 0);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        1:   45:}
+call    0 returned 1
+call    1 never executed
+        -:   46:
+function _ZL22CATCH2_INTERNAL_TEST_4v called 1 returned 100% blocks executed 49%
+        1:   47:TEST_CASE("bit buffer handles unaligned 64-bit integer payloads") {
+        1:   48:    ecs::BitBuffer buffer;
+call    0 returned 1
+        1:   49:    buffer.push_bits(0b101, 3U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:   50:    buffer.push_unsigned_bits(0xfedcba9876543210ULL, 64U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:   51:    buffer.push_unsigned_bits(0x0123456789abcdefULL, 64U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:   52:    buffer.push_bits(0b11, 2U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        -:   53:
+        1:   54:    REQUIRE(buffer.read_bits(3U) == 0b101);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        1:   55:    REQUIRE(buffer.read_unsigned_bits(64U) == 0xfedcba9876543210ULL);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        1:   56:    REQUIRE(buffer.read_unsigned_bits(64U) == 0x0123456789abcdefULL);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        1:   57:    REQUIRE(buffer.read_bits(2U) == 0b11);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        1:   58:    REQUIRE(buffer.remaining_bits() == 0U);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        1:   59:}
+call    0 returned 1
+call    1 never executed
+        -:   60:
+function _ZL22CATCH2_INTERNAL_TEST_6v called 1 returned 100% blocks executed 48%
+        1:   61:TEST_CASE("bit buffer reset and clear preserve expected offsets") {
+        1:   62:    ecs::BitBuffer buffer;
+call    0 returned 1
+        1:   63:    buffer.push_unsigned_bits(0xfeedfaceULL, 32U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:   64:    REQUIRE(buffer.read_unsigned_bits(16U) == 0xfaceU);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        1:   65:    REQUIRE(buffer.read_offset_bits() == 16);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        -:   66:
+        1:   67:    buffer.reset_read();
+call    0 returned 1
+        1:   68:    REQUIRE(buffer.read_unsigned_bits(32U) == 0xfeedfaceULL);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        -:   69:
+        1:   70:    buffer.clear();
+call    0 returned 1
+        1:   71:    REQUIRE(buffer.empty());
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 never executed
+call   18 never executed
+branch 19 never executed (fallthrough)
+branch 20 never executed (throw)
+call   21 never executed
+branch 22 never executed (fallthrough)
+branch 23 never executed (throw)
+call   24 never executed
+call   25 never executed
+        1:   72:    REQUIRE(buffer.bit_size() == 0);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        1:   73:    REQUIRE(buffer.read_offset_bits() == 0);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        1:   74:}
+call    0 returned 1
+call    1 never executed
+        -:   75:
+function _ZL22CATCH2_INTERNAL_TEST_8v called 1 returned 100% blocks executed 50%
+        1:   76:TEST_CASE("bit buffer validates invalid read and write requests") {
+        1:   77:    ecs::BitBuffer buffer;
+call    0 returned 1
+        -:   78:
+        1:   79:    REQUIRE_NOTHROW(buffer.push_bytes(nullptr, 0U));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+call   16 never executed
+call   17 never executed
+branch 18 never executed (fallthrough)
+branch 19 never executed (throw)
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+call   24 never executed
+       1*:   80:    REQUIRE_THROWS_AS(buffer.push_bytes(nullptr, 1U), std::invalid_argument);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+branch  9 taken 1 (fallthrough)
+branch 10 taken 0
+call   11 returned 1
+branch 12 taken 0 (fallthrough)
+branch 13 taken 1 (throw)
+call   14 never executed
+branch 15 never executed (fallthrough)
+branch 16 never executed (throw)
+call   17 never executed
+branch 18 never executed (fallthrough)
+branch 19 never executed (throw)
+call   20 returned 1
+branch 21 taken 1 (fallthrough)
+branch 22 taken 0 (throw)
+call   23 returned 1
+branch 24 taken 1
+branch 25 taken 0
+call   26 returned 1
+call   27 returned 1
+branch 28 taken 1 (fallthrough)
+branch 29 taken 0 (throw)
+call   30 returned 1
+call   31 never executed
+call   32 never executed
+branch 33 never executed (fallthrough)
+branch 34 never executed (throw)
+call   35 never executed
+branch 36 never executed (fallthrough)
+branch 37 never executed (throw)
+call   38 never executed
+call   39 never executed
+call   40 never executed
+       1*:   81:    REQUIRE_THROWS_AS(buffer.push_bits(0, 65U), std::invalid_argument);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+branch  9 taken 1 (fallthrough)
+branch 10 taken 0
+call   11 returned 1
+branch 12 taken 0 (fallthrough)
+branch 13 taken 1 (throw)
+call   14 never executed
+branch 15 never executed (fallthrough)
+branch 16 never executed (throw)
+call   17 never executed
+branch 18 never executed (fallthrough)
+branch 19 never executed (throw)
+call   20 returned 1
+branch 21 taken 1 (fallthrough)
+branch 22 taken 0 (throw)
+call   23 returned 1
+branch 24 taken 1
+branch 25 taken 0
+call   26 returned 1
+call   27 returned 1
+branch 28 taken 1 (fallthrough)
+branch 29 taken 0 (throw)
+call   30 returned 1
+call   31 never executed
+call   32 never executed
+branch 33 never executed (fallthrough)
+branch 34 never executed (throw)
+call   35 never executed
+branch 36 never executed (fallthrough)
+branch 37 never executed (throw)
+call   38 never executed
+call   39 never executed
+call   40 never executed
+       1*:   82:    REQUIRE_THROWS_AS(buffer.overwrite_unsigned_bits(0, 0, 65U), std::invalid_argument);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+branch  9 taken 1 (fallthrough)
+branch 10 taken 0
+call   11 returned 1
+branch 12 taken 0 (fallthrough)
+branch 13 taken 1 (throw)
+call   14 never executed
+branch 15 never executed (fallthrough)
+branch 16 never executed (throw)
+call   17 never executed
+branch 18 never executed (fallthrough)
+branch 19 never executed (throw)
+call   20 returned 1
+branch 21 taken 1 (fallthrough)
+branch 22 taken 0 (throw)
+call   23 returned 1
+branch 24 taken 1
+branch 25 taken 0
+call   26 returned 1
+call   27 returned 1
+branch 28 taken 1 (fallthrough)
+branch 29 taken 0 (throw)
+call   30 returned 1
+call   31 never executed
+call   32 never executed
+branch 33 never executed (fallthrough)
+branch 34 never executed (throw)
+call   35 never executed
+branch 36 never executed (fallthrough)
+branch 37 never executed (throw)
+call   38 never executed
+call   39 never executed
+call   40 never executed
+       1*:   83:    REQUIRE_THROWS_AS(buffer.overwrite_unsigned_bits(0, 0, 1U), std::out_of_range);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+branch  9 taken 1 (fallthrough)
+branch 10 taken 0
+call   11 returned 1
+branch 12 taken 0 (fallthrough)
+branch 13 taken 1 (throw)
+call   14 never executed
+branch 15 never executed (fallthrough)
+branch 16 never executed (throw)
+call   17 never executed
+branch 18 never executed (fallthrough)
+branch 19 never executed (throw)
+call   20 returned 1
+branch 21 taken 1 (fallthrough)
+branch 22 taken 0 (throw)
+call   23 returned 1
+branch 24 taken 1
+branch 25 taken 0
+call   26 returned 1
+call   27 returned 1
+branch 28 taken 1 (fallthrough)
+branch 29 taken 0 (throw)
+call   30 returned 1
+call   31 never executed
+call   32 never executed
+branch 33 never executed (fallthrough)
+branch 34 never executed (throw)
+call   35 never executed
+branch 36 never executed (fallthrough)
+branch 37 never executed (throw)
+call   38 never executed
+call   39 never executed
+call   40 never executed
+        -:   84:
+        1:   85:    char out = 0;
+        1:   86:    REQUIRE_NOTHROW(buffer.read_bytes(nullptr, 0U));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+call   16 never executed
+call   17 never executed
+branch 18 never executed (fallthrough)
+branch 19 never executed (throw)
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+call   24 never executed
+       1*:   87:    REQUIRE_THROWS_AS(buffer.read_bytes(nullptr, 1U), std::invalid_argument);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+branch  9 taken 1 (fallthrough)
+branch 10 taken 0
+call   11 returned 1
+branch 12 taken 0 (fallthrough)
+branch 13 taken 1 (throw)
+call   14 never executed
+branch 15 never executed (fallthrough)
+branch 16 never executed (throw)
+call   17 never executed
+branch 18 never executed (fallthrough)
+branch 19 never executed (throw)
+call   20 returned 1
+branch 21 taken 1 (fallthrough)
+branch 22 taken 0 (throw)
+call   23 returned 1
+branch 24 taken 1
+branch 25 taken 0
+call   26 returned 1
+call   27 returned 1
+branch 28 taken 1 (fallthrough)
+branch 29 taken 0 (throw)
+call   30 returned 1
+call   31 never executed
+call   32 never executed
+branch 33 never executed (fallthrough)
+branch 34 never executed (throw)
+call   35 never executed
+branch 36 never executed (fallthrough)
+branch 37 never executed (throw)
+call   38 never executed
+call   39 never executed
+call   40 never executed
+       1*:   88:    REQUIRE_THROWS_AS(buffer.read_unsigned_bits(65U), std::invalid_argument);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+branch  9 taken 1 (fallthrough)
+branch 10 taken 0
+call   11 returned 1
+branch 12 taken 0 (fallthrough)
+branch 13 taken 1 (throw)
+call   14 never executed
+branch 15 never executed (fallthrough)
+branch 16 never executed (throw)
+call   17 never executed
+branch 18 never executed (fallthrough)
+branch 19 never executed (throw)
+call   20 returned 1
+branch 21 taken 1 (fallthrough)
+branch 22 taken 0 (throw)
+call   23 returned 1
+branch 24 taken 1
+branch 25 taken 0
+call   26 returned 1
+call   27 returned 1
+branch 28 taken 1 (fallthrough)
+branch 29 taken 0 (throw)
+call   30 returned 1
+call   31 never executed
+call   32 never executed
+branch 33 never executed (fallthrough)
+branch 34 never executed (throw)
+call   35 never executed
+branch 36 never executed (fallthrough)
+branch 37 never executed (throw)
+call   38 never executed
+call   39 never executed
+call   40 never executed
+       1*:   89:    REQUIRE_THROWS_AS(buffer.read_bytes(&out, 1U), std::out_of_range);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+branch  9 taken 1 (fallthrough)
+branch 10 taken 0
+call   11 returned 1
+branch 12 taken 0 (fallthrough)
+branch 13 taken 1 (throw)
+call   14 never executed
+branch 15 never executed (fallthrough)
+branch 16 never executed (throw)
+call   17 never executed
+branch 18 never executed (fallthrough)
+branch 19 never executed (throw)
+call   20 returned 1
+branch 21 taken 1 (fallthrough)
+branch 22 taken 0 (throw)
+call   23 returned 1
+branch 24 taken 1
+branch 25 taken 0
+call   26 returned 1
+call   27 returned 1
+branch 28 taken 1 (fallthrough)
+branch 29 taken 0 (throw)
+call   30 returned 1
+call   31 never executed
+call   32 never executed
+branch 33 never executed (fallthrough)
+branch 34 never executed (throw)
+call   35 never executed
+branch 36 never executed (fallthrough)
+branch 37 never executed (throw)
+call   38 never executed
+call   39 never executed
+call   40 never executed
+        1:   90:}
+call    0 returned 1
+call    1 never executed
+        -:   91:
+function _ZL23CATCH2_INTERNAL_TEST_10v called 1 returned 100% blocks executed 49%
+        1:   92:TEST_CASE("bit buffer overwrites existing aligned and unaligned bit ranges") {
+        1:   93:    ecs::BitBuffer aligned;
+call    0 returned 1
+        1:   94:    aligned.push_bits(0, 32U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:   95:    aligned.overwrite_unsigned_bits(0, 0xfeedfaceU, 32U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:   96:    REQUIRE(aligned.read_unsigned_bits(32U) == 0xfeedfaceU);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        -:   97:
+        1:   98:    ecs::BitBuffer unaligned;
+call    0 returned 1
+        1:   99:    unaligned.push_bits(0b101, 3U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  100:    const std::size_t patch_offset = unaligned.bit_size();
+call    0 returned 1
+        1:  101:    unaligned.push_bits(0, 32U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  102:    unaligned.push_bits(0b11, 2U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  103:
+        1:  104:    REQUIRE(unaligned.read_bits(3U) == 0b101);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        1:  105:    REQUIRE(unaligned.read_offset_bits() == 3U);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        -:  106:
+        1:  107:    unaligned.overwrite_unsigned_bits(patch_offset, 0xcafebabeU, 32U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  108:
+        1:  109:    REQUIRE(unaligned.bit_size() == 37U);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        1:  110:    REQUIRE(unaligned.read_offset_bits() == 3U);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        1:  111:    REQUIRE(unaligned.read_unsigned_bits(32U) == 0xcafebabeU);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        1:  112:    REQUIRE(unaligned.read_bits(2U) == 0b11);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        1:  113:    REQUIRE(unaligned.remaining_bits() == 0U);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        1:  114:}
+call    0 returned 1
+call    1 returned 1
+call    2 never executed
+call    3 never executed
+        -:  115:
+function _ZL23CATCH2_INTERNAL_TEST_12v called 1 returned 100% blocks executed 50%
+        1:  116:TEST_CASE("bit buffer appends source buffers bit-exactly") {
+        1:  117:    ecs::BitBuffer source;
+call    0 returned 1
+        1:  118:    source.push_bool(true);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  119:    source.push_bits(0b010011, 6U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  120:
+        1:  121:    ecs::BitBuffer combined;
+call    0 returned 1
+        1:  122:    combined.push_bool(false);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  123:    combined.push_buffer_bits(source);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  124:
+        1:  125:    REQUIRE_FALSE(combined.read_bool());
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 returned 1
+call    4 returned 1
+call    5 returned 1
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+branch 19 taken 1 (fallthrough)
+branch 20 taken 0 (throw)
+call   21 returned 1
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        1:  126:    REQUIRE(combined.read_bool());
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 never executed
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+call   27 never executed
+        1:  127:    REQUIRE(combined.read_bits(6U) == 0b010011);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        1:  128:    REQUIRE(combined.remaining_bits() == 0);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        1:  129:}
+call    0 returned 1
+call    1 returned 1
+call    2 never executed
+call    3 never executed
+        -:  130:
+function _ZL23CATCH2_INTERNAL_TEST_14v called 1 returned 100% blocks executed 56%
+        1:  131:TEST_CASE("bit buffer round-trips deterministic randomized unaligned integer fields") {
+        1:  132:    std::mt19937 rng(12345);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  133:    std::vector<std::pair<std::uint64_t, std::size_t>> fields;
+call    0 returned 1
+        1:  134:    ecs::BitBuffer buffer;
+call    0 returned 1
+        1:  135:    buffer.push_bits(0b101, 3U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  136:
+      129:  137:    for (int field = 0; field < 128; ++field) {
+branch  0 taken 128
+branch  1 taken 1 (fallthrough)
+      128:  138:        const std::size_t bits = 1U + (rng() % 64U);
+call    0 returned 128
+branch  1 taken 128 (fallthrough)
+branch  2 taken 0 (throw)
+      128:  139:        const std::uint64_t mask = bits == 64U ? ~std::uint64_t{0} : ((std::uint64_t{1} << bits) - 1U);
+branch  0 taken 126 (fallthrough)
+branch  1 taken 2
+        -:  140:        const std::uint64_t value =
+      128:  141:            ((static_cast<std::uint64_t>(rng()) << 32U) | static_cast<std::uint64_t>(rng())) & mask;
+call    0 returned 128
+branch  1 taken 128 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 returned 128
+branch  4 taken 128 (fallthrough)
+branch  5 taken 0 (throw)
+      128:  142:        fields.push_back({value, bits});
+call    0 returned 128
+call    1 returned 128
+branch  2 taken 128 (fallthrough)
+branch  3 taken 0 (throw)
+      128:  143:        buffer.push_unsigned_bits(value, bits);
+call    0 returned 128
+branch  1 taken 128 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  144:    }
+        -:  145:
+        1:  146:    REQUIRE(buffer.read_bits(3U) == 0b101);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+      129:  147:    for (const auto& [value, bits] : fields) {
+call    0 returned 1
+call    1 returned 1
+call    2 returned 128
+call    3 returned 128
+call    4 returned 128
+call    5 returned 128
+call    6 returned 129
+branch  7 taken 128
+branch  8 taken 1 (fallthrough)
+      128:  148:        REQUIRE(buffer.read_unsigned_bits(bits) == value);
+call    0 returned 128
+call    1 returned 128
+call    2 returned 128
+call    3 returned 128
+branch  4 taken 128 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 128
+branch  7 taken 128 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 128
+branch 10 taken 128 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 128
+branch 13 taken 128 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 128
+branch 16 taken 128 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 128
+call   19 returned 128
+branch 20 taken 128 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 128
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        -:  149:    }
+        1:  150:    REQUIRE(buffer.remaining_bits() == 0U);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        1:  151:}
+call    0 returned 1
+call    1 returned 1
+call    2 never executed
+call    3 never executed
+        -:  152:
+function _ZL23CATCH2_INTERNAL_TEST_16v called 1 returned 100% blocks executed 47%
+        1:  153:TEST_CASE("protocol baseline frame encoding uses relative deltas when possible") {
+        1:  154:    ecs::BitBuffer relative;
+call    0 returned 1
+        1:  155:    kage::sync::protocol::write_baseline_frame(relative, 40U, 35U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  156:    REQUIRE(relative.bit_size() == 1U + kage::sync::protocol::baseline_frame_delta_bits);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        -:  157:
+        1:  158:    std::uint32_t decoded = 0;
+        1:  159:    REQUIRE(kage::sync::protocol::read_baseline_frame(relative, 40U, decoded));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 never executed
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+call   27 never executed
+        1:  160:    REQUIRE(decoded == 35U);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+call   16 returned 1
+branch 17 taken 1 (fallthrough)
+branch 18 taken 0 (throw)
+call   19 returned 1
+call   20 never executed
+call   21 never executed
+call   22 never executed
+branch 23 never executed (fallthrough)
+branch 24 never executed (throw)
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+call   29 never executed
+        1:  161:    REQUIRE(relative.remaining_bits() == 0U);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        -:  162:
+        1:  163:    ecs::BitBuffer full;
+call    0 returned 1
+        1:  164:    kage::sync::protocol::write_baseline_frame(
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  165:        full,
+        -:  166:        40U,
+        -:  167:        40U - kage::sync::protocol::max_baseline_frame_delta - 1U);
+        1:  168:    REQUIRE(full.bit_size() == 33U);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        -:  169:
+        1:  170:    REQUIRE(kage::sync::protocol::read_baseline_frame(full, 40U, decoded));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 never executed
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+call   27 never executed
+        1:  171:    REQUIRE(decoded == 40U - kage::sync::protocol::max_baseline_frame_delta - 1U);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+call   16 returned 1
+branch 17 taken 1 (fallthrough)
+branch 18 taken 0 (throw)
+call   19 returned 1
+call   20 never executed
+call   21 never executed
+call   22 never executed
+branch 23 never executed (fallthrough)
+branch 24 never executed (throw)
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+call   29 never executed
+        1:  172:    REQUIRE(full.remaining_bits() == 0U);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        1:  173:}
+call    0 returned 1
+call    1 returned 1
+call    2 never executed
+call    3 never executed
+        -:  174:
+function _ZL23CATCH2_INTERNAL_TEST_18v called 1 returned 100% blocks executed 52%
+        1:  175:TEST_CASE("protocol baseline frame encoding round-trips sampled frame pairs") {
+       17:  176:    for (std::uint32_t current = 0; current < 256U; current += 17U) {
+branch  0 taken 16
+branch  1 taken 1 (fallthrough)
+       96:  177:        for (std::uint32_t baseline : {
+        -:  178:                 0U,
+        -:  179:                 current,
+       16:  180:                 current > 3U ? current - 3U : 0U,
+       16:  181:                 current + 11U,
+        -:  182:                 current > kage::sync::protocol::max_baseline_frame_delta + 2U
+       16:  183:                     ? current - kage::sync::protocol::max_baseline_frame_delta - 2U
+      112:  184:                     : 0U}) {
+call    0 returned 16
+call    1 returned 16
+branch  2 taken 80
+branch  3 taken 16 (fallthrough)
+       80:  185:            ecs::BitBuffer buffer;
+call    0 returned 80
+       80:  186:            kage::sync::protocol::write_baseline_frame(buffer, current, baseline);
+call    0 returned 80
+branch  1 taken 80 (fallthrough)
+branch  2 taken 0 (throw)
+       80:  187:            std::uint32_t decoded = 0;
+       80:  188:            REQUIRE(kage::sync::protocol::read_baseline_frame(buffer, current, decoded));
+call    0 returned 80
+call    1 returned 80
+call    2 returned 80
+call    3 returned 80
+branch  4 taken 80 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 80
+branch  7 taken 80 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 80
+branch 10 taken 80 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 80
+branch 13 taken 80 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 80
+branch 16 taken 80 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 80
+call   19 never executed
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+call   27 never executed
+       80:  189:            REQUIRE(decoded == baseline);
+call    0 returned 80
+call    1 returned 80
+call    2 returned 80
+call    3 returned 80
+branch  4 taken 80 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 80
+branch  7 taken 80 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 80
+branch 10 taken 80 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 80
+branch 13 taken 80 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 80
+call   16 returned 80
+branch 17 taken 80 (fallthrough)
+branch 18 taken 0 (throw)
+call   19 returned 80
+call   20 never executed
+call   21 never executed
+call   22 never executed
+branch 23 never executed (fallthrough)
+branch 24 never executed (throw)
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+call   29 never executed
+       80:  190:            REQUIRE(buffer.remaining_bits() == 0U);
+call    0 returned 80
+call    1 returned 80
+call    2 returned 80
+call    3 returned 80
+branch  4 taken 80 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 80
+call    7 returned 80
+branch  8 taken 80 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 80
+branch 11 taken 80 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 80
+branch 14 taken 80 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 80
+call   17 returned 80
+branch 18 taken 80 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 80
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+       80:  191:        }
+call    0 returned 80
+call    1 never executed
+        -:  192:    }
+        1:  193:}
+        -:  194:
+function _ZL23CATCH2_INTERNAL_TEST_20v called 1 returned 100% blocks executed 51%
+        1:  195:TEST_CASE("protocol network entity id encoding uses compact tiers") {
+        4:  196:    for (const std::size_t tier0_bits : {8U, 11U, 15U}) {
+call    0 returned 1
+call    1 returned 1
+branch  2 taken 3
+branch  3 taken 1 (fallthrough)
+        3:  197:        const std::uint32_t tier0_max = kage::sync::protocol::network_entity_id_tier0_max(tier0_bits);
+call    0 returned 3
+        3:  198:        const std::uint32_t ids[] = {
+        -:  199:            1U,
+        -:  200:            tier0_max,
+        3:  201:            tier0_max + 1U,
+        -:  202:            kage::sync::protocol::network_entity_id_tier1_max,
+        -:  203:            kage::sync::protocol::network_entity_id_tier1_max + 1U,
+        -:  204:            0xffffffffU,
+        3:  205:        };
+        -:  206:
+       21:  207:        for (const std::uint32_t id : ids) {
+branch  0 taken 18
+branch  1 taken 3 (fallthrough)
+       18:  208:            ecs::BitBuffer buffer;
+call    0 returned 18
+       18:  209:            kage::sync::protocol::write_network_entity_id(buffer, id, tier0_bits);
+call    0 returned 18
+branch  1 taken 18 (fallthrough)
+branch  2 taken 0 (throw)
+       18:  210:            REQUIRE(buffer.bit_size() ==
+call    0 returned 18
+call    1 returned 18
+call    2 returned 18
+call    3 returned 18
+branch  4 taken 18 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 18
+call    7 returned 18
+call    8 returned 18
+branch  9 taken 18 (fallthrough)
+branch 10 taken 0 (throw)
+call   11 returned 18
+branch 12 taken 18 (fallthrough)
+branch 13 taken 0 (throw)
+call   14 returned 18
+branch 15 taken 18 (fallthrough)
+branch 16 taken 0 (throw)
+call   17 returned 18
+call   18 returned 18
+branch 19 taken 18 (fallthrough)
+branch 20 taken 0 (throw)
+call   21 returned 18
+call   22 never executed
+call   23 never executed
+call   24 never executed
+branch 25 never executed (fallthrough)
+branch 26 never executed (throw)
+call   27 never executed
+branch 28 never executed (fallthrough)
+branch 29 never executed (throw)
+call   30 never executed
+call   31 never executed
+        -:  211:                    kage::sync::protocol::network_entity_id_encoded_bits(id, tier0_bits));
+        -:  212:
+       18:  213:            std::uint32_t decoded = 0;
+       18:  214:            REQUIRE(kage::sync::protocol::read_network_entity_id(buffer, decoded, tier0_bits));
+call    0 returned 18
+call    1 returned 18
+call    2 returned 18
+call    3 returned 18
+branch  4 taken 18 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 18
+branch  7 taken 18 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 18
+branch 10 taken 18 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 18
+branch 13 taken 18 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 18
+branch 16 taken 18 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 18
+call   19 never executed
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+call   27 never executed
+       18:  215:            REQUIRE(decoded == id);
+call    0 returned 18
+call    1 returned 18
+call    2 returned 18
+call    3 returned 18
+branch  4 taken 18 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 18
+branch  7 taken 18 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 18
+branch 10 taken 18 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 18
+branch 13 taken 18 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 18
+call   16 returned 18
+branch 17 taken 18 (fallthrough)
+branch 18 taken 0 (throw)
+call   19 returned 18
+call   20 never executed
+call   21 never executed
+call   22 never executed
+branch 23 never executed (fallthrough)
+branch 24 never executed (throw)
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+call   29 never executed
+       18:  216:            REQUIRE(buffer.remaining_bits() == 0U);
+call    0 returned 18
+call    1 returned 18
+call    2 returned 18
+call    3 returned 18
+branch  4 taken 18 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 18
+call    7 returned 18
+branch  8 taken 18 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 18
+branch 11 taken 18 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 18
+branch 14 taken 18 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 18
+call   17 returned 18
+branch 18 taken 18 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 18
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+       18:  217:        }
+call    0 returned 18
+call    1 never executed
+        -:  218:    }
+        1:  219:}
+        -:  220:
+function _ZL23CATCH2_INTERNAL_TEST_22v called 1 returned 100% blocks executed 51%
+        1:  221:TEST_CASE("protocol network entity id encoding round-trips sampled ids across tier widths") {
+        1:  222:    std::mt19937 rng(6789);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        6:  223:    for (const std::size_t tier0_bits : {1U, 4U, 8U, 11U, 22U}) {
+call    0 returned 1
+call    1 returned 1
+branch  2 taken 5
+branch  3 taken 1 (fallthrough)
+      645:  224:        for (int sample = 0; sample < 128; ++sample) {
+branch  0 taken 640
+branch  1 taken 5 (fallthrough)
+      640:  225:            const std::uint32_t id = rng();
+call    0 returned 640
+branch  1 taken 640 (fallthrough)
+branch  2 taken 0 (throw)
+      640:  226:            ecs::BitBuffer buffer;
+call    0 returned 640
+      640:  227:            kage::sync::protocol::write_network_entity_id(buffer, id, tier0_bits);
+call    0 returned 640
+branch  1 taken 640 (fallthrough)
+branch  2 taken 0 (throw)
+      640:  228:            REQUIRE(buffer.bit_size() ==
+call    0 returned 640
+call    1 returned 640
+call    2 returned 640
+call    3 returned 640
+branch  4 taken 640 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 640
+call    7 returned 640
+call    8 returned 640
+branch  9 taken 640 (fallthrough)
+branch 10 taken 0 (throw)
+call   11 returned 640
+branch 12 taken 640 (fallthrough)
+branch 13 taken 0 (throw)
+call   14 returned 640
+branch 15 taken 640 (fallthrough)
+branch 16 taken 0 (throw)
+call   17 returned 640
+call   18 returned 640
+branch 19 taken 640 (fallthrough)
+branch 20 taken 0 (throw)
+call   21 returned 640
+call   22 never executed
+call   23 never executed
+call   24 never executed
+branch 25 never executed (fallthrough)
+branch 26 never executed (throw)
+call   27 never executed
+branch 28 never executed (fallthrough)
+branch 29 never executed (throw)
+call   30 never executed
+call   31 never executed
+        -:  229:                    kage::sync::protocol::network_entity_id_encoded_bits(id, tier0_bits));
+        -:  230:
+      640:  231:            std::uint32_t decoded = 0;
+      640:  232:            REQUIRE(kage::sync::protocol::read_network_entity_id(buffer, decoded, tier0_bits));
+call    0 returned 640
+call    1 returned 640
+call    2 returned 640
+call    3 returned 640
+branch  4 taken 640 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 640
+branch  7 taken 640 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 640
+branch 10 taken 640 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 640
+branch 13 taken 640 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 640
+branch 16 taken 640 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 640
+call   19 never executed
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+call   27 never executed
+      640:  233:            REQUIRE(decoded == id);
+call    0 returned 640
+call    1 returned 640
+call    2 returned 640
+call    3 returned 640
+branch  4 taken 640 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 640
+branch  7 taken 640 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 640
+branch 10 taken 640 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 640
+branch 13 taken 640 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 640
+call   16 returned 640
+branch 17 taken 640 (fallthrough)
+branch 18 taken 0 (throw)
+call   19 returned 640
+call   20 never executed
+call   21 never executed
+call   22 never executed
+branch 23 never executed (fallthrough)
+branch 24 never executed (throw)
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+call   29 never executed
+      640:  234:            REQUIRE(buffer.remaining_bits() == 0U);
+call    0 returned 640
+call    1 returned 640
+call    2 returned 640
+call    3 returned 640
+branch  4 taken 640 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 640
+call    7 returned 640
+branch  8 taken 640 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 640
+branch 11 taken 640 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 640
+branch 14 taken 640 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 640
+call   17 returned 640
+branch 18 taken 640 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 640
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+      640:  235:        }
+call    0 returned 640
+call    1 never executed
+        -:  236:    }
+        1:  237:}
+        -:  238:
+function _ZL23CATCH2_INTERNAL_TEST_24v called 1 returned 100% blocks executed 50%
+        1:  239:TEST_CASE("protocol strings round-trip and reject truncated payloads") {
+        6:  240:    const std::vector<std::string> values = {"", "a", "hello", std::string(32, 'x')};
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+branch  3 taken 4 (fallthrough)
+branch  4 taken 1
+call    5 returned 4
+branch  6 never executed (fallthrough)
+branch  7 never executed
+call    8 never executed
+        5:  241:    for (const std::string& value : values) {
+call    0 returned 1
+call    1 returned 4
+call    2 returned 4
+call    3 returned 5
+branch  4 taken 4
+branch  5 taken 1 (fallthrough)
+        4:  242:        ecs::BitBuffer buffer;
+call    0 returned 4
+        4:  243:        kage::sync::protocol::write_string(buffer, value);
+call    0 returned 4
+branch  1 taken 4 (fallthrough)
+branch  2 taken 0 (throw)
+        4:  244:        std::string decoded;
+call    0 returned 4
+        4:  245:        REQUIRE(kage::sync::protocol::read_string(buffer, decoded));
+call    0 returned 4
+call    1 returned 4
+call    2 returned 4
+call    3 returned 4
+branch  4 taken 4 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 4
+branch  7 taken 4 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 4
+branch 10 taken 4 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 4
+branch 13 taken 4 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 4
+branch 16 taken 4 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 4
+call   19 never executed
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+call   27 never executed
+        4:  246:        REQUIRE(decoded == value);
+call    0 returned 4
+call    1 returned 4
+call    2 returned 4
+call    3 returned 4
+branch  4 taken 4 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 4
+branch  7 taken 4 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 4
+branch 10 taken 4 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 4
+branch 13 taken 4 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 4
+call   16 returned 4
+branch 17 taken 4 (fallthrough)
+branch 18 taken 0 (throw)
+call   19 returned 4
+call   20 never executed
+call   21 never executed
+call   22 never executed
+branch 23 never executed (fallthrough)
+branch 24 never executed (throw)
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+call   29 never executed
+        4:  247:        REQUIRE(buffer.remaining_bits() == 0U);
+call    0 returned 4
+call    1 returned 4
+call    2 returned 4
+call    3 returned 4
+branch  4 taken 4 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 4
+call    7 returned 4
+branch  8 taken 4 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 4
+branch 11 taken 4 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 4
+branch 14 taken 4 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 4
+call   17 returned 4
+branch 18 taken 4 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 4
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        4:  248:    }
+call    0 returned 4
+call    1 returned 4
+call    2 never executed
+call    3 never executed
+        -:  249:
+        1:  250:    ecs::BitBuffer truncated_length;
+call    0 returned 1
+        1:  251:    truncated_length.push_bits(1, 8U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  252:    std::string decoded;
+call    0 returned 1
+        1:  253:    REQUIRE_FALSE(kage::sync::protocol::read_string(truncated_length, decoded));
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 returned 1
+call    4 returned 1
+call    5 returned 1
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+branch 19 taken 1 (fallthrough)
+branch 20 taken 0 (throw)
+call   21 returned 1
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        -:  254:
+        1:  255:    ecs::BitBuffer truncated_payload;
+call    0 returned 1
+        1:  256:    truncated_payload.push_bits(4, 16U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  257:    truncated_payload.push_bytes("xy", 2U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  258:    REQUIRE_FALSE(kage::sync::protocol::read_string(truncated_payload, decoded));
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 returned 1
+call    4 returned 1
+call    5 returned 1
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+branch 19 taken 1 (fallthrough)
+branch 20 taken 0 (throw)
+call   21 returned 1
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        4:  259:}
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+call   13 returned 1
+call   14 returned 1
+call   15 returned 1
+call   16 returned 1
+branch 17 never executed (fallthrough)
+branch 18 never executed
+branch 19 never executed (fallthrough)
+branch 20 never executed
+call   21 never executed
+call   22 never executed
+call   23 never executed
+call   24 never executed
+call   25 never executed
+        -:  260:
+function _ZL23CATCH2_INTERNAL_TEST_26v called 1 returned 100% blocks executed 47%
+        1:  261:TEST_CASE("delta helpers quantize floats and vectors with changed-value masks") {
+        1:  262:    const kage::sync::delta::FloatConfig config{-10.0f, 10.0f, 0.25f};
+        -:  263:
+        1:  264:    ecs::BitBuffer scalar;
+call    0 returned 1
+        1:  265:    kage::sync::delta::write_float(scalar, 1.12f, config);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  266:    REQUIRE(scalar.bit_size() == kage::sync::delta::float_bits(config));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+branch 17 taken 1 (fallthrough)
+branch 18 taken 0 (throw)
+call   19 returned 1
+call   20 returned 1
+branch 21 taken 1 (fallthrough)
+branch 22 taken 0 (throw)
+call   23 returned 1
+call   24 never executed
+call   25 never executed
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+branch 30 never executed (fallthrough)
+branch 31 never executed (throw)
+call   32 never executed
+call   33 never executed
+        1:  267:    float scalar_out = 0.0f;
+        1:  268:    REQUIRE(kage::sync::delta::read_float(scalar, config, scalar_out));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 never executed
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+call   27 never executed
+        1:  269:    REQUIRE(scalar_out == Catch::Approx(1.0f));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        -:  270:
+        1:  271:    ecs::BitBuffer delta;
+call    0 returned 1
+        1:  272:    kage::sync::delta::write_delta_vec3(
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  273:        delta,
+        -:  274:        kage::sync::delta::Vec3{1.0f, 2.0f, 3.0f},
+        -:  275:        kage::sync::delta::Vec3{1.0f, 2.5f, 3.0f},
+        -:  276:        config);
+        1:  277:    REQUIRE(delta.bit_size() == 3U + kage::sync::delta::float_bits(config));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+branch 17 taken 1 (fallthrough)
+branch 18 taken 0 (throw)
+call   19 returned 1
+call   20 returned 1
+branch 21 taken 1 (fallthrough)
+branch 22 taken 0 (throw)
+call   23 returned 1
+call   24 never executed
+call   25 never executed
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+branch 30 never executed (fallthrough)
+branch 31 never executed (throw)
+call   32 never executed
+call   33 never executed
+        -:  278:
+        1:  279:    kage::sync::delta::Vec3 decoded;
+        1:  280:    REQUIRE(kage::sync::delta::read_delta_vec3(
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 never executed
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+call   27 never executed
+        -:  281:        delta,
+        -:  282:        kage::sync::delta::Vec3{1.0f, 2.0f, 3.0f},
+        -:  283:        config,
+        -:  284:        decoded));
+        1:  285:    REQUIRE(decoded.x == Catch::Approx(1.0f));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        1:  286:    REQUIRE(decoded.y == Catch::Approx(2.5f));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        1:  287:    REQUIRE(decoded.z == Catch::Approx(3.0f));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        1:  288:}
+call    0 returned 1
+call    1 returned 1
+call    2 never executed
+call    3 never executed
+        -:  289:
+function _ZL23CATCH2_INTERNAL_TEST_28v called 1 returned 100% blocks executed 46%
+        1:  290:TEST_CASE("delta helpers encode integer and quaternion deltas") {
+        1:  291:    ecs::BitBuffer ints;
+call    0 returned 1
+        1:  292:    kage::sync::delta::write_delta_int(ints, 100, 93, 8U);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  293:    std::int64_t int_out = 0;
+        1:  294:    REQUIRE(kage::sync::delta::read_delta_int(ints, 100, 8U, int_out));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 never executed
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+call   27 never executed
+        1:  295:    REQUIRE(int_out == 93);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+call   16 returned 1
+branch 17 taken 1 (fallthrough)
+branch 18 taken 0 (throw)
+call   19 returned 1
+call   20 never executed
+call   21 never executed
+call   22 never executed
+branch 23 never executed (fallthrough)
+branch 24 never executed (throw)
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+call   29 never executed
+        -:  296:
+        1:  297:    const kage::sync::delta::FloatConfig quat_config{-1.0f, 1.0f, 0.01f};
+        1:  298:    ecs::BitBuffer quaternion;
+call    0 returned 1
+        1:  299:    kage::sync::delta::write_delta_quaternion(
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  300:        quaternion,
+        -:  301:        kage::sync::delta::Quaternion{0.0f, 0.0f, 0.0f, 1.0f},
+        -:  302:        kage::sync::delta::Quaternion{0.0f, 0.25f, 0.0f, 0.97f},
+        -:  303:        quat_config);
+        -:  304:
+        1:  305:    kage::sync::delta::Quaternion out;
+        1:  306:    REQUIRE(kage::sync::delta::read_delta_quaternion(
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 never executed
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+call   27 never executed
+        -:  307:        quaternion,
+        -:  308:        kage::sync::delta::Quaternion{0.0f, 0.0f, 0.0f, 1.0f},
+        -:  309:        quat_config,
+        -:  310:        out));
+        1:  311:    REQUIRE(out.x == Catch::Approx(0.0f));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        1:  312:    REQUIRE(out.y == Catch::Approx(0.25f));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        1:  313:    REQUIRE(out.z == Catch::Approx(0.0f));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        1:  314:    REQUIRE(out.w == Catch::Approx(0.97f));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 returned 1
+branch 20 taken 1 (fallthrough)
+branch 21 taken 0 (throw)
+call   22 returned 1
+call   23 never executed
+call   24 never executed
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+branch 29 never executed (fallthrough)
+branch 30 never executed (throw)
+call   31 never executed
+call   32 never executed
+        1:  315:}
+call    0 returned 1
+call    1 returned 1
+call    2 never executed
+call    3 never executed

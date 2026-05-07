@@ -1,0 +1,532 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/include/kage/sync/registration.hpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include "kage/sync/component_traits.hpp"
+        -:    4:#include "kage/sync/components.hpp"
+        -:    5:#include "kage/sync/detail/component_trait_adapters.hpp"
+        -:    6:#include "kage/sync/detail/type_name.hpp"
+        -:    7:
+        -:    8:#include <cstdint>
+        -:    9:#include <cstring>
+        -:   10:#include <limits>
+        -:   11:#include <memory>
+        -:   12:#include <mutex>
+        -:   13:#include <stdexcept>
+        -:   14:#include <string>
+        -:   15:#include <type_traits>
+        -:   16:#include <typeindex>
+        -:   17:#include <typeinfo>
+        -:   18:#include <utility>
+        -:   19:
+        -:   20:namespace kage::sync {
+        -:   21:
+        -:   22:template <typename T>
+    #####:   23:ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = {}) {
+        -:   24:    using Traits = SyncComponentTraits<T>;
+        -:   25:    using Quantized = typename Traits::Quantized;
+        -:   26:    static_assert(
+        -:   27:        std::is_trivially_copyable<Quantized>::value,
+        -:   28:        "SyncComponentTraits<T>::Quantized must be trivially copyable");
+        -:   29:
+    #####:   30:    register_components(registry);
+        -:   31:
+    #####:   32:    std::string component_name = name;
+    #####:   33:    const ecs::Entity component = registry.register_component<T>(std::move(name));
+        -:   34:
+    #####:   35:    SyncComponentOps ops;
+    #####:   36:    ops.name = std::move(component_name);
+    #####:   37:    ops.quantized_size = sizeof(Quantized);
+    #####:   38:    ops.quantize = [](const void* value, std::uint8_t* out) {
+    #####:   39:        const Quantized quantized = Traits::quantize(*static_cast<const T*>(value));
+call    0 never executed
+call    1 never executed
+    #####:   40:        std::memcpy(out, &quantized, sizeof(Quantized));
+        -:   41:    };
+    #####:   42:    ops.dequantize = [](const std::uint8_t* quantized_bytes, void* out) {
+    #####:   43:        Quantized quantized{};
+    #####:   44:        std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
+    #####:   45:        *static_cast<T*>(out) = Traits::dequantize(quantized);
+call    0 never executed
+call    1 never executed
+        -:   46:    };
+    #####:   47:    ops.push_to_ecs = [](ecs::Registry& registry, ecs::Entity entity, const std::uint8_t* quantized_bytes) {
+    #####:   48:        Quantized quantized{};
+    #####:   49:        std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
+    #####:   50:        return registry.add<T>(entity, Traits::dequantize(quantized)) != nullptr;
+call    0 never executed
+call    1 never executed
+branch  2 never executed (fallthrough)
+branch  3 never executed (throw)
+call    4 never executed
+call    5 never executed
+branch  6 never executed (fallthrough)
+branch  7 never executed (throw)
+        -:   51:    };
+    #####:   52:    ops.serialize = [](
+        -:   53:        const std::uint8_t* previous_bytes,
+        -:   54:        const std::uint8_t* current_bytes,
+        -:   55:        ecs::BitBuffer& out,
+        -:   56:        EntityReferenceContext* references) {
+    #####:   57:        Quantized current{};
+    #####:   58:        std::memcpy(&current, current_bytes, sizeof(Quantized));
+        -:   59:
+    #####:   60:        Quantized previous{};
+    #####:   61:        const Quantized* previous_ptr = nullptr;
+    #####:   62:        if (previous_bytes != nullptr) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+branch  2 never executed (fallthrough)
+branch  3 never executed
+    #####:   63:            std::memcpy(&previous, previous_bytes, sizeof(Quantized));
+    #####:   64:            previous_ptr = &previous;
+        -:   65:        }
+        -:   66:
+    #####:   67:        detail::serialize_quantized<Traits, Quantized>(previous_ptr, current, out, references);
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+call    3 never executed
+branch  4 never executed (fallthrough)
+branch  5 never executed (throw)
+        -:   68:    };
+    #####:   69:    ops.deserialize = [](
+        -:   70:        ecs::BitBuffer& in,
+        -:   71:        const std::uint8_t* previous_bytes,
+        -:   72:        std::uint8_t* out,
+        -:   73:        EntityReferenceContext* references) {
+    #####:   74:        Quantized previous{};
+    #####:   75:        const Quantized* previous_ptr = nullptr;
+    #####:   76:        if (previous_bytes != nullptr) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+branch  2 never executed (fallthrough)
+branch  3 never executed
+    #####:   77:            std::memcpy(&previous, previous_bytes, sizeof(Quantized));
+    #####:   78:            previous_ptr = &previous;
+        -:   79:        }
+        -:   80:
+    #####:   81:        Quantized quantized{};
+    #####:   82:        if (!detail::deserialize_quantized<Traits, Quantized>(in, previous_ptr, quantized, references)) {
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+branch  3 never executed (fallthrough)
+branch  4 never executed
+call    5 never executed
+branch  6 never executed (fallthrough)
+branch  7 never executed (throw)
+branch  8 never executed (fallthrough)
+branch  9 never executed
+    #####:   83:            return false;
+        -:   84:        }
+        -:   85:
+    #####:   86:        std::memcpy(out, &quantized, sizeof(Quantized));
+    #####:   87:        return true;
+        -:   88:    };
+    #####:   89:    ops.references_entities =
+        -:   90:        detail::has_context_serialize<Traits, Quantized>::value ||
+        -:   91:        detail::has_context_deserialize<Traits, Quantized>::value;
+        -:   92:    if constexpr (detail::has_interpolate<Traits, Quantized>::value) {
+        -:   93:        ops.interpolate = &detail::interpolate_quantized<Traits, Quantized>;
+        -:   94:    }
+        -:   95:    if constexpr (detail::has_error_blending<Traits, Quantized>::value) {
+        -:   96:        using Error = typename Traits::Error;
+        -:   97:        static_assert(
+        -:   98:            std::is_trivially_copyable<Error>::value,
+        -:   99:            "SyncComponentTraits<T>::Error must be trivially copyable");
+        -:  100:        ops.error_size = sizeof(Error);
+        -:  101:        ops.compute_error = &detail::compute_error_quantized<Traits, Quantized>;
+        -:  102:        ops.apply_error = &detail::apply_error_quantized<Traits, Quantized>;
+        -:  103:        ops.blend_out_error = &detail::blend_out_error_quantized<Traits, Quantized>;
+        -:  104:    }
+        -:  105:    if constexpr (detail::has_should_roll_back<Traits, Quantized>::value) {
+        -:  106:        ops.should_roll_back = &detail::should_roll_back_quantized<Traits, Quantized>;
+        -:  107:    }
+        -:  108:#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+        -:  109:    if constexpr (detail::has_trace_component<Traits, Quantized>::value) {
+        -:  110:        ops.trace = &detail::trace_component_quantized<Traits, Quantized>;
+        -:  111:    }
+        -:  112:#endif
+        -:  113:
+    #####:  114:    registry.write<SyncSettings>().component_ops[component.value] = ops;
+    #####:  115:    return component;
+    #####:  116:}
+------------------
+_ZN4kage4sync23register_sync_componentIN15kage_sync_tests6HealthEEEN3ecs6EntityERNS4_8RegistryENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE:
+function _ZN4kage4sync23register_sync_componentIN15kage_sync_tests6HealthEEEN3ecs6EntityERNS4_8RegistryENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE called 0 returned 0% blocks executed 0%
+    #####:   23:ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = {}) {
+        -:   24:    using Traits = SyncComponentTraits<T>;
+        -:   25:    using Quantized = typename Traits::Quantized;
+        -:   26:    static_assert(
+        -:   27:        std::is_trivially_copyable<Quantized>::value,
+        -:   28:        "SyncComponentTraits<T>::Quantized must be trivially copyable");
+        -:   29:
+    #####:   30:    register_components(registry);
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+        -:   31:
+    #####:   32:    std::string component_name = name;
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+    #####:   33:    const ecs::Entity component = registry.register_component<T>(std::move(name));
+call    0 never executed
+call    1 never executed
+call    2 never executed
+branch  3 never executed (fallthrough)
+branch  4 never executed (throw)
+call    5 never executed
+call    6 never executed
+        -:   34:
+    #####:   35:    SyncComponentOps ops;
+call    0 never executed
+    #####:   36:    ops.name = std::move(component_name);
+call    0 never executed
+call    1 never executed
+    #####:   37:    ops.quantized_size = sizeof(Quantized);
+    #####:   38:    ops.quantize = [](const void* value, std::uint8_t* out) {
+call    0 never executed
+        -:   39:        const Quantized quantized = Traits::quantize(*static_cast<const T*>(value));
+        -:   40:        std::memcpy(out, &quantized, sizeof(Quantized));
+        -:   41:    };
+    #####:   42:    ops.dequantize = [](const std::uint8_t* quantized_bytes, void* out) {
+call    0 never executed
+        -:   43:        Quantized quantized{};
+        -:   44:        std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
+        -:   45:        *static_cast<T*>(out) = Traits::dequantize(quantized);
+        -:   46:    };
+    #####:   47:    ops.push_to_ecs = [](ecs::Registry& registry, ecs::Entity entity, const std::uint8_t* quantized_bytes) {
+call    0 never executed
+        -:   48:        Quantized quantized{};
+        -:   49:        std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
+        -:   50:        return registry.add<T>(entity, Traits::dequantize(quantized)) != nullptr;
+        -:   51:    };
+    #####:   52:    ops.serialize = [](
+call    0 never executed
+        -:   53:        const std::uint8_t* previous_bytes,
+        -:   54:        const std::uint8_t* current_bytes,
+        -:   55:        ecs::BitBuffer& out,
+        -:   56:        EntityReferenceContext* references) {
+        -:   57:        Quantized current{};
+        -:   58:        std::memcpy(&current, current_bytes, sizeof(Quantized));
+        -:   59:
+        -:   60:        Quantized previous{};
+        -:   61:        const Quantized* previous_ptr = nullptr;
+        -:   62:        if (previous_bytes != nullptr) {
+        -:   63:            std::memcpy(&previous, previous_bytes, sizeof(Quantized));
+        -:   64:            previous_ptr = &previous;
+        -:   65:        }
+        -:   66:
+        -:   67:        detail::serialize_quantized<Traits, Quantized>(previous_ptr, current, out, references);
+        -:   68:    };
+    #####:   69:    ops.deserialize = [](
+call    0 never executed
+        -:   70:        ecs::BitBuffer& in,
+        -:   71:        const std::uint8_t* previous_bytes,
+        -:   72:        std::uint8_t* out,
+        -:   73:        EntityReferenceContext* references) {
+        -:   74:        Quantized previous{};
+        -:   75:        const Quantized* previous_ptr = nullptr;
+        -:   76:        if (previous_bytes != nullptr) {
+        -:   77:            std::memcpy(&previous, previous_bytes, sizeof(Quantized));
+        -:   78:            previous_ptr = &previous;
+        -:   79:        }
+        -:   80:
+        -:   81:        Quantized quantized{};
+        -:   82:        if (!detail::deserialize_quantized<Traits, Quantized>(in, previous_ptr, quantized, references)) {
+        -:   83:            return false;
+        -:   84:        }
+        -:   85:
+        -:   86:        std::memcpy(out, &quantized, sizeof(Quantized));
+        -:   87:        return true;
+        -:   88:    };
+    #####:   89:    ops.references_entities =
+        -:   90:        detail::has_context_serialize<Traits, Quantized>::value ||
+        -:   91:        detail::has_context_deserialize<Traits, Quantized>::value;
+        -:   92:    if constexpr (detail::has_interpolate<Traits, Quantized>::value) {
+        -:   93:        ops.interpolate = &detail::interpolate_quantized<Traits, Quantized>;
+        -:   94:    }
+        -:   95:    if constexpr (detail::has_error_blending<Traits, Quantized>::value) {
+        -:   96:        using Error = typename Traits::Error;
+        -:   97:        static_assert(
+        -:   98:            std::is_trivially_copyable<Error>::value,
+        -:   99:            "SyncComponentTraits<T>::Error must be trivially copyable");
+        -:  100:        ops.error_size = sizeof(Error);
+        -:  101:        ops.compute_error = &detail::compute_error_quantized<Traits, Quantized>;
+        -:  102:        ops.apply_error = &detail::apply_error_quantized<Traits, Quantized>;
+        -:  103:        ops.blend_out_error = &detail::blend_out_error_quantized<Traits, Quantized>;
+        -:  104:    }
+        -:  105:    if constexpr (detail::has_should_roll_back<Traits, Quantized>::value) {
+        -:  106:        ops.should_roll_back = &detail::should_roll_back_quantized<Traits, Quantized>;
+        -:  107:    }
+        -:  108:#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+        -:  109:    if constexpr (detail::has_trace_component<Traits, Quantized>::value) {
+        -:  110:        ops.trace = &detail::trace_component_quantized<Traits, Quantized>;
+        -:  111:    }
+        -:  112:#endif
+        -:  113:
+    #####:  114:    registry.write<SyncSettings>().component_ops[component.value] = ops;
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+call    3 never executed
+branch  4 never executed (fallthrough)
+branch  5 never executed (throw)
+call    6 never executed
+branch  7 never executed (fallthrough)
+branch  8 never executed (throw)
+    #####:  115:    return component;
+    #####:  116:}
+call    0 never executed
+call    1 never executed
+call    2 never executed
+call    3 never executed
+------------------
+_ZN4kage4sync23register_sync_componentIN15kage_sync_tests17NetworkedPositionEEEN3ecs6EntityERNS4_8RegistryENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE:
+function _ZN4kage4sync23register_sync_componentIN15kage_sync_tests17NetworkedPositionEEEN3ecs6EntityERNS4_8RegistryENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE called 0 returned 0% blocks executed 0%
+    #####:   23:ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = {}) {
+        -:   24:    using Traits = SyncComponentTraits<T>;
+        -:   25:    using Quantized = typename Traits::Quantized;
+        -:   26:    static_assert(
+        -:   27:        std::is_trivially_copyable<Quantized>::value,
+        -:   28:        "SyncComponentTraits<T>::Quantized must be trivially copyable");
+        -:   29:
+    #####:   30:    register_components(registry);
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+        -:   31:
+    #####:   32:    std::string component_name = name;
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+    #####:   33:    const ecs::Entity component = registry.register_component<T>(std::move(name));
+call    0 never executed
+call    1 never executed
+call    2 never executed
+branch  3 never executed (fallthrough)
+branch  4 never executed (throw)
+call    5 never executed
+call    6 never executed
+        -:   34:
+    #####:   35:    SyncComponentOps ops;
+call    0 never executed
+    #####:   36:    ops.name = std::move(component_name);
+call    0 never executed
+call    1 never executed
+    #####:   37:    ops.quantized_size = sizeof(Quantized);
+    #####:   38:    ops.quantize = [](const void* value, std::uint8_t* out) {
+call    0 never executed
+        -:   39:        const Quantized quantized = Traits::quantize(*static_cast<const T*>(value));
+        -:   40:        std::memcpy(out, &quantized, sizeof(Quantized));
+        -:   41:    };
+    #####:   42:    ops.dequantize = [](const std::uint8_t* quantized_bytes, void* out) {
+call    0 never executed
+        -:   43:        Quantized quantized{};
+        -:   44:        std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
+        -:   45:        *static_cast<T*>(out) = Traits::dequantize(quantized);
+        -:   46:    };
+    #####:   47:    ops.push_to_ecs = [](ecs::Registry& registry, ecs::Entity entity, const std::uint8_t* quantized_bytes) {
+call    0 never executed
+        -:   48:        Quantized quantized{};
+        -:   49:        std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
+        -:   50:        return registry.add<T>(entity, Traits::dequantize(quantized)) != nullptr;
+        -:   51:    };
+    #####:   52:    ops.serialize = [](
+call    0 never executed
+        -:   53:        const std::uint8_t* previous_bytes,
+        -:   54:        const std::uint8_t* current_bytes,
+        -:   55:        ecs::BitBuffer& out,
+        -:   56:        EntityReferenceContext* references) {
+        -:   57:        Quantized current{};
+        -:   58:        std::memcpy(&current, current_bytes, sizeof(Quantized));
+        -:   59:
+        -:   60:        Quantized previous{};
+        -:   61:        const Quantized* previous_ptr = nullptr;
+        -:   62:        if (previous_bytes != nullptr) {
+        -:   63:            std::memcpy(&previous, previous_bytes, sizeof(Quantized));
+        -:   64:            previous_ptr = &previous;
+        -:   65:        }
+        -:   66:
+        -:   67:        detail::serialize_quantized<Traits, Quantized>(previous_ptr, current, out, references);
+        -:   68:    };
+    #####:   69:    ops.deserialize = [](
+call    0 never executed
+        -:   70:        ecs::BitBuffer& in,
+        -:   71:        const std::uint8_t* previous_bytes,
+        -:   72:        std::uint8_t* out,
+        -:   73:        EntityReferenceContext* references) {
+        -:   74:        Quantized previous{};
+        -:   75:        const Quantized* previous_ptr = nullptr;
+        -:   76:        if (previous_bytes != nullptr) {
+        -:   77:            std::memcpy(&previous, previous_bytes, sizeof(Quantized));
+        -:   78:            previous_ptr = &previous;
+        -:   79:        }
+        -:   80:
+        -:   81:        Quantized quantized{};
+        -:   82:        if (!detail::deserialize_quantized<Traits, Quantized>(in, previous_ptr, quantized, references)) {
+        -:   83:            return false;
+        -:   84:        }
+        -:   85:
+        -:   86:        std::memcpy(out, &quantized, sizeof(Quantized));
+        -:   87:        return true;
+        -:   88:    };
+    #####:   89:    ops.references_entities =
+        -:   90:        detail::has_context_serialize<Traits, Quantized>::value ||
+        -:   91:        detail::has_context_deserialize<Traits, Quantized>::value;
+        -:   92:    if constexpr (detail::has_interpolate<Traits, Quantized>::value) {
+        -:   93:        ops.interpolate = &detail::interpolate_quantized<Traits, Quantized>;
+        -:   94:    }
+        -:   95:    if constexpr (detail::has_error_blending<Traits, Quantized>::value) {
+        -:   96:        using Error = typename Traits::Error;
+        -:   97:        static_assert(
+        -:   98:            std::is_trivially_copyable<Error>::value,
+        -:   99:            "SyncComponentTraits<T>::Error must be trivially copyable");
+        -:  100:        ops.error_size = sizeof(Error);
+        -:  101:        ops.compute_error = &detail::compute_error_quantized<Traits, Quantized>;
+        -:  102:        ops.apply_error = &detail::apply_error_quantized<Traits, Quantized>;
+        -:  103:        ops.blend_out_error = &detail::blend_out_error_quantized<Traits, Quantized>;
+        -:  104:    }
+        -:  105:    if constexpr (detail::has_should_roll_back<Traits, Quantized>::value) {
+        -:  106:        ops.should_roll_back = &detail::should_roll_back_quantized<Traits, Quantized>;
+        -:  107:    }
+        -:  108:#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+        -:  109:    if constexpr (detail::has_trace_component<Traits, Quantized>::value) {
+        -:  110:        ops.trace = &detail::trace_component_quantized<Traits, Quantized>;
+        -:  111:    }
+        -:  112:#endif
+        -:  113:
+    #####:  114:    registry.write<SyncSettings>().component_ops[component.value] = ops;
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+call    3 never executed
+branch  4 never executed (fallthrough)
+branch  5 never executed (throw)
+call    6 never executed
+branch  7 never executed (fallthrough)
+branch  8 never executed (throw)
+    #####:  115:    return component;
+    #####:  116:}
+call    0 never executed
+call    1 never executed
+call    2 never executed
+call    3 never executed
+------------------
+        -:  117:
+        -:  118:template <typename T>
+        -:  119:SyncCueTypeId register_sync_cue(ecs::Registry& registry, std::string name = {}) {
+        -:  120:    register_components(registry);
+        -:  121:
+        -:  122:    SyncSettings& settings = registry.write<SyncSettings>();
+        -:  123:    const std::type_index type = std::type_index(typeid(T));
+        -:  124:    const auto found = settings.cue_type_ids.find(type);
+        -:  125:    if (found != settings.cue_type_ids.end()) {
+        -:  126:        return found->second;
+        -:  127:    }
+        -:  128:    if (settings.cue_ops.size() >= std::numeric_limits<SyncCueTypeId>::max()) {
+        -:  129:        throw std::length_error("sync cue type id space exhausted");
+        -:  130:    }
+        -:  131:
+        -:  132:    const SyncCueTypeId id = static_cast<SyncCueTypeId>(settings.cue_ops.size());
+        -:  133:    SyncCueOps ops;
+        -:  134:    ops.name = name.empty() ? detail::default_type_name<T>() : std::move(name);
+        -:  135:    ops.serialize = [](const void* value, ecs::BitBuffer& out, EntityReferenceContext* references) {
+        -:  136:        detail::serialize_cue_payload<T>(*static_cast<const T*>(value), out, references);
+        -:  137:    };
+        -:  138:    ops.play = &detail::play_cue_payload<T>;
+        -:  139:    ops.rollback = &detail::rollback_cue_payload<T>;
+        -:  140:    ops.equals = &detail::equal_cue_payloads<T>;
+        -:  141:    ops.references_entities =
+        -:  142:        detail::has_context_cue_serialize<T>::value ||
+        -:  143:        detail::has_context_cue_deserialize<T>::value;
+        -:  144:#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+        -:  145:    if constexpr (detail::has_trace_cue<SyncCueTraits<T>, T>::value) {
+        -:  146:        ops.trace = &detail::trace_cue_payload<T>;
+        -:  147:    }
+        -:  148:#endif
+        -:  149:    settings.cue_ops.push_back(ops);
+        -:  150:    settings.cue_type_ids[type] = id;
+        -:  151:    return id;
+        -:  152:}
+        -:  153:
+        -:  154:template <typename T>
+        -:  155:bool emit_cue(
+        -:  156:    SyncSettings& settings,
+        -:  157:    ecs::Entity entity,
+        -:  158:    SyncFrame frame,
+        -:  159:    const T& cue,
+        -:  160:    float relevance_seconds,
+        -:  161:    bool only_replicate_to_owner = false) {
+        -:  162:    if (!entity || relevance_seconds < 0.0f) {
+        -:  163:        return false;
+        -:  164:    }
+        -:  165:
+        -:  166:    const auto found_type = settings.cue_type_ids.find(std::type_index(typeid(T)));
+        -:  167:    if (found_type == settings.cue_type_ids.end()) {
+        -:  168:        return false;
+        -:  169:    }
+        -:  170:    const SyncCueTypeId type = found_type->second;
+        -:  171:    if (type >= settings.cue_ops.size() || settings.cue_ops[type].serialize == nullptr) {
+        -:  172:        return false;
+        -:  173:    }
+        -:  174:    if (!settings.cue_queue) {
+        -:  175:        settings.cue_queue = std::make_shared<SyncCueQueue>();
+        -:  176:    }
+        -:  177:
+        -:  178:    QueuedSyncCue queued;
+        -:  179:    queued.entity = entity;
+        -:  180:    queued.frame = frame;
+        -:  181:    queued.type = type;
+        -:  182:    queued.relevance_seconds = relevance_seconds;
+        -:  183:    queued.only_replicate_to_owner = only_replicate_to_owner;
+        -:  184:    if (settings.cue_ops[type].references_entities) {
+        -:  185:        queued.value = std::make_shared<T>(cue);
+        -:  186:    } else {
+        -:  187:        settings.cue_ops[type].serialize(&cue, queued.payload, nullptr);
+        -:  188:    }
+        -:  189:    std::lock_guard<std::mutex> lock(settings.cue_queue->mutex);
+        -:  190:    settings.cue_queue->cues.push_back(std::move(queued));
+        -:  191:    return true;
+        -:  192:}
+        -:  193:
+        -:  194:template <typename T>
+        -:  195:bool emit_cue(
+        -:  196:    SyncSettings& settings,
+        -:  197:    ecs::Entity entity,
+        -:  198:    const T& cue,
+        -:  199:    float relevance_seconds,
+        -:  200:    bool only_replicate_to_owner = false) {
+        -:  201:    return emit_cue(settings, entity, SyncFrame{0}, cue, relevance_seconds, only_replicate_to_owner);
+        -:  202:}
+        -:  203:
+        -:  204:template <typename T>
+        -:  205:bool emit_cue(
+        -:  206:    ecs::Registry& registry,
+        -:  207:    ecs::Entity entity,
+        -:  208:    SyncFrame frame,
+        -:  209:    const T& cue,
+        -:  210:    float relevance_seconds,
+        -:  211:    bool only_replicate_to_owner = false) {
+        -:  212:    register_components(registry);
+        -:  213:    if (!registry.alive(entity)) {
+        -:  214:        return false;
+        -:  215:    }
+        -:  216:    return emit_cue(registry.write<SyncSettings>(), entity, frame, cue, relevance_seconds, only_replicate_to_owner);
+        -:  217:}
+        -:  218:
+        -:  219:template <typename T>
+        -:  220:bool emit_cue(
+        -:  221:    ecs::Registry& registry,
+        -:  222:    ecs::Entity entity,
+        -:  223:    const T& cue,
+        -:  224:    float relevance_seconds,
+        -:  225:    bool only_replicate_to_owner = false) {
+        -:  226:    return emit_cue(registry, entity, SyncFrame{0}, cue, relevance_seconds, only_replicate_to_owner);
+        -:  227:}
+        -:  228:
+        -:  229:}  // namespace kage::sync

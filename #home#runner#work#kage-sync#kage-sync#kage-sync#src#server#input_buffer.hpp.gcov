@@ -1,0 +1,70 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/server/input_buffer.hpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_input_buffer.test.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_input_buffer.test.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include "kage/sync/server.hpp"
+        -:    4:
+        -:    5:#include <cstddef>
+        -:    6:#include <cstdint>
+        -:    7:#include <vector>
+        -:    8:
+        -:    9:namespace kage::sync::server_detail {
+        -:   10:
+        -:   11:struct ServerInputPacketTrace {
+        -:   12:    SyncFrame baseline_frame = 0;
+        -:   13:    SyncFrame first_input_frame = 0;
+        -:   14:    SyncFrame last_input_frame = 0;
+        -:   15:};
+        -:   16:
+        -:   17:struct ServerInputForFrame {
+        -:   18:    const std::vector<std::uint8_t>* bytes = nullptr;
+        -:   19:    SyncFrame input_frame = 0;
+        -:   20:    bool cached = false;
+        -:   21:};
+        -:   22:
+        -:   23:class ServerInputBuffer {
+        -:   24:public:
+        -:   25:    bool set_local_frame(
+        -:   26:        SyncFrame frame,
+        -:   27:        const std::uint8_t* bytes,
+        -:   28:        std::size_t quantized_size,
+        -:   29:        std::size_t capacity_frames);
+        -:   30:
+        -:   31:    bool process_packet_payload(
+        -:   32:        ecs::BitBuffer& packet,
+        -:   33:        const SyncComponentOps& ops,
+        -:   34:        std::size_t capacity_frames,
+        -:   35:        ServerInputPacketTrace* trace);
+        -:   36:
+        -:   37:    ServerInputForFrame select_input_for_frame(SyncFrame due_frame, std::size_t quantized_size);
+        -:   38:
+function _ZNK4kage4sync13server_detail17ServerInputBuffer9ack_frameEv called 2109 returned 100% blocks executed 100%
+     2109:   39:    SyncFrame ack_frame() const noexcept {
+     2109:   40:        return input_ack_frame_;
+        -:   41:    }
+        -:   42:
+function _ZNK4kage4sync13server_detail17ServerInputBuffer5statsEv called 206 returned 100% blocks executed 100%
+      206:   43:    const ReplicationServer::ClientInputStats& stats() const noexcept {
+      206:   44:        return stats_;
+        -:   45:    }
+        -:   46:
+        -:   47:private:
+        -:   48:    struct InputFrame {
+        -:   49:        SyncFrame frame = 0;
+        -:   50:        bool valid = false;
+        -:   51:        std::vector<std::uint8_t> bytes;
+        -:   52:    };
+        -:   53:
+        -:   54:    std::vector<InputFrame> input_frames_;
+        -:   55:    std::vector<std::uint8_t> latest_input_;
+        -:   56:    std::vector<std::uint8_t> latest_applied_input_;
+        -:   57:    SyncFrame input_ack_frame_ = 0;
+        -:   58:    SyncFrame latest_applied_input_frame_ = 0;
+        -:   59:    bool has_latest_input_ = false;
+        -:   60:    bool has_latest_applied_input_ = false;
+        -:   61:    ReplicationServer::ClientInputStats stats_;
+        -:   62:};
+        -:   63:
+        -:   64:}  // namespace kage::sync::server_detail

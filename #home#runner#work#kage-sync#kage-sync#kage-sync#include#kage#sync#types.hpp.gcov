@@ -1,0 +1,586 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/include/kage/sync/types.hpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include "ecs/bit_buffer.hpp"
+        -:    4:#include "kage/sync/logging.hpp"
+        -:    5:#include "kage/sync/protocol.hpp"
+        -:    6:
+        -:    7:#include "ecs/ecs.hpp"
+        -:    8:
+        -:    9:#include <algorithm>
+        -:   10:#include <array>
+        -:   11:#include <cstddef>
+        -:   12:#include <cstdint>
+        -:   13:#include <cstring>
+        -:   14:#include <functional>
+        -:   15:#include <limits>
+        -:   16:#include <memory>
+        -:   17:#include <mutex>
+        -:   18:#include <stdexcept>
+        -:   19:#include <string>
+        -:   20:#include <type_traits>
+        -:   21:#include <typeindex>
+        -:   22:#include <unordered_map>
+        -:   23:#include <utility>
+        -:   24:#include <vector>
+        -:   25:
+        -:   26:namespace kage::sync {
+        -:   27:
+        -:   28:using ClientId = std::uint64_t;
+        -:   29:using SyncFrame = std::uint32_t;
+        -:   30:using SyncCueTypeId = std::uint16_t;
+        -:   31:using ClientEntityNetworkId = std::uint64_t;
+        -:   32:using TransportFn = std::function<void(ClientId, const ecs::BitBuffer&)>;
+        -:   33:using ConnectHandlerFn = std::function<bool(const std::string&, ClientId&, std::string&)>;
+        -:   34:
+        -:   35:struct ReplicationPriorityObject {
+        -:   36:    ecs::Entity entity;
+        -:   37:};
+        -:   38:
+        -:   39:struct ReplicationPriorityDecision {
+        -:   40:    float priority = 0.0f;
+        -:   41:    std::uint64_t component_mask = std::numeric_limits<std::uint64_t>::max();
+        -:   42:};
+        -:   43:
+        -:   44:using ReplicationPrioritizerFn = std::function<ReplicationPriorityDecision(ClientId, ReplicationPriorityObject)>;
+        -:   45:
+        -:   46:inline constexpr ClientId invalid_client_id = std::numeric_limits<ClientId>::max();
+        -:   47:inline constexpr ClientEntityNetworkId invalid_client_entity_network_id = 0;
+        -:   48:inline constexpr ClientId max_client_entity_network_id_client = 0xfffULL;
+        -:   49:inline constexpr std::uint32_t max_client_local_wire_network_id = (std::uint32_t{1} << 20U) - 1U;
+        -:   50:
+        -:   51:inline constexpr ClientEntityNetworkId make_client_entity_network_id(
+        -:   52:    ClientId client,
+        -:   53:    std::uint32_t wire_network_id,
+        -:   54:    std::uint32_t version) noexcept {
+        -:   55:    return ((client & max_client_entity_network_id_client) << 52U) |
+        -:   56:        ((static_cast<std::uint64_t>(wire_network_id) & 0xfffffULL) << 32U) |
+        -:   57:        static_cast<std::uint64_t>(version);
+        -:   58:}
+        -:   59:
+        -:   60:inline constexpr ClientId client_entity_network_id_client(ClientEntityNetworkId id) noexcept {
+        -:   61:    return (id >> 52U) & 0xfffULL;
+        -:   62:}
+        -:   63:
+        -:   64:inline constexpr std::uint32_t client_entity_network_id_wire_id(ClientEntityNetworkId id) noexcept {
+        -:   65:    return static_cast<std::uint32_t>((id >> 32U) & 0xfffffULL);
+        -:   66:}
+        -:   67:
+        -:   68:inline constexpr std::uint32_t client_entity_network_id_version(ClientEntityNetworkId id) noexcept {
+        -:   69:    return static_cast<std::uint32_t>(id & 0xffffffffULL);
+        -:   70:}
+        -:   71:
+        -:   72:enum class SyncRole {
+        -:   73:    Server,
+        -:   74:    Client
+        -:   75:};
+        -:   76:
+        -:   77:struct SyncArchetypeId {
+        -:   78:    std::uint32_t value = std::numeric_limits<std::uint32_t>::max();
+        -:   79:};
+        -:   80:
+        -:   81:inline constexpr SyncArchetypeId invalid_sync_archetype_id{};
+        -:   82:
+function _ZN4kage4synceqENS0_15SyncArchetypeIdES1_ called 0 returned 0% blocks executed 0%
+    #####:   83:constexpr bool operator==(SyncArchetypeId lhs, SyncArchetypeId rhs) noexcept {
+    #####:   84:    return lhs.value == rhs.value;
+        -:   85:}
+        -:   86:
+        -:   87:constexpr bool operator!=(SyncArchetypeId lhs, SyncArchetypeId rhs) noexcept {
+        -:   88:    return !(lhs == rhs);
+        -:   89:}
+        -:   90:
+        -:   91:enum class ReplicationAudience {
+        -:   92:    Owner,
+        -:   93:    All
+        -:   94:};
+        -:   95:
+        -:   96:enum class ComponentInterpolation {
+        -:   97:    Step,
+        -:   98:    Interpolate
+        -:   99:};
+        -:  100:
+        -:  101:enum class ReplicationClientMode {
+        -:  102:    Snap,
+        -:  103:    BufferedInterpolation,
+        -:  104:    Predict
+        -:  105:};
+        -:  106:
+        -:  107:enum class ReplicationRollbackPolicy {
+        -:  108:    All,
+        -:  109:    OnlyAffected
+        -:  110:};
+        -:  111:
+        -:  112:#ifdef KAGE_SYNC_ENABLE_TRACING
+        -:  113:struct TraceOptions {
+        -:  114:    bool enabled = false;
+        -:  115:    std::string directory;
+        -:  116:    std::size_t queue_capacity_bytes = 4 * 1024 * 1024;
+        -:  117:    std::size_t flush_threshold_bytes = 64 * 1024;
+        -:  118:    bool truncate_existing = true;
+        -:  119:    bool frame_data = false;
+        -:  120:    bool packet_logs = false;
+        -:  121:};
+        -:  122:
+        -:  123:struct SyncTraceStringBuilder {
+        -:  124:    std::string value;
+        -:  125:
+        -:  126:    void clear() noexcept {
+        -:  127:        value.clear();
+        -:  128:    }
+        -:  129:
+        -:  130:    void append(const char* text) {
+        -:  131:        if (text != nullptr) {
+        -:  132:            value += text;
+        -:  133:        }
+        -:  134:    }
+        -:  135:
+        -:  136:    void append(const std::string& text) {
+        -:  137:        value += text;
+        -:  138:    }
+        -:  139:
+        -:  140:    template <typename T>
+        -:  141:    void append_number(T number) {
+        -:  142:        value += std::to_string(number);
+        -:  143:    }
+        -:  144:};
+        -:  145:#endif
+        -:  146:
+        -:  147:struct ComponentReplication {
+        -:  148:    ecs::Entity component;
+        -:  149:    ReplicationAudience audience = ReplicationAudience::All;
+        -:  150:    ComponentInterpolation interpolation = ComponentInterpolation::Step;
+        -:  151:};
+        -:  152:
+        -:  153:struct SyncTagReplication {
+        -:  154:    ecs::Entity tag;
+        -:  155:    ReplicationAudience audience = ReplicationAudience::All;
+        -:  156:};
+        -:  157:
+        -:  158:struct SyncArchetypeDesc {
+        -:  159:    std::string name;
+        -:  160:    std::vector<SyncTagReplication> tags;
+        -:  161:    std::vector<ComponentReplication> components;
+        -:  162:};
+        -:  163:
+        -:  164:class QuantizedBytes {
+        -:  165:public:
+        -:  166:    static constexpr std::size_t inline_capacity = 64;
+        -:  167:    static constexpr std::size_t max_size = 1200;
+        -:  168:
+        -:  169:    QuantizedBytes() = default;
+        -:  170:
+        -:  171:    QuantizedBytes(const QuantizedBytes& other) {
+        -:  172:        assign(other.data(), other.size_);
+        -:  173:    }
+        -:  174:
+        -:  175:    QuantizedBytes& operator=(const QuantizedBytes& other) {
+        -:  176:        if (this != &other) {
+        -:  177:            assign(other.data(), other.size_);
+        -:  178:        }
+        -:  179:        return *this;
+        -:  180:    }
+        -:  181:
+        -:  182:    QuantizedBytes(QuantizedBytes&& other) noexcept {
+        -:  183:        move_from(std::move(other));
+        -:  184:    }
+        -:  185:
+        -:  186:    QuantizedBytes& operator=(QuantizedBytes&& other) noexcept {
+        -:  187:        if (this != &other) {
+        -:  188:            move_from(std::move(other));
+        -:  189:        }
+        -:  190:        return *this;
+        -:  191:    }
+        -:  192:
+        -:  193:    std::size_t size() const noexcept {
+        -:  194:        return size_;
+        -:  195:    }
+        -:  196:
+        -:  197:    bool empty() const noexcept {
+        -:  198:        return size_ == 0;
+        -:  199:    }
+        -:  200:
+        -:  201:    std::uint8_t* data() noexcept {
+        -:  202:        return overflow_ == nullptr ? inline_.data() : overflow_.get();
+        -:  203:    }
+        -:  204:
+        -:  205:    const std::uint8_t* data() const noexcept {
+        -:  206:        return overflow_ == nullptr ? inline_.data() : overflow_.get();
+        -:  207:    }
+        -:  208:
+        -:  209:    std::uint8_t* begin() noexcept {
+        -:  210:        return data();
+        -:  211:    }
+        -:  212:
+        -:  213:    std::uint8_t* end() noexcept {
+        -:  214:        return data() + size_;
+        -:  215:    }
+        -:  216:
+        -:  217:    const std::uint8_t* begin() const noexcept {
+        -:  218:        return data();
+        -:  219:    }
+        -:  220:
+        -:  221:    const std::uint8_t* end() const noexcept {
+        -:  222:        return data() + size_;
+        -:  223:    }
+        -:  224:
+        -:  225:    void clear() noexcept {
+        -:  226:        size_ = 0;
+        -:  227:    }
+        -:  228:
+        -:  229:    void resize(std::size_t size) {
+        -:  230:        if (size > max_size) {
+        -:  231:            throw std::length_error("sync quantized component payload exceeds maximum size");
+        -:  232:        }
+        -:  233:        if (size <= inline_capacity) {
+        -:  234:            if (overflow_ != nullptr) {
+        -:  235:                const std::size_t copy_size = std::min(size_, size);
+        -:  236:                if (copy_size != 0U) {
+        -:  237:                    std::memcpy(inline_.data(), overflow_.get(), copy_size);
+        -:  238:                }
+        -:  239:                overflow_.reset();
+        -:  240:                overflow_capacity_ = 0;
+        -:  241:            }
+        -:  242:            size_ = size;
+        -:  243:            return;
+        -:  244:        }
+        -:  245:
+        -:  246:        if (overflow_ == nullptr || overflow_capacity_ < size) {
+        -:  247:            std::unique_ptr<std::uint8_t[]> next = std::make_unique<std::uint8_t[]>(size);
+        -:  248:            const std::size_t copy_size = std::min(size_, size);
+        -:  249:            if (copy_size != 0U) {
+        -:  250:                std::memcpy(next.get(), data(), copy_size);
+        -:  251:            }
+        -:  252:            overflow_ = std::move(next);
+        -:  253:            overflow_capacity_ = size;
+        -:  254:        }
+        -:  255:        size_ = size;
+        -:  256:    }
+        -:  257:
+        -:  258:    void assign(const void* data, std::size_t size) {
+        -:  259:        resize(size);
+        -:  260:        if (size != 0U) {
+        -:  261:            std::memcpy(this->data(), data, size);
+        -:  262:        }
+        -:  263:    }
+        -:  264:
+        -:  265:    friend bool operator==(const QuantizedBytes& lhs, const QuantizedBytes& rhs) noexcept {
+        -:  266:        return lhs.size_ == rhs.size_ && std::equal(lhs.data(), lhs.data() + lhs.size_, rhs.data());
+        -:  267:    }
+        -:  268:
+        -:  269:    friend bool operator!=(const QuantizedBytes& lhs, const QuantizedBytes& rhs) noexcept {
+        -:  270:        return !(lhs == rhs);
+        -:  271:    }
+        -:  272:
+        -:  273:private:
+        -:  274:    void move_from(QuantizedBytes&& other) noexcept {
+        -:  275:        size_ = other.size_;
+        -:  276:        inline_ = other.inline_;
+        -:  277:        overflow_ = std::move(other.overflow_);
+        -:  278:        overflow_capacity_ = other.overflow_capacity_;
+        -:  279:        other.size_ = 0;
+        -:  280:        other.overflow_capacity_ = 0;
+        -:  281:    }
+        -:  282:
+        -:  283:    std::size_t size_ = 0;
+        -:  284:    std::array<std::uint8_t, inline_capacity> inline_{};
+        -:  285:    std::unique_ptr<std::uint8_t[]> overflow_;
+        -:  286:    std::size_t overflow_capacity_ = 0;
+        -:  287:};
+        -:  288:
+        -:  289:struct EntityReference {
+        -:  290:    ecs::Entity entity;
+        -:  291:    ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
+        -:  292:};
+        -:  293:
+        -:  294:struct EntityReferenceContext {
+        -:  295:    using ServerNetworkIdForEntityFn = std::uint32_t (*)(void*, ecs::Entity);
+        -:  296:    using ClientEntityNetworkIdForWireFn = ClientEntityNetworkId (*)(void*, std::uint32_t);
+        -:  297:    using ClientLocalEntityFn = ecs::Entity (*)(void*, ClientEntityNetworkId);
+        -:  298:
+        -:  299:    void* user = nullptr;
+        -:  300:    std::size_t network_entity_id_tier0_bits = protocol::default_network_entity_id_tier0_bits;
+        -:  301:    ServerNetworkIdForEntityFn server_network_id_for_entity = nullptr;
+        -:  302:    ClientEntityNetworkIdForWireFn client_entity_network_id_for_wire = nullptr;
+        -:  303:    ClientLocalEntityFn client_local_entity = nullptr;
+        -:  304:
+        -:  305:    std::uint32_t network_id_for_entity(ecs::Entity entity) const {
+        -:  306:        if (!entity || server_network_id_for_entity == nullptr) {
+        -:  307:            return 0U;
+        -:  308:        }
+        -:  309:        return server_network_id_for_entity(user, entity);
+        -:  310:    }
+        -:  311:
+        -:  312:    ClientEntityNetworkId network_id_for_wire(std::uint32_t wire_network_id) const {
+        -:  313:        if (wire_network_id == 0U || client_entity_network_id_for_wire == nullptr) {
+        -:  314:            return invalid_client_entity_network_id;
+        -:  315:        }
+        -:  316:        return client_entity_network_id_for_wire(user, wire_network_id);
+        -:  317:    }
+        -:  318:
+        -:  319:    ecs::Entity local_entity(ClientEntityNetworkId network_id) const {
+        -:  320:        if (network_id == invalid_client_entity_network_id || client_local_entity == nullptr) {
+        -:  321:            return ecs::Entity{};
+        -:  322:        }
+        -:  323:        return client_local_entity(user, network_id);
+        -:  324:    }
+        -:  325:};
+        -:  326:
+        -:  327:inline bool write_entity_reference(
+        -:  328:    ecs::BitBuffer& out,
+        -:  329:    ecs::Entity entity,
+        -:  330:    const EntityReferenceContext& context) {
+        -:  331:    const std::uint32_t network_id = context.network_id_for_entity(entity);
+        -:  332:    out.push_bool(network_id != 0U);
+        -:  333:    if (network_id == 0U) {
+        -:  334:        return false;
+        -:  335:    }
+        -:  336:    protocol::write_network_entity_id(out, network_id, context.network_entity_id_tier0_bits);
+        -:  337:    return true;
+        -:  338:}
+        -:  339:
+        -:  340:inline bool write_entity_reference(
+        -:  341:    ecs::BitBuffer& out,
+        -:  342:    const EntityReference& reference,
+        -:  343:    const EntityReferenceContext& context) {
+        -:  344:    return write_entity_reference(out, reference.entity, context);
+        -:  345:}
+        -:  346:
+        -:  347:inline bool read_entity_reference(
+        -:  348:    ecs::BitBuffer& in,
+        -:  349:    EntityReferenceContext& context,
+        -:  350:    EntityReference& out) {
+        -:  351:    if (in.remaining_bits() < 1U) {
+        -:  352:        return false;
+        -:  353:    }
+        -:  354:    const bool has_reference = in.read_bool();
+        -:  355:    if (!has_reference) {
+        -:  356:        out = EntityReference{};
+        -:  357:        return true;
+        -:  358:    }
+        -:  359:
+        -:  360:    std::uint32_t wire_network_id = 0;
+        -:  361:    if (!protocol::read_network_entity_id(in, wire_network_id, context.network_entity_id_tier0_bits) ||
+        -:  362:        wire_network_id == 0U) {
+        -:  363:        return false;
+        -:  364:    }
+        -:  365:
+        -:  366:    const ClientEntityNetworkId client_network_id = context.network_id_for_wire(wire_network_id);
+        -:  367:    if (client_network_id == invalid_client_entity_network_id) {
+        -:  368:        return false;
+        -:  369:    }
+        -:  370:    out.client_entity_network_id = client_network_id;
+        -:  371:    out.entity = context.local_entity(client_network_id);
+        -:  372:    return true;
+        -:  373:}
+        -:  374:
+        -:  375:struct SyncComponentOps {
+        -:  376:    using QuantizedBytes = kage::sync::QuantizedBytes;
+        -:  377:    using QuantizeFn = void (*)(const void*, std::uint8_t*);
+        -:  378:    using DequantizeFn = void (*)(const std::uint8_t*, void*);
+        -:  379:    using PushToEcsFn = bool (*)(ecs::Registry&, ecs::Entity, const std::uint8_t*);
+        -:  380:    using SerializeFn = void (*)(const std::uint8_t*, const std::uint8_t*, ecs::BitBuffer&, EntityReferenceContext*);
+        -:  381:    using DeserializeFn = bool (*)(ecs::BitBuffer&, const std::uint8_t*, std::uint8_t*, EntityReferenceContext*);
+        -:  382:    using InterpolateFn = bool (*)(const std::uint8_t*, const std::uint8_t*, float, std::uint8_t*);
+        -:  383:    using ComputeErrorFn = bool (*)(const std::uint8_t*, const std::uint8_t*, QuantizedBytes&);
+        -:  384:    using ApplyErrorFn = bool (*)(const std::uint8_t*, const QuantizedBytes&, QuantizedBytes&);
+        -:  385:    using BlendOutErrorFn = bool (*)(const QuantizedBytes&, float, QuantizedBytes&);
+        -:  386:    using ShouldRollBackFn = bool (*)(const std::uint8_t*, const std::uint8_t*);
+        -:  387:#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+        -:  388:    using TraceFn = void (*)(const std::uint8_t*, SyncTraceStringBuilder&);
+        -:  389:#endif
+        -:  390:
+        -:  391:    std::string name;
+        -:  392:    std::size_t quantized_size = 0;
+        -:  393:    std::size_t error_size = 0;
+        -:  394:    QuantizeFn quantize = nullptr;
+        -:  395:    DequantizeFn dequantize = nullptr;
+        -:  396:    PushToEcsFn push_to_ecs = nullptr;
+        -:  397:    SerializeFn serialize = nullptr;
+        -:  398:    DeserializeFn deserialize = nullptr;
+        -:  399:    bool references_entities = false;
+        -:  400:    InterpolateFn interpolate = nullptr;
+        -:  401:    ComputeErrorFn compute_error = nullptr;
+        -:  402:    ApplyErrorFn apply_error = nullptr;
+        -:  403:    BlendOutErrorFn blend_out_error = nullptr;
+        -:  404:    ShouldRollBackFn should_roll_back = nullptr;
+        -:  405:#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+        -:  406:    TraceFn trace = nullptr;
+        -:  407:#endif
+        -:  408:};
+        -:  409:
+        -:  410:struct SyncCueOps {
+        -:  411:    using SerializeFn = void (*)(const void*, ecs::BitBuffer&, EntityReferenceContext*);
+        -:  412:    using PlayFn = bool (*)(ecs::Registry&, ecs::Entity, const ecs::BitBuffer&, float, SyncFrame, EntityReferenceContext*);
+        -:  413:    using RollbackFn = bool (*)(ecs::Registry&, ecs::Entity, const ecs::BitBuffer&, EntityReferenceContext*);
+        -:  414:    using EqualsFn = bool (*)(const ecs::BitBuffer&, const ecs::BitBuffer&, EntityReferenceContext*);
+        -:  415:#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+        -:  416:    using TraceFn = bool (*)(const ecs::BitBuffer&, SyncTraceStringBuilder&);
+        -:  417:#endif
+        -:  418:
+        -:  419:    SerializeFn serialize = nullptr;
+        -:  420:    PlayFn play = nullptr;
+        -:  421:    RollbackFn rollback = nullptr;
+        -:  422:    EqualsFn equals = nullptr;
+        -:  423:    std::string name;
+        -:  424:    bool references_entities = false;
+        -:  425:#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+        -:  426:    TraceFn trace = nullptr;
+        -:  427:#endif
+        -:  428:};
+        -:  429:
+        -:  430:struct QueuedSyncCue {
+        -:  431:    ecs::Entity entity;
+        -:  432:    SyncFrame frame = 0;
+        -:  433:    SyncCueTypeId type = 0;
+        -:  434:    float relevance_seconds = 0.0f;
+        -:  435:    ecs::BitBuffer payload;
+        -:  436:    std::shared_ptr<void> value;
+        -:  437:    bool only_replicate_to_owner = false;
+        -:  438:};
+        -:  439:
+        -:  440:struct SyncCueQueue {
+        -:  441:    mutable std::mutex mutex;
+        -:  442:    std::vector<QueuedSyncCue> cues;
+        -:  443:};
+        -:  444:
+        -:  445:struct SyncArchetype {
+        -:  446:    std::string name;
+        -:  447:    std::vector<SyncTagReplication> tags;
+        -:  448:    std::vector<ComponentReplication> components;
+        -:  449:    std::vector<SyncComponentOps> component_ops;
+        -:  450:    std::vector<std::uint32_t> component_offsets;
+        -:  451:    std::uint32_t total_quantized_bytes = 0;
+        -:  452:};
+        -:  453:
+        -:  454:struct QuantizedFrameData {
+        -:  455:    std::uint64_t tag_mask = 0;
+        -:  456:    std::uint64_t present_mask = 0;
+        -:  457:    std::vector<std::uint8_t> bytes;
+        -:  458:
+        -:  459:    void clear() {
+        -:  460:        tag_mask = 0;
+        -:  461:        present_mask = 0;
+        -:  462:        bytes.clear();
+        -:  463:    }
+        -:  464:};
+        -:  465:
+        -:  466:struct SyncSettings {
+        -:  467:    SyncSettings()
+        -:  468:        : cue_queue(std::make_shared<SyncCueQueue>()) {}
+        -:  469:
+        -:  470:    SyncSettings(const SyncSettings&) = default;
+        -:  471:    SyncSettings& operator=(const SyncSettings&) = default;
+        -:  472:
+        -:  473:    SyncSettings(SyncSettings&& other) noexcept {
+        -:  474:        swap(other);
+        -:  475:    }
+        -:  476:
+        -:  477:    SyncSettings& operator=(SyncSettings&& other) noexcept {
+        -:  478:        if (this != &other) {
+        -:  479:            SyncSettings moved(std::move(other));
+        -:  480:            swap(moved);
+        -:  481:        }
+        -:  482:        return *this;
+        -:  483:    }
+        -:  484:
+        -:  485:    void swap(SyncSettings& other) noexcept {
+        -:  486:        using std::swap;
+        -:  487:        swap(role, other.role);
+        -:  488:        swap(local_client, other.local_client);
+        -:  489:        swap(input_component, other.input_component);
+        -:  490:        archetypes.swap(other.archetypes);
+        -:  491:        component_ops.swap(other.component_ops);
+        -:  492:        cue_ops.swap(other.cue_ops);
+        -:  493:        cue_type_ids.swap(other.cue_type_ids);
+        -:  494:        cue_queue.swap(other.cue_queue);
+        -:  495:    }
+        -:  496:
+        -:  497:    SyncRole role = SyncRole::Server;
+        -:  498:    ClientId local_client = invalid_client_id;
+        -:  499:    ecs::Entity input_component;
+        -:  500:    std::vector<SyncArchetype> archetypes;
+        -:  501:    std::unordered_map<std::uint64_t, SyncComponentOps> component_ops;
+        -:  502:    std::vector<SyncCueOps> cue_ops;
+        -:  503:    std::unordered_map<std::type_index, SyncCueTypeId> cue_type_ids;
+        -:  504:    std::shared_ptr<SyncCueQueue> cue_queue;
+        -:  505:};
+        -:  506:
+        -:  507:struct QueuedSyncCueView {
+        -:  508:    const QueuedSyncCue* data = nullptr;
+        -:  509:    std::size_t size = 0;
+        -:  510:
+        -:  511:    const QueuedSyncCue* begin() const noexcept { return data; }
+        -:  512:    const QueuedSyncCue* end() const noexcept { return data == nullptr ? nullptr : data + size; }
+        -:  513:    bool empty() const noexcept { return size == 0U; }
+        -:  514:};
+        -:  515:
+        -:  516:struct SyncAuthority {
+        -:  517:    bool authoritative = true;
+        -:  518:
+        -:  519:    bool is_authoritative() const noexcept {
+        -:  520:        return authoritative;
+        -:  521:    }
+        -:  522:};
+        -:  523:
+        -:  524:struct Replicated {
+        -:  525:    SyncArchetypeId archetype;
+        -:  526:};
+        -:  527:
+        -:  528:struct NetworkOwner {
+        -:  529:    ClientId client = invalid_client_id;
+        -:  530:};
+        -:  531:
+        -:  532:struct FractionalTickSampled {};
+        -:  533:struct NoResim {};
+        -:  534:struct NoSimulate {};
+        -:  535:
+        -:  536:struct ReplicationBandwidthOptions {
+        -:  537:    bool enabled = false;
+        -:  538:    std::size_t min_bytes_per_second = 8U * 1024U;
+        -:  539:    std::size_t initial_bytes_per_second = 32U * 1024U;
+        -:  540:    std::size_t max_bytes_per_second = 512U * 1024U;
+        -:  541:    std::size_t max_burst_bytes = 0;
+        -:  542:    std::size_t transport_overhead_bytes_per_packet = 28U;
+        -:  543:    SyncFrame sample_window_frames = 60;
+        -:  544:    float loss_decrease_threshold = 0.02f;
+        -:  545:    float rtt_inflation_decrease_threshold = 1.5f;
+        -:  546:    float multiplicative_decrease = 0.75f;
+        -:  547:    float additive_increase_bytes_per_second = 2400.0f;
+        -:  548:};
+        -:  549:
+        -:  550:struct ReplicationServerOptions {
+        -:  551:    std::size_t bandwidth_limit_bytes_per_tick = 1024;
+        -:  552:    std::size_t fixed_entity_replication_cost_bytes = 128;
+        -:  553:    std::size_t mtu_bytes = 1200;
+        -:  554:    ReplicationBandwidthOptions bandwidth;
+        -:  555:    std::size_t serialized_worker_threads = 1;
+        -:  556:    protocol::Descriptor protocol = protocol::default_descriptor;
+        -:  557:    double fixed_dt_seconds = 1.0 / 60.0;
+        -:  558:    double connect_resend_interval_seconds = 0.25;
+        -:  559:    double idle_client_timeout_seconds = 0.0;
+        -:  560:    std::size_t input_buffer_capacity_frames = 64;
+        -:  561:    SyncFrame prioritizer_interval_frames = 4;
+        -:  562:    ReplicationPrioritizerFn prioritizer;
+        -:  563:    ConnectHandlerFn connect_handler;
+        -:  564:    TransportFn transport;
+        -:  565:    LoggingOptions logging;
+        -:  566:#ifdef KAGE_SYNC_ENABLE_TRACING
+        -:  567:    TraceOptions trace;
+        -:  568:#endif
+        -:  569:};
+        -:  570:
+        -:  571:}  // namespace kage::sync
+        -:  572:
+        -:  573:namespace ecs {
+        -:  574:
+        -:  575:template <>
+        -:  576:struct is_singleton_component<kage::sync::SyncSettings> : std::true_type {};
+        -:  577:
+        -:  578:template <>
+        -:  579:struct is_singleton_component<kage::sync::SyncAuthority> : std::true_type {};
+        -:  580:
+        -:  581:}  // namespace ecs

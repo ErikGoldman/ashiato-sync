@@ -1,0 +1,121 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/_deps/spdlog-src/include/spdlog/details/circular_q.h
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_logging.test.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_logging.test.cpp.gcda
+        -:    0:Runs:310
+        -:    1:// Copyright(c) 2015-present, Gabi Melman & spdlog contributors.
+        -:    2:// Distributed under the MIT License (http://opensource.org/licenses/MIT)
+        -:    3:
+        -:    4:// circular q view of std::vector.
+        -:    5:#pragma once
+        -:    6:
+        -:    7:#include <cassert>
+        -:    8:#include <vector>
+        -:    9:
+        -:   10:#include "spdlog/common.h"
+        -:   11:
+        -:   12:namespace spdlog {
+        -:   13:namespace details {
+        -:   14:template <typename T>
+        -:   15:class circular_q {
+        -:   16:    size_t max_items_ = 0;
+        -:   17:    typename std::vector<T>::size_type head_ = 0;
+        -:   18:    typename std::vector<T>::size_type tail_ = 0;
+        -:   19:    size_t overrun_counter_ = 0;
+        -:   20:    std::vector<T> v_;
+        -:   21:
+        -:   22:public:
+        -:   23:    using value_type = T;
+        -:   24:
+        -:   25:    // empty ctor - create a disabled queue with no elements allocated at all
+function _ZN6spdlog7details10circular_qINS0_14log_msg_bufferEEC2Ev called 4 returned 100% blocks executed 100%
+        4:   26:    circular_q() = default;
+call    0 returned 4
+        -:   27:
+        -:   28:    explicit circular_q(size_t max_items)
+        -:   29:        : max_items_(max_items + 1)  // one item is reserved as marker for full q
+        -:   30:          ,
+        -:   31:          v_(max_items_) {}
+        -:   32:
+        -:   33:    circular_q(const circular_q &) = default;
+        -:   34:    circular_q &operator=(const circular_q &) = default;
+        -:   35:
+        -:   36:    // move cannot be default,
+        -:   37:    // since we need to reset head_, tail_, etc to zero in the moved object
+        -:   38:    circular_q(circular_q &&other) SPDLOG_NOEXCEPT { copy_moveable(std::move(other)); }
+        -:   39:
+        -:   40:    circular_q &operator=(circular_q &&other) SPDLOG_NOEXCEPT {
+        -:   41:        copy_moveable(std::move(other));
+        -:   42:        return *this;
+        -:   43:    }
+        -:   44:
+        -:   45:    // push back, overrun (oldest) item if no room left
+        -:   46:    void push_back(T &&item) {
+        -:   47:        if (max_items_ > 0) {
+        -:   48:            v_[tail_] = std::move(item);
+        -:   49:            tail_ = (tail_ + 1) % max_items_;
+        -:   50:
+        -:   51:            if (tail_ == head_)  // overrun last item if full
+        -:   52:            {
+        -:   53:                head_ = (head_ + 1) % max_items_;
+        -:   54:                ++overrun_counter_;
+        -:   55:            }
+        -:   56:        }
+        -:   57:    }
+        -:   58:
+        -:   59:    // Return reference to the front item.
+        -:   60:    // If there are no elements in the container, the behavior is undefined.
+        -:   61:    const T &front() const { return v_[head_]; }
+        -:   62:
+        -:   63:    T &front() { return v_[head_]; }
+        -:   64:
+        -:   65:    // Return number of elements actually stored
+        -:   66:    size_t size() const {
+        -:   67:        if (tail_ >= head_) {
+        -:   68:            return tail_ - head_;
+        -:   69:        } else {
+        -:   70:            return max_items_ - (head_ - tail_);
+        -:   71:        }
+        -:   72:    }
+        -:   73:
+        -:   74:    // Return const reference to item by index.
+        -:   75:    // If index is out of range 0…size()-1, the behavior is undefined.
+        -:   76:    const T &at(size_t i) const {
+        -:   77:        assert(i < size());
+        -:   78:        return v_[(head_ + i) % max_items_];
+        -:   79:    }
+        -:   80:
+        -:   81:    // Pop item from front.
+        -:   82:    // If there are no elements in the container, the behavior is undefined.
+        -:   83:    void pop_front() { head_ = (head_ + 1) % max_items_; }
+        -:   84:
+        -:   85:    bool empty() const { return tail_ == head_; }
+        -:   86:
+        -:   87:    bool full() const {
+        -:   88:        // head is ahead of the tail by 1
+        -:   89:        if (max_items_ > 0) {
+        -:   90:            return ((tail_ + 1) % max_items_) == head_;
+        -:   91:        }
+        -:   92:        return false;
+        -:   93:    }
+        -:   94:
+        -:   95:    size_t overrun_counter() const { return overrun_counter_; }
+        -:   96:
+        -:   97:    void reset_overrun_counter() { overrun_counter_ = 0; }
+        -:   98:
+        -:   99:private:
+        -:  100:    // copy from other&& and reset it to disabled state
+        -:  101:    void copy_moveable(circular_q &&other) SPDLOG_NOEXCEPT {
+        -:  102:        max_items_ = other.max_items_;
+        -:  103:        head_ = other.head_;
+        -:  104:        tail_ = other.tail_;
+        -:  105:        overrun_counter_ = other.overrun_counter_;
+        -:  106:        v_ = std::move(other.v_);
+        -:  107:
+        -:  108:        // put &&other in disabled, but valid state
+        -:  109:        other.max_items_ = 0;
+        -:  110:        other.head_ = other.tail_ = 0;
+        -:  111:        other.overrun_counter_ = 0;
+        -:  112:    }
+        -:  113:};
+        -:  114:}  // namespace details
+        -:  115:}  // namespace spdlog

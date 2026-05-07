@@ -1,0 +1,244 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/include/kage/sync/detail/type_name.hpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_lifecycle.test.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_lifecycle.test.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include <cstddef>
+        -:    4:#include <string>
+        -:    5:#include <typeinfo>
+        -:    6:
+        -:    7:namespace kage::sync::detail {
+        -:    8:
+function _ZN4kage4sync6detail13remove_prefixERNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEPKc called 0 returned 0% blocks executed 0%
+    #####:    9:inline bool remove_prefix(std::string& value, const char* prefix) {
+    #####:   10:    const std::size_t length = std::char_traits<char>::length(prefix);
+call    0 never executed
+    #####:   11:    if (value.compare(0U, length, prefix) != 0) {
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed
+    #####:   12:        return false;
+        -:   13:    }
+    #####:   14:    value.erase(0U, length);
+call    0 never executed
+    #####:   15:    return true;
+        -:   16:}
+        -:   17:
+function _ZN4kage4sync6detail15short_type_nameENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE called 0 returned 0% blocks executed 0%
+    #####:   18:inline std::string short_type_name(std::string name) {
+    #####:   19:    (void)remove_prefix(name, "struct ");
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+    #####:   20:    (void)remove_prefix(name, "class ");
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+        -:   21:
+    #####:   22:    const std::string anonymous_namespace = "anonymous namespace";
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+    #####:   23:    const std::size_t anonymous = name.find(anonymous_namespace);
+call    0 never executed
+    #####:   24:    if (anonymous != std::string::npos) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:   25:        std::size_t begin = anonymous + anonymous_namespace.size();
+call    0 never executed
+    #####:   26:        while (begin < name.size() && (name[begin] == ')' || name[begin] == '}' ||
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed
+call    3 never executed
+branch  4 never executed (fallthrough)
+branch  5 never executed (throw)
+branch  6 never executed (fallthrough)
+branch  7 never executed
+call    8 never executed
+branch  9 never executed (fallthrough)
+branch 10 never executed (throw)
+branch 11 never executed (fallthrough)
+branch 12 never executed
+branch 13 never executed
+branch 14 never executed (fallthrough)
+    #####:   27:               name[begin] == '\'' || name[begin] == '`' || name[begin] == ':' ||
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+branch  3 never executed (fallthrough)
+branch  4 never executed
+call    5 never executed
+branch  6 never executed (fallthrough)
+branch  7 never executed (throw)
+branch  8 never executed (fallthrough)
+branch  9 never executed
+call   10 never executed
+branch 11 never executed (fallthrough)
+branch 12 never executed (throw)
+branch 13 never executed (fallthrough)
+branch 14 never executed
+    #####:   28:               name[begin] == ' ')) {
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+branch  3 never executed (fallthrough)
+branch  4 never executed
+    #####:   29:            ++begin;
+        -:   30:        }
+    #####:   31:        name.erase(0U, begin);
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+        -:   32:    }
+        -:   33:
+    #####:   34:    const std::size_t scope = name.rfind("::");
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+    #####:   35:    if (scope != std::string::npos) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:   36:        name = name.substr(scope + 2U);
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+call    3 never executed
+call    4 never executed
+        -:   37:    }
+    #####:   38:    return name;
+call    0 never executed
+    #####:   39:}
+call    0 never executed
+call    1 never executed
+        -:   40:
+        -:   41:template <typename T>
+    #####:   42:std::string default_type_name() {
+        -:   43:#if defined(__clang__) || defined(__GNUC__)
+    #####:   44:    std::string pretty = __PRETTY_FUNCTION__;
+    #####:   45:    const std::string marker = "T = ";
+    #####:   46:    const std::size_t begin = pretty.find(marker);
+    #####:   47:    if (begin != std::string::npos) {
+    #####:   48:        std::size_t end = pretty.find_first_of(";]", begin + marker.size());
+    #####:   49:        if (end == std::string::npos) {
+    #####:   50:            end = pretty.size();
+        -:   51:        }
+    #####:   52:        return short_type_name(pretty.substr(begin + marker.size(), end - (begin + marker.size())));
+        -:   53:    }
+        -:   54:#endif
+    #####:   55:    return short_type_name(typeid(T).name());
+    #####:   56:}
+------------------
+_ZN4kage4sync6detail17default_type_nameIN15kage_sync_tests12ReferenceCueEEENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEv:
+function _ZN4kage4sync6detail17default_type_nameIN15kage_sync_tests12ReferenceCueEEENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEv called 0 returned 0% blocks executed 0%
+    #####:   42:std::string default_type_name() {
+        -:   43:#if defined(__clang__) || defined(__GNUC__)
+    #####:   44:    std::string pretty = __PRETTY_FUNCTION__;
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+    #####:   45:    const std::string marker = "T = ";
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+    #####:   46:    const std::size_t begin = pretty.find(marker);
+call    0 never executed
+    #####:   47:    if (begin != std::string::npos) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:   48:        std::size_t end = pretty.find_first_of(";]", begin + marker.size());
+call    0 never executed
+call    1 never executed
+    #####:   49:        if (end == std::string::npos) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:   50:            end = pretty.size();
+call    0 never executed
+        -:   51:        }
+    #####:   52:        return short_type_name(pretty.substr(begin + marker.size(), end - (begin + marker.size())));
+call    0 never executed
+call    1 never executed
+call    2 never executed
+branch  3 never executed (fallthrough)
+branch  4 never executed (throw)
+call    5 never executed
+branch  6 never executed (fallthrough)
+branch  7 never executed (throw)
+call    8 never executed
+call    9 never executed
+        -:   53:    }
+        -:   54:#endif
+    #####:   55:    return short_type_name(typeid(T).name());
+call    0 never executed
+call    1 never executed
+branch  2 never executed (fallthrough)
+branch  3 never executed (throw)
+call    4 never executed
+branch  5 never executed (fallthrough)
+branch  6 never executed (throw)
+call    7 never executed
+call    8 never executed
+    #####:   56:}
+call    0 never executed
+call    1 never executed
+call    2 never executed
+call    3 never executed
+------------------
+_ZN4kage4sync6detail17default_type_nameIN15kage_sync_tests7TestCueEEENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEv:
+function _ZN4kage4sync6detail17default_type_nameIN15kage_sync_tests7TestCueEEENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEv called 0 returned 0% blocks executed 0%
+    #####:   42:std::string default_type_name() {
+        -:   43:#if defined(__clang__) || defined(__GNUC__)
+    #####:   44:    std::string pretty = __PRETTY_FUNCTION__;
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+    #####:   45:    const std::string marker = "T = ";
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+    #####:   46:    const std::size_t begin = pretty.find(marker);
+call    0 never executed
+    #####:   47:    if (begin != std::string::npos) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:   48:        std::size_t end = pretty.find_first_of(";]", begin + marker.size());
+call    0 never executed
+call    1 never executed
+    #####:   49:        if (end == std::string::npos) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:   50:            end = pretty.size();
+call    0 never executed
+        -:   51:        }
+    #####:   52:        return short_type_name(pretty.substr(begin + marker.size(), end - (begin + marker.size())));
+call    0 never executed
+call    1 never executed
+call    2 never executed
+branch  3 never executed (fallthrough)
+branch  4 never executed (throw)
+call    5 never executed
+branch  6 never executed (fallthrough)
+branch  7 never executed (throw)
+call    8 never executed
+call    9 never executed
+        -:   53:    }
+        -:   54:#endif
+    #####:   55:    return short_type_name(typeid(T).name());
+call    0 never executed
+call    1 never executed
+branch  2 never executed (fallthrough)
+branch  3 never executed (throw)
+call    4 never executed
+branch  5 never executed (fallthrough)
+branch  6 never executed (throw)
+call    7 never executed
+call    8 never executed
+    #####:   56:}
+call    0 never executed
+call    1 never executed
+call    2 never executed
+call    3 never executed
+------------------
+        -:   57:
+        -:   58:}  // namespace kage::sync::detail

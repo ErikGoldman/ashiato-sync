@@ -1,0 +1,190 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/server/quantized_frame.cpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/server/quantized_frame.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/server/quantized_frame.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#include "kage/sync/server.hpp"
+        -:    2:
+        -:    3:#include "server/state.hpp"
+        -:    4:
+        -:    5:#include <algorithm>
+        -:    6:#include <limits>
+        -:    7:
+        -:    8:namespace kage::sync {
+        -:    9:
+function _ZN4kage4sync17ReplicationServer22retain_quantized_frameEj called 186628 returned 100% blocks executed 91%
+   186628:   10:void ReplicationServer::retain_quantized_frame(std::uint32_t quantized_frame) {
+   186628:   11:    if (quantized_frame != invalid_quantized_frame_id &&
+branch  0 taken 186628 (fallthrough)
+branch  1 taken 0
+  373256*:   12:        quantized_frame < quantized_frames_.size() &&
+branch  0 taken 186628 (fallthrough)
+branch  1 taken 0
+call    2 returned 186628
+branch  3 taken 186628 (fallthrough)
+branch  4 taken 0
+   186628:   13:        quantized_frames_[quantized_frame].active) {
+call    0 returned 186628
+branch  1 taken 186628 (fallthrough)
+branch  2 taken 0
+   186628:   14:        ++quantized_frames_[quantized_frame].ref_count;
+call    0 returned 186628
+        -:   15:    }
+   186628:   16:}
+        -:   17:
+function _ZN4kage4sync17ReplicationServer23release_quantized_frameEj called 187519 returned 100% blocks executed 91%
+   187519:   18:void ReplicationServer::release_quantized_frame(std::uint32_t quantized_frame) {
+   185484:   19:    if (quantized_frame == invalid_quantized_frame_id ||
+branch  0 taken 185484 (fallthrough)
+branch  1 taken 0
+   373003:   20:        quantized_frame >= quantized_frames_.size() ||
+branch  0 taken 185484 (fallthrough)
+branch  1 taken 2035
+call    2 returned 185484
+branch  3 taken 2035 (fallthrough)
+branch  4 taken 185484
+   185484:   21:        !quantized_frames_[quantized_frame].active) {
+call    0 returned 185484
+branch  1 taken 0 (fallthrough)
+branch  2 taken 185484
+     2035:   22:        return;
+        -:   23:    }
+        -:   24:
+   185484:   25:    QuantizedFrame& current = quantized_frames_[quantized_frame];
+call    0 returned 185484
+   185484:   26:    if (current.ref_count != 0) {
+branch  0 taken 185455 (fallthrough)
+branch  1 taken 29
+   185455:   27:        --current.ref_count;
+   185455:   28:        if (current.ref_count != 0) {
+branch  0 taken 85959 (fallthrough)
+branch  1 taken 99496
+    85959:   29:            return;
+        -:   30:        }
+        -:   31:    }
+        -:   32:
+    99525:   33:    if (current.slot < replicated_.size()) {
+call    0 returned 99525
+branch  1 taken 99525 (fallthrough)
+branch  2 taken 0
+    99525:   34:        std::vector<std::uint32_t>& slot_quantized_frames = replicated_[current.slot].quantized_frames;
+call    0 returned 99525
+   199050:   35:        slot_quantized_frames.erase(
+call    0 returned 99525
+call    1 returned 99525
+call    2 returned 99525
+branch  3 taken 99525 (fallthrough)
+branch  4 taken 0 (throw)
+    99525:   36:            std::remove(slot_quantized_frames.begin(), slot_quantized_frames.end(), quantized_frame),
+call    0 returned 99525
+call    1 returned 99525
+call    2 returned 99525
+branch  3 taken 99525 (fallthrough)
+branch  4 taken 0 (throw)
+   199050:   37:            slot_quantized_frames.end());
+call    0 returned 99525
+        -:   38:    }
+    99525:   39:    current.active = false;
+    99525:   40:    current.data.clear();
+call    0 returned 99525
+    99525:   41:    current.dirty_generations.clear();
+call    0 returned 99525
+    99525:   42:    free_quantized_frames_.push_back(quantized_frame);
+call    0 returned 99525
+        -:   43:}
+        -:   44:
+function _ZN4kage4sync17ReplicationServer25clear_client_entity_stateERNS0_13server_detail17ClientEntityStateE called 1710 returned 100% blocks executed 100%
+     1710:   45:void ReplicationServer::clear_client_entity_state(ClientEntityState& state) {
+     1710:   46:    release_quantized_frame(state.baseline);
+call    0 returned 1710
+     8324:   47:    for (const ClientEntityState::PendingQuantizedFrame& pending : state.pending) {
+call    0 returned 1710
+call    1 returned 1710
+call    2 returned 6614
+call    3 returned 6614
+call    4 returned 8324
+branch  5 taken 6614
+branch  6 taken 1710 (fallthrough)
+     6614:   48:        release_quantized_frame(pending.quantized_frame);
+call    0 returned 6614
+branch  1 taken 6614 (fallthrough)
+branch  2 taken 0 (throw)
+        -:   49:    }
+     1710:   50:    state.baseline = invalid_quantized_frame_id;
+     1710:   51:    state.pending.clear();
+call    0 returned 1710
+     1710:   52:    state.network_id = 0;
+     1710:   53:    state.network_version = 0;
+     1710:   54:    state.last_priority = std::numeric_limits<float>::quiet_NaN();
+call    0 returned 1710
+     1710:   55:    state.component_mask = std::numeric_limits<std::uint64_t>::max();
+call    0 returned 1710
+     1710:   56:    state.reference_priority_boost_pending = false;
+     1710:   57:    state.has_network_id = false;
+     1710:   58:    state.pending_cues.clear();
+call    0 returned 1710
+     1710:   59:}
+        -:   60:
+function _ZN4kage4sync17ReplicationServer16acknowledge_cuesERNS0_13server_detail17ClientEntityStateEj called 85517 returned 100% blocks executed 75%
+    85517:   61:void ReplicationServer::acknowledge_cues(ClientEntityState& state, SyncFrame frame) {
+   171034:   62:    state.pending_cues.erase(
+call    0 returned 85517
+call    1 returned 85517
+call    2 returned 85517
+branch  3 taken 85517 (fallthrough)
+branch  4 taken 0 (throw)
+    85517:   63:        std::remove_if(
+call    0 returned 85517
+call    1 returned 85517
+call    2 returned 85517
+branch  3 taken 85517 (fallthrough)
+branch  4 taken 0 (throw)
+        -:   64:            state.pending_cues.begin(),
+        -:   65:            state.pending_cues.end(),
+function _ZZN4kage4sync17ReplicationServer16acknowledge_cuesERNS0_13server_detail17ClientEntityStateEjENKUlRKNS3_10PendingCueEE_clES7_ called 473 returned 100% blocks executed 100%
+      473:   66:            [frame](const ClientEntityState::PendingCue& cue) {
+      473:   67:                return cue.frame <= frame;
+        -:   68:            }),
+    85517:   69:        state.pending_cues.end());
+call    0 returned 85517
+    85517:   70:}
+        -:   71:
+function _ZNK4kage4sync17ReplicationServer31same_quantized_frame_componentsERKNS1_14QuantizedFrameERKNS0_18QuantizedFrameDataERKSt6vectorImSaImEE called 9 returned 100% blocks executed 29%
+        9:   72:bool ReplicationServer::same_quantized_frame_components(
+        -:   73:    const QuantizedFrame& quantized_frame,
+        -:   74:    const QuantizedFrameData& data,
+        -:   75:    const std::vector<std::uint64_t>& dirty_generations) const {
+       23:   76:    if (quantized_frame.data.tag_mask != data.tag_mask ||
+       5*:   77:        quantized_frame.data.present_mask != data.present_mask ||
+branch  0 taken 0 (fallthrough)
+branch  1 taken 5
+      14*:   78:        quantized_frame.data.bytes != data.bytes ||
+branch  0 taken 5 (fallthrough)
+branch  1 taken 4
+call    2 never executed
+branch  3 never executed (fallthrough)
+branch  4 never executed
+branch  5 never executed (fallthrough)
+branch  6 never executed
+branch  7 taken 9 (fallthrough)
+branch  8 taken 0
+    #####:   79:        quantized_frame.dirty_generations.size() != dirty_generations.size()) {
+call    0 never executed
+call    1 never executed
+        9:   80:        return false;
+        -:   81:    }
+    #####:   82:    for (std::size_t index = 0; index < dirty_generations.size(); ++index) {
+call    0 never executed
+branch  1 never executed
+branch  2 never executed (fallthrough)
+    #####:   83:        if (quantized_frame.dirty_generations[index] != dirty_generations[index]) {
+call    0 never executed
+call    1 never executed
+branch  2 never executed (fallthrough)
+branch  3 never executed
+    #####:   84:            return false;
+        -:   85:        }
+        -:   86:    }
+    #####:   87:    return true;
+        -:   88:}
+        -:   89:
+        -:   90:}  // namespace kage::sync

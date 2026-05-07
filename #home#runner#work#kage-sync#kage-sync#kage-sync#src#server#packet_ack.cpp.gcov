@@ -1,0 +1,318 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/server/packet_ack.cpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/server/packet_ack.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/server/packet_ack.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#include "kage/sync/server.hpp"
+        -:    2:
+        -:    3:#include "server/packet.hpp"
+        -:    4:#include "server/packet_ack_tracker.hpp"
+        -:    5:#include "server/state.hpp"
+        -:    6:
+        -:    7:#include <algorithm>
+        -:    8:#include <vector>
+        -:    9:
+        -:   10:namespace kage::sync {
+        -:   11:
+function _ZN4kage4sync13server_detail22ServerClientReplicator10AckTracker27client_acknowledged_destroyERNS0_17ReplicationServerERS2_N3ecs6EntityEj called 4116 returned 100% blocks executed 100%
+     4116:   12:bool server_detail::ServerClientReplicator::AckTracker::client_acknowledged_destroy(
+        -:   13:    ReplicationServer& server,
+        -:   14:    ServerClientReplicator& client,
+        -:   15:    ecs::Entity entity,
+        -:   16:    SyncFrame frame) {
+        -:   17:    (void)server;
+     4116:   18:    return client.destroys.acknowledge(client, entity, frame);
+call    0 returned 4116
+        -:   19:}
+        -:   20:
+function _ZN4kage4sync13server_detail22ServerClientReplicator10AckTracker18acknowledge_packetERNS0_17ReplicationServerERS2_j called 1788 returned 100% blocks executed 82%
+     1788:   21:bool server_detail::ServerClientReplicator::AckTracker::acknowledge_packet(
+        -:   22:    ReplicationServer& server,
+        -:   23:    ServerClientReplicator& client,
+        -:   24:    std::uint32_t packet_id) {
+     1788:   25:    const auto found = std::find_if(
+call    0 returned 1788
+call    1 returned 1788
+call    2 returned 1788
+branch  3 taken 1788 (fallthrough)
+branch  4 taken 0 (throw)
+        -:   26:        pending_packet_acks.begin(),
+        -:   27:        pending_packet_acks.end(),
+function _ZZN4kage4sync13server_detail22ServerClientReplicator10AckTracker18acknowledge_packetERNS0_17ReplicationServerERS2_jENKUlRKNS1_16PendingPacketAckEE_clES9_ called 2303 returned 100% blocks executed 100%
+     2303:   28:        [packet_id](const PendingPacketAck& pending) {
+     2303:   29:            return pending.packet_id == packet_id;
+        -:   30:        });
+     1788:   31:    if (found == pending_packet_acks.end()) {
+call    0 returned 1788
+call    1 returned 1788
+branch  2 taken 50 (fallthrough)
+branch  3 taken 1738
+       50:   32:        return false;
+        -:   33:    }
+        -:   34:
+     1738:   35:    bool all_valid = true;
+    96214:   36:    for (const PacketAckRecord& record : found->records) {
+call    0 returned 1738
+call    1 returned 1738
+call    2 returned 1738
+call    3 returned 94476
+call    4 returned 96214
+branch  5 taken 94476
+branch  6 taken 1738 (fallthrough)
+    94476:   37:        const bool accepted = record.destroy
+    94476:   38:            ? client_acknowledged_destroy(server, client, record.entity, record.frame)
+branch  0 taken 4116 (fallthrough)
+branch  1 taken 90360
+call    2 returned 4116
+branch  3 taken 4116 (fallthrough)
+branch  4 taken 0 (throw)
+    90360:   39:            : server.acknowledge_entity(client.id, record.entity, record.frame);
+call    0 returned 90360
+branch  1 taken 90360 (fallthrough)
+branch  2 taken 0 (throw)
+    94476:   40:        all_valid = accepted && all_valid;
+branch  0 taken 86133 (fallthrough)
+branch  1 taken 8343
+branch  2 taken 15359 (fallthrough)
+branch  3 taken 70774
+call    4 returned 94476
+        -:   41:    }
+     1738:   42:    if (server.options().bandwidth.enabled) {
+call    0 returned 1738
+branch  1 taken 0 (fallthrough)
+branch  2 taken 1738
+    #####:   43:        client.bandwidth.packet_acked(server.options().bandwidth, found->sent_frame, server.frame(), found->charged_bytes);
+call    0 never executed
+call    1 never executed
+call    2 never executed
+call    3 never executed
+call    4 never executed
+branch  5 never executed (fallthrough)
+branch  6 never executed (throw)
+        -:   44:    }
+     1738:   45:    pending_packet_acks.erase(found);
+call    0 returned 1738
+call    1 returned 1738
+branch  2 taken 1738 (fallthrough)
+branch  3 taken 0 (throw)
+     1738:   46:    return all_valid;
+        -:   47:}
+        -:   48:
+function _ZNK4kage4sync13server_detail22ServerClientReplicator10AckTracker25packet_ack_record_pendingERKNS0_17ReplicationServerERKS2_RKNS1_15PacketAckRecordE called 53741 returned 100% blocks executed 93%
+    53741:   49:bool server_detail::ServerClientReplicator::AckTracker::packet_ack_record_pending(
+        -:   50:    const ReplicationServer& server,
+        -:   51:    const ServerClientReplicator& client,
+        -:   52:    const PacketAckRecord& record) const {
+    53741:   53:    if (record.destroy) {
+branch  0 taken 41017 (fallthrough)
+branch  1 taken 12724
+    41017:   54:        return client.destroys.contains_ack_record(record.entity, record.frame);
+call    0 returned 41017
+        -:   55:    }
+        -:   56:
+    12724:   57:    const std::uint32_t slot = server.replicated_slot_for_entity(record.entity);
+call    0 returned 12724
+    12724:   58:    if (slot == server_detail::invalid_quantized_frame_id) {
+branch  0 taken 1819 (fallthrough)
+branch  1 taken 10905
+     1819:   59:        return false;
+        -:   60:    }
+    10905:   61:    const ClientEntityState* state = client.entities.try_get(slot);
+call    0 returned 10905
+    10905:   62:    if (state == nullptr) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 10905
+    #####:   63:        return false;
+        -:   64:    }
+    10905:   65:    return std::any_of(
+call    0 returned 10905
+call    1 returned 10905
+call    2 returned 10905
+        -:   66:        state->pending.begin(),
+        -:   67:        state->pending.end(),
+function _ZZNK4kage4sync13server_detail22ServerClientReplicator10AckTracker25packet_ack_record_pendingERKNS0_17ReplicationServerERKS2_RKNS1_15PacketAckRecordEENKUlRKNS1_17ClientEntityState21PendingQuantizedFrameEE_clESF_ called 139043 returned 100% blocks executed 100%
+   139043:   68:        [&](const ClientEntityState::PendingQuantizedFrame& pending) {
+   139043:   69:            return pending.frame == record.frame;
+    10905:   70:        });
+        -:   71:}
+        -:   72:
+function _ZN4kage4sync13server_detail22ServerClientReplicator10AckTracker19cleanup_packet_acksERNS0_17ReplicationServerERS2_ called 1718 returned 100% blocks executed 75%
+     1718:   73:void server_detail::ServerClientReplicator::AckTracker::cleanup_packet_acks(
+        -:   74:    ReplicationServer& server,
+        -:   75:    ServerClientReplicator& client) {
+     3436:   76:    pending_packet_acks.erase(
+call    0 returned 1718
+call    1 returned 1718
+call    2 returned 1718
+branch  3 taken 1718 (fallthrough)
+branch  4 taken 0 (throw)
+     1718:   77:        std::remove_if(
+call    0 returned 1718
+call    1 returned 1718
+call    2 returned 1718
+branch  3 taken 1718 (fallthrough)
+branch  4 taken 0 (throw)
+        -:   78:            pending_packet_acks.begin(),
+        -:   79:            pending_packet_acks.end(),
+function _ZZN4kage4sync13server_detail22ServerClientReplicator10AckTracker19cleanup_packet_acksERNS0_17ReplicationServerERS2_ENKUlRKNS1_16PendingPacketAckEE_clES9_ called 10154 returned 100% blocks executed 71%
+    10154:   80:            [&](const PendingPacketAck& pending_packet) {
+    10154:   81:                const bool stale = std::none_of(
+call    0 returned 10154
+call    1 returned 10154
+call    2 returned 10154
+        -:   82:                    pending_packet.records.begin(),
+        -:   83:                    pending_packet.records.end(),
+function _ZZZN4kage4sync13server_detail22ServerClientReplicator10AckTracker19cleanup_packet_acksERNS0_17ReplicationServerERS2_ENKUlRKNS1_16PendingPacketAckEE_clES9_ENKUlRKNS1_15PacketAckRecordEE_clESD_ called 53741 returned 100% blocks executed 100%
+    53741:   84:                    [&](const PacketAckRecord& record) {
+    53741:   85:                        return packet_ack_record_pending(server, client, record);
+call    0 returned 53741
+        -:   86:                    });
+   10154*:   87:                if (stale && server.options().bandwidth.enabled) {
+branch  0 taken 113 (fallthrough)
+branch  1 taken 10041
+call    2 returned 113
+branch  3 taken 0 (fallthrough)
+branch  4 taken 113
+branch  5 taken 0 (fallthrough)
+branch  6 taken 10154
+    #####:   88:                    client.bandwidth.packet_lost(server.options().bandwidth, server.frame(), pending_packet.charged_bytes);
+call    0 never executed
+call    1 never executed
+call    2 never executed
+        -:   89:                }
+    10154:   90:                return stale;
+        -:   91:            }),
+     1718:   92:        pending_packet_acks.end());
+call    0 returned 1718
+     1718:   93:}
+        -:   94:
+function _ZN4kage4sync13server_detail22ServerClientReplicator10AckTracker18allocate_packet_idERNS0_17ReplicationServerERS2_ called 2125 returned 100% blocks executed 76%
+     2125:   95:std::uint32_t server_detail::ServerClientReplicator::AckTracker::allocate_packet_id(
+        -:   96:    ReplicationServer& server,
+        -:   97:    ServerClientReplicator& client) {
+     2125:   98:    const ReplicationServerOptions& options = server.options();
+call    0 returned 2125
+     2125:   99:    const server_detail::ServerPacketIdAllocator allocator(options.protocol.max_pending_packet_acks_per_client);
+call    0 returned 2125
+     2125:  100:    const std::uint32_t packet_id = allocator.allocate(next_packet_id);
+call    0 returned 2125
+     4250:  101:    pending_packet_acks.erase(
+call    0 returned 2125
+call    1 returned 2125
+call    2 returned 2125
+branch  3 taken 2125 (fallthrough)
+branch  4 taken 0 (throw)
+     2125:  102:        std::remove_if(
+call    0 returned 2125
+call    1 returned 2125
+call    2 returned 2125
+branch  3 taken 2125 (fallthrough)
+branch  4 taken 0 (throw)
+        -:  103:            pending_packet_acks.begin(),
+        -:  104:            pending_packet_acks.end(),
+function _ZZN4kage4sync13server_detail22ServerClientReplicator10AckTracker18allocate_packet_idERNS0_17ReplicationServerERS2_ENKUlRKNS1_16PendingPacketAckEE_clES9_ called 17270 returned 100% blocks executed 43%
+    17270:  105:            [&](const PendingPacketAck& pending) {
+    17270:  106:                if (pending.packet_id != packet_id) {
+branch  0 taken 17270 (fallthrough)
+branch  1 taken 0
+    17270:  107:                    return false;
+        -:  108:                }
+    #####:  109:                if (options.bandwidth.enabled) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  110:                    client.bandwidth.packet_lost(options.bandwidth, server.frame(), pending.charged_bytes);
+call    0 never executed
+call    1 never executed
+        -:  111:                }
+    #####:  112:                return true;
+        -:  113:            }),
+     2125:  114:        pending_packet_acks.end());
+call    0 returned 2125
+     2125:  115:    return packet_id;
+        -:  116:}
+        -:  117:
+function _ZN4kage4sync13server_detail22ServerClientReplicator10AckTracker32enforce_pending_packet_ack_limitERNS0_17ReplicationServerERS2_ called 2125 returned 100% blocks executed 24%
+     2125:  118:void server_detail::ServerClientReplicator::AckTracker::enforce_pending_packet_ack_limit(
+        -:  119:    ReplicationServer& server,
+        -:  120:    ServerClientReplicator& client) {
+     2125:  121:    const ReplicationServerOptions& options = server.options();
+call    0 returned 2125
+     2125:  122:    const std::size_t max_pending = options.protocol.max_pending_packet_acks_per_client;
+     2125:  123:    if (pending_packet_acks.size() <= max_pending) {
+call    0 returned 2125
+branch  1 taken 2125 (fallthrough)
+branch  2 taken 0
+     2125:  124:        return;
+        -:  125:    }
+    #####:  126:    const std::size_t drop_count = pending_packet_acks.size() - max_pending;
+call    0 never executed
+    #####:  127:    if (options.bandwidth.enabled) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  128:        for (std::size_t index = 0; index < drop_count; ++index) {
+branch  0 never executed
+branch  1 never executed (fallthrough)
+    #####:  129:            client.bandwidth.packet_lost(
+call    0 never executed
+    #####:  130:                options.bandwidth,
+call    0 never executed
+        -:  131:                server.frame(),
+    #####:  132:                pending_packet_acks[index].charged_bytes);
+call    0 never executed
+        -:  133:        }
+        -:  134:    }
+    #####:  135:    pending_packet_acks.erase(
+call    0 never executed
+call    1 never executed
+call    2 never executed
+branch  3 never executed (fallthrough)
+branch  4 never executed (throw)
+    #####:  136:        pending_packet_acks.begin(),
+call    0 never executed
+    #####:  137:        pending_packet_acks.begin() +
+    #####:  138:            static_cast<std::vector<PendingPacketAck>::difference_type>(drop_count));
+call    0 never executed
+call    1 never executed
+        -:  139:}
+        -:  140:
+function _ZN4kage4sync17ReplicationServer27begin_client_bandwidth_tickERNS0_13server_detail22ServerClientReplicatorE called 2107 returned 100% blocks executed 100%
+     2107:  141:std::size_t ReplicationServer::begin_client_bandwidth_tick(ServerClientReplicator& client) {
+     2107:  142:    if (!options_.bandwidth.enabled) {
+branch  0 taken 2105 (fallthrough)
+branch  1 taken 2
+     2105:  143:        return options_.bandwidth_limit_bytes_per_tick;
+        -:  144:    }
+        2:  145:    return client.bandwidth.begin_tick(options_.bandwidth, options_.fixed_dt_seconds);
+call    0 returned 2
+        -:  146:}
+        -:  147:
+function _ZNK4kage4sync17ReplicationServer20charged_packet_bytesEm called 112593 returned 100% blocks executed 100%
+   112593:  148:std::size_t ReplicationServer::charged_packet_bytes(std::size_t payload_bytes) const noexcept {
+   112593:  149:    return payload_bytes + (options_.bandwidth.enabled ? options_.bandwidth.transport_overhead_bytes_per_packet : 0U);
+branch  0 taken 4 (fallthrough)
+branch  1 taken 112589
+        -:  150:}
+        -:  151:
+function _ZN4kage4sync13server_detail22ServerClientReplicator10AckTracker16track_packet_ackERS2_jjmRKSt6vectorINS1_15PacketAckRecordESaIS6_EE called 2125 returned 100% blocks executed 86%
+     2125:  152:void server_detail::ServerClientReplicator::AckTracker::track_packet_ack(
+        -:  153:    ServerClientReplicator& client,
+        -:  154:    std::uint32_t packet_id,
+        -:  155:    SyncFrame sent_frame,
+        -:  156:    std::size_t charged_bytes,
+        -:  157:    const std::vector<PacketAckRecord>& records) {
+     2125:  158:    if (records.empty()) {
+call    0 returned 2125
+branch  1 taken 0 (fallthrough)
+branch  2 taken 2125
+    #####:  159:        return;
+        -:  160:    }
+     2125:  161:    server_detail::track_packet_ack(pending_packet_acks, packet_id, sent_frame, charged_bytes, records);
+call    0 returned 2125
+     2125:  162:    if (charged_bytes != 0U) {
+branch  0 taken 2125 (fallthrough)
+branch  1 taken 0
+     2125:  163:        client.bandwidth.packet_sent(charged_bytes);
+call    0 returned 2125
+        -:  164:    }
+        -:  165:}
+        -:  166:
+        -:  167:}  // namespace kage::sync

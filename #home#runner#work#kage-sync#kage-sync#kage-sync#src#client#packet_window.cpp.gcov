@@ -1,0 +1,195 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/client/packet_window.cpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/client/packet_window.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/client/packet_window.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#include "client/packet_window.hpp"
+        -:    2:
+        -:    3:#include "kage/sync/protocol.hpp"
+        -:    4:
+        -:    5:#include <algorithm>
+        -:    6:#include <limits>
+        -:    7:
+        -:    8:namespace kage::sync::client_detail {
+        -:    9:namespace {
+        -:   10:
+        -:   11:constexpr std::uint32_t server_update_packet_loss_window = 64;
+        -:   12:
+function _ZN4kage4sync13client_detail12_GLOBAL__N_110count_bitsEm called 1259 returned 100% blocks executed 100%
+     1259:   13:std::uint32_t count_bits(std::uint64_t value) noexcept {
+     1259:   14:    std::uint32_t count = 0;
+     2573:   15:    while (value != 0U) {
+branch  0 taken 1314
+branch  1 taken 1259 (fallthrough)
+     1314:   16:        value &= value - 1U;
+     1314:   17:        ++count;
+        -:   18:    }
+     1259:   19:    return count;
+        -:   20:}
+        -:   21:
+function _ZN4kage4sync13client_detail12_GLOBAL__N_126packet_id_forward_distanceEjjj called 3826 returned 100% blocks executed 100%
+     3826:   22:std::uint32_t packet_id_forward_distance(
+        -:   23:    std::uint32_t from,
+        -:   24:    std::uint32_t to,
+        -:   25:    std::uint32_t max_packet_id) noexcept {
+     3826:   26:    return to >= from ? to - from : max_packet_id - from + to;
+branch  0 taken 1916 (fallthrough)
+branch  1 taken 1910
+        -:   27:}
+        -:   28:
+function _ZN4kage4sync13client_detail12_GLOBAL__N_121packet_id_window_sizeEj called 2050 returned 100% blocks executed 83%
+     2050:   29:std::uint32_t packet_id_window_size(std::uint32_t max_packet_id) noexcept {
+     2050:   30:    if (max_packet_id <= 1U) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 2050
+    #####:   31:        return 1U;
+        -:   32:    }
+     2050:   33:    return std::min(server_update_packet_loss_window, max_packet_id / 2U);
+call    0 returned 2050
+        -:   34:}
+        -:   35:
+function _ZN4kage4sync13client_detail12_GLOBAL__N_112low_bit_maskEj called 3135 returned 100% blocks executed 100%
+     3135:   36:std::uint64_t low_bit_mask(std::uint32_t bit_count) noexcept {
+     3135:   37:    return bit_count >= 64U ? std::numeric_limits<std::uint64_t>::max() : ((std::uint64_t{1} << bit_count) - 1U);
+branch  0 taken 1876 (fallthrough)
+branch  1 taken 1259
+call    2 returned 1876
+        -:   38:}
+        -:   39:
+function _ZN4kage4sync13client_detail12_GLOBAL__N_129record_packet_window_with_maxEjjRNS0_28ReplicationClientTimingStatsERjRmS5_Rb called 2050 returned 100% blocks executed 85%
+     2050:   40:void record_packet_window_with_max(
+        -:   41:    std::uint32_t packet_id,
+        -:   42:    std::uint32_t max_packet_id,
+        -:   43:    ReplicationClientTimingStats& stats,
+        -:   44:    std::uint32_t& highest_packet_id,
+        -:   45:    std::uint64_t& window_mask,
+        -:   46:    std::uint32_t& window_span,
+        -:   47:    bool& has_window) noexcept {
+     2050:   48:    if (packet_id == 0U || packet_id > max_packet_id) {
+branch  0 taken 2050 (fallthrough)
+branch  1 taken 0
+branch  2 taken 0 (fallthrough)
+branch  3 taken 2050
+    #####:   49:        return;
+        -:   50:    }
+        -:   51:
+     2050:   52:    ++stats.server_update_packets_received;
+        -:   53:
+     2050:   54:    const std::uint32_t window_size = packet_id_window_size(max_packet_id);
+call    0 returned 2050
+     2050:   55:    if (!has_window) {
+branch  0 taken 137 (fallthrough)
+branch  1 taken 1913
+      137:   56:        highest_packet_id = packet_id;
+      137:   57:        window_mask = 1U;
+      137:   58:        window_span = 1U;
+      137:   59:        has_window = true;
+        -:   60:    } else {
+        -:   61:        const std::uint32_t forward_distance =
+     1913:   62:            packet_id_forward_distance(highest_packet_id, packet_id, max_packet_id);
+call    0 returned 1913
+        -:   63:        const std::uint32_t backward_distance =
+     1913:   64:            packet_id_forward_distance(packet_id, highest_packet_id, max_packet_id);
+call    0 returned 1913
+        -:   65:
+     1913:   66:        if (forward_distance != 0U && forward_distance <= backward_distance) {
+branch  0 taken 1910 (fallthrough)
+branch  1 taken 3
+branch  2 taken 1876 (fallthrough)
+branch  3 taken 34
+     1876:   67:            const std::uint32_t new_span = std::min(window_size, window_span + forward_distance);
+call    0 returned 1876
+     1876:   68:            const std::uint32_t finalized_count = window_span + forward_distance - new_span;
+        -:   69:
+     1876:   70:            if (finalized_count != 0U) {
+branch  0 taken 1259 (fallthrough)
+branch  1 taken 617
+     1259:   71:                std::uint32_t finalized_received = 0;
+     1259:   72:                if (forward_distance < 64U) {
+branch  0 taken 1259 (fallthrough)
+branch  1 taken 0
+    1259*:   73:                    const std::uint32_t retained_old_count = new_span > forward_distance ? new_span - forward_distance : 0U;
+branch  0 taken 1259 (fallthrough)
+branch  1 taken 0
+     1259:   74:                    const std::uint64_t retained_old_mask = low_bit_mask(retained_old_count);
+call    0 returned 1259
+     1259:   75:                    finalized_received = count_bits(window_mask & ~retained_old_mask);
+call    0 returned 1259
+        -:   76:                } else {
+    #####:   77:                    finalized_received = count_bits(window_mask);
+call    0 never executed
+        -:   78:                }
+     1259:   79:                stats.server_update_packets_missing += finalized_count - finalized_received;
+        -:   80:            }
+        -:   81:
+    1876*:   82:            window_mask = forward_distance >= 64U ? 0U : (window_mask << forward_distance);
+branch  0 taken 1876 (fallthrough)
+branch  1 taken 0
+     1876:   83:            window_mask |= 1U;
+     1876:   84:            window_mask &= low_bit_mask(window_size);
+call    0 returned 1876
+     1876:   85:            window_span = new_span;
+     1876:   86:            highest_packet_id = packet_id;
+     1876:   87:        } else {
+       37:   88:            ++stats.server_update_packets_reordered_or_duplicate;
+       37:   89:            if (backward_distance < window_span && backward_distance < 64U) {
+branch  0 taken 35 (fallthrough)
+branch  1 taken 2
+branch  2 taken 35 (fallthrough)
+branch  3 taken 0
+       35:   90:                window_mask |= std::uint64_t{1} << backward_distance;
+        -:   91:            }
+        -:   92:        }
+        -:   93:    }
+        -:   94:
+     2050:   95:    const std::uint64_t total = stats.server_update_packets_received + stats.server_update_packets_missing;
+     2050:   96:    stats.server_update_packet_loss = total == 0U
+    2050*:   97:        ? 0.0f
+branch  0 taken 2050 (fallthrough)
+branch  1 taken 0
+     2050:   98:        : static_cast<float>(stats.server_update_packets_missing) / static_cast<float>(total);
+        -:   99:}
+        -:  100:
+        -:  101:}  // namespace
+        -:  102:
+function _ZN4kage4sync13client_detail18ClientPacketWindowC2Em called 3 returned 100% blocks executed 100%
+        3:  103:ClientPacketWindow::ClientPacketWindow(std::size_t max_pending_packet_acks_per_client) noexcept
+        3:  104:    : max_packet_id_(protocol::packet_id_mask(protocol::packet_id_bits_for_max_pending(max_pending_packet_acks_per_client))) {}
+call    0 returned 3
+call    1 returned 3
+        -:  105:
+function _ZN4kage4sync13client_detail18ClientPacketWindow6recordEjRNS0_28ReplicationClientTimingStatsE called 72 returned 100% blocks executed 100%
+       72:  106:void ClientPacketWindow::record(std::uint32_t packet_id, ReplicationClientTimingStats& stats) noexcept {
+       72:  107:    record_packet_window_with_max(
+        -:  108:        packet_id,
+        -:  109:        max_packet_id_,
+        -:  110:        stats,
+       72:  111:        highest_packet_id_,
+       72:  112:        window_mask_,
+       72:  113:        window_span_,
+       72:  114:        has_window_);
+call    0 returned 72
+       72:  115:}
+        -:  116:
+function _ZN4kage4sync13client_detail20record_packet_windowEjmRNS0_28ReplicationClientTimingStatsERjRmS4_Rb called 1978 returned 100% blocks executed 100%
+     1978:  117:void record_packet_window(
+        -:  118:    std::uint32_t packet_id,
+        -:  119:    std::size_t max_pending_packet_acks_per_client,
+        -:  120:    ReplicationClientTimingStats& stats,
+        -:  121:    std::uint32_t& highest_packet_id,
+        -:  122:    std::uint64_t& window_mask,
+        -:  123:    std::uint32_t& window_span,
+        -:  124:    bool& has_window) noexcept {
+     1978:  125:    record_packet_window_with_max(
+call    0 returned 1978
+call    1 returned 1978
+call    2 returned 1978
+        -:  126:        packet_id,
+        -:  127:        protocol::packet_id_mask(protocol::packet_id_bits_for_max_pending(max_pending_packet_acks_per_client)),
+        -:  128:        stats,
+        -:  129:        highest_packet_id,
+        -:  130:        window_mask,
+        -:  131:        window_span,
+        -:  132:        has_window);
+     1978:  133:}
+        -:  134:
+        -:  135:}  // namespace kage::sync::client_detail

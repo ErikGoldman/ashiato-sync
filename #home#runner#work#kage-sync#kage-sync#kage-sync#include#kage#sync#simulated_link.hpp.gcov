@@ -1,0 +1,273 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/include/kage/sync/simulated_link.hpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_input.test.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_input.test.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include <algorithm>
+        -:    4:#include <cstddef>
+        -:    5:#include <cstdint>
+        -:    6:#include <deque>
+        -:    7:#include <random>
+        -:    8:#include <utility>
+        -:    9:
+        -:   10:namespace kage::sync {
+        -:   11:
+        -:   12:struct SimulatedLinkSettings {
+        -:   13:    double latency_ms = 0.0;
+        -:   14:    double jitter_ms = 0.0;
+        -:   15:    double loss_percent = 0.0;
+        -:   16:};
+        -:   17:
+        -:   18:template <typename Payload, typename Endpoint>
+        -:   19:class SimulatedLink {
+        -:   20:public:
+        -:   21:    struct QueuedPacket {
+        -:   22:        Endpoint endpoint;
+        -:   23:        Payload payload;
+        -:   24:        double deliver_at = 0.0;
+        -:   25:    };
+        -:   26:
+        -:   27:    SimulatedLink() = default;
+        -:   28:
+        -:   29:    explicit SimulatedLink(std::uint32_t seed)
+        -:   30:        : rng_(seed) {}
+        -:   31:
+function _ZN4kage4sync13SimulatedLinkIN3ecs9BitBufferEmEC2ENS0_21SimulatedLinkSettingsEj called 0 returned 0% blocks executed 0%
+    #####:   32:    explicit SimulatedLink(SimulatedLinkSettings initial_settings, std::uint32_t seed = 0)
+    #####:   33:        : settings(initial_settings), rng_(seed) {}
+call    0 never executed
+call    1 never executed
+branch  2 never executed (fallthrough)
+branch  3 never executed (throw)
+call    4 never executed
+        -:   34:
+function _ZN4kage4sync13SimulatedLinkIN3ecs9BitBufferEmE12drops_packetEv called 0 returned 0% blocks executed 0%
+    #####:   35:    bool drops_packet() {
+    #####:   36:        if (settings.loss_percent <= 0.0) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:   37:            return false;
+        -:   38:        }
+    #####:   39:        std::uniform_real_distribution<double> distribution(0.0, 100.0);
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+    #####:   40:        return distribution(rng_) < settings.loss_percent;
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+        -:   41:    }
+        -:   42:
+function _ZN4kage4sync13SimulatedLinkIN3ecs9BitBufferEmE13delay_secondsEv called 0 returned 0% blocks executed 0%
+    #####:   43:    double delay_seconds() {
+    #####:   44:        double latency_ms = std::max(0.0, settings.latency_ms);
+call    0 never executed
+    #####:   45:        if (settings.jitter_ms > 0.0) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:   46:            std::uniform_real_distribution<double> distribution(-settings.jitter_ms, settings.jitter_ms);
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+    #####:   47:            latency_ms = std::max(0.0, latency_ms + distribution(rng_));
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+call    3 never executed
+        -:   48:        }
+    #####:   49:        return latency_ms / 1000.0;
+        -:   50:    }
+        -:   51:
+function _ZN4kage4sync13SimulatedLinkIN3ecs9BitBufferEmE7enqueueERKmRKS3_d called 0 returned 0% blocks executed 0%
+    #####:   52:    bool enqueue(const Endpoint& endpoint, const Payload& payload, double now_seconds) {
+    #####:   53:        if (drops_packet()) {
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed
+    #####:   54:            return false;
+        -:   55:        }
+    #####:   56:        enqueue_ready(endpoint, payload, now_seconds + delay_seconds());
+call    0 never executed
+call    1 never executed
+    #####:   57:        return true;
+        -:   58:    }
+        -:   59:
+        -:   60:    bool enqueue(const Endpoint& endpoint, Payload&& payload, double now_seconds) {
+        -:   61:        if (drops_packet()) {
+        -:   62:            return false;
+        -:   63:        }
+        -:   64:        enqueue_ready(endpoint, std::move(payload), now_seconds + delay_seconds());
+        -:   65:        return true;
+        -:   66:    }
+        -:   67:
+        -:   68:    template <typename Fn>
+      308:   69:    std::size_t deliver_ready(double now_seconds, Fn&& fn) {
+      308:   70:        std::size_t delivered = 0;
+      528:   71:        while (!queued_.empty() && queued_.front().deliver_at <= now_seconds) {
+      220:   72:            fn(queued_.front().endpoint, queued_.front().payload);
+      220:   73:            queued_.pop_front();
+      220:   74:            ++delivered;
+        -:   75:        }
+      308:   76:        return delivered;
+        -:   77:    }
+------------------
+_ZN4kage4sync13SimulatedLinkIN3ecs9BitBufferEmE13deliver_readyIZL23CATCH2_INTERNAL_TEST_30vEUlmRKS3_E1_EEmdOT_:
+function _ZN4kage4sync13SimulatedLinkIN3ecs9BitBufferEmE13deliver_readyIZL23CATCH2_INTERNAL_TEST_30vEUlmRKS3_E1_EEmdOT_ called 136 returned 100% blocks executed 100%
+      136:   69:    std::size_t deliver_ready(double now_seconds, Fn&& fn) {
+      136:   70:        std::size_t delivered = 0;
+      233:   71:        while (!queued_.empty() && queued_.front().deliver_at <= now_seconds) {
+call    0 returned 233
+branch  1 taken 196 (fallthrough)
+branch  2 taken 37
+call    3 returned 196
+branch  4 taken 97 (fallthrough)
+branch  5 taken 99
+branch  6 taken 97
+branch  7 taken 136 (fallthrough)
+       97:   72:            fn(queued_.front().endpoint, queued_.front().payload);
+call    0 returned 97
+call    1 returned 97
+call    2 returned 97
+       97:   73:            queued_.pop_front();
+call    0 returned 97
+       97:   74:            ++delivered;
+        -:   75:        }
+      136:   76:        return delivered;
+        -:   77:    }
+------------------
+_ZN4kage4sync13SimulatedLinkIN3ecs9BitBufferEmE13deliver_readyIZL23CATCH2_INTERNAL_TEST_30vEUlmRKS3_E0_EEmdOT_:
+function _ZN4kage4sync13SimulatedLinkIN3ecs9BitBufferEmE13deliver_readyIZL23CATCH2_INTERNAL_TEST_30vEUlmRKS3_E0_EEmdOT_ called 136 returned 100% blocks executed 100%
+      136:   69:    std::size_t deliver_ready(double now_seconds, Fn&& fn) {
+      136:   70:        std::size_t delivered = 0;
+      233:   71:        while (!queued_.empty() && queued_.front().deliver_at <= now_seconds) {
+call    0 returned 233
+branch  1 taken 196 (fallthrough)
+branch  2 taken 37
+call    3 returned 196
+branch  4 taken 97 (fallthrough)
+branch  5 taken 99
+branch  6 taken 97
+branch  7 taken 136 (fallthrough)
+       97:   72:            fn(queued_.front().endpoint, queued_.front().payload);
+call    0 returned 97
+call    1 returned 97
+call    2 returned 97
+       97:   73:            queued_.pop_front();
+call    0 returned 97
+       97:   74:            ++delivered;
+        -:   75:        }
+      136:   76:        return delivered;
+        -:   77:    }
+------------------
+_ZN4kage4sync13SimulatedLinkIN3ecs9BitBufferEmE13deliver_readyIZL23CATCH2_INTERNAL_TEST_20vEUlmRKS3_E1_EEmdOT_:
+function _ZN4kage4sync13SimulatedLinkIN3ecs9BitBufferEmE13deliver_readyIZL23CATCH2_INTERNAL_TEST_20vEUlmRKS3_E1_EEmdOT_ called 18 returned 100% blocks executed 100%
+       18:   69:    std::size_t deliver_ready(double now_seconds, Fn&& fn) {
+       18:   70:        std::size_t delivered = 0;
+       31:   71:        while (!queued_.empty() && queued_.front().deliver_at <= now_seconds) {
+call    0 returned 31
+branch  1 taken 31 (fallthrough)
+branch  2 taken 0
+call    3 returned 31
+branch  4 taken 13 (fallthrough)
+branch  5 taken 18
+branch  6 taken 13
+branch  7 taken 18 (fallthrough)
+       13:   72:            fn(queued_.front().endpoint, queued_.front().payload);
+call    0 returned 13
+call    1 returned 13
+call    2 returned 13
+       13:   73:            queued_.pop_front();
+call    0 returned 13
+       13:   74:            ++delivered;
+        -:   75:        }
+       18:   76:        return delivered;
+        -:   77:    }
+------------------
+_ZN4kage4sync13SimulatedLinkIN3ecs9BitBufferEmE13deliver_readyIZL23CATCH2_INTERNAL_TEST_20vEUlmRKS3_E0_EEmdOT_:
+function _ZN4kage4sync13SimulatedLinkIN3ecs9BitBufferEmE13deliver_readyIZL23CATCH2_INTERNAL_TEST_20vEUlmRKS3_E0_EEmdOT_ called 18 returned 100% blocks executed 100%
+       18:   69:    std::size_t deliver_ready(double now_seconds, Fn&& fn) {
+       18:   70:        std::size_t delivered = 0;
+       31:   71:        while (!queued_.empty() && queued_.front().deliver_at <= now_seconds) {
+call    0 returned 31
+branch  1 taken 31 (fallthrough)
+branch  2 taken 0
+call    3 returned 31
+branch  4 taken 13 (fallthrough)
+branch  5 taken 18
+branch  6 taken 13
+branch  7 taken 18 (fallthrough)
+       13:   72:            fn(queued_.front().endpoint, queued_.front().payload);
+call    0 returned 13
+call    1 returned 13
+call    2 returned 13
+       13:   73:            queued_.pop_front();
+call    0 returned 13
+       13:   74:            ++delivered;
+        -:   75:        }
+       18:   76:        return delivered;
+        -:   77:    }
+------------------
+        -:   78:
+        -:   79:    const std::deque<QueuedPacket>& queued_packets() const noexcept {
+        -:   80:        return queued_;
+        -:   81:    }
+        -:   82:
+        -:   83:    bool empty() const noexcept {
+        -:   84:        return queued_.empty();
+        -:   85:    }
+        -:   86:
+        -:   87:    std::size_t size() const noexcept {
+        -:   88:        return queued_.size();
+        -:   89:    }
+        -:   90:
+        -:   91:    std::mt19937& random_engine() noexcept {
+        -:   92:        return rng_;
+        -:   93:    }
+        -:   94:
+        -:   95:    const std::mt19937& random_engine() const noexcept {
+        -:   96:        return rng_;
+        -:   97:    }
+        -:   98:
+        -:   99:    SimulatedLinkSettings settings;
+        -:  100:
+        -:  101:private:
+        -:  102:    template <typename PacketPayload>
+function _ZN4kage4sync13SimulatedLinkIN3ecs9BitBufferEmE13enqueue_readyIRKS3_EEvRKmOT_d called 0 returned 0% blocks executed 0%
+    #####:  103:    void enqueue_ready(const Endpoint& endpoint, PacketPayload&& payload, double deliver_at) {
+    #####:  104:        QueuedPacket queued{
+call    0 never executed
+call    1 never executed
+branch  2 never executed (fallthrough)
+branch  3 never executed (throw)
+        -:  105:            endpoint,
+        -:  106:            std::forward<PacketPayload>(payload),
+        -:  107:            deliver_at};
+    #####:  108:        const auto insert_at = std::upper_bound(
+call    0 never executed
+call    1 never executed
+call    2 never executed
+branch  3 never executed (fallthrough)
+branch  4 never executed (throw)
+        -:  109:            queued_.begin(),
+        -:  110:            queued_.end(),
+        -:  111:            queued.deliver_at,
+function _ZZN4kage4sync13SimulatedLinkIN3ecs9BitBufferEmE13enqueue_readyIRKS3_EEvRKmOT_dENKUldRKNS4_12QueuedPacketEE_clEdSE_ called 0 returned 0% blocks executed 0%
+    #####:  112:            [](double deliver_at_value, const QueuedPacket& queued_packet) {
+    #####:  113:                return deliver_at_value < queued_packet.deliver_at;
+        -:  114:            });
+    #####:  115:        queued_.insert(insert_at, std::move(queued));
+call    0 never executed
+call    1 never executed
+call    2 never executed
+branch  3 never executed (fallthrough)
+branch  4 never executed (throw)
+    #####:  116:    }
+call    0 never executed
+call    1 never executed
+        -:  117:
+        -:  118:    std::deque<QueuedPacket> queued_;
+        -:  119:    std::mt19937 rng_{0};
+        -:  120:};
+        -:  121:
+        -:  122:}  // namespace kage::sync

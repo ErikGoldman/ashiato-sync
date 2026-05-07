@@ -1,0 +1,238 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/include/kage/sync/protocol.hpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include "ecs/bit_buffer.hpp"
+        -:    4:
+        -:    5:#include <cstddef>
+        -:    6:#include <cstdint>
+        -:    7:#include <limits>
+        -:    8:#include <string>
+        -:    9:
+        -:   10:#ifndef KAGE_SYNC_BASELINE_FRAME_DELTA_BITS
+        -:   11:#define KAGE_SYNC_BASELINE_FRAME_DELTA_BITS 5
+        -:   12:#endif
+        -:   13:
+        -:   14:namespace kage::sync::protocol {
+        -:   15:
+        -:   16:inline constexpr std::uint8_t server_update_message = 1;
+        -:   17:inline constexpr std::uint8_t client_ack_message = 2;
+        -:   18:inline constexpr std::uint8_t client_connect_request_message = 3;
+        -:   19:inline constexpr std::uint8_t server_connect_response_message = 4;
+        -:   20:inline constexpr std::uint8_t client_connect_ack_message = 5;
+        -:   21:inline constexpr std::uint8_t client_ping_message = 6;
+        -:   22:inline constexpr std::uint8_t server_pong_message = 7;
+        -:   23:inline constexpr std::uint8_t client_input_message = 8;
+        -:   24:
+        -:   25:inline constexpr std::size_t default_max_pending_packet_acks_per_client = 255U;
+        -:   26:inline constexpr std::size_t network_entity_id_bits = 32U;
+        -:   27:inline constexpr std::size_t default_network_entity_id_tier0_bits = 11U;
+        -:   28:inline constexpr std::size_t network_entity_id_tier1_bits = 23U;
+        -:   29:inline constexpr std::uint32_t network_entity_id_tier1_max =
+        -:   30:    (std::uint32_t{1} << network_entity_id_tier1_bits) - 1U;
+        -:   31:inline constexpr std::size_t client_ack_header_bits = 8U + 16U;
+        -:   32:inline constexpr std::size_t client_connect_ack_bits = 8U + 64U;
+        -:   33:inline constexpr std::size_t frame_subframe_bits = 16U;
+        -:   34:inline constexpr std::uint32_t frame_subframe_scale = std::uint32_t{1} << frame_subframe_bits;
+        -:   35:inline constexpr std::size_t client_ping_bits = 8U + 32U + 32U + frame_subframe_bits;
+        -:   36:inline constexpr std::size_t server_pong_bits = 8U + 32U + 32U + frame_subframe_bits + 32U + frame_subframe_bits;
+        -:   37:inline constexpr std::size_t baseline_frame_delta_bits = KAGE_SYNC_BASELINE_FRAME_DELTA_BITS;
+        -:   38:
+        -:   39:static_assert(baseline_frame_delta_bits > 0U, "KAGE_SYNC_BASELINE_FRAME_DELTA_BITS must be at least 1");
+        -:   40:static_assert(baseline_frame_delta_bits < 32U, "KAGE_SYNC_BASELINE_FRAME_DELTA_BITS must be less than 32");
+        -:   41:
+        -:   42:inline constexpr std::uint32_t max_baseline_frame_delta =
+        -:   43:    (std::uint32_t{1} << baseline_frame_delta_bits) - 1U;
+        -:   44:
+        -:   45:struct Descriptor {
+        -:   46:    std::size_t max_pending_packet_acks_per_client = default_max_pending_packet_acks_per_client;
+        -:   47:    std::size_t network_entity_id_tier0_bits = default_network_entity_id_tier0_bits;
+        -:   48:    std::size_t baseline_frame_delta_bits = protocol::baseline_frame_delta_bits;
+        -:   49:};
+        -:   50:
+        -:   51:inline constexpr Descriptor default_descriptor{};
+        -:   52:
+        -:   53:inline constexpr std::size_t bytes_for_bits(std::size_t bits) noexcept {
+        -:   54:    return (bits + 7U) / 8U;
+        -:   55:}
+        -:   56:
+function _ZN4kage4sync8protocol14bits_for_rangeEm called 0 returned 0% blocks executed 0%
+    #####:   57:inline constexpr std::size_t bits_for_range(std::size_t value_count) noexcept {
+    #####:   58:    if (value_count <= 1U) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:   59:        return 1U;
+        -:   60:    }
+    #####:   61:    std::size_t bits = 0;
+    #####:   62:    std::size_t values = value_count - 1U;
+    #####:   63:    while (values != 0U) {
+branch  0 never executed
+branch  1 never executed (fallthrough)
+    #####:   64:        ++bits;
+    #####:   65:        values >>= 1U;
+        -:   66:    }
+    #####:   67:    return bits;
+        -:   68:}
+        -:   69:
+        -:   70:inline constexpr std::size_t packet_id_bits_for_max_pending(std::size_t max_pending_packet_acks) noexcept {
+        -:   71:    if (max_pending_packet_acks >= std::numeric_limits<std::uint32_t>::max()) {
+        -:   72:        return 32U;
+        -:   73:    }
+        -:   74:    const std::size_t bits = bits_for_range(max_pending_packet_acks + 1U);
+        -:   75:    return bits > 32U ? 32U : bits;
+        -:   76:}
+        -:   77:
+        -:   78:inline constexpr std::size_t packet_id_bits(const Descriptor& descriptor) noexcept {
+        -:   79:    return packet_id_bits_for_max_pending(descriptor.max_pending_packet_acks_per_client);
+        -:   80:}
+        -:   81:
+        -:   82:inline constexpr std::uint32_t packet_id_mask(std::size_t packet_id_bits) noexcept {
+        -:   83:    return packet_id_bits >= 32U
+        -:   84:        ? std::numeric_limits<std::uint32_t>::max()
+        -:   85:        : ((std::uint32_t{1} << packet_id_bits) - 1U);
+        -:   86:}
+        -:   87:
+        -:   88:inline constexpr std::size_t server_packet_id_bits =
+        -:   89:    packet_id_bits_for_max_pending(default_max_pending_packet_acks_per_client);
+        -:   90:inline constexpr std::size_t server_update_header_bits = 8U + 32U + server_packet_id_bits + 32U + 16U;
+        -:   91:inline constexpr std::size_t client_ack_record_bits = server_packet_id_bits;
+        -:   92:
+        -:   93:inline constexpr std::size_t server_update_header_bits_for(const Descriptor& descriptor) noexcept {
+        -:   94:    return 8U + 32U + packet_id_bits(descriptor) + 32U + 16U;
+        -:   95:}
+        -:   96:
+        -:   97:inline constexpr std::size_t client_ack_record_bits_for(const Descriptor& descriptor) noexcept {
+        -:   98:    return packet_id_bits(descriptor);
+        -:   99:}
+        -:  100:
+        -:  101:inline constexpr bool valid_network_entity_id_tier0_bits(std::size_t tier0_bits) noexcept {
+        -:  102:    return tier0_bits > 0U && tier0_bits < network_entity_id_tier1_bits;
+        -:  103:}
+        -:  104:
+        -:  105:inline constexpr std::uint32_t network_entity_id_tier0_max(
+        -:  106:    std::size_t tier0_bits = default_network_entity_id_tier0_bits) noexcept {
+        -:  107:    return (std::uint32_t{1} << tier0_bits) - 1U;
+        -:  108:}
+        -:  109:
+        -:  110:inline constexpr std::size_t network_entity_id_encoded_bits(
+        -:  111:    std::uint32_t network_id,
+        -:  112:    std::size_t tier0_bits = default_network_entity_id_tier0_bits) noexcept {
+        -:  113:    if (network_id <= network_entity_id_tier0_max(tier0_bits)) {
+        -:  114:        return tier0_bits + 1U;
+        -:  115:    }
+        -:  116:    if (network_id <= network_entity_id_tier1_max) {
+        -:  117:        return 25U;
+        -:  118:    }
+        -:  119:    return 34U;
+        -:  120:}
+        -:  121:
+        -:  122:inline void write_network_entity_id(
+        -:  123:    ecs::BitBuffer& out,
+        -:  124:    std::uint32_t network_id,
+        -:  125:    std::size_t tier0_bits = default_network_entity_id_tier0_bits) {
+        -:  126:    const std::uint32_t tier0_max = network_entity_id_tier0_max(tier0_bits);
+        -:  127:    out.push_bits(network_id & tier0_max, tier0_bits);
+        -:  128:    const bool needs_tier1 = network_id > tier0_max;
+        -:  129:    out.push_bool(needs_tier1);
+        -:  130:    if (!needs_tier1) {
+        -:  131:        return;
+        -:  132:    }
+        -:  133:
+        -:  134:    out.push_bits(
+        -:  135:        (network_id >> tier0_bits) &
+        -:  136:            ((std::uint32_t{1} << (network_entity_id_tier1_bits - tier0_bits)) - 1U),
+        -:  137:        network_entity_id_tier1_bits - tier0_bits);
+        -:  138:    const bool needs_tier2 = network_id > network_entity_id_tier1_max;
+        -:  139:    out.push_bool(needs_tier2);
+        -:  140:    if (needs_tier2) {
+        -:  141:        out.push_bits(network_id >> network_entity_id_tier1_bits, 9U);
+        -:  142:    }
+        -:  143:}
+        -:  144:
+function _ZN4kage4sync8protocol22read_network_entity_idERN3ecs9BitBufferERjm called 0 returned 0% blocks executed 0%
+    #####:  145:inline bool read_network_entity_id(
+        -:  146:    ecs::BitBuffer& in,
+        -:  147:    std::uint32_t& network_id,
+        -:  148:    std::size_t tier0_bits = default_network_entity_id_tier0_bits) {
+    #####:  149:    network_id = static_cast<std::uint32_t>(in.read_bits(tier0_bits));
+call    0 never executed
+    #####:  150:    if (!in.read_bool()) {
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed
+    #####:  151:        return true;
+        -:  152:    }
+        -:  153:
+    #####:  154:    network_id |=
+    #####:  155:        static_cast<std::uint32_t>(in.read_bits(network_entity_id_tier1_bits - tier0_bits)) << tier0_bits;
+call    0 never executed
+    #####:  156:    if (in.read_bool()) {
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed
+    #####:  157:        network_id |= static_cast<std::uint32_t>(in.read_bits(9U)) << network_entity_id_tier1_bits;
+call    0 never executed
+        -:  158:    }
+    #####:  159:    return true;
+        -:  160:}
+        -:  161:
+        -:  162:inline void write_string(ecs::BitBuffer& out, const std::string& value) {
+        -:  163:    const std::size_t length = value.size() > std::numeric_limits<std::uint16_t>::max()
+        -:  164:        ? std::numeric_limits<std::uint16_t>::max()
+        -:  165:        : value.size();
+        -:  166:    out.push_bits(static_cast<std::uint16_t>(length), 16U);
+        -:  167:    out.push_bytes(value.data(), length);
+        -:  168:}
+        -:  169:
+        -:  170:inline bool read_string(ecs::BitBuffer& in, std::string& value) {
+        -:  171:    if (in.remaining_bits() < 16U) {
+        -:  172:        return false;
+        -:  173:    }
+        -:  174:    const auto length = static_cast<std::uint16_t>(in.read_bits(16U));
+        -:  175:    if (in.remaining_bits() < static_cast<std::size_t>(length) * 8U) {
+        -:  176:        return false;
+        -:  177:    }
+        -:  178:    value.resize(length);
+        -:  179:    if (length != 0U) {
+        -:  180:        in.read_bytes(value.data(), length);
+        -:  181:    }
+        -:  182:    return true;
+        -:  183:}
+        -:  184:
+        -:  185:inline void write_baseline_frame(ecs::BitBuffer& out, std::uint32_t current_frame, std::uint32_t baseline_frame) {
+        -:  186:    const bool can_use_delta = current_frame >= baseline_frame &&
+        -:  187:        current_frame - baseline_frame <= max_baseline_frame_delta;
+        -:  188:    out.push_bool(can_use_delta);
+        -:  189:    if (can_use_delta) {
+        -:  190:        out.push_bits(current_frame - baseline_frame, baseline_frame_delta_bits);
+        -:  191:    } else {
+        -:  192:        out.push_bits(baseline_frame, 32U);
+        -:  193:    }
+        -:  194:}
+        -:  195:
+function _ZN4kage4sync8protocol19read_baseline_frameERN3ecs9BitBufferEjRj called 0 returned 0% blocks executed 0%
+    #####:  196:inline bool read_baseline_frame(ecs::BitBuffer& in, std::uint32_t current_frame, std::uint32_t& baseline_frame) {
+    #####:  197:    const bool uses_delta = in.read_bool();
+call    0 never executed
+    #####:  198:    if (!uses_delta) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  199:        baseline_frame = static_cast<std::uint32_t>(in.read_bits(32U));
+call    0 never executed
+    #####:  200:        return true;
+        -:  201:    }
+        -:  202:
+    #####:  203:    const auto delta = static_cast<std::uint32_t>(in.read_bits(baseline_frame_delta_bits));
+call    0 never executed
+    #####:  204:    if (delta > current_frame) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  205:        return false;
+        -:  206:    }
+    #####:  207:    baseline_frame = current_frame - delta;
+    #####:  208:    return true;
+        -:  209:}
+        -:  210:
+        -:  211:}  // namespace kage::sync::protocol

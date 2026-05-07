@@ -1,0 +1,864 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/server/server_client_replicator.cpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/server/server_client_replicator.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/server/server_client_replicator.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#include "kage/sync/server.hpp"
+        -:    2:
+        -:    3:#include "server/detail.hpp"
+        -:    4:#include "server/state.hpp"
+        -:    5:
+        -:    6:#include <algorithm>
+        -:    7:#include <limits>
+        -:    8:#include <stdexcept>
+        -:    9:
+        -:   10:namespace kage::sync {
+        -:   11:
+function _ZN4kage4sync13server_detail22ServerClientReplicatorC2Ev called 134 returned 100% blocks executed 46%
+      134:   12:server_detail::ServerClientReplicator::ServerClientReplicator()
+      134:   13:    : update_scheduler(std::make_unique<UpdateScheduler>()) {}
+call    0 returned 134
+call    1 returned 134
+call    2 returned 134
+call    3 returned 134
+call    4 returned 134
+call    5 returned 134
+branch  6 taken 134 (fallthrough)
+branch  7 taken 0 (throw)
+call    8 returned 134
+call    9 returned 134
+branch 10 taken 134 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 134
+call   13 never executed
+call   14 never executed
+call   15 never executed
+call   16 never executed
+call   17 never executed
+call   18 never executed
+call   19 never executed
+        -:   14:
+      268:   15:server_detail::ServerClientReplicator::~ServerClientReplicator() = default;
+------------------
+_ZN4kage4sync13server_detail22ServerClientReplicatorD0Ev:
+function _ZN4kage4sync13server_detail22ServerClientReplicatorD0Ev called 134 returned 100% blocks executed 100%
+      134:   15:server_detail::ServerClientReplicator::~ServerClientReplicator() = default;
+call    0 returned 134
+call    1 returned 134
+------------------
+_ZN4kage4sync13server_detail22ServerClientReplicatorD2Ev:
+function _ZN4kage4sync13server_detail22ServerClientReplicatorD2Ev called 134 returned 100% blocks executed 100%
+      134:   15:server_detail::ServerClientReplicator::~ServerClientReplicator() = default;
+call    0 returned 134
+call    1 returned 134
+call    2 returned 134
+call    3 returned 134
+call    4 returned 134
+call    5 returned 134
+call    6 returned 134
+call    7 returned 134
+call    8 returned 134
+------------------
+        -:   16:
+function _ZN4kage4sync13server_detail22ServerClientReplicator22accumulate_frame_deltaERKNS0_16ServerFrameDeltaE called 2110 returned 100% blocks executed 75%
+     2110:   17:void server_detail::ServerClientReplicator::accumulate_frame_delta(const ServerFrameDelta& frame) {
+     2110:   18:    const SyncSettings& settings = frame.registry.get<SyncSettings>();
+call    0 returned 2110
+     4224:   19:    for (const SyncArchetype& archetype : settings.archetypes) {
+call    0 returned 2110
+call    1 returned 2110
+call    2 returned 2114
+call    3 returned 2114
+call    4 returned 4224
+branch  5 taken 2114
+branch  6 taken 2110 (fallthrough)
+     2340:   20:        for (const SyncTagReplication& tag_replication : archetype.tags) {
+call    0 returned 2114
+call    1 returned 2114
+call    2 returned 226
+call    3 returned 2340
+branch  4 taken 226
+branch  5 taken 2114 (fallthrough)
+function _ZZN4kage4sync13server_detail22ServerClientReplicator22accumulate_frame_deltaERKNS0_16ServerFrameDeltaEENKUlN3ecs6EntityEPKvE_clES7_S9_ called 132 returned 100% blocks executed 100%
+      226:   21:            frame.dirty.each_dirty(tag_replication.tag, [&](ecs::Entity entity, const void*) {
+call    0 returned 226
+branch  1 taken 226 (fallthrough)
+branch  2 taken 0 (throw)
+      132:   22:                const std::uint32_t slot = frame.server.replicated_slot_for_entity(entity);
+call    0 returned 132
+      132:   23:                if (slot != server_detail::invalid_quantized_frame_id) {
+branch  0 taken 132 (fallthrough)
+branch  1 taken 0
+      132:   24:                    mark_dirty(frame.server, slot, frame.frame);
+call    0 returned 132
+        -:   25:                }
+      132:   26:            });
+function _ZZN4kage4sync13server_detail22ServerClientReplicator22accumulate_frame_deltaERKNS0_16ServerFrameDeltaEENKUlN3ecs8Registry16ComponentRemovalEE_clES8_ called 2 returned 100% blocks executed 100%
+      226:   27:            frame.dirty.each_removed(tag_replication.tag, [&](ecs::Registry::ComponentRemoval removal) {
+call    0 returned 226
+branch  1 taken 226 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 returned 226
+        2:   28:                const std::uint32_t slot = frame.server.replicated_slot_for_entity_index(removal.entity_index);
+call    0 returned 2
+        2:   29:                if (slot != server_detail::invalid_quantized_frame_id) {
+branch  0 taken 2 (fallthrough)
+branch  1 taken 0
+        2:   30:                    mark_dirty(frame.server, slot, frame.frame);
+call    0 returned 2
+        -:   31:                }
+        2:   32:            });
+        -:   33:        }
+        -:   34:    }
+        -:   35:
+     4811:   36:    for (const auto& component_ops : settings.component_ops) {
+call    0 returned 2110
+call    1 returned 2110
+call    2 returned 2701
+call    3 returned 4811
+branch  4 taken 2701
+branch  5 taken 2110 (fallthrough)
+     2701:   37:        const ecs::Entity component{component_ops.first};
+function _ZZN4kage4sync13server_detail22ServerClientReplicator22accumulate_frame_deltaERKNS0_16ServerFrameDeltaEENKUlN3ecs6EntityEPKvE0_clES7_S9_ called 104736 returned 100% blocks executed 100%
+     2701:   38:        frame.dirty.each_dirty(component, [&](ecs::Entity entity, const void*) {
+call    0 returned 2701
+branch  1 taken 2701 (fallthrough)
+branch  2 taken 0 (throw)
+   104736:   39:            const std::uint32_t slot = frame.server.replicated_slot_for_entity(entity);
+call    0 returned 104736
+   104736:   40:            if (slot != server_detail::invalid_quantized_frame_id) {
+branch  0 taken 104735 (fallthrough)
+branch  1 taken 1
+   104735:   41:                mark_dirty(frame.server, slot, frame.frame);
+call    0 returned 104735
+        -:   42:            }
+   104736:   43:        });
+function _ZZN4kage4sync13server_detail22ServerClientReplicator22accumulate_frame_deltaERKNS0_16ServerFrameDeltaEENKUlN3ecs8Registry16ComponentRemovalEE0_clES8_ called 73 returned 100% blocks executed 100%
+     2701:   44:        frame.dirty.each_removed(component, [&](ecs::Registry::ComponentRemoval removal) {
+call    0 returned 2701
+branch  1 taken 2701 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 returned 2701
+       73:   45:            const std::uint32_t slot = frame.server.replicated_slot_for_entity_index(removal.entity_index);
+call    0 returned 73
+       73:   46:            if (slot != server_detail::invalid_quantized_frame_id) {
+branch  0 taken 61 (fallthrough)
+branch  1 taken 12
+       61:   47:                mark_dirty(frame.server, slot, frame.frame);
+call    0 returned 61
+        -:   48:            }
+       73:   49:        });
+        -:   50:    }
+        -:   51:
+function _ZZN4kage4sync13server_detail22ServerClientReplicator22accumulate_frame_deltaERKNS0_16ServerFrameDeltaEENKUlN3ecs6EntityEPKvE1_clES7_S9_ called 31 returned 100% blocks executed 100%
+     2110:   52:    frame.dirty.each_dirty<NetworkOwner>([&](ecs::Entity entity, const void*) {
+call    0 returned 2110
+branch  1 taken 2110 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 never executed
+       31:   53:        const std::uint32_t slot = frame.server.replicated_slot_for_entity(entity);
+call    0 returned 31
+       31:   54:        if (slot != server_detail::invalid_quantized_frame_id) {
+branch  0 taken 31 (fallthrough)
+branch  1 taken 0
+       31:   55:            mark_dirty(frame.server, slot, frame.frame);
+call    0 returned 31
+        -:   56:        }
+       31:   57:    });
+function _ZZN4kage4sync13server_detail22ServerClientReplicator22accumulate_frame_deltaERKNS0_16ServerFrameDeltaEENKUlN3ecs8Registry16ComponentRemovalEE1_clES8_ called 0 returned 0% blocks executed 0%
+    2110*:   58:    frame.dirty.each_removed<NetworkOwner>([&](ecs::Registry::ComponentRemoval removal) {
+call    0 returned 2110
+branch  1 taken 2110 (fallthrough)
+branch  2 taken 0 (throw)
+    #####:   59:        const std::uint32_t slot = frame.server.replicated_slot_for_entity_index(removal.entity_index);
+call    0 never executed
+    #####:   60:        if (slot != server_detail::invalid_quantized_frame_id) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:   61:            mark_dirty(frame.server, slot, frame.frame);
+call    0 never executed
+        -:   62:        }
+    #####:   63:    });
+     2110:   64:}
+        -:   65:
+function _ZN4kage4sync13server_detail22ServerClientReplicator5flushERKNS0_23ServerFrameFlushContextE called 2108 returned 100% blocks executed 86%
+     2108:   66:void server_detail::ServerClientReplicator::flush(const ServerFrameFlushContext& context) {
+        -:   67:    (void)context.completed_frames;
+     2108:   68:    if (!context.server.prepare_client_update_send(*this)) {
+call    0 returned 2107
+branch  1 taken 0 (fallthrough)
+branch  2 taken 2107
+    #####:   69:        return;
+        -:   70:    }
+     2107:   71:    const SyncSettings& settings = context.registry.get<SyncSettings>();
+call    0 returned 2107
+     2107:   72:    update_scheduler->send_client(context.server, context.registry, settings, *this, context.completed_frames);
+call    0 returned 2107
+call    1 returned 2107
+        -:   73:}
+        -:   74:
+function _ZN4kage4sync13server_detail22ServerClientReplicator12EntityStates15ensure_capacityEm called 109478 returned 100% blocks executed 100%
+   109478:   75:void server_detail::ServerClientReplicator::EntityStates::ensure_capacity(std::size_t size) {
+   109478:   76:    if (states.size() < size) {
+call    0 returned 109478
+branch  1 taken 437 (fallthrough)
+branch  2 taken 109041
+      437:   77:        states.resize(size);
+call    0 returned 437
+        -:   78:    }
+   109478:   79:}
+        -:   80:
+function _ZNK4kage4sync13server_detail22ServerClientReplicator12EntityStates4sizeEv called 0 returned 0% blocks executed 0%
+    #####:   81:std::size_t server_detail::ServerClientReplicator::EntityStates::size() const noexcept {
+    #####:   82:    return states.size();
+call    0 never executed
+        -:   83:}
+        -:   84:
+        -:   85:server_detail::ClientEntityState*
+function _ZN4kage4sync13server_detail22ServerClientReplicator12EntityStates7try_getEj called 622637 returned 100% blocks executed 83%
+   622637:   86:server_detail::ServerClientReplicator::EntityStates::try_get(std::uint32_t slot) noexcept {
+  622637*:   87:    return slot < states.size() ? &states[slot] : nullptr;
+call    0 returned 622637
+branch  1 taken 622637 (fallthrough)
+branch  2 taken 0
+call    3 returned 622637
+        -:   88:}
+        -:   89:
+        -:   90:const server_detail::ClientEntityState*
+function _ZNK4kage4sync13server_detail22ServerClientReplicator12EntityStates7try_getEj called 111564 returned 100% blocks executed 83%
+   111564:   91:server_detail::ServerClientReplicator::EntityStates::try_get(std::uint32_t slot) const noexcept {
+  111564*:   92:    return slot < states.size() ? &states[slot] : nullptr;
+call    0 returned 111564
+branch  1 taken 111564 (fallthrough)
+branch  2 taken 0
+call    3 returned 111564
+        -:   93:}
+        -:   94:
+function _ZN4kage4sync13server_detail22ServerClientReplicator12EntityStates5clearERNS0_17ReplicationServerEj called 1704 returned 100% blocks executed 80%
+     1704:   95:void server_detail::ServerClientReplicator::EntityStates::clear(ReplicationServer& server, std::uint32_t slot) {
+     1704:   96:    ClientEntityState* state = try_get(slot);
+call    0 returned 1704
+     1704:   97:    if (state == nullptr) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1704
+    #####:   98:        return;
+        -:   99:    }
+     1704:  100:    server.clear_server_client_entity_state(*state);
+call    0 returned 1704
+        -:  101:}
+        -:  102:
+function _ZN4kage4sync13server_detail22ServerClientReplicator12EntityStates9clear_allERNS0_17ReplicationServerE called 7 returned 100% blocks executed 100%
+        7:  103:void server_detail::ServerClientReplicator::EntityStates::clear_all(ReplicationServer& server) {
+       11:  104:    for (ClientEntityState& state : states) {
+call    0 returned 7
+call    1 returned 7
+call    2 returned 4
+call    3 returned 4
+call    4 returned 11
+branch  5 taken 4
+branch  6 taken 7 (fallthrough)
+        4:  105:        server.clear_server_client_entity_state(state);
+call    0 returned 4
+branch  1 taken 4 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  106:    }
+        7:  107:}
+        -:  108:
+function _ZN4kage4sync13server_detail22ServerClientReplicator12EntityStates33clear_preserving_network_identityERNS0_17ReplicationServerEj called 2 returned 100% blocks executed 83%
+        2:  109:void server_detail::ServerClientReplicator::EntityStates::clear_preserving_network_identity(
+        -:  110:    ReplicationServer& server,
+        -:  111:    std::uint32_t slot) {
+        2:  112:    ClientEntityState* state = try_get(slot);
+call    0 returned 2
+        2:  113:    if (state == nullptr) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 2
+    #####:  114:        return;
+        -:  115:    }
+        2:  116:    const std::uint32_t network_id = state->network_id;
+        2:  117:    const std::uint32_t network_version = state->network_version;
+        2:  118:    const bool has_network_id = state->has_network_id;
+        2:  119:    server.clear_server_client_entity_state(*state);
+call    0 returned 2
+        2:  120:    state->network_id = network_id;
+        2:  121:    state->network_version = network_version;
+        2:  122:    state->has_network_id = has_network_id;
+        -:  123:}
+        -:  124:
+function _ZN4kage4sync13server_detail22ServerClientReplicator12EntityStates19expire_pending_cuesEj called 2107 returned 100% blocks executed 79%
+     2107:  125:void server_detail::ServerClientReplicator::EntityStates::expire_pending_cues(SyncFrame frame) {
+   103270:  126:    for (ClientEntityState& state : states) {
+call    0 returned 2107
+call    1 returned 2107
+call    2 returned 101163
+call    3 returned 103270
+branch  4 taken 101163
+branch  5 taken 2107 (fallthrough)
+   202326:  127:        state.pending_cues.erase(
+call    0 returned 101163
+call    1 returned 101163
+call    2 returned 101163
+branch  3 taken 101163 (fallthrough)
+branch  4 taken 0 (throw)
+   101163:  128:            std::remove_if(
+call    0 returned 101163
+call    1 returned 101163
+call    2 returned 101163
+branch  3 taken 101163 (fallthrough)
+branch  4 taken 0 (throw)
+        -:  129:                state.pending_cues.begin(),
+        -:  130:                state.pending_cues.end(),
+function _ZZN4kage4sync13server_detail22ServerClientReplicator12EntityStates19expire_pending_cuesEjENKUlRKNS1_17ClientEntityState10PendingCueEE_clES7_ called 504 returned 100% blocks executed 100%
+      504:  131:                [frame](const ClientEntityState::PendingCue& cue) {
+      504:  132:                    return frame > cue.expire_frame;
+        -:  133:                }),
+   202326:  134:            state.pending_cues.end());
+call    0 returned 101163
+call    1 returned 101163
+        -:  135:    }
+     2107:  136:}
+        -:  137:
+function _ZN4kage4sync13server_detail22ServerClientReplicator12DestroyQueue7enqueueEN3ecs6EntityEjjj called 639 returned 100% blocks executed 91%
+      639:  138:void server_detail::ServerClientReplicator::DestroyQueue::enqueue(
+        -:  139:    ecs::Entity entity,
+        -:  140:    SyncFrame frame,
+        -:  141:    std::uint32_t network_id,
+        -:  142:    std::uint32_t network_version) {
+      639:  143:    const auto found = std::find_if(
+call    0 returned 639
+call    1 returned 639
+call    2 returned 639
+branch  3 taken 639 (fallthrough)
+branch  4 taken 0 (throw)
+        -:  144:        pending.begin(),
+        -:  145:        pending.end(),
+function _ZZN4kage4sync13server_detail22ServerClientReplicator12DestroyQueue7enqueueEN3ecs6EntityEjjjENKUlRKNS1_18ClientDestroyStateEE_clES8_ called 8657 returned 100% blocks executed 71%
+     8657:  146:        [entity, network_id](const ClientDestroyState& destroy) {
+    8657*:  147:            return destroy.entity == entity && destroy.network_id == network_id;
+call    0 returned 8657
+branch  1 taken 0 (fallthrough)
+branch  2 taken 8657
+branch  3 never executed (fallthrough)
+branch  4 never executed
+        -:  148:        });
+      639:  149:    if (found == pending.end()) {
+call    0 returned 639
+call    1 returned 639
+branch  2 taken 639 (fallthrough)
+branch  3 taken 0
+      639:  150:        pending.push_back(ClientDestroyState{entity, frame, 0, network_id, network_version});
+call    0 returned 639
+branch  1 taken 639 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  151:    }
+      639:  152:}
+        -:  153:
+function _ZNK4kage4sync13server_detail22ServerClientReplicator12DestroyQueue5emptyEv called 2107 returned 100% blocks executed 100%
+     2107:  154:bool server_detail::ServerClientReplicator::DestroyQueue::empty() const noexcept {
+     2107:  155:    return pending.empty();
+call    0 returned 2107
+        -:  156:}
+        -:  157:
+function _ZNK4kage4sync13server_detail22ServerClientReplicator12DestroyQueue4sizeEv called 19487 returned 100% blocks executed 100%
+    19487:  158:std::size_t server_detail::ServerClientReplicator::DestroyQueue::size() const noexcept {
+    19487:  159:    return pending.size();
+call    0 returned 19487
+        -:  160:}
+        -:  161:
+        -:  162:server_detail::ClientDestroyState&
+function _ZN4kage4sync13server_detail22ServerClientReplicator12DestroyQueue2atEm called 51852 returned 100% blocks executed 100%
+    51852:  163:server_detail::ServerClientReplicator::DestroyQueue::at(std::size_t index) noexcept {
+    51852:  164:    return pending[index];
+call    0 returned 51852
+        -:  165:}
+        -:  166:
+        -:  167:const server_detail::ClientDestroyState&
+function _ZNK4kage4sync13server_detail22ServerClientReplicator12DestroyQueue2atEm called 0 returned 0% blocks executed 0%
+    #####:  168:server_detail::ServerClientReplicator::DestroyQueue::at(std::size_t index) const noexcept {
+    #####:  169:    return pending[index];
+call    0 never executed
+        -:  170:}
+        -:  171:
+function _ZN4kage4sync13server_detail22ServerClientReplicator12DestroyQueue11acknowledgeERS2_N3ecs6EntityEj called 4116 returned 100% blocks executed 94%
+     4116:  172:bool server_detail::ServerClientReplicator::DestroyQueue::acknowledge(
+        -:  173:    ServerClientReplicator& client,
+        -:  174:    ecs::Entity entity,
+        -:  175:    SyncFrame frame) {
+     4116:  176:    const auto found = std::find_if(
+call    0 returned 4116
+call    1 returned 4116
+call    2 returned 4116
+branch  3 taken 4116 (fallthrough)
+branch  4 taken 0 (throw)
+        -:  177:        pending.begin(),
+        -:  178:        pending.end(),
+function _ZZN4kage4sync13server_detail22ServerClientReplicator12DestroyQueue11acknowledgeERS2_N3ecs6EntityEjENKUlRKNS1_18ClientDestroyStateEE_clES9_ called 45081 returned 100% blocks executed 100%
+    45081:  179:        [entity, frame](const ClientDestroyState& destroy) {
+    45081:  180:            return destroy.entity == entity && frame <= destroy.frame;
+call    0 returned 45081
+branch  1 taken 630 (fallthrough)
+branch  2 taken 44451
+branch  3 taken 630 (fallthrough)
+branch  4 taken 0
+        -:  181:        });
+     4116:  182:    if (found == pending.end()) {
+call    0 returned 4116
+call    1 returned 4116
+branch  2 taken 3486 (fallthrough)
+branch  3 taken 630
+     3486:  183:        return false;
+        -:  184:    }
+        -:  185:
+      630:  186:    const std::uint32_t network_id = found->network_id;
+call    0 returned 630
+      630:  187:    pending.erase(found);
+call    0 returned 630
+call    1 returned 630
+branch  2 taken 630 (fallthrough)
+branch  3 taken 0 (throw)
+      630:  188:    client.free_network_id(network_id);
+call    0 returned 630
+      630:  189:    return true;
+        -:  190:}
+        -:  191:
+function _ZNK4kage4sync13server_detail22ServerClientReplicator12DestroyQueue19contains_ack_recordEN3ecs6EntityEj called 41017 returned 100% blocks executed 100%
+    41017:  192:bool server_detail::ServerClientReplicator::DestroyQueue::contains_ack_record(
+        -:  193:    ecs::Entity entity,
+        -:  194:    SyncFrame frame) const {
+    41017:  195:    return std::any_of(
+call    0 returned 41017
+call    1 returned 41017
+call    2 returned 41017
+        -:  196:        pending.begin(),
+        -:  197:        pending.end(),
+function _ZZNK4kage4sync13server_detail22ServerClientReplicator12DestroyQueue19contains_ack_recordEN3ecs6EntityEjENKUlRKNS1_18ClientDestroyStateEE_clES8_ called 865187 returned 100% blocks executed 100%
+   865187:  198:        [entity, frame](const ClientDestroyState& destroy) {
+   865187:  199:            return destroy.entity == entity && frame <= destroy.frame;
+call    0 returned 865187
+branch  1 taken 7360 (fallthrough)
+branch  2 taken 857827
+branch  3 taken 7360 (fallthrough)
+branch  4 taken 0
+    41017:  200:        });
+        -:  201:}
+        -:  202:
+function _ZN4kage4sync13server_detail22ServerClientReplicator10NetworkIds14network_id_forERNS0_17ReplicationServerERS2_j called 101145 returned 100% blocks executed 88%
+   101145:  203:std::uint32_t server_detail::ServerClientReplicator::NetworkIds::network_id_for(
+        -:  204:    ReplicationServer& server,
+        -:  205:    ServerClientReplicator& client,
+        -:  206:    std::uint32_t slot) {
+   101145:  207:    ClientEntityState* state = client.entities.try_get(slot);
+call    0 returned 101145
+   101145:  208:    if (state == nullptr) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 101145
+    #####:  209:        return 0U;
+        -:  210:    }
+   101145:  211:    if (state->has_network_id) {
+branch  0 taken 100077 (fallthrough)
+branch  1 taken 1068
+   100077:  212:        return state->network_id;
+        -:  213:    }
+     1068:  214:    return allocate_for(server, client, slot);
+call    0 returned 1068
+        -:  215:}
+        -:  216:
+function _ZN4kage4sync13server_detail22ServerClientReplicator10NetworkIds12allocate_forERNS0_17ReplicationServerERS2_j called 1068 returned 100% blocks executed 72%
+     1068:  217:std::uint32_t server_detail::ServerClientReplicator::NetworkIds::allocate_for(
+        -:  218:    ReplicationServer& server,
+        -:  219:    ServerClientReplicator& client,
+        -:  220:    std::uint32_t slot) {
+        -:  221:    (void)server;
+     1068:  222:    ClientEntityState* state = client.entities.try_get(slot);
+call    0 returned 1068
+     1068:  223:    if (state == nullptr) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1068
+    #####:  224:        return 0U;
+        -:  225:    }
+     1068:  226:    if (entries.empty()) {
+call    0 returned 1068
+branch  1 taken 120 (fallthrough)
+branch  2 taken 948
+      120:  227:        entries.push_back(Entry{});
+call    0 returned 120
+branch  1 taken 120 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 never executed
+        -:  228:    }
+     1068:  229:    std::uint32_t network_id = 0;
+     1068:  230:    if (free_network_id != 0U) {
+branch  0 taken 491 (fallthrough)
+branch  1 taken 577
+      491:  231:        network_id = free_network_id;
+      491:  232:        Entry& entry = entries[network_id];
+call    0 returned 491
+      491:  233:        free_network_id = entry.replicated_index_or_next_free_network_id;
+      491:  234:        entry.replicated_index_or_next_free_network_id = slot;
+      491:  235:        entry.active = true;
+      491:  236:        entry.pending_destroy = false;
+        -:  237:    } else {
+      577:  238:        if (entries.size() > max_client_local_wire_network_id) {
+call    0 returned 577
+branch  1 taken 0 (fallthrough)
+branch  2 taken 577
+    #####:  239:            throw std::length_error("kage sync client-local network id space exhausted");
+call    0 never executed
+call    1 never executed
+branch  2 never executed (fallthrough)
+branch  3 never executed (throw)
+call    4 never executed
+call    5 never executed
+        -:  240:        }
+      577:  241:        network_id = static_cast<std::uint32_t>(entries.size());
+call    0 returned 577
+      577:  242:        entries.push_back(Entry{slot, 1U, true, false});
+call    0 returned 577
+branch  1 taken 577 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  243:    }
+        -:  244:
+     1068:  245:    state->network_id = network_id;
+     1068:  246:    state->network_version = entries[network_id].version;
+call    0 returned 1068
+     1068:  247:    state->has_network_id = true;
+        -:  248:#ifdef KAGE_SYNC_ENABLE_TRACING
+        -:  249:    server.trace_entity_started_syncing(client.id, slot, network_id, state->network_version);
+        -:  250:#endif
+     1068:  251:    return network_id;
+        -:  252:}
+        -:  253:
+function _ZN4kage4sync13server_detail22ServerClientReplicator10NetworkIds4freeEj called 630 returned 100% blocks executed 75%
+      630:  254:void server_detail::ServerClientReplicator::NetworkIds::free(std::uint32_t network_id) {
+      630:  255:    Entry* entry = try_get(network_id);
+call    0 returned 630
+      630:  256:    if (entry == nullptr || !entry->pending_destroy) {
+branch  0 taken 630 (fallthrough)
+branch  1 taken 0
+branch  2 taken 0 (fallthrough)
+branch  3 taken 630
+    #####:  257:        return;
+        -:  258:    }
+      630:  259:    ++entry->version;
+      630:  260:    if (entry->version == 0U) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 630
+    #####:  261:        entry->version = 1U;
+        -:  262:    }
+      630:  263:    entry->replicated_index_or_next_free_network_id = free_network_id;
+      630:  264:    entry->active = false;
+      630:  265:    entry->pending_destroy = false;
+      630:  266:    free_network_id = network_id;
+        -:  267:}
+        -:  268:
+function _ZN4kage4sync13server_detail22ServerClientReplicator10NetworkIds20mark_pending_destroyEj called 640 returned 100% blocks executed 100%
+      640:  269:bool server_detail::ServerClientReplicator::NetworkIds::mark_pending_destroy(std::uint32_t network_id) {
+      640:  270:    Entry* entry = try_get(network_id);
+call    0 returned 640
+      640:  271:    if (entry == nullptr) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 639
+        1:  272:        return false;
+        -:  273:    }
+      639:  274:    entry->active = false;
+      639:  275:    entry->pending_destroy = true;
+      639:  276:    entry->replicated_index_or_next_free_network_id =
+        -:  277:        server_detail::invalid_replicated_index_or_free_network_id;
+      639:  278:    return true;
+        -:  279:}
+        -:  280:
+        -:  281:server_detail::ServerClientReplicator::NetworkIds::Entry*
+function _ZN4kage4sync13server_detail22ServerClientReplicator10NetworkIds7try_getEj called 1270 returned 100% blocks executed 100%
+     1270:  282:server_detail::ServerClientReplicator::NetworkIds::try_get(std::uint32_t network_id) noexcept {
+     1270:  283:    return network_id != 0U && network_id < entries.size() ? &entries[network_id] : nullptr;
+branch  0 taken 1269 (fallthrough)
+branch  1 taken 1
+call    2 returned 1269
+branch  3 taken 1269 (fallthrough)
+branch  4 taken 0
+call    5 returned 1269
+        -:  284:}
+        -:  285:
+        -:  286:const server_detail::ServerClientReplicator::NetworkIds::Entry*
+function _ZNK4kage4sync13server_detail22ServerClientReplicator10NetworkIds7try_getEj called 0 returned 0% blocks executed 0%
+    #####:  287:server_detail::ServerClientReplicator::NetworkIds::try_get(std::uint32_t network_id) const noexcept {
+    #####:  288:    return network_id != 0U && network_id < entries.size() ? &entries[network_id] : nullptr;
+branch  0 never executed (fallthrough)
+branch  1 never executed
+call    2 never executed
+branch  3 never executed (fallthrough)
+branch  4 never executed
+call    5 never executed
+        -:  289:}
+        -:  290:
+function _ZN4kage4sync13server_detail22ServerClientReplicator15ensure_capacityEm called 109478 returned 100% blocks executed 100%
+   109478:  291:void server_detail::ServerClientReplicator::ensure_capacity(std::size_t replicated_count) {
+   109478:  292:    entities.ensure_capacity(replicated_count);
+call    0 returned 109478
+   109478:  293:    if (dirty_queue.entries.size() < replicated_count) {
+call    0 returned 109478
+branch  1 taken 437 (fallthrough)
+branch  2 taken 109041
+      437:  294:        dirty_queue.entries.resize(replicated_count);
+call    0 returned 437
+        -:  295:    }
+   109478:  296:}
+        -:  297:
+function _ZN4kage4sync13server_detail22ServerClientReplicator28initialize_marking_all_dirtyERNS0_17ReplicationServerEj called 134 returned 100% blocks executed 100%
+      134:  298:void server_detail::ServerClientReplicator::initialize_marking_all_dirty(
+        -:  299:    ReplicationServer& server,
+        -:  300:    SyncFrame frame) {
+      134:  301:    ensure_capacity(server.replicated_slot_count());
+call    0 returned 134
+call    1 returned 134
+      134:  302:    dirty_queue.dirty_replicated_indices.reserve(server.active_replicated_slot_count());
+call    0 returned 134
+call    1 returned 134
+      140:  303:    for (std::uint32_t replicated_index = 0; replicated_index < server.replicated_slot_count(); ++replicated_index) {
+call    0 returned 140
+branch  1 taken 6
+branch  2 taken 134 (fallthrough)
+        6:  304:        if (server.replicated_slot_active(replicated_index)) {
+call    0 returned 6
+branch  1 taken 5 (fallthrough)
+branch  2 taken 1
+        5:  305:            mark_dirty(server, replicated_index, frame);
+call    0 returned 5
+        -:  306:        }
+        -:  307:    }
+      134:  308:}
+        -:  309:
+function _ZN4kage4sync13server_detail22ServerClientReplicator10mark_dirtyERKNS0_17ReplicationServerEjj called 106173 returned 100% blocks executed 96%
+   106173:  310:void server_detail::ServerClientReplicator::mark_dirty(
+        -:  311:    const ReplicationServer& server,
+        -:  312:    std::uint32_t replicated_index,
+        -:  313:    SyncFrame frame) {
+   106173:  314:    if (replicated_index >= server.replicated_slot_count()) {
+call    0 returned 106173
+branch  1 taken 0 (fallthrough)
+branch  2 taken 106173
+    #####:  315:        return;
+        -:  316:    }
+   106173:  317:    ensure_capacity(server.replicated_slot_count());
+call    0 returned 106173
+call    1 returned 106173
+   106173:  318:    ClientDirtyQueue::Entry& entry = dirty_queue.entries[replicated_index];
+call    0 returned 106173
+   106173:  319:    if (!entry.queued) {
+branch  0 taken 1790 (fallthrough)
+branch  1 taken 104383
+     1790:  320:        entry.queued = true;
+     1790:  321:        entry.priority_accumulator = 0.0f;
+     1790:  322:        entry.component_mask = std::numeric_limits<std::uint64_t>::max();
+call    0 returned 1790
+     1790:  323:        entry.last_priority = std::numeric_limits<float>::quiet_NaN();
+call    0 returned 1790
+     1790:  324:        if (const ClientEntityState* state = entities.try_get(replicated_index)) {
+call    0 returned 1790
+branch  1 taken 1790 (fallthrough)
+branch  2 taken 0
+     1790:  325:            entry.last_priority = state->last_priority;
+     2509:  326:            if (state->baseline != server_detail::invalid_quantized_frame_id &&
+branch  0 taken 719 (fallthrough)
+branch  1 taken 1071
+branch  2 taken 719 (fallthrough)
+branch  3 taken 0
+branch  4 taken 719 (fallthrough)
+branch  5 taken 1071
+      719:  327:                server.quantized_frame_active(state->baseline)) {
+call    0 returned 719
+      719:  328:                entry.baseline_frame = server.quantized_frame_frame(state->baseline);
+call    0 returned 719
+        -:  329:            }
+        -:  330:        }
+        -:  331:    }
+   106173:  332:    if (!entry.listed) {
+branch  0 taken 441 (fallthrough)
+branch  1 taken 105732
+      441:  333:        dirty_queue.dirty_replicated_indices.push_back(replicated_index);
+call    0 returned 441
+      441:  334:        entry.listed = true;
+        -:  335:    }
+   106173:  336:    entry.dirty_frame = std::max(entry.dirty_frame, frame);
+call    0 returned 106173
+   106173:  337:    if (entry.dirty_frame <= entry.baseline_frame) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 106172
+        1:  338:        entry.dirty_frame = entry.baseline_frame + 1U;
+        -:  339:    }
+        -:  340:}
+        -:  341:
+function _ZN4kage4sync13server_detail22ServerClientReplicator11clear_dirtyEj called 1280 returned 100% blocks executed 88%
+     1280:  342:void server_detail::ServerClientReplicator::clear_dirty(std::uint32_t replicated_index) {
+     1280:  343:    if (replicated_index >= dirty_queue.entries.size()) {
+call    0 returned 1280
+branch  1 taken 0 (fallthrough)
+branch  2 taken 1280
+    #####:  344:        return;
+        -:  345:    }
+     1280:  346:    ClientDirtyQueue::Entry& entry = dirty_queue.entries[replicated_index];
+call    0 returned 1280
+     1280:  347:    const bool listed = entry.listed;
+     1280:  348:    entry = ClientDirtyQueue::Entry{};
+call    0 returned 1280
+call    1 returned 1280
+     1280:  349:    entry.listed = listed;
+        -:  350:}
+        -:  351:
+function _ZN4kage4sync13server_detail22ServerClientReplicator19expire_pending_cuesEj called 2107 returned 100% blocks executed 100%
+     2107:  352:void server_detail::ServerClientReplicator::expire_pending_cues(SyncFrame frame) {
+     2107:  353:    entities.expire_pending_cues(frame);
+call    0 returned 2107
+     2107:  354:}
+        -:  355:
+function _ZN4kage4sync13server_detail22ServerClientReplicator14network_id_forERNS0_17ReplicationServerEj called 101145 returned 100% blocks executed 100%
+   101145:  356:std::uint32_t server_detail::ServerClientReplicator::network_id_for(
+        -:  357:    ReplicationServer& server,
+        -:  358:    std::uint32_t replicated_index) {
+   101145:  359:    return network_ids.network_id_for(server, *this, replicated_index);
+call    0 returned 101145
+        -:  360:}
+        -:  361:
+function _ZN4kage4sync13server_detail22ServerClientReplicator15free_network_idEj called 630 returned 100% blocks executed 100%
+      630:  362:void server_detail::ServerClientReplicator::free_network_id(std::uint32_t network_id) {
+      630:  363:    network_ids.free(network_id);
+call    0 returned 630
+      630:  364:}
+        -:  365:
+function _ZN4kage4sync13server_detail22ServerClientReplicator15enqueue_destroyERNS0_17ReplicationServerEjN3ecs6EntityEj called 640 returned 100% blocks executed 100%
+      640:  366:bool server_detail::ServerClientReplicator::enqueue_destroy(
+        -:  367:    ReplicationServer& server,
+        -:  368:    std::uint32_t replicated_index,
+        -:  369:    ecs::Entity entity,
+        -:  370:    SyncFrame frame) {
+      640:  371:    std::uint32_t network_id = 0;
+      640:  372:    std::uint32_t network_version = 0;
+      640:  373:    if (ClientEntityState* state = entities.try_get(replicated_index)) {
+call    0 returned 640
+branch  1 taken 640 (fallthrough)
+branch  2 taken 0
+      640:  374:        network_id = state->network_id;
+      640:  375:        network_version = state->network_version;
+      640:  376:        entities.clear(server, replicated_index);
+call    0 returned 640
+        -:  377:    }
+      640:  378:    clear_dirty(replicated_index);
+call    0 returned 640
+      640:  379:    if (!network_ids.mark_pending_destroy(network_id)) {
+call    0 returned 640
+branch  1 taken 1 (fallthrough)
+branch  2 taken 639
+        1:  380:        return false;
+        -:  381:    }
+      639:  382:    destroys.enqueue(entity, frame, network_id, network_version);
+call    0 returned 639
+      639:  383:    return true;
+        -:  384:}
+        -:  385:
+function _ZN4kage4sync13server_detail22ServerClientReplicator18acknowledge_entityERNS0_17ReplicationServerEjj called 85519 returned 100% blocks executed 89%
+    85519:  386:bool server_detail::ServerClientReplicator::acknowledge_entity(
+        -:  387:    ReplicationServer& server,
+        -:  388:    std::uint32_t replicated_index,
+        -:  389:    SyncFrame frame) {
+    85519:  390:    ClientEntityState* entity_state = entities.try_get(replicated_index);
+call    0 returned 85519
+    85519:  391:    if (entity_state == nullptr) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 85519
+    #####:  392:        return false;
+        -:  393:    }
+        -:  394:
+    85519:  395:    const auto found_pending = std::find_if(
+call    0 returned 85519
+call    1 returned 85519
+call    2 returned 85519
+branch  3 taken 85519 (fallthrough)
+branch  4 taken 0 (throw)
+        -:  396:        entity_state->pending.begin(),
+        -:  397:        entity_state->pending.end(),
+function _ZZN4kage4sync13server_detail22ServerClientReplicator18acknowledge_entityERNS0_17ReplicationServerEjjENKUlRKNS1_17ClientEntityState21PendingQuantizedFrameEE_clES8_ called 93644 returned 100% blocks executed 100%
+    93644:  398:        [frame](const ClientEntityState::PendingQuantizedFrame& pending) {
+    93644:  399:            return pending.frame == frame;
+        -:  400:        });
+    85519:  401:    if (found_pending == entity_state->pending.end()) {
+call    0 returned 85519
+call    1 returned 85519
+branch  2 taken 2 (fallthrough)
+branch  3 taken 85517
+        2:  402:        return false;
+        -:  403:    }
+        -:  404:
+    85517:  405:    const std::uint32_t acked_quantized_frame = found_pending->quantized_frame;
+call    0 returned 85517
+  171034*:  406:    if (acked_quantized_frame == server_detail::invalid_quantized_frame_id ||
+branch  0 taken 85517 (fallthrough)
+branch  1 taken 0
+branch  2 taken 0 (fallthrough)
+branch  3 taken 85517
+    85517:  407:        !server.quantized_frame_active(acked_quantized_frame)) {
+call    0 returned 85517
+branch  1 taken 0 (fallthrough)
+branch  2 taken 85517
+    #####:  408:        return false;
+        -:  409:    }
+        -:  410:
+    85517:  411:    if (entity_state->baseline != acked_quantized_frame) {
+branch  0 taken 85517 (fallthrough)
+branch  1 taken 0
+    85517:  412:        server.release_server_quantized_frame(entity_state->baseline);
+call    0 returned 85517
+branch  1 taken 85517 (fallthrough)
+branch  2 taken 0 (throw)
+    85517:  413:        entity_state->baseline = acked_quantized_frame;
+    85517:  414:        server.retain_server_quantized_frame(entity_state->baseline);
+call    0 returned 85517
+branch  1 taken 85517 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  415:    }
+    85517:  416:    if (replicated_index < dirty_queue.entries.size()) {
+call    0 returned 85517
+branch  1 taken 85517 (fallthrough)
+branch  2 taken 0
+    85517:  417:        ClientDirtyQueue::Entry& entry = dirty_queue.entries[replicated_index];
+call    0 returned 85517
+    85517:  418:        entry.baseline_frame = frame;
+    85517:  419:        if (entry.baseline_frame >= entry.dirty_frame) {
+branch  0 taken 1024 (fallthrough)
+branch  1 taken 84493
+     1024:  420:            entry.queued = false;
+     1024:  421:            entry.priority_accumulator = 0.0f;
+        -:  422:        }
+        -:  423:    }
+        -:  424:
+   872279:  425:    for (auto pending = entity_state->pending.begin(); pending != entity_state->pending.end();) {
+call    0 returned 85517
+call    1 returned 872279
+call    2 returned 872279
+branch  3 taken 786762
+branch  4 taken 85517 (fallthrough)
+   786762:  426:        if (pending->frame <= frame) {
+call    0 returned 786762
+branch  1 taken 93643 (fallthrough)
+branch  2 taken 693119
+    93643:  427:            server.release_server_quantized_frame(pending->quantized_frame);
+call    0 returned 93643
+call    1 returned 93643
+branch  2 taken 93643 (fallthrough)
+branch  3 taken 0 (throw)
+    93643:  428:            pending = entity_state->pending.erase(pending);
+call    0 returned 93643
+call    1 returned 93643
+branch  2 taken 93643 (fallthrough)
+branch  3 taken 0 (throw)
+        -:  429:        } else {
+   693119:  430:            ++pending;
+call    0 returned 693119
+        -:  431:        }
+        -:  432:    }
+    85517:  433:    server.acknowledge_server_cues(*entity_state, frame);
+call    0 returned 85517
+branch  1 taken 85517 (fallthrough)
+branch  2 taken 0 (throw)
+    85517:  434:    return true;
+        -:  435:}
+        -:  436:
+        -:  437:}  // namespace kage::sync

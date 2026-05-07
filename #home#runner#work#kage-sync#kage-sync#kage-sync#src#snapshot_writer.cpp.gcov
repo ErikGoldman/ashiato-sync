@@ -1,0 +1,248 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/snapshot_writer.cpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/snapshot_writer.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/snapshot_writer.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#include "kage/sync/snapshot_writer.hpp"
+        -:    2:
+        -:    3:#include "kage/sync/server.hpp"
+        -:    4:
+        -:    5:#include <sstream>
+        -:    6:#include <utility>
+        -:    7:
+        -:    8:namespace kage::sync {
+        -:    9:
+function _ZN4kage4sync14SnapshotWriterC2ENS0_21SnapshotWriterOptionsE called 1 returned 100% blocks executed 100%
+        1:   10:SnapshotWriter::SnapshotWriter(SnapshotWriterOptions options)
+        1:   11:    : options_(std::move(options)) {}
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+call    4 returned 1
+call    5 returned 1
+        -:   12:
+       1*:   13:SnapshotWriter::~SnapshotWriter() = default;
+------------------
+_ZN4kage4sync14SnapshotWriterD0Ev:
+function _ZN4kage4sync14SnapshotWriterD0Ev called 0 returned 0% blocks executed 0%
+    #####:   13:SnapshotWriter::~SnapshotWriter() = default;
+call    0 never executed
+call    1 never executed
+------------------
+_ZN4kage4sync14SnapshotWriterD2Ev:
+function _ZN4kage4sync14SnapshotWriterD2Ev called 1 returned 100% blocks executed 100%
+        1:   13:SnapshotWriter::~SnapshotWriter() = default;
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+call    4 returned 1
+------------------
+        -:   14:
+function _ZN4kage4sync14SnapshotWriterC2EOS1_ called 0 returned 0% blocks executed 0%
+    #####:   15:SnapshotWriter::SnapshotWriter(SnapshotWriter&& other) noexcept
+    #####:   16:    : options_(std::move(other.options_)),
+call    0 never executed
+    #####:   17:      last_full_(std::move(other.last_full_)),
+call    0 never executed
+call    1 never executed
+    #####:   18:      last_delta_(std::move(other.last_delta_)) {
+call    0 never executed
+call    1 never executed
+call    2 never executed
+call    3 never executed
+call    4 never executed
+    #####:   19:    other.detach();
+call    0 never executed
+    #####:   20:}
+        -:   21:
+function _ZN4kage4sync14SnapshotWriteraSEOS1_ called 0 returned 0% blocks executed 0%
+    #####:   22:SnapshotWriter& SnapshotWriter::operator=(SnapshotWriter&& other) noexcept {
+    #####:   23:    if (this != &other) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:   24:        detach();
+call    0 never executed
+    #####:   25:        other.detach();
+call    0 never executed
+    #####:   26:        options_ = std::move(other.options_);
+call    0 never executed
+call    1 never executed
+    #####:   27:        last_full_ = std::move(other.last_full_);
+call    0 never executed
+call    1 never executed
+    #####:   28:        last_delta_ = std::move(other.last_delta_);
+call    0 never executed
+call    1 never executed
+        -:   29:    }
+    #####:   30:    return *this;
+        -:   31:}
+        -:   32:
+function _ZN4kage4sync14SnapshotWriter6attachERNS0_17ReplicationServerE called 1 returned 100% blocks executed 100%
+        1:   33:void SnapshotWriter::attach(ReplicationServer& server) {
+        1:   34:    detach();
+call    0 returned 1
+        1:   35:    subscription_ = server.subscribe_frame_consumer(*this);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 returned 1
+call    4 returned 1
+        1:   36:}
+        -:   37:
+function _ZN4kage4sync14SnapshotWriter6detachEv called 1 returned 100% blocks executed 100%
+        1:   38:void SnapshotWriter::detach() {
+        1:   39:    subscription_.reset();
+call    0 returned 1
+        1:   40:}
+        -:   41:
+function _ZNK4kage4sync14SnapshotWriter8attachedEv called 0 returned 0% blocks executed 0%
+    #####:   42:bool SnapshotWriter::attached() const noexcept {
+    #####:   43:    return subscription_.active();
+call    0 never executed
+        -:   44:}
+        -:   45:
+function _ZN4kage4sync14SnapshotWriter22accumulate_frame_deltaERKNS0_16ServerFrameDeltaE called 3 returned 100% blocks executed 100%
+        3:   46:void SnapshotWriter::accumulate_frame_delta(const ServerFrameDelta& frame) {
+        3:   47:    record(frame);
+call    0 returned 3
+        3:   48:}
+        -:   49:
+function _ZN4kage4sync14SnapshotWriter6recordERKNS0_16ServerFrameDeltaE called 3 returned 100% blocks executed 58%
+        3:   50:void SnapshotWriter::record(const ServerFrameDelta& frame) {
+        3:   51:    if (!options_.write) {
+call    0 returned 3
+branch  1 taken 0 (fallthrough)
+branch  2 taken 3
+       2*:   52:        return;
+        -:   53:    }
+        -:   54:
+        3:   55:    const SyncFrame full_interval = options_.full_snapshot_interval_frames;
+        -:   56:    const bool write_full =
+        5:   57:        last_full_ == nullptr ||
+call    0 returned 3
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0
+        5:   58:        full_interval == 0U ||
+branch  0 taken 2 (fallthrough)
+branch  1 taken 1
+        2:   59:        frame.frame % full_interval == 0U;
+branch  0 taken 1 (fallthrough)
+branch  1 taken 1
+        -:   60:
+        3:   61:    std::stringstream payload(std::ios::in | std::ios::out | std::ios::binary);
+call    0 returned 3
+call    1 returned 3
+call    2 returned 3
+branch  3 taken 3 (fallthrough)
+branch  4 taken 0 (throw)
+        3:   62:    if (write_full) {
+branch  0 taken 2 (fallthrough)
+branch  1 taken 1
+        2:   63:        auto snapshot = std::make_unique<ecs::Registry::Snapshot>(frame.registry.create_snapshot());
+call    0 returned 2
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 returned 2
+branch  4 taken 2 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 2
+call    7 never executed
+        2:   64:        snapshot->write(payload, options_.component_options);
+call    0 returned 2
+call    1 returned 2
+branch  2 taken 2 (fallthrough)
+branch  3 taken 0 (throw)
+        2:   65:        options_.write(SnapshotWriterFrame{
+call    0 returned 2
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 returned 2
+call    4 never executed
+branch  5 never executed (fallthrough)
+branch  6 never executed
+call    7 never executed
+        2:   66:            &frame.registry,
+        2:   67:            frame.frame,
+call    0 returned 2
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0 (throw)
+        -:   68:            SnapshotWriterFrameKind::Full,
+        -:   69:            payload.str(),
+        -:   70:            frame.cues});
+        2:   71:        last_full_ = std::move(snapshot);
+call    0 returned 2
+call    1 returned 2
+        2:   72:        last_delta_.reset();
+call    0 returned 2
+        2:   73:        return;
+        2:   74:    }
+call    0 returned 2
+call    1 never executed
+        -:   75:
+        1:   76:    auto delta = last_delta_ != nullptr
+call    0 returned 1
+    #####:   77:        ? std::make_unique<ecs::Registry::DeltaSnapshot>(frame.registry.create_delta_snapshot(*last_delta_))
+call    0 never executed
+call    1 never executed
+branch  2 never executed (fallthrough)
+branch  3 never executed (throw)
+call    4 never executed
+branch  5 never executed (fallthrough)
+branch  6 never executed
+call    7 never executed
+       1*:   78:        : std::make_unique<ecs::Registry::DeltaSnapshot>(frame.registry.create_delta_snapshot(*last_full_));
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+call    2 never executed
+branch  3 never executed (fallthrough)
+branch  4 never executed (throw)
+call    5 returned 1
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+branch 12 taken 1 (fallthrough)
+branch 13 taken 0
+call   14 returned 1
+branch 15 taken 0 (fallthrough)
+branch 16 taken 1
+branch 17 never executed (fallthrough)
+branch 18 never executed
+call   19 never executed
+        1:   79:    delta->write(payload, options_.component_options);
+call    0 returned 1
+call    1 returned 1
+branch  2 taken 1 (fallthrough)
+branch  3 taken 0 (throw)
+        1:   80:    options_.write(SnapshotWriterFrame{
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 returned 1
+call    4 never executed
+branch  5 never executed (fallthrough)
+branch  6 never executed
+call    7 never executed
+        1:   81:        &frame.registry,
+        1:   82:        frame.frame,
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        -:   83:        SnapshotWriterFrameKind::Delta,
+        -:   84:        payload.str(),
+        -:   85:        frame.cues});
+        1:   86:    last_delta_ = std::move(delta);
+call    0 returned 1
+call    1 returned 1
+        3:   87:}
+call    0 returned 1
+call    1 returned 3
+branch  2 taken 1 (fallthrough)
+branch  3 taken 2
+call    4 never executed
+call    5 never executed
+        -:   88:
+        -:   89:}  // namespace kage::sync

@@ -1,0 +1,85 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/include/kage/sync/server_frame_consumer.hpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_lifecycle.test.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_lifecycle.test.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include "kage/sync/types.hpp"
+        -:    4:
+        -:    5:#include <cstdint>
+        -:    6:#include <memory>
+        -:    7:#include <vector>
+        -:    8:
+        -:    9:namespace kage::sync {
+        -:   10:
+        -:   11:class ReplicationServer;
+        -:   12:
+        -:   13:struct ServerFrameDelta {
+        -:   14:    ReplicationServer& server;
+        -:   15:    ecs::Registry& registry;
+        -:   16:    SyncFrame frame = 0;
+        -:   17:    ecs::Registry::DirtyView dirty;
+        -:   18:    QueuedSyncCueView cues;
+        -:   19:};
+        -:   20:
+        -:   21:struct ServerFrameFlushContext {
+        -:   22:    ReplicationServer& server;
+        -:   23:    ecs::Registry& registry;
+        -:   24:    SyncFrame frame = 0;
+        -:   25:    double dt_seconds = 0.0;
+        -:   26:    std::uint32_t completed_frames = 0;
+        -:   27:};
+        -:   28:
+        -:   29:class ServerFrameConsumer {
+        -:   30:public:
+     141*:   31:    virtual ~ServerFrameConsumer() = default;
+------------------
+_ZN4kage4sync19ServerFrameConsumerD0Ev:
+function _ZN4kage4sync19ServerFrameConsumerD0Ev called 0 returned 0% blocks executed 0%
+    #####:   31:    virtual ~ServerFrameConsumer() = default;
+call    0 never executed
+call    1 never executed
+------------------
+_ZN4kage4sync19ServerFrameConsumerD2Ev:
+function _ZN4kage4sync19ServerFrameConsumerD2Ev called 141 returned 100% blocks executed 100%
+      141:   31:    virtual ~ServerFrameConsumer() = default;
+------------------
+        -:   32:    virtual void accumulate_frame_delta(const ServerFrameDelta& frame) = 0;
+function _ZN4kage4sync19ServerFrameConsumer5flushERKNS0_23ServerFrameFlushContextE called 16 returned 100% blocks executed 100%
+       16:   33:    virtual void flush(const ServerFrameFlushContext& context) {
+        -:   34:        (void)context;
+       16:   35:    }
+        -:   36:};
+        -:   37:
+        -:   38:class ServerFrameConsumerSubscription {
+        -:   39:public:
+        -:   40:    ServerFrameConsumerSubscription() = default;
+        -:   41:    ServerFrameConsumerSubscription(const ServerFrameConsumerSubscription&) = delete;
+        -:   42:    ServerFrameConsumerSubscription& operator=(const ServerFrameConsumerSubscription&) = delete;
+        -:   43:    ServerFrameConsumerSubscription(ServerFrameConsumerSubscription&& other) noexcept;
+        -:   44:    ServerFrameConsumerSubscription& operator=(ServerFrameConsumerSubscription&& other) noexcept;
+        -:   45:    ~ServerFrameConsumerSubscription();
+        -:   46:
+        -:   47:    void reset();
+        -:   48:    bool active() const noexcept;
+        -:   49:
+        -:   50:private:
+        -:   51:    friend class ReplicationServer;
+        -:   52:
+        -:   53:    struct Entry {
+        -:   54:        std::uint64_t id = 0;
+        -:   55:        ServerFrameConsumer* consumer = nullptr;
+        -:   56:    };
+        -:   57:
+        -:   58:    struct State {
+        -:   59:        std::uint64_t next_id = 1;
+        -:   60:        std::vector<Entry> consumers;
+        -:   61:    };
+        -:   62:
+        -:   63:    ServerFrameConsumerSubscription(std::shared_ptr<State> state, std::uint64_t id);
+        -:   64:
+        -:   65:    std::weak_ptr<State> state_;
+        -:   66:    std::uint64_t id_ = 0;
+        -:   67:};
+        -:   68:
+        -:   69:}  // namespace kage::sync

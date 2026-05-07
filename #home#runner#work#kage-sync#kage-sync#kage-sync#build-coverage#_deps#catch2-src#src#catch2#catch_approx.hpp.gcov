@@ -1,0 +1,134 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/_deps/catch2-src/src/catch2/catch_approx.hpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_bandwidth_controller.test.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_bandwidth_controller.test.cpp.gcda
+        -:    0:Runs:310
+        -:    1:
+        -:    2://              Copyright Catch2 Authors
+        -:    3:// Distributed under the Boost Software License, Version 1.0.
+        -:    4://   (See accompanying file LICENSE.txt or copy at
+        -:    5://        https://www.boost.org/LICENSE_1_0.txt)
+        -:    6:
+        -:    7:// SPDX-License-Identifier: BSL-1.0
+        -:    8:#ifndef CATCH_APPROX_HPP_INCLUDED
+        -:    9:#define CATCH_APPROX_HPP_INCLUDED
+        -:   10:
+        -:   11:#include <catch2/catch_tostring.hpp>
+        -:   12:
+        -:   13:#include <type_traits>
+        -:   14:
+        -:   15:namespace Catch {
+        -:   16:
+        -:   17:    class Approx {
+        -:   18:    private:
+        -:   19:        bool equalityComparisonImpl(double other) const;
+        -:   20:        // Sets and validates the new margin (margin >= 0)
+        -:   21:        void setMargin(double margin);
+        -:   22:        // Sets and validates the new epsilon (0 < epsilon < 1)
+        -:   23:        void setEpsilon(double epsilon);
+        -:   24:
+        -:   25:    public:
+        -:   26:        explicit Approx ( double value );
+        -:   27:
+        -:   28:        static Approx custom();
+        -:   29:
+        -:   30:        Approx operator-() const;
+        -:   31:
+        -:   32:        template <typename T, typename = std::enable_if_t<std::is_constructible<double, T>::value>>
+        -:   33:        Approx operator()( T const& value ) const {
+        -:   34:            Approx approx( static_cast<double>(value) );
+        -:   35:            approx.m_epsilon = m_epsilon;
+        -:   36:            approx.m_margin = m_margin;
+        -:   37:            approx.m_scale = m_scale;
+        -:   38:            return approx;
+        -:   39:        }
+        -:   40:
+        -:   41:        template <typename T, typename = std::enable_if_t<std::is_constructible<double, T>::value>>
+function _ZN5Catch6ApproxC2IfvEERKT_ called 0 returned 0% blocks executed 0%
+    #####:   42:        explicit Approx( T const& value ): Approx(static_cast<double>(value))
+call    0 never executed
+    #####:   43:        {}
+        -:   44:
+        -:   45:
+        -:   46:        template <typename T, typename = std::enable_if_t<std::is_constructible<double, T>::value>>
+    #####:   47:        friend bool operator == ( const T& lhs, Approx const& rhs ) {
+    #####:   48:            auto lhs_v = static_cast<double>(lhs);
+    #####:   49:            return rhs.equalityComparisonImpl(lhs_v);
+        -:   50:        }
+        -:   51:
+        -:   52:        template <typename T, typename = std::enable_if_t<std::is_constructible<double, T>::value>>
+        -:   53:        friend bool operator == ( Approx const& lhs, const T& rhs ) {
+        -:   54:            return operator==( rhs, lhs );
+        -:   55:        }
+        -:   56:
+        -:   57:        template <typename T, typename = std::enable_if_t<std::is_constructible<double, T>::value>>
+        -:   58:        friend bool operator != ( T const& lhs, Approx const& rhs ) {
+        -:   59:            return !operator==( lhs, rhs );
+        -:   60:        }
+        -:   61:
+        -:   62:        template <typename T, typename = std::enable_if_t<std::is_constructible<double, T>::value>>
+        -:   63:        friend bool operator != ( Approx const& lhs, T const& rhs ) {
+        -:   64:            return !operator==( rhs, lhs );
+        -:   65:        }
+        -:   66:
+        -:   67:        template <typename T, typename = std::enable_if_t<std::is_constructible<double, T>::value>>
+        -:   68:        friend bool operator <= ( T const& lhs, Approx const& rhs ) {
+        -:   69:            return static_cast<double>(lhs) < rhs.m_value || lhs == rhs;
+        -:   70:        }
+        -:   71:
+        -:   72:        template <typename T, typename = std::enable_if_t<std::is_constructible<double, T>::value>>
+        -:   73:        friend bool operator <= ( Approx const& lhs, T const& rhs ) {
+        -:   74:            return lhs.m_value < static_cast<double>(rhs) || lhs == rhs;
+        -:   75:        }
+        -:   76:
+        -:   77:        template <typename T, typename = std::enable_if_t<std::is_constructible<double, T>::value>>
+        -:   78:        friend bool operator >= ( T const& lhs, Approx const& rhs ) {
+        -:   79:            return static_cast<double>(lhs) > rhs.m_value || lhs == rhs;
+        -:   80:        }
+        -:   81:
+        -:   82:        template <typename T, typename = std::enable_if_t<std::is_constructible<double, T>::value>>
+        -:   83:        friend bool operator >= ( Approx const& lhs, T const& rhs ) {
+        -:   84:            return lhs.m_value > static_cast<double>(rhs) || lhs == rhs;
+        -:   85:        }
+        -:   86:
+        -:   87:        template <typename T, typename = std::enable_if_t<std::is_constructible<double, T>::value>>
+        -:   88:        Approx& epsilon( T const& newEpsilon ) {
+        -:   89:            const auto epsilonAsDouble = static_cast<double>(newEpsilon);
+        -:   90:            setEpsilon(epsilonAsDouble);
+        -:   91:            return *this;
+        -:   92:        }
+        -:   93:
+        -:   94:        template <typename T, typename = std::enable_if_t<std::is_constructible<double, T>::value>>
+        -:   95:        Approx& margin( T const& newMargin ) {
+        -:   96:            const auto marginAsDouble = static_cast<double>(newMargin);
+        -:   97:            setMargin(marginAsDouble);
+        -:   98:            return *this;
+        -:   99:        }
+        -:  100:
+        -:  101:        template <typename T, typename = std::enable_if_t<std::is_constructible<double, T>::value>>
+        -:  102:        Approx& scale( T const& newScale ) {
+        -:  103:            m_scale = static_cast<double>(newScale);
+        -:  104:            return *this;
+        -:  105:        }
+        -:  106:
+        -:  107:        std::string toString() const;
+        -:  108:
+        -:  109:    private:
+        -:  110:        double m_epsilon;
+        -:  111:        double m_margin;
+        -:  112:        double m_scale;
+        -:  113:        double m_value;
+        -:  114:    };
+        -:  115:
+        -:  116:namespace literals {
+        -:  117:    Approx operator ""_a(long double val);
+        -:  118:    Approx operator ""_a(unsigned long long val);
+        -:  119:} // end namespace literals
+        -:  120:
+        -:  121:template<>
+        -:  122:struct StringMaker<Catch::Approx> {
+        -:  123:    static std::string convert(Catch::Approx const& value);
+        -:  124:};
+        -:  125:
+        -:  126:} // end namespace Catch
+        -:  127:
+        -:  128:#endif // CATCH_APPROX_HPP_INCLUDED

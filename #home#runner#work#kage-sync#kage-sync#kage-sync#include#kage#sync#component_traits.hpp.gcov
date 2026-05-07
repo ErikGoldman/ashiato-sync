@@ -1,0 +1,73 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/include/kage/sync/component_traits.hpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include "kage/sync/types.hpp"
+        -:    4:
+        -:    5:#include <string>
+        -:    6:#include <type_traits>
+        -:    7:
+        -:    8:namespace kage::sync {
+        -:    9:
+        -:   10:#ifdef KAGE_SYNC_ENABLE_TRACING
+        -:   11:void trace_rollback_reason(const char* reason);
+        -:   12:void trace_rollback_reason(const std::string& reason);
+        -:   13:#define TRACE_ROLLBACK_IF(condition, reason)            \
+        -:   14:    do {                                                \
+        -:   15:        if (condition) {                                \
+        -:   16:            ::kage::sync::trace_rollback_reason(reason); \
+        -:   17:            return true;                                \
+        -:   18:        }                                               \
+        -:   19:    } while (false)
+        -:   20:#else
+        -:   21:#define TRACE_ROLLBACK_IF(condition, reason) \
+        -:   22:    do {                                     \
+        -:   23:        if (condition) {                     \
+        -:   24:            return true;                     \
+        -:   25:        }                                    \
+        -:   26:    } while (false)
+        -:   27:#endif
+        -:   28:
+        -:   29:template <typename T>
+        -:   30:struct SyncComponentTraits {
+        -:   31:    using Quantized = T;
+        -:   32:
+function _ZN4kage4sync19SyncComponentTraitsIN15kage_sync_tests6HealthEE8quantizeERKS3_ called 0 returned 0% blocks executed 0%
+    #####:   33:    static Quantized quantize(const T& value) {
+        -:   34:        static_assert(
+        -:   35:            std::is_trivially_copyable<T>::value,
+        -:   36:            "default SyncComponentTraits require a trivially copyable component");
+    #####:   37:        return value;
+        -:   38:    }
+        -:   39:
+function _ZN4kage4sync19SyncComponentTraitsIN15kage_sync_tests6HealthEE10dequantizeERKS3_ called 0 returned 0% blocks executed 0%
+    #####:   40:    static T dequantize(const Quantized& value) {
+    #####:   41:        return value;
+        -:   42:    }
+        -:   43:
+function _ZN4kage4sync19SyncComponentTraitsIN15kage_sync_tests6HealthEE9serializeEPKS3_RS5_RN3ecs9BitBufferE called 0 returned 0% blocks executed 0%
+    #####:   44:    static void serialize(const Quantized* /*previous*/, const Quantized& current, ecs::BitBuffer& out) {
+        -:   45:        static_assert(
+        -:   46:            std::is_trivially_copyable<Quantized>::value,
+        -:   47:            "default SyncComponentTraits serialization requires a trivially copyable quantized state");
+    #####:   48:        out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
+call    0 never executed
+    #####:   49:    }
+        -:   50:
+function _ZN4kage4sync19SyncComponentTraitsIN15kage_sync_tests6HealthEE11deserializeERN3ecs9BitBufferEPKS3_RS3_ called 0 returned 0% blocks executed 0%
+    #####:   51:    static bool deserialize(ecs::BitBuffer& in, const Quantized* /*previous*/, Quantized& out) {
+        -:   52:        static_assert(
+        -:   53:            std::is_trivially_copyable<Quantized>::value,
+        -:   54:            "default SyncComponentTraits deserialization requires a trivially copyable quantized state");
+    #####:   55:        in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
+call    0 never executed
+    #####:   56:        return true;
+        -:   57:    }
+        -:   58:};
+        -:   59:
+        -:   60:template <typename T>
+        -:   61:struct SyncCueTraits;
+        -:   62:
+        -:   63:}  // namespace kage::sync

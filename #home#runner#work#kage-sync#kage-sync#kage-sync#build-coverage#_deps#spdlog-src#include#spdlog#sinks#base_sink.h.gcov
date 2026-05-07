@@ -1,0 +1,68 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/_deps/spdlog-src/include/spdlog/sinks/base_sink.h
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_logging.test.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_logging.test.cpp.gcda
+        -:    0:Runs:310
+        -:    1:// Copyright(c) 2015-present, Gabi Melman & spdlog contributors.
+        -:    2:// Distributed under the MIT License (http://opensource.org/licenses/MIT)
+        -:    3:
+        -:    4:#pragma once
+        -:    5://
+        -:    6:// base sink templated over a mutex (either dummy or real)
+        -:    7:// concrete implementation should override the sink_it_() and flush_()  methods.
+        -:    8:// locking is taken care of in this class - no locking needed by the
+        -:    9:// implementers..
+        -:   10://
+        -:   11:
+        -:   12:#include <spdlog/common.h>
+        -:   13:#include <spdlog/details/log_msg.h>
+        -:   14:#include <spdlog/sinks/sink.h>
+        -:   15:
+        -:   16:namespace spdlog {
+        -:   17:namespace sinks {
+        -:   18:template <typename Mutex>
+        -:   19:class SPDLOG_API base_sink : public sink {
+        -:   20:public:
+        -:   21:    base_sink();
+        -:   22:    explicit base_sink(std::unique_ptr<spdlog::formatter> formatter);
+       4*:   23:    ~base_sink() override = default;
+------------------
+_ZN6spdlog5sinks9base_sinkISt5mutexED0Ev:
+function _ZN6spdlog5sinks9base_sinkISt5mutexED0Ev called 0 returned 0% blocks executed 0%
+    #####:   23:    ~base_sink() override = default;
+call    0 never executed
+call    1 never executed
+------------------
+_ZN6spdlog5sinks9base_sinkISt5mutexED2Ev:
+function _ZN6spdlog5sinks9base_sinkISt5mutexED2Ev called 4 returned 100% blocks executed 100%
+        4:   23:    ~base_sink() override = default;
+call    0 returned 4
+call    1 returned 4
+------------------
+        -:   24:
+        -:   25:    base_sink(const base_sink &) = delete;
+        -:   26:    base_sink(base_sink &&) = delete;
+        -:   27:
+        -:   28:    base_sink &operator=(const base_sink &) = delete;
+        -:   29:    base_sink &operator=(base_sink &&) = delete;
+        -:   30:
+        -:   31:    void log(const details::log_msg &msg) final override;
+        -:   32:    void flush() final override;
+        -:   33:    void set_pattern(const std::string &pattern) final override;
+        -:   34:    void set_formatter(std::unique_ptr<spdlog::formatter> sink_formatter) final override;
+        -:   35:
+        -:   36:protected:
+        -:   37:    // sink formatter
+        -:   38:    std::unique_ptr<spdlog::formatter> formatter_;
+        -:   39:    Mutex mutex_;
+        -:   40:
+        -:   41:    virtual void sink_it_(const details::log_msg &msg) = 0;
+        -:   42:    virtual void flush_() = 0;
+        -:   43:    virtual void set_pattern_(const std::string &pattern);
+        -:   44:    virtual void set_formatter_(std::unique_ptr<spdlog::formatter> sink_formatter);
+        -:   45:};
+        -:   46:}  // namespace sinks
+        -:   47:}  // namespace spdlog
+        -:   48:
+        -:   49:#ifdef SPDLOG_HEADER_ONLY
+        -:   50:    #include "base_sink-inl.h"
+        -:   51:#endif

@@ -1,0 +1,219 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/detail/frame_data.cpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/detail/frame_data.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/detail/frame_data.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#include "detail/frame_data.hpp"
+        -:    2:
+        -:    3:namespace kage::sync::detail {
+        -:    4:
+function _ZN4kage4sync6detail15init_frame_dataERKNS0_13SyncArchetypeERNS0_18QuantizedFrameDataE called 532926 returned 100% blocks executed 100%
+   532926:    5:bool init_frame_data(const SyncArchetype& archetype, QuantizedFrameData& frame) {
+  1065851:    6:    if (archetype.tags.size() > 64U ||
+call    0 returned 532926
+branch  1 taken 532925 (fallthrough)
+branch  2 taken 0
+  1065850:    7:        archetype.components.size() > 63U ||
+call    0 returned 532925
+branch  1 taken 532924 (fallthrough)
+branch  2 taken 1
+  1598776:    8:        archetype.component_offsets.size() != archetype.components.size() ||
+branch  0 taken 532925 (fallthrough)
+branch  1 taken 1
+call    2 returned 532925
+call    3 returned 532925
+branch  4 taken 0 (fallthrough)
+branch  5 taken 532924
+branch  6 taken 2 (fallthrough)
+branch  7 taken 532924
+   532924:    9:        archetype.component_ops.size() != archetype.components.size()) {
+call    0 returned 532924
+call    1 returned 532924
+        2:   10:        return false;
+        -:   11:    }
+   532924:   12:    frame.tag_mask = 0;
+   532924:   13:    frame.present_mask = 0;
+   532924:   14:    frame.bytes.assign(archetype.total_quantized_bytes, 0U);
+call    0 returned 532924
+branch  1 taken 532924 (fallthrough)
+branch  2 taken 0 (throw)
+   532924:   15:    return true;
+        -:   16:}
+        -:   17:
+function _ZN4kage4sync6detail15sync_slot_countERKNS0_13SyncArchetypeE called 385301 returned 100% blocks executed 100%
+   385301:   18:std::size_t sync_slot_count(const SyncArchetype& archetype) noexcept {
+   385301:   19:    return archetype.components.size() + 1U;
+call    0 returned 385301
+        -:   20:}
+        -:   21:
+function _ZN4kage4sync6detail12has_tag_slotERKNS0_13SyncArchetypeE called 211658 returned 100% blocks executed 100%
+   211658:   22:bool has_tag_slot(const SyncArchetype& archetype) noexcept {
+   211658:   23:    return !archetype.tags.empty();
+call    0 returned 211658
+        -:   24:}
+        -:   25:
+function _ZN4kage4sync6detail13sync_slot_bitEm called 518539 returned 100% blocks executed 100%
+   518539:   26:std::uint64_t sync_slot_bit(std::size_t slot) noexcept {
+   518539:   27:    return std::uint64_t{1} << slot;
+        -:   28:}
+        -:   29:
+function _ZN4kage4sync6detail19frame_has_componentERKNS0_18QuantizedFrameDataEm called 876028 returned 100% blocks executed 100%
+   876028:   30:bool frame_has_component(const QuantizedFrameData& frame, std::size_t component_index) {
+   876028:   31:    return component_index < 64U && (frame.present_mask & (std::uint64_t{1} << component_index)) != 0U;
+branch  0 taken 876027 (fallthrough)
+branch  1 taken 1
+branch  2 taken 870330 (fallthrough)
+branch  3 taken 5697
+        -:   32:}
+        -:   33:
+function _ZN4kage4sync6detail20frame_component_dataERKNS0_13SyncArchetypeERKNS0_18QuantizedFrameDataEm called 472362 returned 100% blocks executed 100%
+   472362:   34:const std::uint8_t* frame_component_data(
+        -:   35:    const SyncArchetype& archetype,
+        -:   36:    const QuantizedFrameData& frame,
+        -:   37:    std::size_t component_index) {
+   944541:   38:    if (!frame_has_component(frame, component_index) ||
+call    0 returned 472362
+branch  1 taken 472179 (fallthrough)
+branch  2 taken 0
+   944541:   39:        component_index >= archetype.component_offsets.size() ||
+branch  0 taken 472179 (fallthrough)
+branch  1 taken 183
+call    2 returned 472179
+branch  3 taken 0 (fallthrough)
+branch  4 taken 472179
+branch  5 taken 183 (fallthrough)
+branch  6 taken 472179
+   472179:   40:        component_index >= archetype.component_ops.size()) {
+call    0 returned 472179
+      183:   41:        return nullptr;
+        -:   42:    }
+   472179:   43:    const std::size_t offset = archetype.component_offsets[component_index];
+call    0 returned 472179
+   472179:   44:    const std::size_t size = archetype.component_ops[component_index].quantized_size;
+call    0 returned 472179
+   472179:   45:    if (offset + size > frame.bytes.size()) {
+call    0 returned 472179
+branch  1 taken 1 (fallthrough)
+branch  2 taken 472178
+        1:   46:        return nullptr;
+        -:   47:    }
+   472178:   48:    return frame.bytes.data() + offset;
+call    0 returned 472178
+        -:   49:}
+        -:   50:
+function _ZN4kage4sync6detail30unchecked_frame_component_dataERKNS0_13SyncArchetypeERKNS0_18QuantizedFrameDataEm called 80940 returned 100% blocks executed 100%
+    80940:   51:const std::uint8_t* unchecked_frame_component_data(
+        -:   52:    const SyncArchetype& archetype,
+        -:   53:    const QuantizedFrameData& frame,
+        -:   54:    std::size_t component_index) noexcept {
+    80940:   55:    return frame.bytes.data() + archetype.component_offsets[component_index];
+call    0 returned 80940
+call    1 returned 80940
+        -:   56:}
+        -:   57:
+function _ZN4kage4sync6detail28mutable_frame_component_dataERKNS0_13SyncArchetypeERNS0_18QuantizedFrameDataEm called 295307 returned 100% blocks executed 100%
+   295307:   58:std::uint8_t* mutable_frame_component_data(
+        -:   59:    const SyncArchetype& archetype,
+        -:   60:    QuantizedFrameData& frame,
+        -:   61:    std::size_t component_index) {
+   295307:   62:    if (component_index >= 64U ||
+branch  0 taken 295306 (fallthrough)
+branch  1 taken 1
+   590614:   63:        component_index >= archetype.component_offsets.size() ||
+branch  0 taken 295307 (fallthrough)
+branch  1 taken 0
+call    2 returned 295307
+branch  3 taken 0 (fallthrough)
+branch  4 taken 295306
+branch  5 taken 1 (fallthrough)
+branch  6 taken 295306
+   295306:   64:        component_index >= archetype.component_ops.size()) {
+call    0 returned 295306
+        1:   65:        return nullptr;
+        -:   66:    }
+   295306:   67:    const std::size_t offset = archetype.component_offsets[component_index];
+call    0 returned 295306
+   295306:   68:    const std::size_t size = archetype.component_ops[component_index].quantized_size;
+call    0 returned 295306
+   295306:   69:    if (offset + size > frame.bytes.size()) {
+call    0 returned 295306
+branch  1 taken 1 (fallthrough)
+branch  2 taken 295305
+        1:   70:        return nullptr;
+        -:   71:    }
+   295305:   72:    frame.present_mask |= (std::uint64_t{1} << component_index);
+   295305:   73:    return frame.bytes.data() + offset;
+call    0 returned 295305
+        -:   74:}
+        -:   75:
+function _ZN4kage4sync6detail38unchecked_mutable_frame_component_dataERKNS0_13SyncArchetypeERNS0_18QuantizedFrameDataEm called 180271 returned 100% blocks executed 100%
+   180271:   76:std::uint8_t* unchecked_mutable_frame_component_data(
+        -:   77:    const SyncArchetype& archetype,
+        -:   78:    QuantizedFrameData& frame,
+        -:   79:    std::size_t component_index) noexcept {
+   180271:   80:    frame.present_mask |= (std::uint64_t{1} << component_index);
+   180271:   81:    return frame.bytes.data() + archetype.component_offsets[component_index];
+call    0 returned 180271
+call    1 returned 180271
+        -:   82:}
+        -:   83:
+function _ZN4kage4sync6detail11tag_bit_setEmm called 8004 returned 100% blocks executed 100%
+     8004:   84:bool tag_bit_set(std::uint64_t tag_mask, std::size_t tag_index) noexcept {
+     8004:   85:    return tag_index < 64U && (tag_mask & (std::uint64_t{1} << tag_index)) != 0U;
+branch  0 taken 8003 (fallthrough)
+branch  1 taken 1
+branch  2 taken 4096 (fallthrough)
+branch  3 taken 3907
+        -:   86:}
+        -:   87:
+function _ZN4kage4sync6detail20apply_archetype_tagsERN3ecs8RegistryENS2_6EntityERKNS0_13SyncArchetypeEm called 76851 returned 100% blocks executed 93%
+    76851:   88:bool apply_archetype_tags(
+        -:   89:    ecs::Registry& registry,
+        -:   90:    ecs::Entity entity,
+        -:   91:    const SyncArchetype& archetype,
+        -:   92:    std::uint64_t tag_mask) {
+    84852:   93:    for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
+call    0 returned 84852
+branch  1 taken 8001
+branch  2 taken 76851 (fallthrough)
+     8001:   94:        const ecs::Entity tag = archetype.tags[tag_index].tag;
+call    0 returned 8001
+     8001:   95:        if (tag_bit_set(tag_mask, tag_index)) {
+call    0 returned 8001
+branch  1 taken 4095 (fallthrough)
+branch  2 taken 3906
+     4095:   96:            if (!registry.add_tag(entity, tag)) {
+call    0 returned 4095
+branch  1 taken 4095 (fallthrough)
+branch  2 taken 0 (throw)
+branch  3 taken 0 (fallthrough)
+branch  4 taken 4095
+    #####:   97:                return false;
+        -:   98:            }
+        -:   99:        } else {
+     3906:  100:            registry.remove_tag(entity, tag);
+call    0 returned 3906
+branch  1 taken 3906 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  101:        }
+        -:  102:    }
+    76851:  103:    return true;
+        -:  104:}
+        -:  105:
+function _ZN4kage4sync6detail21remove_archetype_tagsERN3ecs8RegistryENS2_6EntityERKNS0_13SyncArchetypeE called 3 returned 100% blocks executed 100%
+        3:  106:void remove_archetype_tags(ecs::Registry& registry, ecs::Entity entity, const SyncArchetype& archetype) {
+        4:  107:    for (const SyncTagReplication& replication : archetype.tags) {
+call    0 returned 3
+call    1 returned 3
+call    2 returned 1
+call    3 returned 1
+call    4 returned 4
+branch  5 taken 1
+branch  6 taken 3 (fallthrough)
+        1:  108:        registry.remove_tag(entity, replication.tag);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  109:    }
+        3:  110:}
+        -:  111:
+        -:  112:}  // namespace kage::sync::detail

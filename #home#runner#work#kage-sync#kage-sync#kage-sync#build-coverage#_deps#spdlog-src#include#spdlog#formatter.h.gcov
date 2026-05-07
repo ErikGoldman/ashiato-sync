@@ -1,0 +1,32 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/_deps/spdlog-src/include/spdlog/formatter.h
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/server.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/server.cpp.gcda
+        -:    0:Runs:310
+        -:    1:// Copyright(c) 2015-present, Gabi Melman & spdlog contributors.
+        -:    2:// Distributed under the MIT License (http://opensource.org/licenses/MIT)
+        -:    3:
+        -:    4:#pragma once
+        -:    5:
+        -:    6:#include <spdlog/details/log_msg.h>
+        -:    7:#include <spdlog/fmt/fmt.h>
+        -:    8:
+        -:    9:namespace spdlog {
+        -:   10:
+        -:   11:class formatter {
+        -:   12:public:
+       8*:   13:    virtual ~formatter() = default;
+------------------
+_ZN6spdlog9formatterD0Ev:
+function _ZN6spdlog9formatterD0Ev called 0 returned 0% blocks executed 0%
+    #####:   13:    virtual ~formatter() = default;
+call    0 never executed
+call    1 never executed
+------------------
+_ZN6spdlog9formatterD2Ev:
+function _ZN6spdlog9formatterD2Ev called 8 returned 100% blocks executed 100%
+        8:   13:    virtual ~formatter() = default;
+------------------
+        -:   14:    virtual void format(const details::log_msg &msg, memory_buf_t &dest) = 0;
+        -:   15:    virtual std::unique_ptr<formatter> clone() const = 0;
+        -:   16:};
+        -:   17:}  // namespace spdlog

@@ -1,0 +1,54 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/include/kage/sync/components.hpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_input.test.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_input.test.cpp.gcda
+        -:    0:Runs:310
+        -:    1:#pragma once
+        -:    2:
+        -:    3:#include "kage/sync/types.hpp"
+        -:    4:
+        -:    5:#include <string>
+        -:    6:#include <vector>
+        -:    7:
+        -:    8:namespace kage::sync {
+        -:    9:
+        -:   10:void register_components(ecs::Registry& registry);
+        -:   11:
+        -:   12:const SyncComponentOps* find_component_ops(const ecs::Registry& registry, ecs::Entity component);
+        -:   13:bool set_fractional_tick_sampled(ecs::Registry& registry, ecs::Entity component, bool enabled = true);
+        -:   14:bool is_fractional_tick_sampled(const ecs::Registry& registry, ecs::Entity component);
+        -:   15:
+        -:   16:template <typename T>
+        -:   17:bool set_fractional_tick_sampled(ecs::Registry& registry, bool enabled = true) {
+        -:   18:    return set_fractional_tick_sampled(registry, registry.component<T>(), enabled);
+        -:   19:}
+        -:   20:
+        -:   21:template <typename T>
+        -:   22:bool is_fractional_tick_sampled(const ecs::Registry& registry) {
+        -:   23:    return is_fractional_tick_sampled(registry, registry.component<T>());
+        -:   24:}
+        -:   25:
+        -:   26:void configure_server(ecs::Registry& registry);
+        -:   27:void configure_client(ecs::Registry& registry, ClientId local_client);
+        -:   28:
+        -:   29:SyncArchetypeId define_archetype(ecs::Registry& registry, SyncArchetypeDesc desc);
+        -:   30:SyncArchetypeId define_archetype(
+        -:   31:    ecs::Registry& registry,
+        -:   32:    std::string name,
+        -:   33:    std::vector<ComponentReplication> components);
+        -:   34:
+        -:   35:const SyncArchetype* find_archetype(const ecs::Registry& registry, SyncArchetypeId id);
+        -:   36:
+        -:   37:bool set_owner(ecs::Registry& registry, ecs::Entity entity, ClientId client);
+        -:   38:bool set_client_input_component(ecs::Registry& registry, ecs::Entity component);
+        -:   39:
+        -:   40:template <typename T>
+function _ZN4kage4sync26set_client_input_componentIN15kage_sync_tests17NetworkedPositionEEEbRN3ecs8RegistryE called 0 returned 0% blocks executed 0%
+    #####:   41:bool set_client_input_component(ecs::Registry& registry) {
+    #####:   42:    register_components(registry);
+call    0 never executed
+    #####:   43:    return set_client_input_component(registry, registry.component<T>());
+call    0 never executed
+call    1 never executed
+        -:   44:}
+        -:   45:
+        -:   46:}  // namespace kage::sync

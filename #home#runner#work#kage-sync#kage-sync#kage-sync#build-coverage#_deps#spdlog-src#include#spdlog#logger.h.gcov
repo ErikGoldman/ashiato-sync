@@ -1,0 +1,425 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/_deps/spdlog-src/include/spdlog/logger.h
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_logging.test.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_logging.test.cpp.gcda
+        -:    0:Runs:310
+        -:    1:// Copyright(c) 2015-present, Gabi Melman & spdlog contributors.
+        -:    2:// Distributed under the MIT License (http://opensource.org/licenses/MIT)
+        -:    3:
+        -:    4:#pragma once
+        -:    5:
+        -:    6:// Thread safe logger (except for set_error_handler())
+        -:    7:// Has name, log level, vector of std::shared sink pointers and formatter
+        -:    8:// Upon each log write the logger:
+        -:    9:// 1. Checks if its log level is enough to log the message and if yes:
+        -:   10:// 2. Call the underlying sinks to do the job.
+        -:   11:// 3. Each sink use its own private copy of a formatter to format the message
+        -:   12:// and send to its destination.
+        -:   13://
+        -:   14:// The use of private formatter per sink provides the opportunity to cache some
+        -:   15:// formatted data, and support for different format per sink.
+        -:   16:
+        -:   17:#include <spdlog/common.h>
+        -:   18:#include <spdlog/details/backtracer.h>
+        -:   19:#include <spdlog/details/log_msg.h>
+        -:   20:
+        -:   21:#ifdef SPDLOG_WCHAR_TO_UTF8_SUPPORT
+        -:   22:    #ifndef _WIN32
+        -:   23:        #error SPDLOG_WCHAR_TO_UTF8_SUPPORT only supported on windows
+        -:   24:    #endif
+        -:   25:    #include <spdlog/details/os.h>
+        -:   26:#endif
+        -:   27:
+        -:   28:#include <vector>
+        -:   29:
+        -:   30:#ifndef SPDLOG_NO_EXCEPTIONS
+        -:   31:    #define SPDLOG_LOGGER_CATCH(location)                                                 \
+        -:   32:        catch (const std::exception &ex) {                                                \
+        -:   33:            if (location.filename) {                                                      \
+        -:   34:                err_handler_(fmt_lib::format(SPDLOG_FMT_STRING("{} [{}({})]"), ex.what(), \
+        -:   35:                                             location.filename, location.line));          \
+        -:   36:            } else {                                                                      \
+        -:   37:                err_handler_(ex.what());                                                  \
+        -:   38:            }                                                                             \
+        -:   39:        }                                                                                 \
+        -:   40:        catch (...) {                                                                     \
+        -:   41:            err_handler_("Rethrowing unknown exception in logger");                       \
+        -:   42:            throw;                                                                        \
+        -:   43:        }
+        -:   44:#else
+        -:   45:    #define SPDLOG_LOGGER_CATCH(location)
+        -:   46:#endif
+        -:   47:
+        -:   48:namespace spdlog {
+        -:   49:
+        -:   50:class SPDLOG_API logger {
+        -:   51:public:
+        -:   52:    // Empty logger
+        -:   53:    explicit logger(std::string name)
+        -:   54:        : name_(std::move(name)),
+        -:   55:          sinks_() {}
+        -:   56:
+        -:   57:    // Logger with range on sinks
+        -:   58:    template <typename It>
+function _ZN6spdlog6loggerC2IPKSt10shared_ptrINS_5sinks4sinkEEEENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEET_SE_ called 4 returned 100% blocks executed 75%
+        4:   59:    logger(std::string name, It begin, It end)
+        4:   60:        : name_(std::move(name)),
+call    0 returned 4
+       16:   61:          sinks_(begin, end) {}
+call    0 returned 4
+call    1 returned 4
+branch  2 taken 4 (fallthrough)
+branch  3 taken 0 (throw)
+call    4 returned 4
+call    5 returned 4
+call    6 returned 4
+call    7 returned 4
+call    8 never executed
+        -:   62:
+        -:   63:    // Logger with single sink
+function _ZN6spdlog6loggerC2ENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt10shared_ptrINS_5sinks4sinkEE called 4 returned 100% blocks executed 48%
+        4:   64:    logger(std::string name, sink_ptr single_sink)
+        8:   65:        : logger(std::move(name), {std::move(single_sink)}) {}
+call    0 returned 4
+call    1 returned 4
+call    2 returned 4
+call    3 returned 4
+call    4 returned 4
+branch  5 taken 4 (fallthrough)
+branch  6 taken 0 (throw)
+call    7 returned 4
+branch  8 taken 4 (fallthrough)
+branch  9 taken 4
+call   10 returned 4
+call   11 never executed
+branch 12 never executed (fallthrough)
+branch 13 never executed
+call   14 never executed
+branch 15 never executed (fallthrough)
+branch 16 never executed
+branch 17 never executed (fallthrough)
+branch 18 never executed
+call   19 never executed
+        -:   66:
+        -:   67:    // Logger with sinks init list
+function _ZN6spdlog6loggerC2ENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt16initializer_listISt10shared_ptrINS_5sinks4sinkEEE called 4 returned 100% blocks executed 80%
+        4:   68:    logger(std::string name, sinks_init_list sinks)
+        4:   69:        : logger(std::move(name), sinks.begin(), sinks.end()) {}
+call    0 returned 4
+call    1 returned 4
+call    2 returned 4
+call    3 returned 4
+call    4 returned 4
+branch  5 taken 4 (fallthrough)
+branch  6 taken 0 (throw)
+call    7 returned 4
+call    8 never executed
+        -:   70:
+        -:   71:    virtual ~logger() = default;
+        -:   72:
+        -:   73:    logger(const logger &other);
+        -:   74:    logger(logger &&other) SPDLOG_NOEXCEPT;
+        -:   75:    logger &operator=(logger other) SPDLOG_NOEXCEPT;
+        -:   76:    void swap(spdlog::logger &other) SPDLOG_NOEXCEPT;
+        -:   77:
+        -:   78:    template <typename... Args>
+        -:   79:    void log(source_loc loc, level::level_enum lvl, format_string_t<Args...> fmt, Args &&...args) {
+        -:   80:        log_(loc, lvl, details::to_string_view(fmt), std::forward<Args>(args)...);
+        -:   81:    }
+        -:   82:
+        -:   83:    template <typename... Args>
+        -:   84:    void log(level::level_enum lvl, format_string_t<Args...> fmt, Args &&...args) {
+        -:   85:        log(source_loc{}, lvl, fmt, std::forward<Args>(args)...);
+        -:   86:    }
+        -:   87:
+        -:   88:    template <typename T>
+        -:   89:    void log(level::level_enum lvl, const T &msg) {
+        -:   90:        log(source_loc{}, lvl, msg);
+        -:   91:    }
+        -:   92:
+        -:   93:    // T cannot be statically converted to format string (including string_view/wstring_view)
+        -:   94:    template <class T,
+        -:   95:              typename std::enable_if<!is_convertible_to_any_format_string<const T &>::value,
+        -:   96:                                      int>::type = 0>
+        -:   97:    void log(source_loc loc, level::level_enum lvl, const T &msg) {
+        -:   98:        log(loc, lvl, "{}", msg);
+        -:   99:    }
+        -:  100:
+        -:  101:    void log(log_clock::time_point log_time,
+        -:  102:             source_loc loc,
+        -:  103:             level::level_enum lvl,
+        -:  104:             string_view_t msg) {
+        -:  105:        bool log_enabled = should_log(lvl);
+        -:  106:        bool traceback_enabled = tracer_.enabled();
+        -:  107:        if (!log_enabled && !traceback_enabled) {
+        -:  108:            return;
+        -:  109:        }
+        -:  110:
+        -:  111:        details::log_msg log_msg(log_time, loc, name_, lvl, msg);
+        -:  112:        log_it_(log_msg, log_enabled, traceback_enabled);
+        -:  113:    }
+        -:  114:
+        -:  115:    void log(source_loc loc, level::level_enum lvl, string_view_t msg) {
+        -:  116:        bool log_enabled = should_log(lvl);
+        -:  117:        bool traceback_enabled = tracer_.enabled();
+        -:  118:        if (!log_enabled && !traceback_enabled) {
+        -:  119:            return;
+        -:  120:        }
+        -:  121:
+        -:  122:        details::log_msg log_msg(loc, name_, lvl, msg);
+        -:  123:        log_it_(log_msg, log_enabled, traceback_enabled);
+        -:  124:    }
+        -:  125:
+        -:  126:    void log(level::level_enum lvl, string_view_t msg) { log(source_loc{}, lvl, msg); }
+        -:  127:
+        -:  128:    template <typename... Args>
+        -:  129:    void trace(format_string_t<Args...> fmt, Args &&...args) {
+        -:  130:        log(level::trace, fmt, std::forward<Args>(args)...);
+        -:  131:    }
+        -:  132:
+        -:  133:    template <typename... Args>
+        -:  134:    void debug(format_string_t<Args...> fmt, Args &&...args) {
+        -:  135:        log(level::debug, fmt, std::forward<Args>(args)...);
+        -:  136:    }
+        -:  137:
+        -:  138:    template <typename... Args>
+        -:  139:    void info(format_string_t<Args...> fmt, Args &&...args) {
+        -:  140:        log(level::info, fmt, std::forward<Args>(args)...);
+        -:  141:    }
+        -:  142:
+        -:  143:    template <typename... Args>
+        -:  144:    void warn(format_string_t<Args...> fmt, Args &&...args) {
+        -:  145:        log(level::warn, fmt, std::forward<Args>(args)...);
+        -:  146:    }
+        -:  147:
+        -:  148:    template <typename... Args>
+        -:  149:    void error(format_string_t<Args...> fmt, Args &&...args) {
+        -:  150:        log(level::err, fmt, std::forward<Args>(args)...);
+        -:  151:    }
+        -:  152:
+        -:  153:    template <typename... Args>
+        -:  154:    void critical(format_string_t<Args...> fmt, Args &&...args) {
+        -:  155:        log(level::critical, fmt, std::forward<Args>(args)...);
+        -:  156:    }
+        -:  157:
+        -:  158:#ifdef SPDLOG_WCHAR_TO_UTF8_SUPPORT
+        -:  159:    template <typename... Args>
+        -:  160:    void log(source_loc loc, level::level_enum lvl, wformat_string_t<Args...> fmt, Args &&...args) {
+        -:  161:        log_(loc, lvl, details::to_string_view(fmt), std::forward<Args>(args)...);
+        -:  162:    }
+        -:  163:
+        -:  164:    template <typename... Args>
+        -:  165:    void log(level::level_enum lvl, wformat_string_t<Args...> fmt, Args &&...args) {
+        -:  166:        log(source_loc{}, lvl, fmt, std::forward<Args>(args)...);
+        -:  167:    }
+        -:  168:
+        -:  169:    void log(log_clock::time_point log_time,
+        -:  170:             source_loc loc,
+        -:  171:             level::level_enum lvl,
+        -:  172:             wstring_view_t msg) {
+        -:  173:        bool log_enabled = should_log(lvl);
+        -:  174:        bool traceback_enabled = tracer_.enabled();
+        -:  175:        if (!log_enabled && !traceback_enabled) {
+        -:  176:            return;
+        -:  177:        }
+        -:  178:
+        -:  179:        memory_buf_t buf;
+        -:  180:        details::os::wstr_to_utf8buf(wstring_view_t(msg.data(), msg.size()), buf);
+        -:  181:        details::log_msg log_msg(log_time, loc, name_, lvl, string_view_t(buf.data(), buf.size()));
+        -:  182:        log_it_(log_msg, log_enabled, traceback_enabled);
+        -:  183:    }
+        -:  184:
+        -:  185:    void log(source_loc loc, level::level_enum lvl, wstring_view_t msg) {
+        -:  186:        bool log_enabled = should_log(lvl);
+        -:  187:        bool traceback_enabled = tracer_.enabled();
+        -:  188:        if (!log_enabled && !traceback_enabled) {
+        -:  189:            return;
+        -:  190:        }
+        -:  191:
+        -:  192:        memory_buf_t buf;
+        -:  193:        details::os::wstr_to_utf8buf(wstring_view_t(msg.data(), msg.size()), buf);
+        -:  194:        details::log_msg log_msg(loc, name_, lvl, string_view_t(buf.data(), buf.size()));
+        -:  195:        log_it_(log_msg, log_enabled, traceback_enabled);
+        -:  196:    }
+        -:  197:
+        -:  198:    void log(level::level_enum lvl, wstring_view_t msg) { log(source_loc{}, lvl, msg); }
+        -:  199:
+        -:  200:    template <typename... Args>
+        -:  201:    void trace(wformat_string_t<Args...> fmt, Args &&...args) {
+        -:  202:        log(level::trace, fmt, std::forward<Args>(args)...);
+        -:  203:    }
+        -:  204:
+        -:  205:    template <typename... Args>
+        -:  206:    void debug(wformat_string_t<Args...> fmt, Args &&...args) {
+        -:  207:        log(level::debug, fmt, std::forward<Args>(args)...);
+        -:  208:    }
+        -:  209:
+        -:  210:    template <typename... Args>
+        -:  211:    void info(wformat_string_t<Args...> fmt, Args &&...args) {
+        -:  212:        log(level::info, fmt, std::forward<Args>(args)...);
+        -:  213:    }
+        -:  214:
+        -:  215:    template <typename... Args>
+        -:  216:    void warn(wformat_string_t<Args...> fmt, Args &&...args) {
+        -:  217:        log(level::warn, fmt, std::forward<Args>(args)...);
+        -:  218:    }
+        -:  219:
+        -:  220:    template <typename... Args>
+        -:  221:    void error(wformat_string_t<Args...> fmt, Args &&...args) {
+        -:  222:        log(level::err, fmt, std::forward<Args>(args)...);
+        -:  223:    }
+        -:  224:
+        -:  225:    template <typename... Args>
+        -:  226:    void critical(wformat_string_t<Args...> fmt, Args &&...args) {
+        -:  227:        log(level::critical, fmt, std::forward<Args>(args)...);
+        -:  228:    }
+        -:  229:#endif
+        -:  230:
+        -:  231:    template <typename T>
+        -:  232:    void trace(const T &msg) {
+        -:  233:        log(level::trace, msg);
+        -:  234:    }
+        -:  235:
+        -:  236:    template <typename T>
+        -:  237:    void debug(const T &msg) {
+        -:  238:        log(level::debug, msg);
+        -:  239:    }
+        -:  240:
+        -:  241:    template <typename T>
+        -:  242:    void info(const T &msg) {
+        -:  243:        log(level::info, msg);
+        -:  244:    }
+        -:  245:
+        -:  246:    template <typename T>
+        -:  247:    void warn(const T &msg) {
+        -:  248:        log(level::warn, msg);
+        -:  249:    }
+        -:  250:
+        -:  251:    template <typename T>
+        -:  252:    void error(const T &msg) {
+        -:  253:        log(level::err, msg);
+        -:  254:    }
+        -:  255:
+        -:  256:    template <typename T>
+        -:  257:    void critical(const T &msg) {
+        -:  258:        log(level::critical, msg);
+        -:  259:    }
+        -:  260:
+        -:  261:    // return true logging is enabled for the given level.
+        -:  262:    bool should_log(level::level_enum msg_level) const {
+        -:  263:        return msg_level >= level_.load(std::memory_order_relaxed);
+        -:  264:    }
+        -:  265:
+        -:  266:    // return true if backtrace logging is enabled.
+        -:  267:    bool should_backtrace() const { return tracer_.enabled(); }
+        -:  268:
+        -:  269:    void set_level(level::level_enum log_level);
+        -:  270:
+        -:  271:    level::level_enum level() const;
+        -:  272:
+        -:  273:    const std::string &name() const;
+        -:  274:
+        -:  275:    // set formatting for the sinks in this logger.
+        -:  276:    // each sink will get a separate instance of the formatter object.
+        -:  277:    void set_formatter(std::unique_ptr<formatter> f);
+        -:  278:
+        -:  279:    // set formatting for the sinks in this logger.
+        -:  280:    // equivalent to
+        -:  281:    //     set_formatter(make_unique<pattern_formatter>(pattern, time_type))
+        -:  282:    // Note: each sink will get a new instance of a formatter object, replacing the old one.
+        -:  283:    void set_pattern(std::string pattern, pattern_time_type time_type = pattern_time_type::local);
+        -:  284:
+        -:  285:    // backtrace support.
+        -:  286:    // efficiently store all debug/trace messages in a circular buffer until needed for debugging.
+        -:  287:    void enable_backtrace(size_t n_messages);
+        -:  288:    void disable_backtrace();
+        -:  289:    void dump_backtrace();
+        -:  290:
+        -:  291:    // flush functions
+        -:  292:    void flush();
+        -:  293:    void flush_on(level::level_enum log_level);
+        -:  294:    level::level_enum flush_level() const;
+        -:  295:
+        -:  296:    // sinks
+        -:  297:    const std::vector<sink_ptr> &sinks() const;
+        -:  298:
+        -:  299:    std::vector<sink_ptr> &sinks();
+        -:  300:
+        -:  301:    // error handler
+        -:  302:    void set_error_handler(err_handler);
+        -:  303:
+        -:  304:    // create new logger with same sinks and configuration.
+        -:  305:    virtual std::shared_ptr<logger> clone(std::string logger_name);
+        -:  306:
+        -:  307:protected:
+        -:  308:    std::string name_;
+        -:  309:    std::vector<sink_ptr> sinks_;
+        -:  310:    spdlog::level_t level_{level::info};
+        -:  311:    spdlog::level_t flush_level_{level::off};
+        -:  312:    err_handler custom_err_handler_{nullptr};
+        -:  313:    details::backtracer tracer_;
+        -:  314:
+        -:  315:    // common implementation for after templated public api has been resolved
+        -:  316:    template <typename... Args>
+        -:  317:    void log_(source_loc loc, level::level_enum lvl, string_view_t fmt, Args &&...args) {
+        -:  318:        bool log_enabled = should_log(lvl);
+        -:  319:        bool traceback_enabled = tracer_.enabled();
+        -:  320:        if (!log_enabled && !traceback_enabled) {
+        -:  321:            return;
+        -:  322:        }
+        -:  323:        SPDLOG_TRY {
+        -:  324:            memory_buf_t buf;
+        -:  325:#ifdef SPDLOG_USE_STD_FORMAT
+        -:  326:            fmt_lib::vformat_to(std::back_inserter(buf), fmt, fmt_lib::make_format_args(args...));
+        -:  327:#else
+        -:  328:            fmt::vformat_to(fmt::appender(buf), fmt, fmt::make_format_args(args...));
+        -:  329:#endif
+        -:  330:
+        -:  331:            details::log_msg log_msg(loc, name_, lvl, string_view_t(buf.data(), buf.size()));
+        -:  332:            log_it_(log_msg, log_enabled, traceback_enabled);
+        -:  333:        }
+        -:  334:        SPDLOG_LOGGER_CATCH(loc)
+        -:  335:    }
+        -:  336:
+        -:  337:#ifdef SPDLOG_WCHAR_TO_UTF8_SUPPORT
+        -:  338:    template <typename... Args>
+        -:  339:    void log_(source_loc loc, level::level_enum lvl, wstring_view_t fmt, Args &&...args) {
+        -:  340:        bool log_enabled = should_log(lvl);
+        -:  341:        bool traceback_enabled = tracer_.enabled();
+        -:  342:        if (!log_enabled && !traceback_enabled) {
+        -:  343:            return;
+        -:  344:        }
+        -:  345:        SPDLOG_TRY {
+        -:  346:            // format to wmemory_buffer and convert to utf8
+        -:  347:            wmemory_buf_t wbuf;
+        -:  348:            fmt_lib::vformat_to(std::back_inserter(wbuf), fmt,
+        -:  349:                                fmt_lib::make_format_args<fmt_lib::wformat_context>(args...));
+        -:  350:
+        -:  351:            memory_buf_t buf;
+        -:  352:            details::os::wstr_to_utf8buf(wstring_view_t(wbuf.data(), wbuf.size()), buf);
+        -:  353:            details::log_msg log_msg(loc, name_, lvl, string_view_t(buf.data(), buf.size()));
+        -:  354:            log_it_(log_msg, log_enabled, traceback_enabled);
+        -:  355:        }
+        -:  356:        SPDLOG_LOGGER_CATCH(loc)
+        -:  357:    }
+        -:  358:#endif  // SPDLOG_WCHAR_TO_UTF8_SUPPORT
+        -:  359:
+        -:  360:    // log the given message (if the given log level is high enough),
+        -:  361:    // and save backtrace (if backtrace is enabled).
+        -:  362:    void log_it_(const details::log_msg &log_msg, bool log_enabled, bool traceback_enabled);
+        -:  363:    virtual void sink_it_(const details::log_msg &msg);
+        -:  364:    virtual void flush_();
+        -:  365:    void dump_backtrace_();
+        -:  366:    bool should_flush_(const details::log_msg &msg);
+        -:  367:
+        -:  368:    // handle errors during logging.
+        -:  369:    // default handler prints the error to stderr at max rate of 1 message/sec.
+        -:  370:    void err_handler_(const std::string &msg);
+        -:  371:};
+        -:  372:
+        -:  373:void swap(logger &a, logger &b);
+        -:  374:
+        -:  375:}  // namespace spdlog
+        -:  376:
+        -:  377:#ifdef SPDLOG_HEADER_ONLY
+        -:  378:    #include "logger-inl.h"
+        -:  379:#endif
