@@ -1324,7 +1324,7 @@ void ReplicationServer::disconnect_timed_out_clients() {
 }
 
 void ReplicationServer::push_dirty_info_to_listeners(ecs::Registry& registry) {
-    const ecs::Registry::DirtyFrameScope dirty_scope = registry.dirty_scope();
+    const auto dirty_scope = registry.dirty_scope();
     const ecs::Registry::DirtyView dirty = dirty_scope.view();
     rediscover_replicated_entities(registry, dirty);
     const SyncSettings& settings = registry.get<SyncSettings>();

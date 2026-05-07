@@ -1272,6 +1272,10 @@ ReplicationClientMode ReplicationClient::entity_mode(ClientEntityNetworkId netwo
     return state != nullptr ? state->mode : options_.default_entity_mode;
 }
 
+bool ReplicationClient::has_entity(ClientEntityNetworkId network_id) const noexcept {
+    return find_entity_state(network_id) != nullptr;
+}
+
 bool ReplicationClient::set_interpolation_buffer_frames(SyncFrame frames) noexcept {
     if (!clock_.set_interpolation_buffer_frames(frames)) {
         return false;

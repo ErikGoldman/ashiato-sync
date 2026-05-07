@@ -290,6 +290,38 @@ TEST_CASE("set entity mode switches buffered entities to predict and seeds predi
     REQUIRE(registry.get<PredictedPosition>(local).x == 2.0f);
 }
 
+TEST_CASE("set entity mode switches unmaterialized buffered entities to predict") {
+    ecs::Registry registry;
+    const ecs::Entity position_component =
+        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, kage::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    kage::sync::configure_client(registry, 1);
+
+    const ecs::Entity server_entity = registry.create();
+    kage::sync::ReplicationClientOptions options;
+    options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    options.interpolation_buffer_frames = 2;
+    options.interpolation_buffer_capacity_frames = 8;
+    kage::sync::ReplicationClient client(options);
+
+    const kage::sync::ClientEntityNetworkId network_id = test_client_entity_network_id(1, server_entity);
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{3.0f, 0.0f})));
+    REQUIRE(client.has_entity(network_id));
+    REQUIRE_FALSE(client.local_entity(network_id));
+
+    client.set_entity_mode(registry, network_id, kage::sync::ReplicationClientMode::Predict);
+
+    const ecs::Entity local = client.local_entity(network_id);
+    REQUIRE(local);
+    REQUIRE(registry.alive(local));
+    REQUIRE(client.entity_mode(network_id) == kage::sync::ReplicationClientMode::Predict);
+    REQUIRE(registry.get<PredictedPosition>(local).x == 3.0f);
+}
+
 TEST_CASE("set entity mode switches an entity by client network id") {
     ecs::Registry registry;
     const ecs::Entity position_component =

@@ -8,8 +8,11 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <limits>
+#include <random>
 #include <string>
 #include <utility>
+#include <vector>
 
 using namespace kage_sync_tests;
 
@@ -26,6 +29,42 @@ struct SmokeClient {
     ecs::Registry registry;
     kage::sync::ReplicationClient client;
 };
+
+struct LifecycleEntity {
+    ecs::Entity entity;
+    int remaining_ticks = 0;
+};
+
+std::size_t predicted_position_count(ecs::Registry& registry) {
+    std::size_t count = 0;
+    registry.view<const PredictedPosition>().each([&](ecs::Entity, const PredictedPosition&) {
+        ++count;
+    });
+    return count;
+}
+
+kage::sync::SyncArchetypeId define_sampled_predicted_archetype(ecs::Registry& registry) {
+    const ecs::Entity position =
+        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    kage::sync::set_fractional_tick_sampled(registry, position);
+    return kage::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position, kage::sync::ReplicationAudience::All}});
+}
+
+std::size_t displayed_predicted_position_count(
+    kage::sync::ReplicationClient& client,
+    ecs::Registry& registry) {
+    std::size_t count = 0;
+    for (const kage::sync::FractionalTickSample& sample : client.fractional_tick_frame(registry).entities) {
+        PredictedPosition position;
+        if (sample.try_get_sampled_value(registry, position)) {
+            ++count;
+        }
+    }
+    return count;
+}
 
 }  // namespace
 
@@ -183,4 +222,183 @@ TEST_CASE("three clients connect with prediction snap and buffered interpolation
     REQUIRE(buffered_x <= server_x);
     REQUIRE(buffered_x >= server_x - 8.0f);
     REQUIRE(buffered_x == Catch::Approx(expected_buffered_x).margin(2.0f));
+}
+
+TEST_CASE("lifecycle churn stays bounded while switching buffered and predicted under latency spikes") {
+    using Link = kage::sync::SimulatedLink<ecs::BitBuffer, kage::sync::ClientId>;
+
+    constexpr std::size_t target_entities = 100;
+    constexpr int warmup_ticks = 180;
+    constexpr int total_ticks = 960;
+    constexpr double tick_dt = 1.0 / 60.0;
+    constexpr std::size_t min_client_entities = 70;
+    constexpr std::size_t max_client_entities = 130;
+
+    ecs::Registry server_registry;
+    const kage::sync::SyncArchetypeId server_archetype = define_predicted_archetype(server_registry);
+    kage::sync::configure_server(server_registry);
+
+    std::mt19937 rng(1701);
+    std::uniform_int_distribution<int> lifetime_ticks(90, 240);
+    std::vector<LifecycleEntity> server_entities;
+    server_entities.reserve(target_entities);
+    std::uint32_t spawn_index = 0;
+    auto spawn_until_target = [&]() {
+        while (server_entities.size() < target_entities) {
+            const ecs::Entity entity = server_registry.create();
+            REQUIRE(server_registry.add<PredictedPosition>(
+                        entity,
+                        PredictedPosition{
+                            static_cast<float>(spawn_index % 17U),
+                            static_cast<float>((spawn_index / 17U) % 17U)})
+                    != nullptr);
+            REQUIRE(start_sync(server_registry, entity, server_archetype));
+            server_entities.push_back(LifecycleEntity{entity, lifetime_ticks(rng)});
+            ++spawn_index;
+        }
+    };
+    auto update_server_world = [&]() {
+        for (LifecycleEntity& entry : server_entities) {
+            PredictedPosition& position = server_registry.write<PredictedPosition>(entry.entity);
+            position.x += 0.05f;
+            position.y += 0.025f;
+            --entry.remaining_ticks;
+        }
+        server_entities.erase(
+            std::remove_if(
+                server_entities.begin(),
+                server_entities.end(),
+                [&](const LifecycleEntity& entry) {
+                    if (entry.remaining_ticks > 0) {
+                        return false;
+                    }
+                    REQUIRE(server_registry.destroy(entry.entity));
+                    return true;
+                }),
+            server_entities.end());
+        spawn_until_target();
+    };
+    spawn_until_target();
+
+    double now_seconds = 0.0;
+    Link upstream({35.0, 0.0, 0.0}, 41U);
+    Link downstream({35.0, 0.0, 0.0}, 42U);
+
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.fixed_dt_seconds = tick_dt;
+    server_options.bandwidth_limit_bytes_per_tick = 1024U * 1024U;
+    server_options.transport = [&](kage::sync::ClientId peer, const ecs::BitBuffer& packet) {
+        REQUIRE(downstream.enqueue(peer, packet, now_seconds));
+    };
+    kage::sync::ReplicationServer server(server_options);
+    REQUIRE(server.add_client(1));
+
+    ecs::Registry client_registry;
+    kage::sync::configure_client(client_registry, 1);
+    const kage::sync::SyncArchetypeId client_archetype = define_sampled_predicted_archetype(client_registry);
+    REQUIRE(client_archetype == server_archetype);
+
+    std::vector<kage::sync::ClientEntityNetworkId> known_entities;
+    known_entities.reserve(target_entities * 2U);
+    kage::sync::ReplicationClientMode client_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    kage::sync::ReplicationClientOptions client_options;
+    client_options.fixed_dt_seconds = tick_dt;
+    client_options.default_entity_mode = client_mode;
+    client_options.auto_interpolation_buffer_frames = false;
+    client_options.interpolation_buffer_frames = 3;
+    client_options.interpolation_buffer_capacity_frames = 128;
+    client_options.auto_prediction_lead_frames = false;
+    client_options.prediction_lead_frames = 3;
+    client_options.prediction_buffer_capacity_frames = 128;
+    client_options.rollback_policy = kage::sync::ReplicationRollbackPolicy::OnlyAffected;
+    client_options.entity_mode_selector = [&](const kage::sync::ReplicatedEntityUpdateView& update) {
+        if (std::find(known_entities.begin(), known_entities.end(), update.client_entity_network_id) ==
+            known_entities.end()) {
+            known_entities.push_back(update.client_entity_network_id);
+        }
+        return client_mode;
+    };
+    kage::sync::ReplicationClient client(client_options);
+    client.simulation_job<PredictedPosition>(client_registry, 0).each(
+        [](ecs::Entity, PredictedPosition& position) {
+            position.x += 0.05f;
+            position.y += 0.025f;
+        });
+    client.set_packet_sender([&](const ecs::BitBuffer& packet) {
+        REQUIRE(upstream.enqueue(1, packet, now_seconds));
+    });
+
+    auto switch_client_mode = [&](kage::sync::ReplicationClientMode mode) {
+        client_mode = mode;
+        REQUIRE(client.set_default_entity_mode(mode));
+        for (const kage::sync::ClientEntityNetworkId network_id : known_entities) {
+            try {
+                client.set_entity_mode(client_registry, network_id, mode);
+            } catch (const kage::sync::ClientError& error) {
+                if (error.status() != kage::sync::ClientStatus::EntityNotFound &&
+                    error.status() != kage::sync::ClientStatus::EntityUnavailable) {
+                    throw;
+                }
+            }
+        }
+        known_entities.erase(
+            std::remove_if(
+                known_entities.begin(),
+                known_entities.end(),
+                [&](kage::sync::ClientEntityNetworkId network_id) {
+                    return !client.has_entity(network_id);
+                }),
+            known_entities.end());
+    };
+
+    std::size_t min_seen = std::numeric_limits<std::size_t>::max();
+    std::size_t max_seen = 0;
+    for (int tick = 0; tick < total_ticks; ++tick) {
+        if (tick == 240 || tick == 600) {
+            switch_client_mode(kage::sync::ReplicationClientMode::Predict);
+        } else if (tick == 420 || tick == 780) {
+            switch_client_mode(kage::sync::ReplicationClientMode::BufferedInterpolation);
+        }
+
+        if ((tick >= 300 && tick < 390) || (tick >= 660 && tick < 750)) {
+            upstream.settings.latency_ms = 450.0;
+            downstream.settings.latency_ms = 450.0;
+        } else {
+            upstream.settings.latency_ms = 35.0;
+            downstream.settings.latency_ms = 35.0;
+        }
+
+        downstream.deliver_ready(now_seconds, [&](kage::sync::ClientId peer, const ecs::BitBuffer& packet) {
+            REQUIRE(peer == 1);
+            client.receive_packet(packet);
+        });
+
+        REQUIRE(client.tick(client_registry, tick_dt));
+
+        upstream.deliver_ready(now_seconds, [&](kage::sync::ClientId peer, const ecs::BitBuffer& packet) {
+            REQUIRE(peer == 1);
+            server.receive_packet(peer, packet);
+        });
+
+        update_server_world();
+        REQUIRE(server.tick(server_registry, tick_dt));
+        REQUIRE(server_entities.size() == target_entities);
+
+        const std::size_t client_entities = predicted_position_count(client_registry);
+        const std::size_t displayed_entities = displayed_predicted_position_count(client, client_registry);
+        if (tick >= warmup_ticks) {
+            CAPTURE(tick, client_entities, displayed_entities, client_mode, upstream.settings.latency_ms);
+            REQUIRE(client_entities >= min_client_entities);
+            REQUIRE(client_entities <= max_client_entities);
+            REQUIRE(displayed_entities >= min_client_entities);
+            REQUIRE(displayed_entities <= max_client_entities);
+            min_seen = std::min(min_seen, client_entities);
+            max_seen = std::max(max_seen, client_entities);
+        }
+
+        now_seconds += tick_dt;
+    }
+
+    REQUIRE(min_seen <= target_entities);
+    REQUIRE(max_seen >= target_entities);
 }

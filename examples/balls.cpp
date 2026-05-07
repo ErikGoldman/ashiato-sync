@@ -810,19 +810,21 @@ void update_client_mode_hotkeys(
         client_mode = mode;
         (void)client.set_default_entity_mode(mode);
         for (const kage::sync::ClientEntityNetworkId network_id : known_entities) {
-            const ecs::Entity local = client.local_entity(network_id);
-            if (!local || !client_registry.alive(local)) {
-                continue;
+            try {
+                client.set_entity_mode(client_registry, network_id, mode);
+            } catch (const kage::sync::ClientError& error) {
+                if (error.status() != kage::sync::ClientStatus::EntityNotFound &&
+                    error.status() != kage::sync::ClientStatus::EntityUnavailable) {
+                    throw;
+                }
             }
-            (void)client.set_entity_mode(client_registry, network_id, mode);
         }
         known_entities.erase(
             std::remove_if(
                 known_entities.begin(),
                 known_entities.end(),
                 [&](kage::sync::ClientEntityNetworkId network_id) {
-                    const ecs::Entity local = client.local_entity(network_id);
-                    return !local || !client_registry.alive(local);
+                    return !client.has_entity(network_id);
                 }),
             known_entities.end());
     };
@@ -1300,6 +1302,8 @@ int main(int argc, char** argv) {
     server_options.trace = trace_options;
 #endif
     kage::sync::ReplicationServer server(server_options);
+    std::vector<kage::sync::ClientEntityNetworkId> known_client_entities;
+    known_client_entities.reserve(max_ball_count);
     kage::sync::ReplicationClientOptions client_options;
     client_options.mtu_bytes = 1200;
     client_options.default_entity_mode = client_mode;
@@ -1311,7 +1315,8 @@ int main(int argc, char** argv) {
     client_options.auto_interpolation_time_dilation_min = time_dilation_min;
     client_options.auto_interpolation_time_dilation_max = time_dilation_max;
     client_options.auto_interpolation_time_dilation_gain = time_dilation_gain;
-    client_options.entity_mode_selector = [&](const kage::sync::ReplicatedEntityUpdateView&) {
+    client_options.entity_mode_selector = [&](const kage::sync::ReplicatedEntityUpdateView& update) {
+        remember_client_entity(known_client_entities, update.client_entity_network_id);
         return client_mode;
     };
     client_options.fixed_dt_seconds = 1.0 / 30.0;
@@ -1331,9 +1336,7 @@ int main(int argc, char** argv) {
     camera.projection = CAMERA_PERSPECTIVE;
 
     std::vector<ServerBall> balls;
-    std::vector<kage::sync::ClientEntityNetworkId> known_client_entities;
     std::vector<RenderedBall> rendered_balls;
-    known_client_entities.reserve(max_ball_count);
     rendered_balls.reserve(max_ball_count);
     int spawn_index = 0;
     float server_accumulator = 0.0f;

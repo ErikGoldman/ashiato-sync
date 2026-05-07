@@ -355,6 +355,7 @@ public:
 
     bool set_default_entity_mode(ReplicationClientMode mode) noexcept;
     void set_entity_mode(ecs::Registry& registry, ClientEntityNetworkId network_id, ReplicationClientMode mode);
+    bool has_entity(ClientEntityNetworkId network_id) const noexcept;
     ReplicationClientMode entity_mode(ClientEntityNetworkId network_id) const noexcept;
     bool set_interpolation_buffer_frames(SyncFrame frames) noexcept;
     SyncFrame current_interpolation_buffer_frames() const noexcept;

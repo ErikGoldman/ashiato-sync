@@ -2,7 +2,6 @@
 
 #include "kage/sync/components.hpp"
 #include "kage/sync/server_frame_consumer.hpp"
-#include "server/bandwidth_controller.hpp"
 
 #include <cstddef>
 #include <cstdint>
