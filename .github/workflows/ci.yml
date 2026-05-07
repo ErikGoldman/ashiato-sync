@@ -12,44 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
-    name: Build and test
-    runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: kage-sync
-
-    steps:
-      - name: Check out kage-sync
-        uses: actions/checkout@v4
-        with:
-          path: kage-sync
-
-      - name: Check out kagesoko ECS
-        uses: actions/checkout@v4
-        with:
-          repository: ErikGoldman/kagesoto
-          path: main
-          token: ${{ secrets.KAGESOTO_CHECKOUT_TOKEN || github.token }}
-
-      - name: Configure
-        run: >
-          cmake -S . -B build
-          -DCMAKE_BUILD_TYPE=RelWithDebInfo
-          -DBUILD_TESTING=ON
-          -DKAGE_SYNC_BUILD_BENCHMARKS=OFF
-          -DKAGE_SYNC_BUILD_EXAMPLES=OFF
-          -DKAGE_SYNC_BUILD_TRACE_VIEWER=OFF
-
-      - name: Build tests
-        run: cmake --build build --parallel --target kage_sync_tests
-
-      - name: Run tests
-        run: ctest --test-dir build --output-on-failure
-
   coverage:
-    name: Coverage
+    name: Build, test, and coverage
     runs-on: ubuntu-latest
 
     permissions:
@@ -74,7 +38,7 @@ jobs:
           path: main
           token: ${{ secrets.KAGESOTO_CHECKOUT_TOKEN || github.token }}
 
-      - name: Configure coverage build
+      - name: Configure
         run: >
           cmake -S . -B build-coverage
           -DCMAKE_BUILD_TYPE=Debug
@@ -84,7 +48,7 @@ jobs:
           -DKAGE_SYNC_BUILD_TRACE_VIEWER=OFF
           -DKAGE_SYNC_ENABLE_COVERAGE=ON
 
-      - name: Build, test, and collect coverage
+      - name: Build tests, run tests, and collect coverage
         run: cmake --build build-coverage --parallel --target coverage
 
       - name: Upload coverage report artifact
