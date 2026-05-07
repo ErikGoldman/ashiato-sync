@@ -74,6 +74,56 @@ jobs:
           name: coverage-report
           path: kage-sync/build-coverage/coverage
 
+  memory-smoke:
+    name: End-to-end memory smoke
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: kage-sync
+
+    env:
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:strict_string_checks=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+
+    steps:
+      - name: Check out kage-sync
+        uses: actions/checkout@v4
+        with:
+          path: kage-sync
+
+      - name: Check out kagesoko ECS
+        uses: actions/checkout@v4
+        with:
+          repository: ErikGoldman/kagesoto
+          path: main
+          token: ${{ secrets.KAGESOTO_CHECKOUT_TOKEN || github.token }}
+
+      - name: Configure sanitizer smoke build
+        run: >
+          cmake -S . -B build-memory-smoke
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined"
+          -DBUILD_TESTING=OFF
+          -DKAGE_SYNC_BUILD_BENCHMARKS=ON
+          -DKAGE_SYNC_BUILD_EXAMPLES=OFF
+          -DKAGE_SYNC_BUILD_TRACE_VIEWER=OFF
+          -DKAGE_SYNC_KAGESOKO_SOURCE_DIR=${{ github.workspace }}/main
+          -DKAGE_SYNC_BALL_STRESS_RUN_ARGS="--duration-seconds 5 --report text"
+          -DKAGE_SYNC_PREDICTION_STRESS_RUN_ARGS="--ticks 900 --latency-frames 10 --misprediction-percent 5 --report text"
+
+      - name: Build end-to-end smoke tools
+        run: cmake --build build-memory-smoke --parallel --target kage_sync_ball_stress kage_sync_prediction_stress
+
+      - name: Run ball stress under sanitizers
+        run: cmake --build build-memory-smoke --target run_kage_sync_ball_stress
+
+      - name: Run prediction stress under sanitizers
+        run: cmake --build build-memory-smoke --target run_kage_sync_prediction_stress
+
   benchmarks:
     name: Characteristic benchmarks
     runs-on: ubuntu-latest
@@ -134,6 +184,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - coverage
+      - memory-smoke
       - benchmarks
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
 
