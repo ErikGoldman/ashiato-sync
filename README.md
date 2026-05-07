@@ -4,8 +4,8 @@
 [![Coverage](https://img.shields.io/endpoint?url=https://erikgoldman.github.io/kage-sync/coverage.json)](https://erikgoldman.github.io/kage-sync/)
 
 Kage Sync is a C++17 library for fixed-tick, predictive networking on top of the
-kagesoko ECS. The project is separate from the ECS implementation in
-`../main`; sync code, tests, and benchmarks live here.
+kagesoko ECS. The project is separate from the ECS implementation; sync code,
+tests, and benchmarks live here.
 
 The current implementation provides the v0 replication foundation:
 
@@ -27,7 +27,7 @@ The current implementation provides the v0 replication foundation:
 
 - CMake 3.16 or newer
 - A C++17 compiler
-- The kagesoko ECS checkout at `../main`
+- Git, for CMake to fetch the pinned kagesoko ECS revision
 
 Tests fetch Catch2 with CMake `FetchContent`. Benchmarks fetch Google Benchmark
 when enabled.
@@ -40,6 +40,9 @@ cmake --build build
 ```
 
 The library target is `kage_sync`, with the alias target `kage::sync`.
+CMake fetches kagesoko from GitHub at the pinned `KAGE_SYNC_KAGESOKO_GIT_TAG`.
+For local ECS development, pass
+`-DKAGE_SYNC_KAGESOKO_SOURCE_DIR=/path/to/kagesoko` to use a checkout instead.
 
 ## Examples
 

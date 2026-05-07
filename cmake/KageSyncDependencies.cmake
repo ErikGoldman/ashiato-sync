@@ -3,12 +3,35 @@ include(FetchContent)
 function(kage_sync_add_ecs_dependency)
     set(kage_sync_build_testing ${BUILD_TESTING})
 
+    set(KAGE_SYNC_KAGESOKO_GIT_REPOSITORY
+        "https://github.com/ErikGoldman/kagesoto.git"
+        CACHE STRING "kagesoko ECS Git repository"
+    )
+    set(KAGE_SYNC_KAGESOKO_GIT_TAG
+        "eef993892879a6fe6cb9a3ee5129d931f150871a"
+        CACHE STRING "Pinned kagesoko ECS Git commit/tag"
+    )
+    set(KAGE_SYNC_KAGESOKO_SOURCE_DIR
+        ""
+        CACHE PATH "Optional local kagesoko checkout override"
+    )
+
     set(ECS_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
     set(ECS_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
     set(ECS_BUILD_PROFILING OFF CACHE BOOL "" FORCE)
     set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 
-    add_subdirectory("${PROJECT_SOURCE_DIR}/../main" "${PROJECT_BINARY_DIR}/ecs")
+    if(KAGE_SYNC_KAGESOKO_SOURCE_DIR)
+        add_subdirectory("${KAGE_SYNC_KAGESOKO_SOURCE_DIR}" "${PROJECT_BINARY_DIR}/ecs")
+    else()
+        FetchContent_Declare(
+            kagesoko
+            GIT_REPOSITORY "${KAGE_SYNC_KAGESOKO_GIT_REPOSITORY}"
+            GIT_TAG "${KAGE_SYNC_KAGESOKO_GIT_TAG}"
+            GIT_PROGRESS TRUE
+        )
+        FetchContent_MakeAvailable(kagesoko)
+    endif()
 
     set(BUILD_TESTING ${kage_sync_build_testing} CACHE BOOL "" FORCE)
 endfunction()
