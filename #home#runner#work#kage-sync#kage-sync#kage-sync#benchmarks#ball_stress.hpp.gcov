@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/benchmarks/ball_stress.hpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/ball_stress.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/ball_stress.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#pragma once
         -:    2:
         -:    3:#include "kage/sync/simulated_link.hpp"
@@ -1905,13 +1905,19 @@ branch  2 taken 0 (throw)
       133: 1032:            BallBounceCue cue;
       133: 1033:            cue.sequence = static_cast<std::uint32_t>(++report.bounce_cues_emitted);
       133: 1034:            cue.energy = 255U;
-      133: 1035:            (void)emit_cue(
-        -: 1036:                registry,
-        -: 1037:                ball.entity,
-      133: 1038:                static_cast<SyncFrame>(report.ticks + 1U),
+      266: 1035:            (void)registry.write<CueDispatcher>().emit(
 call    0 returned 133
 branch  1 taken 133 (fallthrough)
 branch  2 taken 0 (throw)
+call    3 returned 133
+branch  4 taken 133 (fallthrough)
+branch  5 taken 0 (throw)
+        -: 1036:                registry.get<SyncSettings>(),
+      133: 1037:                static_cast<SyncFrame>(report.ticks + 1U),
+call    0 returned 133
+branch  1 taken 133 (fallthrough)
+branch  2 taken 0 (throw)
+        -: 1038:                ball.entity,
         -: 1039:                cue,
         -: 1040:                0.25f);
       133: 1041:            add_poison(registry, ball.entity, config, rng, report);

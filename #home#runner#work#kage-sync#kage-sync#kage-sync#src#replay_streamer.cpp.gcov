@@ -1,0 +1,884 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/replay_streamer.cpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/replay_streamer.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/replay_streamer.cpp.gcda
+        -:    0:Runs:317
+        -:    1:#include "kage/sync/replay_streamer.hpp"
+        -:    2:
+        -:    3:#include "detail/frame_data.hpp"
+        -:    4:
+        -:    5:#include "kage/sync/components.hpp"
+        -:    6:
+        -:    7:#include <algorithm>
+        -:    8:#include <limits>
+        -:    9:#include <stdexcept>
+        -:   10:#include <unordered_set>
+        -:   11:#include <utility>
+        -:   12:
+        -:   13:namespace kage::sync {
+        -:   14:
+        -:   15:struct ReplicationReplayStreamSessionAccess {
+function _ZN4kage4sync36ReplicationReplayStreamSessionAccess8entitiesERNS0_30ReplicationReplayStreamSessionE called 19 returned 100% blocks executed 100%
+       19:   16:    static std::unordered_map<std::uint32_t, ecs::Entity>& entities(ReplicationReplayStreamSession& session) {
+       19:   17:        return session.entities_;
+        -:   18:    }
+        -:   19:
+        -:   20:    static const std::unordered_map<std::uint32_t, ecs::Entity>& entities(const ReplicationReplayStreamSession& session) {
+        -:   21:        return session.entities_;
+        -:   22:    }
+        -:   23:
+function _ZN4kage4sync36ReplicationReplayStreamSessionAccess6framesERNS0_30ReplicationReplayStreamSessionE called 25 returned 100% blocks executed 100%
+       25:   24:    static std::vector<ReplicationReplayFrame>& frames(ReplicationReplayStreamSession& session) {
+       25:   25:        return session.frames_;
+        -:   26:    }
+        -:   27:
+        -:   28:    static const std::vector<ReplicationReplayFrame>& frames(const ReplicationReplayStreamSession& session) {
+        -:   29:        return session.frames_;
+        -:   30:    }
+        -:   31:
+function _ZN4kage4sync36ReplicationReplayStreamSessionAccess7scratchERNS0_30ReplicationReplayStreamSessionE called 10 returned 100% blocks executed 100%
+       10:   32:    static std::vector<std::uint8_t>& scratch(ReplicationReplayStreamSession& session) {
+       10:   33:        return session.scratch_;
+        -:   34:    }
+        -:   35:};
+        -:   36:
+        -:   37:namespace {
+        -:   38:
+        -:   39:struct ReplayApplyReferenceContextData {
+        -:   40:    ReplicationReplayStreamSession* session = nullptr;
+        -:   41:};
+        -:   42:
+function _ZN4kage4sync12_GLOBAL__N_126replay_network_id_for_wireEPvj called 1 returned 100% blocks executed 75%
+        1:   43:ClientEntityNetworkId replay_network_id_for_wire(void*, std::uint32_t wire_network_id) {
+        1:   44:    if (wire_network_id == 0U) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:   45:        return invalid_client_entity_network_id;
+        -:   46:    }
+        1:   47:    return make_client_entity_network_id(0U, wire_network_id, 1U);
+call    0 returned 1
+        -:   48:}
+        -:   49:
+function _ZN4kage4sync12_GLOBAL__N_119replay_local_entityEPvm called 1 returned 100% blocks executed 88%
+        1:   50:ecs::Entity replay_local_entity(void* userContext, ClientEntityNetworkId network_id) {
+        1:   51:    auto& data = *static_cast<ReplayApplyReferenceContextData*>(userContext);
+        1:   52:    if (data.session == nullptr) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:   53:        return {};
+        -:   54:    }
+        1:   55:    const std::uint32_t replay_id = client_entity_network_id_wire_id(network_id);
+call    0 returned 1
+        1:   56:    const auto& entities = ReplicationReplayStreamSessionAccess::entities(*data.session);
+call    0 returned 1
+        1:   57:    const auto found = entities.find(replay_id);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+       1*:   58:    return found == entities.end() ? ecs::Entity{} : found->second;
+call    0 returned 1
+call    1 returned 1
+branch  2 taken 0 (fallthrough)
+branch  3 taken 1
+call    4 returned 1
+        -:   59:}
+        -:   60:
+function _ZN4kage4sync12_GLOBAL__N_122make_reference_contextERNS0_30ReplicationReplayStreamSessionE called 10 returned 100% blocks executed 100%
+       10:   61:EntityReferenceContext make_reference_context(ReplicationReplayStreamSession& session) {
+        -:   62:    static thread_local ReplayApplyReferenceContextData data;
+       10:   63:    data.session = &session;
+        -:   64:
+       10:   65:    EntityReferenceContext context;
+       10:   66:    context.userContext = &data;
+       10:   67:    context.client_entity_network_id_for_wire = &replay_network_id_for_wire;
+       10:   68:    context.client_local_entity = &replay_local_entity;
+       10:   69:    return context;
+        -:   70:}
+        -:   71:
+function _ZN4kage4sync12_GLOBAL__N_120entity_for_replay_idERNS0_30ReplicationReplayStreamSessionERN3ecs8RegistryEj called 10 returned 100% blocks executed 95%
+       10:   72:ecs::Entity entity_for_replay_id(
+        -:   73:    ReplicationReplayStreamSession& session,
+        -:   74:    ecs::Registry& registry,
+        -:   75:    std::uint32_t replay_id) {
+       10:   76:    if (replay_id == 0U) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 10
+    #####:   77:        return {};
+        -:   78:    }
+       10:   79:    auto& entities = ReplicationReplayStreamSessionAccess::entities(session);
+call    0 returned 10
+       10:   80:    const auto found = entities.find(replay_id);
+call    0 returned 10
+branch  1 taken 10 (fallthrough)
+branch  2 taken 0 (throw)
+       10:   81:    if (found != entities.end() && registry.alive(found->second)) {
+call    0 returned 10
+call    1 returned 10
+branch  2 taken 5 (fallthrough)
+branch  3 taken 5
+call    4 returned 5
+call    5 returned 5
+branch  6 taken 5 (fallthrough)
+branch  7 taken 0
+branch  8 taken 5 (fallthrough)
+branch  9 taken 5
+        5:   82:        return found->second;
+call    0 returned 5
+        -:   83:    }
+        5:   84:    const ecs::Entity entity = registry.create();
+call    0 returned 5
+branch  1 taken 5 (fallthrough)
+branch  2 taken 0 (throw)
+        5:   85:    entities[replay_id] = entity;
+call    0 returned 5
+branch  1 taken 5 (fallthrough)
+branch  2 taken 0 (throw)
+        5:   86:    return entity;
+        -:   87:}
+        -:   88:
+function _ZN4kage4sync12_GLOBAL__N_121destroy_replay_entityERNS0_30ReplicationReplayStreamSessionERN3ecs8RegistryEj called 1 returned 100% blocks executed 92%
+        1:   89:void destroy_replay_entity(
+        -:   90:    ReplicationReplayStreamSession& session,
+        -:   91:    ecs::Registry& registry,
+        -:   92:    std::uint32_t replay_id) {
+        1:   93:    auto& entities = ReplicationReplayStreamSessionAccess::entities(session);
+call    0 returned 1
+        1:   94:    const auto found = entities.find(replay_id);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:   95:    if (found == entities.end()) {
+call    0 returned 1
+call    1 returned 1
+branch  2 taken 0 (fallthrough)
+branch  3 taken 1
+    #####:   96:        return;
+        -:   97:    }
+        1:   98:    registry.destroy(found->second);
+call    0 returned 1
+call    1 returned 1
+branch  2 taken 1 (fallthrough)
+branch  3 taken 0 (throw)
+        1:   99:    entities.erase(found);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  100:}
+        -:  101:
+function _ZN4kage4sync12_GLOBAL__N_110apply_tagsERN3ecs8RegistryENS2_6EntityERKNS0_13SyncArchetypeEm called 10 returned 100% blocks executed 50%
+       10:  102:void apply_tags(
+        -:  103:    ecs::Registry& registry,
+        -:  104:    ecs::Entity entity,
+        -:  105:    const SyncArchetype& archetype,
+        -:  106:    std::uint64_t tag_mask) {
+      10*:  107:    for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
+call    0 returned 10
+branch  1 taken 0
+branch  2 taken 10 (fallthrough)
+    #####:  108:        const ecs::Entity tag = archetype.tags[tag_index].tag;
+call    0 never executed
+    #####:  109:        if ((tag_mask & (std::uint64_t{1} << tag_index)) != 0U) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  110:            registry.add_tag(entity, tag);
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+        -:  111:        } else {
+    #####:  112:            registry.remove_tag(entity, tag);
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+        -:  113:        }
+        -:  114:    }
+       10:  115:}
+        -:  116:
+function _ZN4kage4sync12_GLOBAL__N_116apply_componentsERN3ecs8RegistryENS2_6EntityERKNS0_13SyncArchetypeEmRNS2_9BitBufferERNS0_22EntityReferenceContextERNS0_30ReplicationReplayStreamSessionE called 10 returned 100% blocks executed 75%
+       10:  117:bool apply_components(
+        -:  118:    ecs::Registry& registry,
+        -:  119:    ecs::Entity entity,
+        -:  120:    const SyncArchetype& archetype,
+        -:  121:    std::uint64_t present_mask,
+        -:  122:    ecs::BitBuffer& payload,
+        -:  123:    EntityReferenceContext& references,
+        -:  124:    ReplicationReplayStreamSession& session) {
+       10:  125:    const auto component_count = static_cast<std::uint16_t>(payload.read_bits(16U));
+call    0 returned 10
+       20:  126:    for (std::uint16_t component = 0; component < component_count; ++component) {
+branch  0 taken 10
+branch  1 taken 10 (fallthrough)
+       10:  127:        const auto component_index = static_cast<std::uint16_t>(payload.read_bits(16U));
+call    0 returned 10
+branch  1 taken 10 (fallthrough)
+branch  2 taken 0 (throw)
+       10:  128:        const auto component_bits = static_cast<std::uint16_t>(payload.read_bits(16U));
+call    0 returned 10
+branch  1 taken 10 (fallthrough)
+branch  2 taken 0 (throw)
+       10:  129:        ecs::BitBuffer component_payload;
+call    0 returned 10
+       10:  130:        payload.read_buffer_bits(component_payload, component_bits);
+call    0 returned 10
+branch  1 taken 10 (fallthrough)
+branch  2 taken 0 (throw)
+      20*:  131:        if (component_index >= archetype.components.size() ||
+call    0 returned 10
+branch  1 taken 10 (fallthrough)
+branch  2 taken 0
+branch  3 taken 0 (fallthrough)
+branch  4 taken 10
+branch  5 taken 0 (fallthrough)
+branch  6 taken 10
+       10:  132:            component_index >= archetype.component_ops.size()) {
+call    0 returned 10
+    #####:  133:            continue;
+        -:  134:        }
+       10:  135:        const SyncComponentOps& ops = archetype.component_ops[component_index];
+call    0 returned 10
+      10*:  136:        if (ops.serialization.deserialize == nullptr ||
+branch  0 taken 10 (fallthrough)
+branch  1 taken 0
+       10:  137:            ops.serialization.push_to_registry == nullptr ||
+branch  0 taken 10 (fallthrough)
+branch  1 taken 0
+       10:  138:            ops.serialization.quantized_size == 0U) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 10
+    #####:  139:            continue;
+        -:  140:        }
+       10:  141:        std::vector<std::uint8_t>& scratch = ReplicationReplayStreamSessionAccess::scratch(session);
+call    0 returned 10
+       10:  142:        scratch.assign(ops.serialization.quantized_size, 0U);
+call    0 returned 10
+branch  1 taken 10 (fallthrough)
+branch  2 taken 0 (throw)
+      10*:  143:        ecs::ComponentSerializationContext serialization_context{ops.references_entities ? &references : nullptr};
+branch  0 taken 0 (fallthrough)
+branch  1 taken 10
+      10*:  144:        if (!ops.serialization.deserialize(
+call    0 returned 10
+call    1 returned 10
+branch  2 taken 10 (fallthrough)
+branch  3 taken 0 (throw)
+branch  4 taken 0 (fallthrough)
+branch  5 taken 10
+        -:  145:                component_payload,
+        -:  146:                nullptr,
+        -:  147:                scratch.data(),
+       10:  148:                ops.references_entities ? &serialization_context : nullptr)) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 10
+    #####:  149:            return false;
+        -:  150:        }
+       10:  151:        if (!ops.serialization.push_to_registry(registry, entity, scratch.data())) {
+call    0 returned 10
+call    1 returned 10
+branch  2 taken 10 (fallthrough)
+branch  3 taken 0 (throw)
+branch  4 taken 0 (fallthrough)
+branch  5 taken 10
+    #####:  152:            return false;
+        -:  153:        }
+       10:  154:    }
+call    0 returned 10
+branch  1 taken 10
+branch  2 taken 0
+branch  3 taken 0
+call    4 never executed
+        -:  155:
+       20:  156:    for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
+call    0 returned 20
+branch  1 taken 10
+branch  2 taken 10 (fallthrough)
+       10:  157:        if ((present_mask & (std::uint64_t{1} << component_index)) == 0U) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 10
+    #####:  158:            registry.remove(entity, archetype.components[component_index].component);
+call    0 never executed
+call    1 never executed
+        -:  159:        }
+        -:  160:    }
+       10:  161:    return true;
+        -:  162:}
+        -:  163:
+        -:  164:}  // namespace
+        -:  165:
+function _ZN4kage4sync25ReplicationReplayStreamerC2ENS0_32ReplicationReplayStreamerOptionsE called 4 returned 100% blocks executed 83%
+        4:  166:ReplicationReplayStreamer::ReplicationReplayStreamer(ReplicationReplayStreamerOptions options)
+        4:  167:    : options_(options) {
+call    0 returned 4
+        4:  168:    if (options_.max_frames != 0U) {
+branch  0 taken 4 (fallthrough)
+branch  1 taken 0
+        4:  169:        frames_.resize(options_.max_frames);
+call    0 returned 4
+branch  1 taken 4 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  170:    }
+        4:  171:}
+call    0 never executed
+        -:  172:
+function _ZN4kage4sync25ReplicationReplayStreamer5clearEv called 0 returned 0% blocks executed 0%
+    #####:  173:void ReplicationReplayStreamer::clear() {
+    #####:  174:    if (options_.max_frames == 0U) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  175:        frames_.clear();
+call    0 never executed
+        -:  176:    }
+    #####:  177:    head_ = 0;
+    #####:  178:    count_ = 0;
+    #####:  179:}
+        -:  180:
+function _ZN4kage4sync25ReplicationReplayStreamer10push_frameERKNS0_22ReplicationReplayFrameE called 1 returned 100% blocks executed 62%
+        1:  181:void ReplicationReplayStreamer::push_frame(const ReplicationReplayFrame& frame) {
+        1:  182:    if (options_.max_frames == 0U) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:  183:        frames_.push_back(frame);
+call    0 never executed
+    #####:  184:        count_ = frames_.size();
+call    0 never executed
+    #####:  185:        return;
+        -:  186:    }
+        1:  187:    const std::size_t index = (head_ + count_) % frames_.size();
+call    0 returned 1
+        1:  188:    frames_[index] = frame;
+call    0 returned 1
+call    1 returned 1
+        1:  189:    if (count_ < frames_.size()) {
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0
+        1:  190:        ++count_;
+        -:  191:    } else {
+    #####:  192:        head_ = (head_ + 1U) % frames_.size();
+call    0 never executed
+        -:  193:    }
+        -:  194:}
+        -:  195:
+function _ZN4kage4sync25ReplicationReplayStreamer10push_frameEONS0_22ReplicationReplayFrameE called 4 returned 100% blocks executed 73%
+        4:  196:void ReplicationReplayStreamer::push_frame(ReplicationReplayFrame&& frame) {
+        4:  197:    if (options_.max_frames == 0U) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 4
+    #####:  198:        frames_.push_back(std::move(frame));
+call    0 never executed
+call    1 never executed
+    #####:  199:        count_ = frames_.size();
+call    0 never executed
+    #####:  200:        return;
+        -:  201:    }
+        4:  202:    const std::size_t index = (head_ + count_) % frames_.size();
+call    0 returned 4
+        4:  203:    frames_[index] = std::move(frame);
+call    0 returned 4
+call    1 returned 4
+call    2 returned 4
+        4:  204:    if (count_ < frames_.size()) {
+call    0 returned 4
+branch  1 taken 3 (fallthrough)
+branch  2 taken 1
+        3:  205:        ++count_;
+        -:  206:    } else {
+        1:  207:        head_ = (head_ + 1U) % frames_.size();
+call    0 returned 1
+        -:  208:    }
+        -:  209:}
+        -:  210:
+function _ZNK4kage4sync25ReplicationReplayStreamer13begin_sessionEjRN3ecs8RegistryERNS0_17ReplicationServerERNS0_30ReplicationReplayStreamSessionE called 1 returned 100% blocks executed 75%
+        1:  211:bool ReplicationReplayStreamer::begin_session(
+        -:  212:    SyncFrame focus_frame,
+        -:  213:    ecs::Registry& registry,
+        -:  214:    ReplicationServer& server,
+        -:  215:    ReplicationReplayStreamSession& session) const {
+        1:  216:    if (count_ == 0U) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:  217:        return false;
+        -:  218:    }
+        1:  219:    const std::size_t start = find_start_frame(focus_frame);
+call    0 returned 1
+        1:  220:    if (start >= count_) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:  221:        return false;
+        -:  222:    }
+        -:  223:
+        1:  224:    session = {};
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+        1:  225:    session.end_frame = focus_frame + options_.tail_frames;
+        1:  226:    session.active = true;
+        1:  227:    auto& session_frames = ReplicationReplayStreamSessionAccess::frames(session);
+call    0 returned 1
+        3:  228:    for (std::size_t index = start; index < count_; ++index) {
+branch  0 taken 2
+branch  1 taken 1 (fallthrough)
+        2:  229:        const ReplicationReplayFrame& frame = frame_at(index);
+call    0 returned 2
+        2:  230:        if (frame.frame > session.end_frame) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 2
+    #####:  231:            break;
+        -:  232:        }
+        2:  233:        session_frames.push_back(frame);
+call    0 returned 2
+        -:  234:    }
+       1*:  235:    if (session_frames.empty() || !apply_frame(session_frames.front(), registry, session, false)) {
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0
+call    3 returned 1
+call    4 returned 1
+branch  5 taken 0 (fallthrough)
+branch  6 taken 1
+branch  7 taken 0 (fallthrough)
+branch  8 taken 1
+    #####:  236:        session = {};
+call    0 never executed
+call    1 never executed
+call    2 never executed
+    #####:  237:        return false;
+        -:  238:    }
+        1:  239:    server.rediscover_all_replicated_entities(registry);
+call    0 returned 1
+        1:  240:    session.next_frame_index = 0;
+        1:  241:    session.playback_frame = session_frames.front().frame;
+call    0 returned 1
+        1:  242:    return true;
+        -:  243:}
+        -:  244:
+function _ZNK4kage4sync25ReplicationReplayStreamer12tick_sessionERNS0_30ReplicationReplayStreamSessionERN3ecs8RegistryERNS0_17ReplicationServerE called 12 returned 100% blocks executed 88%
+       12:  245:bool ReplicationReplayStreamer::tick_session(
+        -:  246:    ReplicationReplayStreamSession& session,
+        -:  247:    ecs::Registry& registry,
+        -:  248:    ReplicationServer& server) const {
+       12:  249:    if (!session.active) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 12
+    #####:  250:        session.active = false;
+    #####:  251:        return false;
+        -:  252:    }
+       12:  253:    append_available_frames(session);
+call    0 returned 12
+       12:  254:    auto& session_frames = ReplicationReplayStreamSessionAccess::frames(session);
+call    0 returned 12
+       12:  255:    if (session.playback_frame == 0U || session.playback_frame > session.end_frame) {
+branch  0 taken 12 (fallthrough)
+branch  1 taken 0
+branch  2 taken 1 (fallthrough)
+branch  3 taken 11
+        1:  256:        session.active = false;
+        1:  257:        return false;
+        -:  258:    }
+        -:  259:
+       25:  260:    while (session.next_frame_index < session_frames.size() &&
+call    0 returned 15
+branch  1 taken 10 (fallthrough)
+branch  2 taken 5
+branch  3 taken 4
+branch  4 taken 11 (fallthrough)
+       10:  261:           session_frames[session.next_frame_index].frame <= session.playback_frame) {
+call    0 returned 10
+branch  1 taken 4 (fallthrough)
+branch  2 taken 6
+        4:  262:        if (!apply_frame(session_frames[session.next_frame_index], registry, session)) {
+call    0 returned 4
+call    1 returned 4
+branch  2 taken 0 (fallthrough)
+branch  3 taken 4
+    #####:  263:            session.active = false;
+    #####:  264:            return false;
+        -:  265:        }
+        4:  266:        ++session.next_frame_index;
+        -:  267:    }
+        -:  268:
+       11:  269:    if (!server.advance_frame_without_simulating(registry, session.playback_frame)) {
+call    0 returned 11
+branch  1 taken 0 (fallthrough)
+branch  2 taken 11
+    #####:  270:        session.active = false;
+    #####:  271:        return false;
+        -:  272:    }
+       11:  273:    ++session.playback_frame;
+       11:  274:    return true;
+        -:  275:}
+        -:  276:
+function _ZNK4kage4sync25ReplicationReplayStreamer11apply_frameERKNS0_22ReplicationReplayFrameERN3ecs8RegistryERNS0_30ReplicationReplayStreamSessionE called 9 returned 100% blocks executed 100%
+        9:  277:bool ReplicationReplayStreamer::apply_frame(
+        -:  278:    const ReplicationReplayFrame& frame,
+        -:  279:    ecs::Registry& registry,
+        -:  280:    ReplicationReplayStreamSession& session) const {
+        9:  281:    return apply_frame(frame, registry, session, true);
+call    0 returned 9
+        -:  282:}
+        -:  283:
+function _ZNK4kage4sync25ReplicationReplayStreamer11apply_frameERKNS0_22ReplicationReplayFrameERN3ecs8RegistryERNS0_30ReplicationReplayStreamSessionEb called 10 returned 100% blocks executed 71%
+       10:  284:bool ReplicationReplayStreamer::apply_frame(
+        -:  285:    const ReplicationReplayFrame& frame,
+        -:  286:    ecs::Registry& registry,
+        -:  287:    ReplicationReplayStreamSession& session,
+        -:  288:    bool include_cues) const {
+        -:  289:    try {
+       10:  290:        const SyncSettings& settings = registry.get<SyncSettings>();
+call    0 returned 10
+branch  1 taken 10 (fallthrough)
+branch  2 taken 0 (throw)
+       10:  291:        ecs::BitBuffer payload = frame.payload;
+call    0 returned 10
+branch  1 taken 10 (fallthrough)
+branch  2 taken 0 (throw)
+       10:  292:        EntityReferenceContext references = make_reference_context(session);
+call    0 returned 10
+       10:  293:        std::unordered_set<std::uint32_t> full_replay_ids;
+call    0 returned 10
+        -:  294:
+       10:  295:        const auto record_count = static_cast<std::uint16_t>(payload.read_bits(16U));
+call    0 returned 10
+branch  1 taken 10 (fallthrough)
+branch  2 taken 0 (throw)
+       21:  296:        for (std::uint16_t record = 0; record < record_count; ++record) {
+branch  0 taken 11
+branch  1 taken 10 (fallthrough)
+       11:  297:            const bool destroy = payload.read_bool();
+call    0 returned 11
+branch  1 taken 11 (fallthrough)
+branch  2 taken 0 (throw)
+       11:  298:            const auto replay_id = static_cast<std::uint32_t>(payload.read_bits(32U));
+call    0 returned 11
+branch  1 taken 11 (fallthrough)
+branch  2 taken 0 (throw)
+       11:  299:            if (destroy) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 10
+        1:  300:                destroy_replay_entity(session, registry, replay_id);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  301:                continue;
+        -:  302:            }
+       10:  303:            if (frame.kind == ReplicationReplayFrameKind::Full) {
+branch  0 taken 6 (fallthrough)
+branch  1 taken 4
+        6:  304:                full_replay_ids.insert(replay_id);
+call    0 returned 6
+branch  1 taken 6 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  305:            }
+        -:  306:
+       10:  307:            const auto archetype_value = static_cast<std::uint32_t>(payload.read_bits(32U));
+call    0 returned 10
+branch  1 taken 10 (fallthrough)
+branch  2 taken 0 (throw)
+       10:  308:            const auto tag_mask = payload.read_unsigned_bits(64U);
+call    0 returned 10
+branch  1 taken 10 (fallthrough)
+branch  2 taken 0 (throw)
+       10:  309:            const auto present_mask = payload.read_unsigned_bits(64U);
+call    0 returned 10
+branch  1 taken 10 (fallthrough)
+branch  2 taken 0 (throw)
+       10:  310:            if (archetype_value >= settings.archetypes.size()) {
+call    0 returned 10
+branch  1 taken 0 (fallthrough)
+branch  2 taken 10
+    #####:  311:                return false;
+        -:  312:            }
+       10:  313:            const SyncArchetypeId archetype_id{archetype_value};
+       10:  314:            const SyncArchetype& archetype = settings.archetypes[archetype_id.value];
+call    0 returned 10
+       10:  315:            const ecs::Entity entity = entity_for_replay_id(session, registry, replay_id);
+call    0 returned 10
+branch  1 taken 10 (fallthrough)
+branch  2 taken 0 (throw)
+       10:  316:            if (!entity) {
+call    0 returned 10
+branch  1 taken 0 (fallthrough)
+branch  2 taken 10
+    #####:  317:                return false;
+        -:  318:            }
+       10:  319:            if (registry.contains<Replicated>(entity)) {
+call    0 returned 10
+branch  1 taken 10 (fallthrough)
+branch  2 taken 0 (throw)
+branch  3 taken 5 (fallthrough)
+branch  4 taken 5
+        5:  320:                registry.write<Replicated>(entity).archetype = archetype_id;
+call    0 returned 5
+branch  1 taken 5 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  321:            } else {
+        5:  322:                registry.add<Replicated>(entity, Replicated{archetype_id});
+call    0 returned 5
+branch  1 taken 5 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  323:            }
+       10:  324:            apply_tags(registry, entity, archetype, tag_mask);
+call    0 returned 10
+branch  1 taken 10 (fallthrough)
+branch  2 taken 0 (throw)
+       10:  325:            if (!apply_components(registry, entity, archetype, present_mask, payload, references, session)) {
+call    0 returned 10
+branch  1 taken 10 (fallthrough)
+branch  2 taken 0 (throw)
+branch  3 taken 0 (fallthrough)
+branch  4 taken 10
+    #####:  326:                return false;
+        -:  327:            }
+        -:  328:        }
+        -:  329:
+       10:  330:        if (frame.kind == ReplicationReplayFrameKind::Full) {
+branch  0 taken 5 (fallthrough)
+branch  1 taken 5
+        5:  331:            std::vector<std::uint32_t> stale;
+call    0 returned 5
+       11:  332:            for (const auto& mapped : ReplicationReplayStreamSessionAccess::entities(session)) {
+call    0 returned 5
+call    1 returned 5
+call    2 returned 5
+call    3 returned 6
+call    4 returned 6
+call    5 returned 11
+branch  6 taken 6
+branch  7 taken 5 (fallthrough)
+        6:  333:                if (full_replay_ids.find(mapped.first) == full_replay_ids.end()) {
+call    0 returned 6
+call    1 returned 6
+branch  2 taken 6 (fallthrough)
+branch  3 taken 0 (throw)
+call    4 returned 6
+branch  5 taken 0 (fallthrough)
+branch  6 taken 6
+    #####:  334:                    stale.push_back(mapped.first);
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+        -:  335:                }
+        -:  336:            }
+       5*:  337:            for (const std::uint32_t replay_id : stale) {
+call    0 returned 5
+call    1 returned 5
+call    2 never executed
+call    3 never executed
+call    4 returned 5
+branch  5 taken 0
+branch  6 taken 5 (fallthrough)
+    #####:  338:                destroy_replay_entity(session, registry, replay_id);
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+        -:  339:            }
+        5:  340:        }
+call    0 returned 5
+call    1 never executed
+        -:  341:
+      10*:  342:        return !include_cues || apply_cues(registry, settings, payload, references, session);
+branch  0 taken 9 (fallthrough)
+branch  1 taken 1
+call    2 returned 9
+branch  3 taken 9 (fallthrough)
+branch  4 taken 0 (throw)
+branch  5 taken 9 (fallthrough)
+branch  6 taken 0
+       10:  343:    } catch (const std::exception&) {
+call    0 returned 10
+call    1 returned 10
+call    2 never executed
+call    3 never executed
+branch  4 never executed (fallthrough)
+branch  5 never executed
+call    6 never executed
+    =====:  344:        return false;
+    =====:  345:    }
+        -:  346:}
+        -:  347:
+function _ZNK4kage4sync25ReplicationReplayStreamer10apply_cuesERN3ecs8RegistryERKNS0_12SyncSettingsERNS2_9BitBufferERNS0_22EntityReferenceContextERNS0_30ReplicationReplayStreamSessionE called 9 returned 100% blocks executed 79%
+        9:  348:bool ReplicationReplayStreamer::apply_cues(
+        -:  349:    ecs::Registry& registry,
+        -:  350:    const SyncSettings& settings,
+        -:  351:    ecs::BitBuffer& payload,
+        -:  352:    EntityReferenceContext& references,
+        -:  353:    ReplicationReplayStreamSession& session) const {
+        9:  354:    if (!payload.read_bool()) {
+call    0 returned 9
+branch  1 taken 7 (fallthrough)
+branch  2 taken 2
+        7:  355:        return true;
+        -:  356:    }
+        2:  357:    const auto cue_count = static_cast<std::uint16_t>(payload.read_bits(16U));
+call    0 returned 2
+        2:  358:    CueDispatcher& dispatcher = registry.write<CueDispatcher>();
+call    0 returned 2
+        4:  359:    for (std::uint16_t cue_index = 0; cue_index < cue_count; ++cue_index) {
+branch  0 taken 2
+branch  1 taken 2 (fallthrough)
+        2:  360:        const auto owner_replay_id = static_cast<std::uint32_t>(payload.read_bits(32U));
+call    0 returned 2
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0 (throw)
+        2:  361:        const auto frame = static_cast<SyncFrame>(payload.read_bits(32U));
+call    0 returned 2
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0 (throw)
+        2:  362:        const auto type = static_cast<SyncCueTypeId>(payload.read_bits(16U));
+call    0 returned 2
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0 (throw)
+        2:  363:        float relevance_seconds = 0.0f;
+        2:  364:        payload.read_bytes(reinterpret_cast<char*>(&relevance_seconds), sizeof(relevance_seconds));
+call    0 returned 2
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0 (throw)
+        2:  365:        const bool only_replicate_to_owner = payload.read_bool();
+call    0 returned 2
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0 (throw)
+        2:  366:        const auto cue_bits = static_cast<std::uint16_t>(payload.read_bits(16U));
+call    0 returned 2
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0 (throw)
+        2:  367:        ecs::BitBuffer cue_payload;
+call    0 returned 2
+        2:  368:        payload.read_buffer_bits(cue_payload, cue_bits);
+call    0 returned 2
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  369:
+        2:  370:        const auto& entities = ReplicationReplayStreamSessionAccess::entities(session);
+call    0 returned 2
+        2:  371:        const auto found_owner = entities.find(owner_replay_id);
+call    0 returned 2
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0 (throw)
+       2*:  372:        if (found_owner == entities.end() || type >= settings.cue_ops.size()) {
+call    0 returned 2
+call    1 returned 2
+branch  2 taken 2 (fallthrough)
+branch  3 taken 0
+call    4 returned 2
+branch  5 taken 0 (fallthrough)
+branch  6 taken 2
+branch  7 taken 0 (fallthrough)
+branch  8 taken 2
+    #####:  373:            continue;
+        -:  374:        }
+        2:  375:        const SyncCueOps& ops = settings.cue_ops[type];
+call    0 returned 2
+        2:  376:        QueuedSyncCue cue;
+call    0 returned 2
+        2:  377:        cue.entity = found_owner->second;
+call    0 returned 2
+        2:  378:        cue.frame = frame;
+        2:  379:        cue.type = type;
+        2:  380:        cue.relevance_seconds = relevance_seconds;
+        2:  381:        cue.only_replicate_to_owner = only_replicate_to_owner;
+        2:  382:        if (ops.references_entities) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 1
+       1*:  383:            if (ops.deserialize_value == nullptr) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:  384:                continue;
+        -:  385:            }
+        1:  386:            cue.value = ops.deserialize_value(cue_payload, &references);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 returned 1
+call    4 returned 1
+       1*:  387:            if (!cue.value) {
+call    0 returned 1
+branch  1 taken 0 (fallthrough)
+branch  2 taken 1
+    #####:  388:                continue;
+        -:  389:            }
+        -:  390:        } else {
+        1:  391:            cue.payload = std::move(cue_payload);
+call    0 returned 1
+call    1 returned 1
+        -:  392:        }
+        2:  393:        (void)dispatcher.enqueue(std::move(cue));
+call    0 returned 2
+call    1 returned 2
+call    2 returned 2
+branch  3 taken 2 (fallthrough)
+branch  4 taken 0 (throw)
+call    5 returned 2
+call    6 never executed
+        2:  394:    }
+call    0 returned 2
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0
+call    3 returned 2
+branch  4 taken 2 (fallthrough)
+branch  5 taken 0
+call    6 never executed
+call    7 never executed
+        2:  395:    return true;
+        -:  396:}
+        -:  397:
+function _ZNK4kage4sync25ReplicationReplayStreamer8frame_atEm called 37 returned 100% blocks executed 100%
+       37:  398:const ReplicationReplayFrame& ReplicationReplayStreamer::frame_at(std::size_t index) const {
+       37:  399:    return frames_[(head_ + index) % frames_.size()];
+call    0 returned 37
+call    1 returned 37
+        -:  400:}
+        -:  401:
+function _ZNK4kage4sync25ReplicationReplayStreamer23append_available_framesERNS0_30ReplicationReplayStreamSessionE called 12 returned 100% blocks executed 93%
+       12:  402:void ReplicationReplayStreamer::append_available_frames(ReplicationReplayStreamSession& session) const {
+       12:  403:    auto& session_frames = ReplicationReplayStreamSessionAccess::frames(session);
+call    0 returned 12
+       12:  404:    if (session_frames.empty()) {
+call    0 returned 12
+branch  1 taken 0 (fallthrough)
+branch  2 taken 12
+    #####:  405:        return;
+        -:  406:    }
+        -:  407:
+       12:  408:    SyncFrame last_frame = session_frames.back().frame;
+call    0 returned 12
+       45:  409:    for (std::size_t index = 0; index < count_; ++index) {
+branch  0 taken 33
+branch  1 taken 12 (fallthrough)
+       33:  410:        const ReplicationReplayFrame& frame = frame_at(index);
+call    0 returned 33
+       33:  411:        if (frame.frame <= last_frame || frame.frame > session.end_frame) {
+branch  0 taken 2 (fallthrough)
+branch  1 taken 31
+branch  2 taken 0 (fallthrough)
+branch  3 taken 2
+       31:  412:            continue;
+        -:  413:        }
+        2:  414:        session_frames.push_back(frame);
+call    0 returned 2
+        2:  415:        last_frame = frame.frame;
+        -:  416:    }
+        -:  417:}
+        -:  418:
+function _ZNK4kage4sync25ReplicationReplayStreamer16find_start_frameEj called 1 returned 100% blocks executed 92%
+        1:  419:std::size_t ReplicationReplayStreamer::find_start_frame(SyncFrame focus_frame) const {
+        2:  420:    const SyncFrame target = focus_frame > options_.preroll_frames
+       1*:  421:        ? focus_frame - options_.preroll_frames
+branch  0 taken 1 (fallthrough)
+branch  1 taken 0
+        -:  422:        : 1U;
+        1:  423:    std::size_t start = count_;
+        3:  424:    for (std::size_t index = 0; index < count_; ++index) {
+branch  0 taken 2
+branch  1 taken 1 (fallthrough)
+        2:  425:        const ReplicationReplayFrame& frame = frame_at(index);
+call    0 returned 2
+        2:  426:        if (frame.kind == ReplicationReplayFrameKind::Full &&
+branch  0 taken 1 (fallthrough)
+branch  1 taken 1
+        1:  427:            frame.frame <= target) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 0
+        1:  428:            start = index;
+        -:  429:        }
+        -:  430:    }
+        1:  431:    return start;
+        -:  432:}
+        -:  433:
+        -:  434:}  // namespace kage::sync

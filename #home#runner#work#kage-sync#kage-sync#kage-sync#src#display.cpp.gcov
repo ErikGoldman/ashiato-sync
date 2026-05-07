@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/display.cpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/display.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/display.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#include "kage/sync/display.hpp"
         -:    2:
         -:    3:#include "server/state.hpp"
@@ -201,7 +201,7 @@ branch  6 taken 3
         -:   88:            }
         3:   89:            const SyncComponentOps& ops = archetype.component_ops[component_index];
 call    0 returned 3
-       3*:   90:            if (ops.quantize == nullptr || ops.quantized_size == 0U) {
+       3*:   90:            if (ops.serialization.quantize == nullptr || ops.serialization.quantized_size == 0U) {
 branch  0 taken 3 (fallthrough)
 branch  1 taken 0
 branch  2 taken 0 (fallthrough)
@@ -210,11 +210,11 @@ branch  3 taken 3
         -:   92:            }
         3:   93:            ReplicatedComponentUpdate update;
         3:   94:            update.component = replication.component;
-        3:   95:            update.bytes.resize(ops.quantized_size);
+        3:   95:            update.bytes.resize(ops.serialization.quantized_size);
 call    0 returned 3
 branch  1 taken 3 (fallthrough)
 branch  2 taken 0 (throw)
-        3:   96:            ops.quantize(value, update.bytes.data());
+        3:   96:            ops.serialization.quantize(value, update.bytes.data());
 call    0 returned 3
 call    1 returned 3
 branch  2 taken 3 (fallthrough)
@@ -416,7 +416,7 @@ call    1 returned 1
 call    2 returned 1
 branch  3 taken 1 (fallthrough)
 branch  4 taken 0
-       3*:  170:                component.bytes.size() != found_ops->second.quantized_size ||
+       3*:  170:                component.bytes.size() != found_ops->second.serialization.quantized_size ||
 branch  0 taken 1 (fallthrough)
 branch  1 taken 0
 call    2 returned 1
@@ -425,7 +425,7 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0
 branch  6 taken 0 (fallthrough)
 branch  7 taken 1
-        1:  171:                previous_component->bytes.size() != found_ops->second.quantized_size) {
+        1:  171:                previous_component->bytes.size() != found_ops->second.serialization.quantized_size) {
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 0 (fallthrough)
@@ -433,7 +433,7 @@ branch  3 taken 1
     #####:  172:                continue;
         -:  173:            }
         1:  174:            SyncComponentOps::QuantizedBytes blended;
-        1:  175:            blended.resize(found_ops->second.quantized_size);
+        1:  175:            blended.resize(found_ops->second.serialization.quantized_size);
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)

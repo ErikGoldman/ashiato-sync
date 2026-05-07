@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/tests/bit_buffer.test.cpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/bit_buffer.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/bit_buffer.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#include "ecs/bit_buffer.hpp"
         -:    2:#include "kage/sync/delta.hpp"
         -:    3:#include "kage/sync/protocol.hpp"

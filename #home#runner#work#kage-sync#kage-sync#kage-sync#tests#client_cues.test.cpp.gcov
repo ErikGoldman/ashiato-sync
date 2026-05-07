@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/tests/client_cues.test.cpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/client_cues.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/client_cues.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#include "test_protocol.hpp"
         -:    2:
         -:    3:#include <catch2/catch_approx.hpp>
@@ -148,7 +148,7 @@ branch 24 never executed (fallthrough)
 branch 25 never executed (throw)
 call   26 never executed
 call   27 never executed
-        1:   29:    REQUIRE(kage::sync::emit_cue(server_registry, server_entity, 1, TestCue{7}, 1.0f));
+        1:   29:    REQUIRE(kage_sync_tests::emit_test_cue(server_registry, server_entity, 1, TestCue{7}, 1.0f));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -897,7 +897,7 @@ branch 24 never executed (fallthrough)
 branch 25 never executed (throw)
 call   26 never executed
 call   27 never executed
-        1:   82:    REQUIRE(kage::sync::emit_cue(server_registry, server_entity, 1, TestCue{11}, 1.0f, true));
+        1:   82:    REQUIRE(kage_sync_tests::emit_test_cue(server_registry, server_entity, 1, TestCue{11}, 1.0f, true));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1445,7 +1445,7 @@ branch 24 never executed (fallthrough)
 branch 25 never executed (throw)
 call   26 never executed
 call   27 never executed
-        1:  125:    REQUIRE(kage::sync::emit_cue(server_registry, server_entity, 1, TestCue{12}, 1.0f));
+        1:  125:    REQUIRE(kage_sync_tests::emit_test_cue(server_registry, server_entity, 1, TestCue{12}, 1.0f));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2024,7 +2024,7 @@ branch 24 never executed (fallthrough)
 branch 25 never executed (throw)
 call   26 never executed
 call   27 never executed
-        1:  168:    REQUIRE(kage::sync::emit_cue(
+        1:  168:    REQUIRE(kage_sync_tests::emit_test_cue(
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1

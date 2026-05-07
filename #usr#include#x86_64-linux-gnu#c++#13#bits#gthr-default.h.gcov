@@ -1,7 +1,7 @@
         -:    0:Source:/usr/include/x86_64-linux-gnu/c++/13/bits/gthr-default.h
-        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_lifecycle.test.cpp.gcno
-        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_lifecycle.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/components.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/components.cpp.gcda
+        -:    0:Runs:317
         -:    1:/* Threads compatibility routines for libgcc2 and libobjc.  */
         -:    2:/* Compile this one with gcc.  */
         -:    3:/* Copyright (C) 1997-2023 Free Software Foundation, Inc.
@@ -301,10 +301,10 @@
         -:  297:#else /* not hppa-hpux */
         -:  298:
         -:  299:static inline int
-function _ZL18__gthread_active_pv called 0 returned 0% blocks executed 0%
-    #####:  300:__gthread_active_p (void)
+function _ZL18__gthread_active_pv called 19402 returned 100% blocks executed 100%
+    19402:  300:__gthread_active_p (void)
         -:  301:{
-    #####:  302:  return 1;
+    19402:  302:  return 1;
         -:  303:}
         -:  304:
         -:  305:#endif /* hppa-hpux */
@@ -748,26 +748,31 @@ function _ZL18__gthread_active_pv called 0 returned 0% blocks executed 0%
         -:  743:}
         -:  744:
         -:  745:static inline int
-function _ZL20__gthread_mutex_lockP15pthread_mutex_t called 0 returned 0% blocks executed 0%
-    #####:  746:__gthread_mutex_lock (__gthread_mutex_t *__mutex)
+function _ZL20__gthread_mutex_lockP15pthread_mutex_t called 9701 returned 100% blocks executed 80%
+     9701:  746:__gthread_mutex_lock (__gthread_mutex_t *__mutex)
         -:  747:{
-    #####:  748:  if (__gthread_active_p ())
-call    0 never executed
-branch  1 never executed (fallthrough)
-branch  2 never executed
-    #####:  749:    return __gthrw_(pthread_mutex_lock) (__mutex);
-call    0 never executed
+     9701:  748:  if (__gthread_active_p ())
+call    0 returned 9701
+branch  1 taken 9701 (fallthrough)
+branch  2 taken 0
+     9701:  749:    return __gthrw_(pthread_mutex_lock) (__mutex);
+call    0 returned 9701
         -:  750:  else
     #####:  751:    return 0;
         -:  752:}
         -:  753:
         -:  754:static inline int
-        -:  755:__gthread_mutex_trylock (__gthread_mutex_t *__mutex)
+function _ZL23__gthread_mutex_trylockP15pthread_mutex_t called 0 returned 0% blocks executed 0%
+    #####:  755:__gthread_mutex_trylock (__gthread_mutex_t *__mutex)
         -:  756:{
-        -:  757:  if (__gthread_active_p ())
-        -:  758:    return __gthrw_(pthread_mutex_trylock) (__mutex);
+    #####:  757:  if (__gthread_active_p ())
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed
+    #####:  758:    return __gthrw_(pthread_mutex_trylock) (__mutex);
+call    0 never executed
         -:  759:  else
-        -:  760:    return 0;
+    #####:  760:    return 0;
         -:  761:}
         -:  762:
         -:  763:#if _GTHREAD_USE_MUTEX_TIMEDLOCK
@@ -783,15 +788,15 @@ call    0 never executed
         -:  773:#endif
         -:  774:
         -:  775:static inline int
-function _ZL22__gthread_mutex_unlockP15pthread_mutex_t called 0 returned 0% blocks executed 0%
-    #####:  776:__gthread_mutex_unlock (__gthread_mutex_t *__mutex)
+function _ZL22__gthread_mutex_unlockP15pthread_mutex_t called 9701 returned 100% blocks executed 80%
+     9701:  776:__gthread_mutex_unlock (__gthread_mutex_t *__mutex)
         -:  777:{
-    #####:  778:  if (__gthread_active_p ())
-call    0 never executed
-branch  1 never executed (fallthrough)
-branch  2 never executed
-    #####:  779:    return __gthrw_(pthread_mutex_unlock) (__mutex);
-call    0 never executed
+     9701:  778:  if (__gthread_active_p ())
+call    0 returned 9701
+branch  1 taken 9701 (fallthrough)
+branch  2 taken 0
+     9701:  779:    return __gthrw_(pthread_mutex_unlock) (__mutex);
+call    0 returned 9701
         -:  780:  else
     #####:  781:    return 0;
         -:  782:}

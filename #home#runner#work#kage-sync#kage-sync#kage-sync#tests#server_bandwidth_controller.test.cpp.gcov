@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/tests/server_bandwidth_controller.test.cpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_bandwidth_controller.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_bandwidth_controller.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#include "server/bandwidth_controller.hpp"
         -:    2:
         -:    3:#include <catch2/catch_approx.hpp>

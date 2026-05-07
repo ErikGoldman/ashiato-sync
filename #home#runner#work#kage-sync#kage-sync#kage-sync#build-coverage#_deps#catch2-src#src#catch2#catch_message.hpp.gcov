@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/_deps/catch2-src/src/catch2/catch_message.hpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_input.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_input.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:
         -:    2://              Copyright Catch2 Authors
         -:    3:// Distributed under the Boost Software License, Version 1.0.

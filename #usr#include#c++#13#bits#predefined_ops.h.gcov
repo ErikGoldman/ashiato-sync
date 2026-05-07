@@ -1,7 +1,7 @@
         -:    0:Source:/usr/include/c++/13/bits/predefined_ops.h
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:// Default predicates for internal use -*- C++ -*-
         -:    2:
         -:    3:// Copyright (C) 2013-2023 Free Software Foundation, Inc.
@@ -263,10 +263,10 @@
         -:  259:
         -:  260:      _GLIBCXX20_CONSTEXPR
         -:  261:      explicit
-function _ZN9__gnu_cxx5__ops16_Iter_equals_valIKN3ecs6EntityEEC2ERS4_ called 62 returned 100% blocks executed 100%
-       62:  262:      _Iter_equals_val(_Value& __value)
-       62:  263:	: _M_value(__value)
-       62:  264:      { }
+function _ZN9__gnu_cxx5__ops16_Iter_equals_valIKN3ecs6EntityEEC2ERS4_ called 6 returned 100% blocks executed 100%
+        6:  262:      _Iter_equals_val(_Value& __value)
+        6:  263:	: _M_value(__value)
+        6:  264:      { }
         -:  265:
         -:  266:      template<typename _Iterator>
         -:  267:	_GLIBCXX20_CONSTEXPR
@@ -281,10 +281,10 @@ call    1 returned 9
         -:  273:  template<typename _Value>
         -:  274:    _GLIBCXX20_CONSTEXPR
         -:  275:    inline _Iter_equals_val<_Value>
-function _ZN9__gnu_cxx5__ops17__iter_equals_valIKN3ecs6EntityEEENS0_16_Iter_equals_valIT_EERS6_ called 62 returned 100% blocks executed 100%
-       62:  276:    __iter_equals_val(_Value& __val)
-       62:  277:    { return _Iter_equals_val<_Value>(__val); }
-call    0 returned 62
+function _ZN9__gnu_cxx5__ops17__iter_equals_valIKN3ecs6EntityEEENS0_16_Iter_equals_valIT_EERS6_ called 6 returned 100% blocks executed 100%
+        6:  276:    __iter_equals_val(_Value& __val)
+        6:  277:    { return _Iter_equals_val<_Value>(__val); }
+call    0 returned 6
         -:  278:
         -:  279:  template<typename _Iterator1>
         -:  280:    struct _Iter_equals_iter

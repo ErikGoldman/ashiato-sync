@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/tests/server_packet.test.cpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_packet.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_packet.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#include "server/packet.hpp"
         -:    2:
         -:    3:#include <catch2/catch_test_macros.hpp>

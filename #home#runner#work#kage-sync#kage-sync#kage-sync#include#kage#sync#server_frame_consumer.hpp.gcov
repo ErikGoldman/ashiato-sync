@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/include/kage/sync/server_frame_consumer.hpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_lifecycle.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_lifecycle.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#pragma once
         -:    2:
         -:    3:#include "kage/sync/types.hpp"
@@ -14,72 +14,123 @@
         -:   10:
         -:   11:class ReplicationServer;
         -:   12:
-        -:   13:struct ServerFrameDelta {
-        -:   14:    ReplicationServer& server;
-        -:   15:    ecs::Registry& registry;
-        -:   16:    SyncFrame frame = 0;
-        -:   17:    ecs::Registry::DirtyView dirty;
-        -:   18:    QueuedSyncCueView cues;
-        -:   19:};
-        -:   20:
-        -:   21:struct ServerFrameFlushContext {
-        -:   22:    ReplicationServer& server;
-        -:   23:    ecs::Registry& registry;
-        -:   24:    SyncFrame frame = 0;
-        -:   25:    double dt_seconds = 0.0;
-        -:   26:    std::uint32_t completed_frames = 0;
-        -:   27:};
-        -:   28:
-        -:   29:class ServerFrameConsumer {
-        -:   30:public:
-     141*:   31:    virtual ~ServerFrameConsumer() = default;
+        -:   13:struct ServerDestroyedReplicatedSlot {
+        -:   14:    std::uint32_t slot = 0;
+        -:   15:    ecs::Entity entity;
+        -:   16:};
+        -:   17:
+        -:   18:struct ServerDestroyedReplicatedSlotView {
+        -:   19:    const ServerDestroyedReplicatedSlot* data = nullptr;
+        -:   20:    std::size_t size = 0;
+        -:   21:
+function _ZNK4kage4sync33ServerDestroyedReplicatedSlotView5beginEv called 21 returned 100% blocks executed 100%
+       21:   22:    const ServerDestroyedReplicatedSlot* begin() const noexcept { return data; }
+function _ZNK4kage4sync33ServerDestroyedReplicatedSlotView3endEv called 21 returned 100% blocks executed 100%
+       21:   23:    const ServerDestroyedReplicatedSlot* end() const noexcept { return data == nullptr ? nullptr : data + size; }
+branch  0 taken 3 (fallthrough)
+branch  1 taken 18
+        -:   24:    bool empty() const noexcept { return size == 0U; }
+        -:   25:};
+        -:   26:
+        -:   27:struct ServerRegistryDirtyFrame {
+        -:   28:    ReplicationServer& server;
+        -:   29:    ecs::Registry& registry;
+        -:   30:    ecs::Registry::DirtyView dirty;
+        -:   31:    SyncFrame frame = 0;
+        -:   32:    QueuedSyncCueView cues;
+        -:   33:    ServerDestroyedReplicatedSlotView destroyed_slots;
+        -:   34:};
+        -:   35:
+        -:   36:class ServerRegistryDirtyFrameListener {
+        -:   37:public:
+     148*:   38:    virtual ~ServerRegistryDirtyFrameListener() = default;
 ------------------
-_ZN4kage4sync19ServerFrameConsumerD0Ev:
-function _ZN4kage4sync19ServerFrameConsumerD0Ev called 0 returned 0% blocks executed 0%
-    #####:   31:    virtual ~ServerFrameConsumer() = default;
+_ZN4kage4sync32ServerRegistryDirtyFrameListenerD0Ev:
+function _ZN4kage4sync32ServerRegistryDirtyFrameListenerD0Ev called 0 returned 0% blocks executed 0%
+    #####:   38:    virtual ~ServerRegistryDirtyFrameListener() = default;
 call    0 never executed
 call    1 never executed
 ------------------
-_ZN4kage4sync19ServerFrameConsumerD2Ev:
-function _ZN4kage4sync19ServerFrameConsumerD2Ev called 141 returned 100% blocks executed 100%
-      141:   31:    virtual ~ServerFrameConsumer() = default;
+_ZN4kage4sync32ServerRegistryDirtyFrameListenerD2Ev:
+function _ZN4kage4sync32ServerRegistryDirtyFrameListenerD2Ev called 148 returned 100% blocks executed 100%
+      148:   38:    virtual ~ServerRegistryDirtyFrameListener() = default;
 ------------------
-        -:   32:    virtual void accumulate_frame_delta(const ServerFrameDelta& frame) = 0;
-function _ZN4kage4sync19ServerFrameConsumer5flushERKNS0_23ServerFrameFlushContextE called 16 returned 100% blocks executed 100%
-       16:   33:    virtual void flush(const ServerFrameFlushContext& context) {
-        -:   34:        (void)context;
-       16:   35:    }
-        -:   36:};
-        -:   37:
-        -:   38:class ServerFrameConsumerSubscription {
-        -:   39:public:
-        -:   40:    ServerFrameConsumerSubscription() = default;
-        -:   41:    ServerFrameConsumerSubscription(const ServerFrameConsumerSubscription&) = delete;
-        -:   42:    ServerFrameConsumerSubscription& operator=(const ServerFrameConsumerSubscription&) = delete;
-        -:   43:    ServerFrameConsumerSubscription(ServerFrameConsumerSubscription&& other) noexcept;
-        -:   44:    ServerFrameConsumerSubscription& operator=(ServerFrameConsumerSubscription&& other) noexcept;
-        -:   45:    ~ServerFrameConsumerSubscription();
-        -:   46:
-        -:   47:    void reset();
-        -:   48:    bool active() const noexcept;
-        -:   49:
-        -:   50:private:
-        -:   51:    friend class ReplicationServer;
-        -:   52:
-        -:   53:    struct Entry {
-        -:   54:        std::uint64_t id = 0;
-        -:   55:        ServerFrameConsumer* consumer = nullptr;
-        -:   56:    };
-        -:   57:
-        -:   58:    struct State {
-        -:   59:        std::uint64_t next_id = 1;
-        -:   60:        std::vector<Entry> consumers;
-        -:   61:    };
-        -:   62:
-        -:   63:    ServerFrameConsumerSubscription(std::shared_ptr<State> state, std::uint64_t id);
-        -:   64:
-        -:   65:    std::weak_ptr<State> state_;
-        -:   66:    std::uint64_t id_ = 0;
-        -:   67:};
+        -:   39:    virtual void on_server_registry_dirty_frame(const ServerRegistryDirtyFrame& frame) = 0;
+        -:   40:};
+        -:   41:
+        -:   42:class ServerRegistryDirtyFrameSubscription {
+        -:   43:public:
+        -:   44:    ServerRegistryDirtyFrameSubscription() = default;
+        -:   45:    ServerRegistryDirtyFrameSubscription(const ServerRegistryDirtyFrameSubscription&) = delete;
+        -:   46:    ServerRegistryDirtyFrameSubscription& operator=(const ServerRegistryDirtyFrameSubscription&) = delete;
+        -:   47:    ServerRegistryDirtyFrameSubscription(ServerRegistryDirtyFrameSubscription&& other) noexcept;
+        -:   48:    ServerRegistryDirtyFrameSubscription& operator=(ServerRegistryDirtyFrameSubscription&& other) noexcept;
+        -:   49:    ~ServerRegistryDirtyFrameSubscription();
+        -:   50:
+        -:   51:    void reset();
+        -:   52:    bool active() const noexcept;
+        -:   53:
+        -:   54:private:
+        -:   55:    friend class ReplicationServer;
+        -:   56:
+        -:   57:    struct Entry {
+        -:   58:        std::uint64_t id = 0;
+        -:   59:        ServerRegistryDirtyFrameListener* listener = nullptr;
+        -:   60:    };
+        -:   61:
+        -:   62:    struct State {
+        -:   63:        std::uint64_t next_id = 1;
+        -:   64:        std::vector<Entry> listeners;
+        -:   65:    };
+        -:   66:
+        -:   67:    ServerRegistryDirtyFrameSubscription(std::shared_ptr<State> state, std::uint64_t id);
         -:   68:
-        -:   69:}  // namespace kage::sync
+        -:   69:    std::weak_ptr<State> state_;
+        -:   70:    std::uint64_t id_ = 0;
+        -:   71:};
+        -:   72:
+        -:   73:struct ServerFrameBatch {
+        -:   74:    ReplicationServer& server;
+        -:   75:    ecs::Registry& registry;
+        -:   76:    double dt_seconds = 0.0;
+        -:   77:    std::uint32_t completed_frames = 0;
+        -:   78:};
+        -:   79:
+        -:   80:class ServerFrameBatchListener {
+        -:   81:public:
+        -:   82:    virtual ~ServerFrameBatchListener() = default;
+        -:   83:    virtual void on_server_frame_batch_complete(const ServerFrameBatch& batch) = 0;
+        -:   84:};
+        -:   85:
+        -:   86:class ServerFrameBatchListenerSubscription {
+        -:   87:public:
+        -:   88:    ServerFrameBatchListenerSubscription() = default;
+        -:   89:    ServerFrameBatchListenerSubscription(const ServerFrameBatchListenerSubscription&) = delete;
+        -:   90:    ServerFrameBatchListenerSubscription& operator=(const ServerFrameBatchListenerSubscription&) = delete;
+        -:   91:    ServerFrameBatchListenerSubscription(ServerFrameBatchListenerSubscription&& other) noexcept;
+        -:   92:    ServerFrameBatchListenerSubscription& operator=(ServerFrameBatchListenerSubscription&& other) noexcept;
+        -:   93:    ~ServerFrameBatchListenerSubscription();
+        -:   94:
+        -:   95:    void reset();
+        -:   96:    bool active() const noexcept;
+        -:   97:
+        -:   98:private:
+        -:   99:    friend class ReplicationServer;
+        -:  100:
+        -:  101:    struct Entry {
+        -:  102:        std::uint64_t id = 0;
+        -:  103:        ServerFrameBatchListener* listener = nullptr;
+        -:  104:    };
+        -:  105:
+        -:  106:    struct State {
+        -:  107:        std::uint64_t next_id = 1;
+        -:  108:        std::vector<Entry> listeners;
+        -:  109:    };
+        -:  110:
+        -:  111:    ServerFrameBatchListenerSubscription(std::shared_ptr<State> state, std::uint64_t id);
+        -:  112:
+        -:  113:    std::weak_ptr<State> state_;
+        -:  114:    std::uint64_t id_ = 0;
+        -:  115:};
+        -:  116:
+        -:  117:}  // namespace kage::sync

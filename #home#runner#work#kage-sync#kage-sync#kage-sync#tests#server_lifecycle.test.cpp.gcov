@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/tests/server_lifecycle.test.cpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_lifecycle.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_lifecycle.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#include "test_protocol.hpp"
         -:    2:
         -:    3:#include "kage/sync/simulated_link.hpp"
@@ -23,23 +23,23 @@
         -:   19:
         -:   20:namespace {
         -:   21:
-        -:   22:class TestFrameConsumer final : public kage::sync::ServerFrameConsumer {
+        -:   22:class TestFrameConsumer final : public kage::sync::ServerRegistryDirtyFrameListener {
         -:   23:public:
-function _ZN12_GLOBAL__N_117TestFrameConsumerC2ESt8functionIFvRKN4kage4sync16ServerFrameDeltaEEE called 6 returned 100% blocks executed 100%
-        6:   24:    explicit TestFrameConsumer(std::function<void(const kage::sync::ServerFrameDelta&)> on_delta)
-        6:   25:        : on_delta_(std::move(on_delta)) {}
-call    0 returned 6
-call    1 returned 6
-call    2 returned 6
+function _ZN12_GLOBAL__N_117TestFrameConsumerC2ESt8functionIFvRKN4kage4sync24ServerRegistryDirtyFrameEEE called 7 returned 100% blocks executed 100%
+        7:   24:    explicit TestFrameConsumer(std::function<void(const kage::sync::ServerRegistryDirtyFrame&)> on_delta)
+        7:   25:        : on_delta_(std::move(on_delta)) {}
+call    0 returned 7
+call    1 returned 7
+call    2 returned 7
         -:   26:
-function _ZN12_GLOBAL__N_117TestFrameConsumer22accumulate_frame_deltaERKN4kage4sync16ServerFrameDeltaE called 15 returned 100% blocks executed 100%
-       15:   27:    void accumulate_frame_delta(const kage::sync::ServerFrameDelta& frame) override {
-       15:   28:        on_delta_(frame);
-call    0 returned 15
-       15:   29:    }
+function _ZN12_GLOBAL__N_117TestFrameConsumer30on_server_registry_dirty_frameERKN4kage4sync24ServerRegistryDirtyFrameE called 17 returned 100% blocks executed 100%
+       17:   27:    void on_server_registry_dirty_frame(const kage::sync::ServerRegistryDirtyFrame& frame) override {
+       17:   28:        on_delta_(frame);
+call    0 returned 17
+       17:   29:    }
         -:   30:
         -:   31:private:
-        -:   32:    std::function<void(const kage::sync::ServerFrameDelta&)> on_delta_;
+        -:   32:    std::function<void(const kage::sync::ServerRegistryDirtyFrame&)> on_delta_;
         -:   33:};
         -:   34:
         -:   35:}  // namespace
@@ -2246,8 +2246,8 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-function _ZZL23CATCH2_INTERNAL_TEST_16vENKUlRKN4kage4sync16ServerFrameDeltaEE_clES3_ called 5 returned 100% blocks executed 50%
-        7:  220:    TestFrameConsumer consumer([&frames](const kage::sync::ServerFrameDelta& frame) {
+function _ZZL23CATCH2_INTERNAL_TEST_16vENKUlRKN4kage4sync24ServerRegistryDirtyFrameEE_clES3_ called 5 returned 100% blocks executed 50%
+        7:  220:    TestFrameConsumer consumer([&frames, &server](const kage::sync::ServerRegistryDirtyFrame& frame) {
         5:  221:        REQUIRE(frame.registry.get<kage::sync::SyncSettings>().role == kage::sync::SyncRole::Server);
 call    0 returned 5
 call    1 returned 5
@@ -2309,13 +2309,16 @@ branch 22 never executed (fallthrough)
 branch 23 never executed (throw)
 call   24 never executed
 call   25 never executed
-        5:  223:        frames.push_back(frame.frame);
+        5:  223:        frames.push_back(server.frame());
 call    0 returned 5
+call    1 returned 5
+branch  2 taken 5 (fallthrough)
+branch  3 taken 0 (throw)
         6:  224:    });
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
-        1:  225:    auto subscription = server.subscribe_frame_consumer(consumer);
+        1:  225:    auto subscription = server.subscribe_registry_dirty_frame_listener(consumer);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -2667,8 +2670,8 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-function _ZZL23CATCH2_INTERNAL_TEST_18vENKUlRKN4kage4sync16ServerFrameDeltaEE_clES3_ called 1 returned 100% blocks executed 77%
-        3:  266:    TestFrameConsumer consumer([&seen](const kage::sync::ServerFrameDelta& frame) {
+function _ZZL23CATCH2_INTERNAL_TEST_18vENKUlRKN4kage4sync24ServerRegistryDirtyFrameEE_clES3_ called 1 returned 100% blocks executed 77%
+        3:  266:    TestFrameConsumer consumer([&seen](const kage::sync::ServerRegistryDirtyFrame& frame) {
         2:  267:        for (const kage::sync::QueuedSyncCue& cue : frame.cues) {
 call    0 returned 1
 call    1 returned 1
@@ -2698,12 +2701,12 @@ call    1 never executed
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
-        1:  278:    auto subscription = server.subscribe_frame_consumer(consumer);
+        1:  278:    auto subscription = server.subscribe_registry_dirty_frame_listener(consumer);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
         -:  279:
-        1:  280:    REQUIRE(kage::sync::emit_cue(registry, entity, TestCue{42}, 0.5f, true));
+        1:  280:    REQUIRE(kage_sync_tests::emit_test_cue(registry, entity, kage::sync::SyncFrame{1}, TestCue{42}, 0.5f, true));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2971,8 +2974,8 @@ call    9 never executed
 call   10 never executed
 call   11 never executed
         -:  291:
-function _ZL23CATCH2_INTERNAL_TEST_20v called 1 returned 100% blocks executed 50%
-        1:  292:TEST_CASE("replication server frame consumers share one dirty frame") {
+function _ZL23CATCH2_INTERNAL_TEST_20v called 1 returned 100% blocks executed 49%
+        1:  292:TEST_CASE("replication server dirty frame exposes destroyed replicated slots after server bookkeeping") {
         1:  293:    ecs::Registry registry;
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
@@ -2981,93 +2984,356 @@ branch  2 taken 0 (throw)
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  295:    (void)define_position_archetype(registry);
+        1:  295:    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        -:  296:
-        1:  297:    const ecs::Entity entity = registry.create();
+        1:  296:    const ecs::Entity entity = registry.create();
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  298:    registry.add<Position>(entity, Position{1.0f, 2.0f});
+        1:  297:    registry.add<Position>(entity, Position{1.0f, 2.0f});
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
+        1:  298:    REQUIRE(start_sync(registry, entity, archetype));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 never executed
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+call   27 never executed
         -:  299:
-        1:  300:    kage::sync::ReplicationServer server;
+        1:  300:    std::vector<kage::sync::ServerDestroyedReplicatedSlot> destroyed;
+call    0 returned 1
+        1:  301:    kage::sync::ReplicationServer server;
 call    0 returned 1
 call    1 never executed
-        1:  301:    std::vector<int> first_subscriber_counts;
-call    0 returned 1
-        1:  302:    std::vector<int> second_subscriber_counts;
-call    0 returned 1
-function _ZZL23CATCH2_INTERNAL_TEST_20vENKUlRKN4kage4sync16ServerFrameDeltaEE_clES3_ called 3 returned 100% blocks executed 80%
-        5:  303:    TestFrameConsumer first_consumer([&](const kage::sync::ServerFrameDelta& frame) {
-        3:  304:        int count = 0;
-function _ZZZL23CATCH2_INTERNAL_TEST_20vENKUlRKN4kage4sync16ServerFrameDeltaEE_clES3_ENKUlN3ecs6EntityEPKvE_clES6_S8_ called 2 returned 100% blocks executed 100%
-        3:  305:        frame.dirty.each_dirty<Position>([&](ecs::Entity, const void*) {
-call    0 returned 3
-branch  1 taken 3 (fallthrough)
-branch  2 taken 0 (throw)
-        2:  306:            ++count;
-        2:  307:        });
-        3:  308:        first_subscriber_counts.push_back(count);
-call    0 returned 3
-branch  1 taken 3 (fallthrough)
-branch  2 taken 0 (throw)
-        4:  309:    });
+function _ZZL23CATCH2_INTERNAL_TEST_20vENKUlRKN4kage4sync24ServerRegistryDirtyFrameEE_clES3_ called 2 returned 100% blocks executed 100%
+        4:  302:    TestFrameConsumer consumer([&](const kage::sync::ServerRegistryDirtyFrame& frame) {
+        2:  303:        destroyed.assign(frame.destroyed_slots.begin(), frame.destroyed_slots.end());
+call    0 returned 2
+call    1 returned 2
+call    2 returned 2
+        1:  304:    });
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
-function _ZZL23CATCH2_INTERNAL_TEST_20vENKUlRKN4kage4sync16ServerFrameDeltaEE0_clES3_ called 3 returned 100% blocks executed 80%
-        5:  310:    TestFrameConsumer second_consumer([&](const kage::sync::ServerFrameDelta& frame) {
-        3:  311:        int count = 0;
-function _ZZZL23CATCH2_INTERNAL_TEST_20vENKUlRKN4kage4sync16ServerFrameDeltaEE0_clES3_ENKUlN3ecs6EntityEPKvE_clES6_S8_ called 2 returned 100% blocks executed 100%
-        3:  312:        frame.dirty.each_dirty<Position>([&](ecs::Entity, const void*) {
-call    0 returned 3
-branch  1 taken 3 (fallthrough)
+        1:  305:    auto subscription = server.subscribe_registry_dirty_frame_listener(consumer);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        2:  313:            ++count;
-        2:  314:        });
-        3:  315:        second_subscriber_counts.push_back(count);
-call    0 returned 3
-branch  1 taken 3 (fallthrough)
-branch  2 taken 0 (throw)
-        4:  316:    });
+        -:  306:
+        1:  307:    server.tick(registry, server.options().fixed_dt_seconds);
+call    0 returned 1
+call    1 returned 1
+branch  2 taken 1 (fallthrough)
+branch  3 taken 0 (throw)
+        1:  308:    REQUIRE(destroyed.empty());
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
-        1:  317:    auto first = server.subscribe_frame_consumer(first_consumer);
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 never executed
+call   18 never executed
+branch 19 never executed (fallthrough)
+branch 20 never executed (throw)
+call   21 never executed
+branch 22 never executed (fallthrough)
+branch 23 never executed (throw)
+call   24 never executed
+call   25 never executed
+        -:  309:
+        1:  310:    REQUIRE(registry.destroy(entity));
 call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-        1:  318:    auto second = server.subscribe_frame_consumer(second_consumer);
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-        -:  319:
-        1:  320:    server.tick(registry, server.options().fixed_dt_seconds);
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 never executed
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+call   27 never executed
+        1:  311:    server.tick(registry, server.options().fixed_dt_seconds);
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
-        1:  321:    server.tick(registry, server.options().fixed_dt_seconds);
+        -:  312:
+        1:  313:    REQUIRE(destroyed.size() == 1U);
 call    0 returned 1
 call    1 returned 1
-branch  2 taken 1 (fallthrough)
-branch  3 taken 0 (throw)
-        1:  322:    registry.write<Position>(entity).x = 3.0f;
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        1:  314:    REQUIRE(destroyed[0].slot == 0U);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        1:  315:    REQUIRE(destroyed[0].entity == entity);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+branch  8 taken 1 (fallthrough)
+branch  9 taken 0 (throw)
+call   10 returned 1
+branch 11 taken 1 (fallthrough)
+branch 12 taken 0 (throw)
+call   13 returned 1
+branch 14 taken 1 (fallthrough)
+branch 15 taken 0 (throw)
+call   16 returned 1
+call   17 returned 1
+branch 18 taken 1 (fallthrough)
+branch 19 taken 0 (throw)
+call   20 returned 1
+call   21 never executed
+call   22 never executed
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+branch 27 never executed (fallthrough)
+branch 28 never executed (throw)
+call   29 never executed
+call   30 never executed
+        2:  316:}
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 returned 1
+call    8 returned 1
+call    9 returned 1
+call   10 returned 1
+branch 11 never executed (fallthrough)
+branch 12 never executed
+call   13 never executed
+branch 14 never executed (fallthrough)
+branch 15 never executed
+call   16 never executed
+branch 17 never executed (fallthrough)
+branch 18 never executed
+call   19 never executed
+call   20 never executed
+call   21 never executed
+call   22 never executed
+call   23 never executed
+call   24 never executed
+        -:  317:
+function _ZL23CATCH2_INTERNAL_TEST_22v called 1 returned 100% blocks executed 50%
+        1:  318:TEST_CASE("replication server frame consumers share one dirty frame") {
+        1:  319:    ecs::Registry registry;
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  323:    server.tick(registry, server.options().fixed_dt_seconds);
+        1:  320:    kage::sync::configure_server(registry);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  321:    (void)define_position_archetype(registry);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  322:
+        1:  323:    const ecs::Entity entity = registry.create();
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  324:    registry.add<Position>(entity, Position{1.0f, 2.0f});
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  325:
+        1:  326:    kage::sync::ReplicationServer server;
+call    0 returned 1
+call    1 never executed
+        1:  327:    std::vector<int> first_subscriber_counts;
+call    0 returned 1
+        1:  328:    std::vector<int> second_subscriber_counts;
+call    0 returned 1
+function _ZZL23CATCH2_INTERNAL_TEST_22vENKUlRKN4kage4sync24ServerRegistryDirtyFrameEE_clES3_ called 3 returned 100% blocks executed 80%
+        5:  329:    TestFrameConsumer first_consumer([&](const kage::sync::ServerRegistryDirtyFrame& frame) {
+        3:  330:        int count = 0;
+function _ZZZL23CATCH2_INTERNAL_TEST_22vENKUlRKN4kage4sync24ServerRegistryDirtyFrameEE_clES3_ENKUlN3ecs6EntityEPKvE_clES6_S8_ called 2 returned 100% blocks executed 100%
+        3:  331:        frame.dirty.each_dirty<Position>([&](ecs::Entity, const void*) {
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+        2:  332:            ++count;
+        2:  333:        });
+        3:  334:        first_subscriber_counts.push_back(count);
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+        4:  335:    });
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+function _ZZL23CATCH2_INTERNAL_TEST_22vENKUlRKN4kage4sync24ServerRegistryDirtyFrameEE0_clES3_ called 3 returned 100% blocks executed 80%
+        5:  336:    TestFrameConsumer second_consumer([&](const kage::sync::ServerRegistryDirtyFrame& frame) {
+        3:  337:        int count = 0;
+function _ZZZL23CATCH2_INTERNAL_TEST_22vENKUlRKN4kage4sync24ServerRegistryDirtyFrameEE0_clES3_ENKUlN3ecs6EntityEPKvE_clES6_S8_ called 2 returned 100% blocks executed 100%
+        3:  338:        frame.dirty.each_dirty<Position>([&](ecs::Entity, const void*) {
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+        2:  339:            ++count;
+        2:  340:        });
+        3:  341:        second_subscriber_counts.push_back(count);
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+        4:  342:    });
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+        1:  343:    auto first = server.subscribe_registry_dirty_frame_listener(first_consumer);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  344:    auto second = server.subscribe_registry_dirty_frame_listener(second_consumer);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  345:
+        1:  346:    server.tick(registry, server.options().fixed_dt_seconds);
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
-        -:  324:
-        3:  325:    REQUIRE(first_subscriber_counts == std::vector<int>{1, 0, 1});
+        1:  347:    server.tick(registry, server.options().fixed_dt_seconds);
+call    0 returned 1
+call    1 returned 1
+branch  2 taken 1 (fallthrough)
+branch  3 taken 0 (throw)
+        1:  348:    registry.write<Position>(entity).x = 3.0f;
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  349:    server.tick(registry, server.options().fixed_dt_seconds);
+call    0 returned 1
+call    1 returned 1
+branch  2 taken 1 (fallthrough)
+branch  3 taken 0 (throw)
+        -:  350:
+        3:  351:    REQUIRE(first_subscriber_counts == std::vector<int>{1, 0, 1});
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3103,7 +3369,7 @@ branch 31 never executed (fallthrough)
 branch 32 never executed (throw)
 call   33 never executed
 call   34 never executed
-        1:  326:    REQUIRE(second_subscriber_counts == first_subscriber_counts);
+        1:  352:    REQUIRE(second_subscriber_counts == first_subscriber_counts);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3134,7 +3400,7 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        2:  327:}
+        2:  353:}
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3166,25 +3432,25 @@ call   27 never executed
 call   28 never executed
 call   29 never executed
 call   30 never executed
-        -:  328:
-function _ZL23CATCH2_INTERNAL_TEST_22v called 1 returned 100% blocks executed 50%
-        1:  329:TEST_CASE("replication server frame consumer subscription detaches") {
-        1:  330:    ecs::Registry registry;
+        -:  354:
+function _ZL23CATCH2_INTERNAL_TEST_24v called 1 returned 100% blocks executed 50%
+        1:  355:TEST_CASE("replication server frame consumer subscription detaches") {
+        1:  356:    ecs::Registry registry;
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  331:    kage::sync::configure_server(registry);
+        1:  357:    kage::sync::configure_server(registry);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        -:  332:
-        1:  333:    int frames = 0;
-        1:  334:    kage::sync::ReplicationServerOptions options;
+        -:  358:
+        1:  359:    int frames = 0;
+        1:  360:    kage::sync::ReplicationServerOptions options;
 call    0 returned 1
-function _ZZL23CATCH2_INTERNAL_TEST_22vENKUlmRKN3ecs9BitBufferEE_clEmS2_ called 0 returned 0% blocks executed 0%
-       1*:  335:    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
+function _ZZL23CATCH2_INTERNAL_TEST_24vENKUlmRKN3ecs9BitBufferEE_clEmS2_ called 0 returned 0% blocks executed 0%
+       1*:  361:    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
 call    0 returned 1
-        1:  336:    kage::sync::ReplicationServer server(options);
+        1:  362:    kage::sync::ReplicationServer server(options);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -3193,20 +3459,20 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-function _ZZL23CATCH2_INTERNAL_TEST_22vENKUlRKN4kage4sync16ServerFrameDeltaEE_clES3_ called 2 returned 100% blocks executed 100%
-        4:  337:    TestFrameConsumer consumer([&frames](const kage::sync::ServerFrameDelta&) {
-        2:  338:        ++frames;
-        1:  339:    });
+function _ZZL23CATCH2_INTERNAL_TEST_24vENKUlRKN4kage4sync24ServerRegistryDirtyFrameEE_clES3_ called 2 returned 100% blocks executed 100%
+        4:  363:    TestFrameConsumer consumer([&frames](const kage::sync::ServerRegistryDirtyFrame&) {
+        2:  364:        ++frames;
+        1:  365:    });
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
-        -:  340:
-        -:  341:    {
-        1:  342:        auto subscription = server.subscribe_frame_consumer(consumer);
+        -:  366:
+        -:  367:    {
+        1:  368:        auto subscription = server.subscribe_registry_dirty_frame_listener(consumer);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  343:        REQUIRE(subscription.active());
+        1:  369:        REQUIRE(subscription.active());
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3233,12 +3499,12 @@ branch 22 never executed (fallthrough)
 branch 23 never executed (throw)
 call   24 never executed
 call   25 never executed
-        1:  344:        server.tick(registry, server.options().fixed_dt_seconds);
+        1:  370:        server.tick(registry, server.options().fixed_dt_seconds);
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
-        1:  345:        REQUIRE(frames == 1);
+        1:  371:        REQUIRE(frames == 1);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3269,11 +3535,11 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        1:  346:        subscription.reset();
+        1:  372:        subscription.reset();
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  347:        REQUIRE_FALSE(subscription.active());
+        1:  373:        REQUIRE_FALSE(subscription.active());
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -3303,12 +3569,12 @@ branch 25 never executed (fallthrough)
 branch 26 never executed (throw)
 call   27 never executed
 call   28 never executed
-        1:  348:        server.tick(registry, server.options().fixed_dt_seconds);
+        1:  374:        server.tick(registry, server.options().fixed_dt_seconds);
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
-        1:  349:        REQUIRE(frames == 1);
+        1:  375:        REQUIRE(frames == 1);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3339,20 +3605,20 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        1:  350:    }
+        1:  376:    }
 call    0 returned 1
 call    1 never executed
-        -:  351:
-        1:  352:    auto subscription = server.subscribe_frame_consumer(consumer);
+        -:  377:
+        1:  378:    auto subscription = server.subscribe_registry_dirty_frame_listener(consumer);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  353:    server.tick(registry, server.options().fixed_dt_seconds);
+        1:  379:    server.tick(registry, server.options().fixed_dt_seconds);
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
-        1:  354:    REQUIRE(frames == 2);
+        1:  380:    REQUIRE(frames == 2);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3383,7 +3649,7 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        1:  355:}
+        1:  381:}
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3394,25 +3660,25 @@ call    6 never executed
 call    7 never executed
 call    8 never executed
 call    9 never executed
-        -:  356:
-function _ZL23CATCH2_INTERNAL_TEST_24v called 1 returned 100% blocks executed 51%
-        1:  357:TEST_CASE("replication server frame consumer can detach while receiving a frame") {
-        1:  358:    ecs::Registry registry;
+        -:  382:
+function _ZL23CATCH2_INTERNAL_TEST_26v called 1 returned 100% blocks executed 51%
+        1:  383:TEST_CASE("replication server frame consumer can detach while receiving a frame") {
+        1:  384:    ecs::Registry registry;
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  359:    kage::sync::configure_server(registry);
+        1:  385:    kage::sync::configure_server(registry);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        -:  360:
-        1:  361:    int frames = 0;
-        1:  362:    kage::sync::ReplicationServerOptions options;
+        -:  386:
+        1:  387:    int frames = 0;
+        1:  388:    kage::sync::ReplicationServerOptions options;
 call    0 returned 1
-function _ZZL23CATCH2_INTERNAL_TEST_24vENKUlmRKN3ecs9BitBufferEE_clEmS2_ called 0 returned 0% blocks executed 0%
-       1*:  363:    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
+function _ZZL23CATCH2_INTERNAL_TEST_26vENKUlmRKN3ecs9BitBufferEE_clEmS2_ called 0 returned 0% blocks executed 0%
+       1*:  389:    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
 call    0 returned 1
-        1:  364:    kage::sync::ReplicationServer server(options);
+        1:  390:    kage::sync::ReplicationServer server(options);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -3421,28 +3687,28 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-        1:  365:    kage::sync::ServerFrameConsumerSubscription* active_subscription = nullptr;
-function _ZZL23CATCH2_INTERNAL_TEST_24vENKUlRKN4kage4sync16ServerFrameDeltaEE_clES3_ called 1 returned 100% blocks executed 100%
-        3:  366:    TestFrameConsumer consumer([&](const kage::sync::ServerFrameDelta&) {
-        1:  367:        ++frames;
-        1:  368:        active_subscription->reset();
+        1:  391:    kage::sync::ServerRegistryDirtyFrameSubscription* active_subscription = nullptr;
+function _ZZL23CATCH2_INTERNAL_TEST_26vENKUlRKN4kage4sync24ServerRegistryDirtyFrameEE_clES3_ called 1 returned 100% blocks executed 100%
+        3:  392:    TestFrameConsumer consumer([&](const kage::sync::ServerRegistryDirtyFrame&) {
+        1:  393:        ++frames;
+        1:  394:        active_subscription->reset();
 call    0 returned 1
-        1:  369:    });
+        1:  395:    });
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
-        1:  370:    auto subscription = server.subscribe_frame_consumer(consumer);
+        1:  396:    auto subscription = server.subscribe_registry_dirty_frame_listener(consumer);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  371:    active_subscription = &subscription;
-        -:  372:
-        1:  373:    server.tick(registry, server.options().fixed_dt_seconds);
+        1:  397:    active_subscription = &subscription;
+        -:  398:
+        1:  399:    server.tick(registry, server.options().fixed_dt_seconds);
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
-        1:  374:    REQUIRE(frames == 1);
+        1:  400:    REQUIRE(frames == 1);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3473,7 +3739,7 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        1:  375:    REQUIRE_FALSE(subscription.active());
+        1:  401:    REQUIRE_FALSE(subscription.active());
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -3503,200 +3769,200 @@ branch 25 never executed (fallthrough)
 branch 26 never executed (throw)
 call   27 never executed
 call   28 never executed
-        -:  376:
-        1:  377:    server.tick(registry, server.options().fixed_dt_seconds);
-call    0 returned 1
-call    1 returned 1
-branch  2 taken 1 (fallthrough)
-branch  3 taken 0 (throw)
-        1:  378:    REQUIRE(frames == 1);
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-call    6 returned 1
-branch  7 taken 1 (fallthrough)
-branch  8 taken 0 (throw)
-call    9 returned 1
-branch 10 taken 1 (fallthrough)
-branch 11 taken 0 (throw)
-call   12 returned 1
-branch 13 taken 1 (fallthrough)
-branch 14 taken 0 (throw)
-call   15 returned 1
-call   16 returned 1
-branch 17 taken 1 (fallthrough)
-branch 18 taken 0 (throw)
-call   19 returned 1
-call   20 never executed
-call   21 never executed
-call   22 never executed
-branch 23 never executed (fallthrough)
-branch 24 never executed (throw)
-call   25 never executed
-branch 26 never executed (fallthrough)
-branch 27 never executed (throw)
-call   28 never executed
-call   29 never executed
-        1:  379:}
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-call    3 returned 1
-call    4 returned 1
-call    5 never executed
-call    6 never executed
-call    7 never executed
-call    8 never executed
-call    9 never executed
-        -:  380:
-function _ZL23CATCH2_INTERNAL_TEST_26v called 1 returned 100% blocks executed 49%
-        1:  381:TEST_CASE("replication server flushes client replication once after fixed-step catch-up") {
-        1:  382:    ecs::Registry registry;
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-        1:  383:    kage::sync::configure_server(registry);
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-        1:  384:    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-        1:  385:    const ecs::Entity entity = registry.create();
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-        1:  386:    registry.add<Position>(entity, Position{1.0f, 2.0f});
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-        1:  387:    REQUIRE(start_sync(registry, entity, archetype));
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-call    6 returned 1
-branch  7 taken 1 (fallthrough)
-branch  8 taken 0 (throw)
-call    9 returned 1
-branch 10 taken 1 (fallthrough)
-branch 11 taken 0 (throw)
-call   12 returned 1
-branch 13 taken 1 (fallthrough)
-branch 14 taken 0 (throw)
-call   15 returned 1
-branch 16 taken 1 (fallthrough)
-branch 17 taken 0 (throw)
-call   18 returned 1
-call   19 never executed
-call   20 never executed
-branch 21 never executed (fallthrough)
-branch 22 never executed (throw)
-call   23 never executed
-branch 24 never executed (fallthrough)
-branch 25 never executed (throw)
-call   26 never executed
-call   27 never executed
-        -:  388:
-function _ZZL23CATCH2_INTERNAL_TEST_26vENKUlN3ecs6EntityERN15kage_sync_tests8PositionEE_clES0_S3_ called 3 returned 100% blocks executed 100%
-        1:  389:    registry.job<Position>(0).each([](ecs::Entity, Position& position) {
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-        3:  390:        position.x += 1.0f;
-        3:  391:    });
-        -:  392:
-        1:  393:    std::vector<ecs::BitBuffer> payloads;
-call    0 returned 1
-        1:  394:    kage::sync::ReplicationServerOptions options;
-call    0 returned 1
-        1:  395:    options.fixed_dt_seconds = 0.25;
-function _ZZL23CATCH2_INTERNAL_TEST_26vENKUlmRKN3ecs9BitBufferEE_clEmS2_ called 1 returned 100% blocks executed 52%
-        3:  396:    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
-        1:  397:        REQUIRE(client == 1);
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-call    6 returned 1
-branch  7 taken 1 (fallthrough)
-branch  8 taken 0 (throw)
-call    9 returned 1
-branch 10 taken 1 (fallthrough)
-branch 11 taken 0 (throw)
-call   12 returned 1
-branch 13 taken 1 (fallthrough)
-branch 14 taken 0 (throw)
-call   15 returned 1
-call   16 returned 1
-branch 17 taken 1 (fallthrough)
-branch 18 taken 0 (throw)
-call   19 returned 1
-call   20 never executed
-call   21 never executed
-call   22 never executed
-branch 23 never executed (fallthrough)
-branch 24 never executed (throw)
-call   25 never executed
-branch 26 never executed (fallthrough)
-branch 27 never executed (throw)
-call   28 never executed
-call   29 never executed
-        1:  398:        payloads.push_back(payload);
-call    0 returned 1
-        2:  399:    };
-call    0 returned 1
-        1:  400:    kage::sync::ReplicationServer server(options);
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-call    6 returned 1
-call    7 never executed
-        1:  401:    REQUIRE(server.add_client(1));
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-call    6 returned 1
-branch  7 taken 1 (fallthrough)
-branch  8 taken 0 (throw)
-call    9 returned 1
-branch 10 taken 1 (fallthrough)
-branch 11 taken 0 (throw)
-call   12 returned 1
-branch 13 taken 1 (fallthrough)
-branch 14 taken 0 (throw)
-call   15 returned 1
-branch 16 taken 1 (fallthrough)
-branch 17 taken 0 (throw)
-call   18 returned 1
-call   19 never executed
-call   20 never executed
-branch 21 never executed (fallthrough)
-branch 22 never executed (throw)
-call   23 never executed
-branch 24 never executed (fallthrough)
-branch 25 never executed (throw)
-call   26 never executed
-call   27 never executed
         -:  402:
-        1:  403:    REQUIRE(server.tick(registry, server.options().fixed_dt_seconds * 3.0));
+        1:  403:    server.tick(registry, server.options().fixed_dt_seconds);
+call    0 returned 1
+call    1 returned 1
+branch  2 taken 1 (fallthrough)
+branch  3 taken 0 (throw)
+        1:  404:    REQUIRE(frames == 1);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+call   16 returned 1
+branch 17 taken 1 (fallthrough)
+branch 18 taken 0 (throw)
+call   19 returned 1
+call   20 never executed
+call   21 never executed
+call   22 never executed
+branch 23 never executed (fallthrough)
+branch 24 never executed (throw)
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+call   29 never executed
+        1:  405:}
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+call    4 returned 1
+call    5 never executed
+call    6 never executed
+call    7 never executed
+call    8 never executed
+call    9 never executed
+        -:  406:
+function _ZL23CATCH2_INTERNAL_TEST_28v called 1 returned 100% blocks executed 49%
+        1:  407:TEST_CASE("replication server flushes client replication once after fixed-step catch-up") {
+        1:  408:    ecs::Registry registry;
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  409:    kage::sync::configure_server(registry);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  410:    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  411:    const ecs::Entity entity = registry.create();
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  412:    registry.add<Position>(entity, Position{1.0f, 2.0f});
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  413:    REQUIRE(start_sync(registry, entity, archetype));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 never executed
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+call   27 never executed
+        -:  414:
+function _ZZL23CATCH2_INTERNAL_TEST_28vENKUlN3ecs6EntityERN15kage_sync_tests8PositionEE_clES0_S3_ called 3 returned 100% blocks executed 100%
+        1:  415:    registry.job<Position>(0).each([](ecs::Entity, Position& position) {
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+        3:  416:        position.x += 1.0f;
+        3:  417:    });
+        -:  418:
+        1:  419:    std::vector<ecs::BitBuffer> payloads;
+call    0 returned 1
+        1:  420:    kage::sync::ReplicationServerOptions options;
+call    0 returned 1
+        1:  421:    options.fixed_dt_seconds = 0.25;
+function _ZZL23CATCH2_INTERNAL_TEST_28vENKUlmRKN3ecs9BitBufferEE_clEmS2_ called 1 returned 100% blocks executed 52%
+        3:  422:    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+        1:  423:        REQUIRE(client == 1);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+call   16 returned 1
+branch 17 taken 1 (fallthrough)
+branch 18 taken 0 (throw)
+call   19 returned 1
+call   20 never executed
+call   21 never executed
+call   22 never executed
+branch 23 never executed (fallthrough)
+branch 24 never executed (throw)
+call   25 never executed
+branch 26 never executed (fallthrough)
+branch 27 never executed (throw)
+call   28 never executed
+call   29 never executed
+        1:  424:        payloads.push_back(payload);
+call    0 returned 1
+        2:  425:    };
+call    0 returned 1
+        1:  426:    kage::sync::ReplicationServer server(options);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+call    7 never executed
+        1:  427:    REQUIRE(server.add_client(1));
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+call    3 returned 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1
+branch  7 taken 1 (fallthrough)
+branch  8 taken 0 (throw)
+call    9 returned 1
+branch 10 taken 1 (fallthrough)
+branch 11 taken 0 (throw)
+call   12 returned 1
+branch 13 taken 1 (fallthrough)
+branch 14 taken 0 (throw)
+call   15 returned 1
+branch 16 taken 1 (fallthrough)
+branch 17 taken 0 (throw)
+call   18 returned 1
+call   19 never executed
+call   20 never executed
+branch 21 never executed (fallthrough)
+branch 22 never executed (throw)
+call   23 never executed
+branch 24 never executed (fallthrough)
+branch 25 never executed (throw)
+call   26 never executed
+call   27 never executed
+        -:  428:
+        1:  429:    REQUIRE(server.tick(registry, server.options().fixed_dt_seconds * 3.0));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3726,8 +3992,8 @@ branch 25 never executed (fallthrough)
 branch 26 never executed (throw)
 call   27 never executed
 call   28 never executed
-        -:  404:
-        1:  405:    REQUIRE(server.frame() == 3U);
+        -:  430:
+        1:  431:    REQUIRE(server.frame() == 3U);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3759,7 +4025,7 @@ branch 27 never executed (fallthrough)
 branch 28 never executed (throw)
 call   29 never executed
 call   30 never executed
-        1:  406:    REQUIRE(payloads.size() == 1U);
+        1:  432:    REQUIRE(payloads.size() == 1U);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3791,12 +4057,12 @@ branch 27 never executed (fallthrough)
 branch 28 never executed (throw)
 call   29 never executed
 call   30 never executed
-        1:  407:    ecs::BitBuffer update = payloads.back();
+        1:  433:    ecs::BitBuffer update = payloads.back();
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
-        1:  408:    REQUIRE(static_cast<std::uint8_t>(update.read_bits(8U)) == kage::sync::protocol::server_update_message);
+        1:  434:    REQUIRE(static_cast<std::uint8_t>(update.read_bits(8U)) == kage::sync::protocol::server_update_message);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3830,7 +4096,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  409:    REQUIRE(static_cast<kage::sync::SyncFrame>(update.read_bits(32U)) == 3U);
+        1:  435:    REQUIRE(static_cast<kage::sync::SyncFrame>(update.read_bits(32U)) == 3U);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3864,7 +4130,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  410:}
+        1:  436:}
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3875,493 +4141,22 @@ call    6 never executed
 call    7 never executed
 call    8 never executed
 call    9 never executed
-        -:  411:
-function _ZL23CATCH2_INTERNAL_TEST_28v called 1 returned 100% blocks executed 48%
-        1:  412:TEST_CASE("snapshot writer records full frames and frame dirty deltas as a server frame consumer") {
-        1:  413:    ecs::Registry registry;
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-        1:  414:    kage::sync::configure_server(registry);
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-        1:  415:    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-        1:  416:    const ecs::Entity entity = registry.create();
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-        1:  417:    registry.add<Position>(entity, Position{1.0f, 2.0f});
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-        1:  418:    REQUIRE(start_sync(registry, entity, archetype));
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-call    6 returned 1
-branch  7 taken 1 (fallthrough)
-branch  8 taken 0 (throw)
-call    9 returned 1
-branch 10 taken 1 (fallthrough)
-branch 11 taken 0 (throw)
-call   12 returned 1
-branch 13 taken 1 (fallthrough)
-branch 14 taken 0 (throw)
-call   15 returned 1
-branch 16 taken 1 (fallthrough)
-branch 17 taken 0 (throw)
-call   18 returned 1
-call   19 never executed
-call   20 never executed
-branch 21 never executed (fallthrough)
-branch 22 never executed (throw)
-call   23 never executed
-branch 24 never executed (fallthrough)
-branch 25 never executed (throw)
-call   26 never executed
-call   27 never executed
-        -:  419:
-        -:  420:    struct SeenFrame {
-        -:  421:        kage::sync::SyncFrame frame = 0;
-        -:  422:        kage::sync::SnapshotWriterFrameKind kind = kage::sync::SnapshotWriterFrameKind::Full;
-        -:  423:        std::size_t payload_size = 0;
-        -:  424:    };
-        1:  425:    std::vector<SeenFrame> seen;
-call    0 returned 1
-        1:  426:    kage::sync::SnapshotWriterOptions writer_options;
-call    0 returned 1
-        1:  427:    writer_options.full_snapshot_interval_frames = 3;
-    #####:  428:    writer_options.component_options.include_components = {
-        1:  429:        registry.component<Position>(),
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-        1:  430:        registry.component<kage::sync::Replicated>()};
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-function _ZZL23CATCH2_INTERNAL_TEST_28vENKUlRKN4kage4sync19SnapshotWriterFrameEE_clES3_ called 3 returned 100% blocks executed 100%
-        5:  431:    writer_options.write = [&seen](const kage::sync::SnapshotWriterFrame& frame) {
-        3:  432:        seen.push_back(SeenFrame{frame.frame, frame.kind, frame.payload.size()});
-call    0 returned 3
-call    1 returned 3
-branch  2 taken 3 (fallthrough)
-branch  3 taken 0 (throw)
-        4:  433:    };
-call    0 returned 1
-        -:  434:
-        1:  435:    kage::sync::ReplicationServer server;
-call    0 returned 1
-call    1 never executed
-        1:  436:    kage::sync::SnapshotWriter writer(std::move(writer_options));
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-branch  3 taken 1 (fallthrough)
-branch  4 taken 0 (throw)
-call    5 returned 1
-call    6 never executed
-        1:  437:    writer.attach(server);
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-        -:  438:
-        1:  439:    server.tick(registry, server.options().fixed_dt_seconds);
-call    0 returned 1
-call    1 returned 1
-branch  2 taken 1 (fallthrough)
-branch  3 taken 0 (throw)
-        1:  440:    registry.write<Position>(entity).x = 4.0f;
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-        1:  441:    server.tick(registry, server.options().fixed_dt_seconds);
-call    0 returned 1
-call    1 returned 1
-branch  2 taken 1 (fallthrough)
-branch  3 taken 0 (throw)
-        1:  442:    registry.write<Position>(entity).x = 8.0f;
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-        1:  443:    server.tick(registry, server.options().fixed_dt_seconds);
-call    0 returned 1
-call    1 returned 1
-branch  2 taken 1 (fallthrough)
-branch  3 taken 0 (throw)
-        -:  444:
-        1:  445:    REQUIRE(seen.size() == 3);
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-call    6 returned 1
-call    7 returned 1
-branch  8 taken 1 (fallthrough)
-branch  9 taken 0 (throw)
-call   10 returned 1
-branch 11 taken 1 (fallthrough)
-branch 12 taken 0 (throw)
-call   13 returned 1
-branch 14 taken 1 (fallthrough)
-branch 15 taken 0 (throw)
-call   16 returned 1
-call   17 returned 1
-branch 18 taken 1 (fallthrough)
-branch 19 taken 0 (throw)
-call   20 returned 1
-call   21 never executed
-call   22 never executed
-call   23 never executed
-branch 24 never executed (fallthrough)
-branch 25 never executed (throw)
-call   26 never executed
-branch 27 never executed (fallthrough)
-branch 28 never executed (throw)
-call   29 never executed
-call   30 never executed
-        1:  446:    REQUIRE(seen[0].frame == 1);
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-call    6 returned 1
-call    7 returned 1
-branch  8 taken 1 (fallthrough)
-branch  9 taken 0 (throw)
-call   10 returned 1
-branch 11 taken 1 (fallthrough)
-branch 12 taken 0 (throw)
-call   13 returned 1
-branch 14 taken 1 (fallthrough)
-branch 15 taken 0 (throw)
-call   16 returned 1
-call   17 returned 1
-branch 18 taken 1 (fallthrough)
-branch 19 taken 0 (throw)
-call   20 returned 1
-call   21 never executed
-call   22 never executed
-call   23 never executed
-branch 24 never executed (fallthrough)
-branch 25 never executed (throw)
-call   26 never executed
-branch 27 never executed (fallthrough)
-branch 28 never executed (throw)
-call   29 never executed
-call   30 never executed
-        1:  447:    REQUIRE(seen[0].kind == kage::sync::SnapshotWriterFrameKind::Full);
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-call    6 returned 1
-call    7 returned 1
-branch  8 taken 1 (fallthrough)
-branch  9 taken 0 (throw)
-call   10 returned 1
-branch 11 taken 1 (fallthrough)
-branch 12 taken 0 (throw)
-call   13 returned 1
-branch 14 taken 1 (fallthrough)
-branch 15 taken 0 (throw)
-call   16 returned 1
-call   17 returned 1
-branch 18 taken 1 (fallthrough)
-branch 19 taken 0 (throw)
-call   20 returned 1
-call   21 never executed
-call   22 never executed
-call   23 never executed
-branch 24 never executed (fallthrough)
-branch 25 never executed (throw)
-call   26 never executed
-branch 27 never executed (fallthrough)
-branch 28 never executed (throw)
-call   29 never executed
-call   30 never executed
-        1:  448:    REQUIRE(seen[1].frame == 2);
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-call    6 returned 1
-call    7 returned 1
-branch  8 taken 1 (fallthrough)
-branch  9 taken 0 (throw)
-call   10 returned 1
-branch 11 taken 1 (fallthrough)
-branch 12 taken 0 (throw)
-call   13 returned 1
-branch 14 taken 1 (fallthrough)
-branch 15 taken 0 (throw)
-call   16 returned 1
-call   17 returned 1
-branch 18 taken 1 (fallthrough)
-branch 19 taken 0 (throw)
-call   20 returned 1
-call   21 never executed
-call   22 never executed
-call   23 never executed
-branch 24 never executed (fallthrough)
-branch 25 never executed (throw)
-call   26 never executed
-branch 27 never executed (fallthrough)
-branch 28 never executed (throw)
-call   29 never executed
-call   30 never executed
-        1:  449:    REQUIRE(seen[1].kind == kage::sync::SnapshotWriterFrameKind::Delta);
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-call    6 returned 1
-call    7 returned 1
-branch  8 taken 1 (fallthrough)
-branch  9 taken 0 (throw)
-call   10 returned 1
-branch 11 taken 1 (fallthrough)
-branch 12 taken 0 (throw)
-call   13 returned 1
-branch 14 taken 1 (fallthrough)
-branch 15 taken 0 (throw)
-call   16 returned 1
-call   17 returned 1
-branch 18 taken 1 (fallthrough)
-branch 19 taken 0 (throw)
-call   20 returned 1
-call   21 never executed
-call   22 never executed
-call   23 never executed
-branch 24 never executed (fallthrough)
-branch 25 never executed (throw)
-call   26 never executed
-branch 27 never executed (fallthrough)
-branch 28 never executed (throw)
-call   29 never executed
-call   30 never executed
-        1:  450:    REQUIRE(seen[2].frame == 3);
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-call    6 returned 1
-call    7 returned 1
-branch  8 taken 1 (fallthrough)
-branch  9 taken 0 (throw)
-call   10 returned 1
-branch 11 taken 1 (fallthrough)
-branch 12 taken 0 (throw)
-call   13 returned 1
-branch 14 taken 1 (fallthrough)
-branch 15 taken 0 (throw)
-call   16 returned 1
-call   17 returned 1
-branch 18 taken 1 (fallthrough)
-branch 19 taken 0 (throw)
-call   20 returned 1
-call   21 never executed
-call   22 never executed
-call   23 never executed
-branch 24 never executed (fallthrough)
-branch 25 never executed (throw)
-call   26 never executed
-branch 27 never executed (fallthrough)
-branch 28 never executed (throw)
-call   29 never executed
-call   30 never executed
-        1:  451:    REQUIRE(seen[2].kind == kage::sync::SnapshotWriterFrameKind::Full);
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-call    6 returned 1
-call    7 returned 1
-branch  8 taken 1 (fallthrough)
-branch  9 taken 0 (throw)
-call   10 returned 1
-branch 11 taken 1 (fallthrough)
-branch 12 taken 0 (throw)
-call   13 returned 1
-branch 14 taken 1 (fallthrough)
-branch 15 taken 0 (throw)
-call   16 returned 1
-call   17 returned 1
-branch 18 taken 1 (fallthrough)
-branch 19 taken 0 (throw)
-call   20 returned 1
-call   21 never executed
-call   22 never executed
-call   23 never executed
-branch 24 never executed (fallthrough)
-branch 25 never executed (throw)
-call   26 never executed
-branch 27 never executed (fallthrough)
-branch 28 never executed (throw)
-call   29 never executed
-call   30 never executed
-        1:  452:    REQUIRE(seen[0].payload_size > 0);
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-call    6 returned 1
-call    7 returned 1
-branch  8 taken 1 (fallthrough)
-branch  9 taken 0 (throw)
-call   10 returned 1
-branch 11 taken 1 (fallthrough)
-branch 12 taken 0 (throw)
-call   13 returned 1
-branch 14 taken 1 (fallthrough)
-branch 15 taken 0 (throw)
-call   16 returned 1
-call   17 returned 1
-branch 18 taken 1 (fallthrough)
-branch 19 taken 0 (throw)
-call   20 returned 1
-call   21 never executed
-call   22 never executed
-call   23 never executed
-branch 24 never executed (fallthrough)
-branch 25 never executed (throw)
-call   26 never executed
-branch 27 never executed (fallthrough)
-branch 28 never executed (throw)
-call   29 never executed
-call   30 never executed
-        1:  453:    REQUIRE(seen[1].payload_size > 0);
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-call    6 returned 1
-call    7 returned 1
-branch  8 taken 1 (fallthrough)
-branch  9 taken 0 (throw)
-call   10 returned 1
-branch 11 taken 1 (fallthrough)
-branch 12 taken 0 (throw)
-call   13 returned 1
-branch 14 taken 1 (fallthrough)
-branch 15 taken 0 (throw)
-call   16 returned 1
-call   17 returned 1
-branch 18 taken 1 (fallthrough)
-branch 19 taken 0 (throw)
-call   20 returned 1
-call   21 never executed
-call   22 never executed
-call   23 never executed
-branch 24 never executed (fallthrough)
-branch 25 never executed (throw)
-call   26 never executed
-branch 27 never executed (fallthrough)
-branch 28 never executed (throw)
-call   29 never executed
-call   30 never executed
-        1:  454:    REQUIRE(seen[2].payload_size > 0);
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-call    6 returned 1
-call    7 returned 1
-branch  8 taken 1 (fallthrough)
-branch  9 taken 0 (throw)
-call   10 returned 1
-branch 11 taken 1 (fallthrough)
-branch 12 taken 0 (throw)
-call   13 returned 1
-branch 14 taken 1 (fallthrough)
-branch 15 taken 0 (throw)
-call   16 returned 1
-call   17 returned 1
-branch 18 taken 1 (fallthrough)
-branch 19 taken 0 (throw)
-call   20 returned 1
-call   21 never executed
-call   22 never executed
-call   23 never executed
-branch 24 never executed (fallthrough)
-branch 25 never executed (throw)
-call   26 never executed
-branch 27 never executed (fallthrough)
-branch 28 never executed (throw)
-call   29 never executed
-call   30 never executed
-        2:  455:}
-call    0 returned 1
-call    1 returned 1
-call    2 returned 1
-call    3 returned 1
-branch  4 taken 1 (fallthrough)
-branch  5 taken 0 (throw)
-call    6 returned 1
-call    7 returned 1
-call    8 returned 1
-call    9 returned 1
-call   10 returned 1
-branch 11 never executed (fallthrough)
-branch 12 never executed
-call   13 never executed
-branch 14 never executed (fallthrough)
-branch 15 never executed
-call   16 never executed
-branch 17 never executed (fallthrough)
-branch 18 never executed
-call   19 never executed
-call   20 never executed
-call   21 never executed
-call   22 never executed
-call   23 never executed
-call   24 never executed
-        -:  456:
+        -:  437:
 function _ZL23CATCH2_INTERNAL_TEST_30v called 1 returned 100% blocks executed 47%
-        1:  457:TEST_CASE("listen server plays queued cues locally") {
-        1:  458:    ecs::Registry registry;
+        1:  438:TEST_CASE("listen server plays queued cues locally") {
+        1:  439:    ecs::Registry registry;
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  459:    kage::sync::configure_server(registry);
+        1:  440:    kage::sync::configure_server(registry);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  460:    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+        1:  441:    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  461:    registry.register_component<CuePlayback>("CuePlayback");
+        1:  442:    registry.register_component<CuePlayback>("CuePlayback");
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -4370,23 +4165,23 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-        1:  462:    (void)kage::sync::register_sync_cue<TestCue>(registry);
+        1:  443:    (void)kage::sync::register_sync_cue<TestCue>(registry);
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
 call    4 returned 1
 call    5 never executed
-        -:  463:
-        1:  464:    const ecs::Entity entity = registry.create();
+        -:  444:
+        1:  445:    const ecs::Entity entity = registry.create();
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  465:    registry.add<Position>(entity, Position{1.0f, 2.0f});
+        1:  446:    registry.add<Position>(entity, Position{1.0f, 2.0f});
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  466:    REQUIRE(start_sync(registry, entity, archetype));
+        1:  447:    REQUIRE(start_sync(registry, entity, archetype));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -4415,11 +4210,11 @@ branch 24 never executed (fallthrough)
 branch 25 never executed (throw)
 call   26 never executed
 call   27 never executed
-        -:  467:
-        1:  468:    kage::sync::ReplicationServer server;
+        -:  448:
+        1:  449:    kage::sync::ReplicationServer server;
 call    0 returned 1
 call    1 never executed
-        1:  469:    REQUIRE(server.add_local_client() != kage::sync::invalid_client_id);
+        1:  450:    REQUIRE(server.add_local_client() != kage::sync::invalid_client_id);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -4453,7 +4248,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  470:    REQUIRE(kage::sync::emit_cue(registry, entity, TestCue{77}, 0.5f));
+        1:  451:    REQUIRE(kage_sync_tests::emit_test_cue(registry, entity, kage::sync::SyncFrame{1}, TestCue{77}, 0.5f));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -4482,14 +4277,14 @@ branch 24 never executed (fallthrough)
 branch 25 never executed (throw)
 call   26 never executed
 call   27 never executed
-        -:  471:
-        1:  472:    server.tick(registry, server.options().fixed_dt_seconds);
+        -:  452:
+        1:  453:    server.tick(registry, server.options().fixed_dt_seconds);
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
-        -:  473:
-        1:  474:    REQUIRE(registry.contains<CuePlayback>(entity));
+        -:  454:
+        1:  455:    REQUIRE(registry.contains<CuePlayback>(entity));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -4518,7 +4313,7 @@ branch 24 never executed (fallthrough)
 branch 25 never executed (throw)
 call   26 never executed
 call   27 never executed
-        1:  475:    REQUIRE(registry.get<CuePlayback>(entity).plays == 1);
+        1:  456:    REQUIRE(registry.get<CuePlayback>(entity).plays == 1);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -4552,7 +4347,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  476:    REQUIRE(registry.get<CuePlayback>(entity).last_id == 77);
+        1:  457:    REQUIRE(registry.get<CuePlayback>(entity).last_id == 77);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -4586,7 +4381,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        2:  477:}
+        2:  458:}
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -4606,22 +4401,22 @@ branch 15 never executed
 call   16 never executed
 call   17 never executed
 call   18 never executed
-        -:  478:
+        -:  459:
 function _ZL23CATCH2_INTERNAL_TEST_32v called 1 returned 100% blocks executed 48%
-        1:  479:TEST_CASE("listen server resolves entity references while playing queued cues locally") {
-        1:  480:    ecs::Registry registry;
+        1:  460:TEST_CASE("listen server resolves entity references while playing queued cues locally") {
+        1:  461:    ecs::Registry registry;
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  481:    kage::sync::configure_server(registry);
+        1:  462:    kage::sync::configure_server(registry);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  482:    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+        1:  463:    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  483:    registry.register_component<CuePlayback>("CuePlayback");
+        1:  464:    registry.register_component<CuePlayback>("CuePlayback");
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -4630,23 +4425,23 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-        1:  484:    (void)kage::sync::register_sync_cue<ReferenceCue>(registry);
+        1:  465:    (void)kage::sync::register_sync_cue<ReferenceCue>(registry);
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
 call    4 returned 1
 call    5 never executed
-        -:  485:
-        1:  486:    const ecs::Entity owner = registry.create();
+        -:  466:
+        1:  467:    const ecs::Entity owner = registry.create();
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  487:    registry.add<Position>(owner, Position{1.0f, 2.0f});
+        1:  468:    registry.add<Position>(owner, Position{1.0f, 2.0f});
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  488:    REQUIRE(start_sync(registry, owner, archetype));
+        1:  469:    REQUIRE(start_sync(registry, owner, archetype));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -4675,16 +4470,16 @@ branch 24 never executed (fallthrough)
 branch 25 never executed (throw)
 call   26 never executed
 call   27 never executed
-        -:  489:
-        1:  490:    const ecs::Entity target = registry.create();
+        -:  470:
+        1:  471:    const ecs::Entity target = registry.create();
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  491:    registry.add<Position>(target, Position{3.0f, 4.0f});
+        1:  472:    registry.add<Position>(target, Position{3.0f, 4.0f});
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  492:    REQUIRE(start_sync(registry, target, archetype));
+        1:  473:    REQUIRE(start_sync(registry, target, archetype));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -4713,15 +4508,15 @@ branch 24 never executed (fallthrough)
 branch 25 never executed (throw)
 call   26 never executed
 call   27 never executed
-        -:  493:
-        1:  494:    kage::sync::ReplicationServer server;
+        -:  474:
+        1:  475:    kage::sync::ReplicationServer server;
 call    0 returned 1
 call    1 never executed
-        1:  495:    const kage::sync::ClientId local = server.add_local_client();
+        1:  476:    const kage::sync::ClientId local = server.add_local_client();
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  496:    REQUIRE(local != kage::sync::invalid_client_id);
+        1:  477:    REQUIRE(local != kage::sync::invalid_client_id);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -4752,7 +4547,7 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        1:  497:    REQUIRE(kage::sync::emit_cue(
+        1:  478:    REQUIRE(kage_sync_tests::emit_test_cue(
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -4781,18 +4576,19 @@ branch 24 never executed (fallthrough)
 branch 25 never executed (throw)
 call   26 never executed
 call   27 never executed
-        -:  498:        registry,
-        -:  499:        owner,
-        -:  500:        ReferenceCue{kage::sync::EntityReference{target}},
-        -:  501:        0.5f));
-        -:  502:
-        1:  503:    server.tick(registry, server.options().fixed_dt_seconds);
+        -:  479:        registry,
+        -:  480:        owner,
+        -:  481:        kage::sync::SyncFrame{1},
+        -:  482:        ReferenceCue{kage::sync::EntityReference{target}},
+        -:  483:        0.5f));
+        -:  484:
+        1:  485:    server.tick(registry, server.options().fixed_dt_seconds);
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
-        -:  504:
-        1:  505:    REQUIRE(registry.contains<CuePlayback>(owner));
+        -:  486:
+        1:  487:    REQUIRE(registry.contains<CuePlayback>(owner));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -4821,7 +4617,7 @@ branch 24 never executed (fallthrough)
 branch 25 never executed (throw)
 call   26 never executed
 call   27 never executed
-        1:  506:    REQUIRE(registry.get<CuePlayback>(owner).plays == 1);
+        1:  488:    REQUIRE(registry.get<CuePlayback>(owner).plays == 1);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -4855,7 +4651,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  507:    REQUIRE(registry.get<CuePlayback>(owner).last_target == target);
+        1:  489:    REQUIRE(registry.get<CuePlayback>(owner).last_target == target);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -4889,7 +4685,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  508:    REQUIRE(kage::sync::client_entity_network_id_client(
+        1:  490:    REQUIRE(kage::sync::client_entity_network_id_client(
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -4924,8 +4720,8 @@ branch 30 never executed (fallthrough)
 branch 31 never executed (throw)
 call   32 never executed
 call   33 never executed
-        -:  509:                registry.get<CuePlayback>(owner).last_target_network_id) == local);
-        2:  510:}
+        -:  491:                registry.get<CuePlayback>(owner).last_target_network_id) == local);
+        2:  492:}
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -4945,24 +4741,24 @@ branch 15 never executed
 call   16 never executed
 call   17 never executed
 call   18 never executed
-        -:  511:
+        -:  493:
 function _ZL23CATCH2_INTERNAL_TEST_34v called 1 returned 100% blocks executed 50%
-        1:  512:TEST_CASE("replication server frame advances once per completed fixed tick") {
-        1:  513:    ecs::Registry registry;
+        1:  494:TEST_CASE("replication server frame advances once per completed fixed tick") {
+        1:  495:    ecs::Registry registry;
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  514:    kage::sync::configure_server(registry);
+        1:  496:    kage::sync::configure_server(registry);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        -:  515:
-        1:  516:    kage::sync::ReplicationServerOptions options;
+        -:  497:
+        1:  498:    kage::sync::ReplicationServerOptions options;
 call    0 returned 1
 function _ZZL23CATCH2_INTERNAL_TEST_34vENKUlmRKN3ecs9BitBufferEE_clEmS2_ called 0 returned 0% blocks executed 0%
-       1*:  517:    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
+       1*:  499:    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
 call    0 returned 1
-        1:  518:    kage::sync::ReplicationServer server(options);
+        1:  500:    kage::sync::ReplicationServer server(options);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -4971,7 +4767,7 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-        1:  519:    REQUIRE(server.frame() == 0);
+        1:  501:    REQUIRE(server.frame() == 0);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -5003,13 +4799,13 @@ branch 27 never executed (fallthrough)
 branch 28 never executed (throw)
 call   29 never executed
 call   30 never executed
-        -:  520:
-        1:  521:    server.tick(registry, server.options().fixed_dt_seconds);
+        -:  502:
+        1:  503:    server.tick(registry, server.options().fixed_dt_seconds);
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
-        1:  522:    REQUIRE(server.frame() == 1);
+        1:  504:    REQUIRE(server.frame() == 1);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -5041,13 +4837,13 @@ branch 27 never executed (fallthrough)
 branch 28 never executed (throw)
 call   29 never executed
 call   30 never executed
-        -:  523:
-        1:  524:    server.tick(registry, server.options().fixed_dt_seconds);
+        -:  505:
+        1:  506:    server.tick(registry, server.options().fixed_dt_seconds);
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
-        1:  525:    REQUIRE(server.frame() == 2);
+        1:  507:    REQUIRE(server.frame() == 2);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -5079,37 +4875,37 @@ branch 27 never executed (fallthrough)
 branch 28 never executed (throw)
 call   29 never executed
 call   30 never executed
-        1:  526:}
+        1:  508:}
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
 call    3 never executed
 call    4 never executed
 call    5 never executed
-        -:  527:
+        -:  509:
 function _ZL23CATCH2_INTERNAL_TEST_36v called 1 returned 100% blocks executed 49%
-        1:  528:TEST_CASE("replication server queued receive packets are processed after clock advancement") {
-        1:  529:    ecs::Registry registry;
+        1:  510:TEST_CASE("replication server queued receive packets are processed after clock advancement") {
+        1:  511:    ecs::Registry registry;
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  530:    kage::sync::configure_server(registry);
+        1:  512:    kage::sync::configure_server(registry);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        -:  531:
-        1:  532:    std::vector<ecs::BitBuffer> sent;
+        -:  513:
+        1:  514:    std::vector<ecs::BitBuffer> sent;
 call    0 returned 1
-        1:  533:    kage::sync::ReplicationServerOptions options;
+        1:  515:    kage::sync::ReplicationServerOptions options;
 call    0 returned 1
-        1:  534:    options.fixed_dt_seconds = 1.0;
+        1:  516:    options.fixed_dt_seconds = 1.0;
 function _ZZL23CATCH2_INTERNAL_TEST_36vENKUlmRKN3ecs9BitBufferEE_clEmS2_ called 1 returned 100% blocks executed 100%
-        3:  535:    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
-        1:  536:        sent.push_back(packet);
+        3:  517:    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+        1:  518:        sent.push_back(packet);
 call    0 returned 1
-        1:  537:    };
+        1:  519:    };
 call    0 returned 1
-        1:  538:    kage::sync::ReplicationServer server(options);
+        1:  520:    kage::sync::ReplicationServer server(options);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -5118,7 +4914,7 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-        1:  539:    REQUIRE(server.add_client(1));
+        1:  521:    REQUIRE(server.add_client(1));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -5147,26 +4943,26 @@ branch 24 never executed (fallthrough)
 branch 25 never executed (throw)
 call   26 never executed
 call   27 never executed
-        -:  540:
-        1:  541:    ecs::BitBuffer ping;
+        -:  522:
+        1:  523:    ecs::BitBuffer ping;
 call    0 returned 1
-        1:  542:    ping.push_bits(kage::sync::protocol::client_ping_message, 8U);
-call    0 returned 1
-branch  1 taken 1 (fallthrough)
-branch  2 taken 0 (throw)
-        1:  543:    ping.push_bits(7U, 32U);
+        1:  524:    ping.push_bits(kage::sync::protocol::client_ping_message, 8U);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  544:    ping.push_bits(3U, 32U);
+        1:  525:    ping.push_bits(7U, 32U);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  545:    ping.push_bits(0U, kage::sync::protocol::frame_subframe_bits);
+        1:  526:    ping.push_bits(3U, 32U);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  546:    server.receive_packet(1, ping);
+        1:  527:    ping.push_bits(0U, kage::sync::protocol::frame_subframe_bits);
+call    0 returned 1
+branch  1 taken 1 (fallthrough)
+branch  2 taken 0 (throw)
+        1:  528:    server.receive_packet(1, ping);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -5175,8 +4971,8 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-        -:  547:
-        1:  548:    REQUIRE(server.tick(registry, 0.5));
+        -:  529:
+        1:  530:    REQUIRE(server.tick(registry, 0.5));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -5205,7 +5001,7 @@ branch 24 never executed (fallthrough)
 branch 25 never executed (throw)
 call   26 never executed
 call   27 never executed
-        1:  549:    REQUIRE(sent.size() == 1);
+        1:  531:    REQUIRE(sent.size() == 1);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -5237,12 +5033,12 @@ branch 27 never executed (fallthrough)
 branch 28 never executed (throw)
 call   29 never executed
 call   30 never executed
-        1:  550:    ecs::BitBuffer pong = sent[0];
+        1:  532:    ecs::BitBuffer pong = sent[0];
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
-        1:  551:    REQUIRE(static_cast<std::uint8_t>(pong.read_bits(8U)) == kage::sync::protocol::server_pong_message);
+        1:  533:    REQUIRE(static_cast<std::uint8_t>(pong.read_bits(8U)) == kage::sync::protocol::server_pong_message);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -5276,7 +5072,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  552:    REQUIRE(static_cast<std::uint32_t>(pong.read_bits(32U)) == 7U);
+        1:  534:    REQUIRE(static_cast<std::uint32_t>(pong.read_bits(32U)) == 7U);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -5310,7 +5106,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  553:    REQUIRE(static_cast<kage::sync::SyncFrame>(pong.read_bits(32U)) == 3U);
+        1:  535:    REQUIRE(static_cast<kage::sync::SyncFrame>(pong.read_bits(32U)) == 3U);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -5344,7 +5140,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  554:    REQUIRE(static_cast<std::uint16_t>(pong.read_bits(kage::sync::protocol::frame_subframe_bits)) == 0U);
+        1:  536:    REQUIRE(static_cast<std::uint16_t>(pong.read_bits(kage::sync::protocol::frame_subframe_bits)) == 0U);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -5378,7 +5174,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  555:    REQUIRE(static_cast<kage::sync::SyncFrame>(pong.read_bits(32U)) == 0U);
+        1:  537:    REQUIRE(static_cast<kage::sync::SyncFrame>(pong.read_bits(32U)) == 0U);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -5412,11 +5208,11 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  556:    const auto server_subframe = static_cast<std::uint16_t>(pong.read_bits(kage::sync::protocol::frame_subframe_bits));
+        1:  538:    const auto server_subframe = static_cast<std::uint16_t>(pong.read_bits(kage::sync::protocol::frame_subframe_bits));
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  557:    REQUIRE(server_subframe == kage::sync::protocol::frame_subframe_scale / 2U);
+        1:  539:    REQUIRE(server_subframe == kage::sync::protocol::frame_subframe_scale / 2U);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -5447,7 +5243,7 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        1:  558:}
+        1:  540:}
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1

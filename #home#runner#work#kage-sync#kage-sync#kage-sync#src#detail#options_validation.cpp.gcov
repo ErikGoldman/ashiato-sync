@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/detail/options_validation.cpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/detail/options_validation.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/detail/options_validation.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#include "detail/options_validation.hpp"
         -:    2:
         -:    3:#include <cmath>
@@ -12,20 +12,20 @@
         -:    8:namespace kage::sync::detail {
         -:    9:namespace {
         -:   10:
-function _ZN4kage4sync6detail12_GLOBAL__N_115is_power_of_twoEm called 1054 returned 100% blocks executed 100%
-     1054:   11:bool is_power_of_two(std::size_t value) noexcept {
-     1054:   12:    return value != 0U && (value & (value - 1U)) == 0U;
-branch  0 taken 1052 (fallthrough)
+function _ZN4kage4sync6detail12_GLOBAL__N_115is_power_of_twoEm called 1063 returned 100% blocks executed 100%
+     1063:   11:bool is_power_of_two(std::size_t value) noexcept {
+     1063:   12:    return value != 0U && (value & (value - 1U)) == 0U;
+branch  0 taken 1061 (fallthrough)
 branch  1 taken 2
-branch  2 taken 1048 (fallthrough)
+branch  2 taken 1057 (fallthrough)
 branch  3 taken 4
         -:   13:}
         -:   14:
-function _ZN4kage4sync6detail12_GLOBAL__N_122require_positive_bytesEmPKc called 1072 returned 99% blocks executed 86%
-     1072:   15:void require_positive_bytes(std::size_t value, const char* message) {
-     1072:   16:    if (value == 0U) {
+function _ZN4kage4sync6detail12_GLOBAL__N_122require_positive_bytesEmPKc called 1126 returned 99% blocks executed 86%
+     1126:   15:void require_positive_bytes(std::size_t value, const char* message) {
+     1126:   16:    if (value == 0U) {
 branch  0 taken 7 (fallthrough)
-branch  1 taken 1065
+branch  1 taken 1119
         7:   17:        throw std::invalid_argument(message);
 call    0 returned 7
 call    1 returned 7
@@ -34,18 +34,18 @@ branch  3 taken 0 (throw)
 call    4 returned 0
 call    5 never executed
         -:   18:    }
-     1065:   19:}
+     1119:   19:}
         -:   20:
-function _ZN4kage4sync6detail12_GLOBAL__N_123require_finite_positiveEdPKc called 1131 returned 100% blocks executed 92%
-     1131:   21:void require_finite_positive(double value, const char* message) {
-     1131:   22:    if (value <= 0.0 || !std::isfinite(value)) {
-branch  0 taken 1130 (fallthrough)
+function _ZN4kage4sync6detail12_GLOBAL__N_123require_finite_positiveEdPKc called 1149 returned 100% blocks executed 92%
+     1149:   21:void require_finite_positive(double value, const char* message) {
+     1149:   22:    if (value <= 0.0 || !std::isfinite(value)) {
+branch  0 taken 1148 (fallthrough)
 branch  1 taken 1
-call    2 returned 1130
+call    2 returned 1148
 branch  3 taken 1 (fallthrough)
-branch  4 taken 1129
+branch  4 taken 1147
 branch  5 taken 2 (fallthrough)
-branch  6 taken 1129
+branch  6 taken 1147
         2:   23:        throw std::invalid_argument(message);
 call    0 returned 2
 call    1 returned 2
@@ -54,18 +54,18 @@ branch  3 taken 0 (throw)
 call    4 returned 0
 call    5 never executed
         -:   24:    }
-     1129:   25:}
+     1147:   25:}
         -:   26:
-function _ZN4kage4sync6detail12_GLOBAL__N_127require_finite_non_negativeEdPKc called 130 returned 99% blocks executed 92%
-      130:   27:void require_finite_non_negative(double value, const char* message) {
-      130:   28:    if (value < 0.0 || !std::isfinite(value)) {
-branch  0 taken 130 (fallthrough)
+function _ZN4kage4sync6detail12_GLOBAL__N_127require_finite_non_negativeEdPKc called 139 returned 99% blocks executed 92%
+      139:   27:void require_finite_non_negative(double value, const char* message) {
+      139:   28:    if (value < 0.0 || !std::isfinite(value)) {
+branch  0 taken 139 (fallthrough)
 branch  1 taken 0
-call    2 returned 130
+call    2 returned 139
 branch  3 taken 1 (fallthrough)
-branch  4 taken 129
+branch  4 taken 138
 branch  5 taken 1 (fallthrough)
-branch  6 taken 129
+branch  6 taken 138
         1:   29:        throw std::invalid_argument(message);
 call    0 returned 1
 call    1 returned 1
@@ -74,18 +74,18 @@ branch  3 taken 0 (throw)
 call    4 returned 0
 call    5 never executed
         -:   30:    }
-      129:   31:}
+      138:   31:}
         -:   32:
-function _ZN4kage4sync6detail12_GLOBAL__N_127require_finite_non_negativeEfPKc called 1900 returned 100% blocks executed 92%
-     1900:   33:void require_finite_non_negative(float value, const char* message) {
-     1900:   34:    if (value < 0.0f || !std::isfinite(value)) {
-branch  0 taken 1898 (fallthrough)
+function _ZN4kage4sync6detail12_GLOBAL__N_127require_finite_non_negativeEfPKc called 1909 returned 100% blocks executed 92%
+     1909:   33:void require_finite_non_negative(float value, const char* message) {
+     1909:   34:    if (value < 0.0f || !std::isfinite(value)) {
+branch  0 taken 1907 (fallthrough)
 branch  1 taken 2
-call    2 returned 1898
+call    2 returned 1907
 branch  3 taken 5 (fallthrough)
-branch  4 taken 1893
+branch  4 taken 1902
 branch  5 taken 7 (fallthrough)
-branch  6 taken 1893
+branch  6 taken 1902
         7:   35:        throw std::invalid_argument(message);
 call    0 returned 7
 call    1 returned 7
@@ -94,20 +94,20 @@ branch  3 taken 0 (throw)
 call    4 returned 0
 call    5 never executed
         -:   36:    }
-     1893:   37:}
+     1902:   37:}
         -:   38:
-function _ZN4kage4sync6detail12_GLOBAL__N_123require_finite_unit_minEfPKc called 852 returned 100% blocks executed 92%
-      852:   39:void require_finite_unit_min(float value, const char* message) {
-      852:   40:    if (value <= 0.0f || value > 1.0f || !std::isfinite(value)) {
-branch  0 taken 850 (fallthrough)
+function _ZN4kage4sync6detail12_GLOBAL__N_123require_finite_unit_minEfPKc called 861 returned 100% blocks executed 92%
+      861:   39:void require_finite_unit_min(float value, const char* message) {
+      861:   40:    if (value <= 0.0f || value > 1.0f || !std::isfinite(value)) {
+branch  0 taken 859 (fallthrough)
 branch  1 taken 2
-branch  2 taken 850 (fallthrough)
+branch  2 taken 859 (fallthrough)
 branch  3 taken 0
-call    4 returned 850
+call    4 returned 859
 branch  5 taken 0 (fallthrough)
-branch  6 taken 850
+branch  6 taken 859
 branch  7 taken 2 (fallthrough)
-branch  8 taken 850
+branch  8 taken 859
         2:   41:        throw std::invalid_argument(message);
 call    0 returned 2
 call    1 returned 2
@@ -116,18 +116,18 @@ branch  3 taken 0 (throw)
 call    4 returned 0
 call    5 never executed
         -:   42:    }
-      850:   43:}
+      859:   43:}
         -:   44:
-function _ZN4kage4sync6detail12_GLOBAL__N_127require_finite_at_least_oneEfPKc called 852 returned 100% blocks executed 92%
-      852:   45:void require_finite_at_least_one(float value, const char* message) {
-      852:   46:    if (value < 1.0f || !std::isfinite(value)) {
-branch  0 taken 850 (fallthrough)
+function _ZN4kage4sync6detail12_GLOBAL__N_127require_finite_at_least_oneEfPKc called 861 returned 100% blocks executed 92%
+      861:   45:void require_finite_at_least_one(float value, const char* message) {
+      861:   46:    if (value < 1.0f || !std::isfinite(value)) {
+branch  0 taken 859 (fallthrough)
 branch  1 taken 2
-call    2 returned 850
+call    2 returned 859
 branch  3 taken 1 (fallthrough)
-branch  4 taken 849
+branch  4 taken 858
 branch  5 taken 3 (fallthrough)
-branch  6 taken 849
+branch  6 taken 858
         3:   47:        throw std::invalid_argument(message);
 call    0 returned 3
 call    1 returned 3
@@ -136,18 +136,18 @@ branch  3 taken 0 (throw)
 call    4 returned 0
 call    5 never executed
         -:   48:    }
-      849:   49:}
+      858:   49:}
         -:   50:
-function _ZN4kage4sync6detail12_GLOBAL__N_123require_finite_positiveEfPKc called 138 returned 99% blocks executed 92%
-      138:   51:void require_finite_positive(float value, const char* message) {
-      138:   52:    if (value <= 0.0f || !std::isfinite(value)) {
-branch  0 taken 138 (fallthrough)
+function _ZN4kage4sync6detail12_GLOBAL__N_123require_finite_positiveEfPKc called 147 returned 99% blocks executed 92%
+      147:   51:void require_finite_positive(float value, const char* message) {
+      147:   52:    if (value <= 0.0f || !std::isfinite(value)) {
+branch  0 taken 147 (fallthrough)
 branch  1 taken 0
-call    2 returned 138
+call    2 returned 147
 branch  3 taken 1 (fallthrough)
-branch  4 taken 137
+branch  4 taken 146
 branch  5 taken 1 (fallthrough)
-branch  6 taken 137
+branch  6 taken 146
         1:   53:        throw std::invalid_argument(message);
 call    0 returned 1
 call    1 returned 1
@@ -156,18 +156,18 @@ branch  3 taken 0 (throw)
 call    4 returned 0
 call    5 never executed
         -:   54:    }
-      137:   55:}
+      146:   55:}
         -:   56:
-function _ZN4kage4sync6detail12_GLOBAL__N_137require_valid_max_pending_packet_acksEm called 322 returned 99% blocks executed 92%
-      322:   57:void require_valid_max_pending_packet_acks(std::size_t value) {
-      322:   58:    if (value == 0U || value > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
-branch  0 taken 320 (fallthrough)
+function _ZN4kage4sync6detail12_GLOBAL__N_137require_valid_max_pending_packet_acksEm called 331 returned 99% blocks executed 92%
+      331:   57:void require_valid_max_pending_packet_acks(std::size_t value) {
+      331:   58:    if (value == 0U || value > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+branch  0 taken 329 (fallthrough)
 branch  1 taken 2
-call    2 returned 320
+call    2 returned 329
 branch  3 taken 2 (fallthrough)
-branch  4 taken 318
+branch  4 taken 327
 branch  5 taken 4 (fallthrough)
-branch  6 taken 318
+branch  6 taken 327
         4:   59:        throw std::invalid_argument("max pending packet ACKs per client must be in [1, 2^32 - 1]");
 call    0 returned 4
 call    1 returned 4
@@ -176,16 +176,16 @@ branch  3 taken 0 (throw)
 call    4 returned 0
 call    5 never executed
         -:   60:    }
-      318:   61:}
+      327:   61:}
         -:   62:
-function _ZN4kage4sync6detail12_GLOBAL__N_128validate_protocol_descriptorERKNS0_8protocol10DescriptorE called 322 returned 97% blocks executed 80%
-      322:   63:void validate_protocol_descriptor(const protocol::Descriptor& descriptor) {
-      322:   64:    require_valid_max_pending_packet_acks(descriptor.max_pending_packet_acks_per_client);
-call    0 returned 318
-      318:   65:    if (!protocol::valid_network_entity_id_tier0_bits(descriptor.network_entity_id_tier0_bits)) {
-call    0 returned 318
+function _ZN4kage4sync6detail12_GLOBAL__N_128validate_protocol_descriptorERKNS0_8protocol10DescriptorE called 331 returned 97% blocks executed 80%
+      331:   63:void validate_protocol_descriptor(const protocol::Descriptor& descriptor) {
+      331:   64:    require_valid_max_pending_packet_acks(descriptor.max_pending_packet_acks_per_client);
+call    0 returned 327
+      327:   65:    if (!protocol::valid_network_entity_id_tier0_bits(descriptor.network_entity_id_tier0_bits)) {
+call    0 returned 327
 branch  1 taken 4 (fallthrough)
-branch  2 taken 314
+branch  2 taken 323
         4:   66:        throw std::invalid_argument("network entity id tier0 bits must be in [1, 22]");
 call    0 returned 4
 call    1 returned 4
@@ -194,9 +194,9 @@ branch  3 taken 0 (throw)
 call    4 returned 0
 call    5 never executed
         -:   67:    }
-      314:   68:    if (descriptor.baseline_frame_delta_bits != protocol::baseline_frame_delta_bits) {
+      323:   68:    if (descriptor.baseline_frame_delta_bits != protocol::baseline_frame_delta_bits) {
 branch  0 taken 2 (fallthrough)
-branch  1 taken 312
+branch  1 taken 321
         2:   69:        throw std::invalid_argument("protocol descriptor baseline frame delta bits must match this build");
 call    0 returned 2
 call    1 returned 2
@@ -205,7 +205,7 @@ branch  3 taken 0 (throw)
 call    4 returned 0
 call    5 never executed
         -:   70:    }
-      312:   71:}
+      321:   71:}
         -:   72:
 function _ZN4kage4sync6detail12_GLOBAL__N_130validate_client_timing_optionsEdmjjfffffmjjffffj called 375 returned 94% blocks executed 73%
       375:   73:void validate_client_timing_options(
@@ -457,26 +457,26 @@ call    0 returned 186
       186:  208:    return config;
         -:  209:}
         -:  210:
-function _ZN4kage4sync6detail23validate_server_optionsENS0_24ReplicationServerOptionsE called 150 returned 86% blocks executed 78%
-      150:  211:ReplicationServerOptions validate_server_options(ReplicationServerOptions options) {
-      150:  212:    require_positive_bytes(options.bandwidth_limit_bytes_per_tick, "bandwidth limit bytes per tick must be greater than zero");
-call    0 returned 149
-      149:  213:    require_positive_bytes(options.fixed_entity_replication_cost_bytes, "fixed entity replication cost bytes must be greater than zero");
-call    0 returned 148
-      148:  214:    require_positive_bytes(options.mtu_bytes, "MTU bytes must be greater than zero");
-call    0 returned 147
-      147:  215:    require_positive_bytes(options.bandwidth.min_bytes_per_second, "minimum bandwidth bytes per second must be greater than zero");
-call    0 returned 146
-      146:  216:    require_positive_bytes(options.bandwidth.initial_bytes_per_second, "initial bandwidth bytes per second must be greater than zero");
-call    0 returned 145
-      145:  217:    require_positive_bytes(options.bandwidth.max_bytes_per_second, "maximum bandwidth bytes per second must be greater than zero");
-call    0 returned 144
-      144:  218:    if (options.bandwidth.min_bytes_per_second > options.bandwidth.initial_bytes_per_second ||
-branch  0 taken 143 (fallthrough)
+function _ZN4kage4sync6detail23validate_server_optionsENS0_24ReplicationServerOptionsE called 159 returned 87% blocks executed 78%
+      159:  211:ReplicationServerOptions validate_server_options(ReplicationServerOptions options) {
+      159:  212:    require_positive_bytes(options.bandwidth_limit_bytes_per_tick, "bandwidth limit bytes per tick must be greater than zero");
+call    0 returned 158
+      158:  213:    require_positive_bytes(options.fixed_entity_replication_cost_bytes, "fixed entity replication cost bytes must be greater than zero");
+call    0 returned 157
+      157:  214:    require_positive_bytes(options.mtu_bytes, "MTU bytes must be greater than zero");
+call    0 returned 156
+      156:  215:    require_positive_bytes(options.bandwidth.min_bytes_per_second, "minimum bandwidth bytes per second must be greater than zero");
+call    0 returned 155
+      155:  216:    require_positive_bytes(options.bandwidth.initial_bytes_per_second, "initial bandwidth bytes per second must be greater than zero");
+call    0 returned 154
+      154:  217:    require_positive_bytes(options.bandwidth.max_bytes_per_second, "maximum bandwidth bytes per second must be greater than zero");
+call    0 returned 153
+      153:  218:    if (options.bandwidth.min_bytes_per_second > options.bandwidth.initial_bytes_per_second ||
+branch  0 taken 152 (fallthrough)
 branch  1 taken 1
-      143:  219:        options.bandwidth.initial_bytes_per_second > options.bandwidth.max_bytes_per_second) {
+      152:  219:        options.bandwidth.initial_bytes_per_second > options.bandwidth.max_bytes_per_second) {
 branch  0 taken 1 (fallthrough)
-branch  1 taken 142
+branch  1 taken 151
         2:  220:        throw std::invalid_argument("bandwidth byte rates must satisfy min <= initial <= max");
 call    0 returned 2
 call    1 returned 2
@@ -485,9 +485,9 @@ branch  3 taken 0 (throw)
 call    4 returned 0
 call    5 never executed
         -:  221:    }
-      142:  222:    if (options.bandwidth.sample_window_frames == 0U) {
+      151:  222:    if (options.bandwidth.sample_window_frames == 0U) {
 branch  0 taken 1 (fallthrough)
-branch  1 taken 141
+branch  1 taken 150
         1:  223:        throw std::invalid_argument("bandwidth sample window frames must be greater than zero");
 call    0 returned 1
 call    1 returned 1
@@ -496,25 +496,25 @@ branch  3 taken 0 (throw)
 call    4 returned 0
 call    5 never executed
         -:  224:    }
-      141:  225:    require_finite_non_negative(
-call    0 returned 140
+      150:  225:    require_finite_non_negative(
+call    0 returned 149
         -:  226:        options.bandwidth.loss_decrease_threshold,
         -:  227:        "bandwidth loss decrease threshold must be finite and non-negative");
-      140:  228:    require_finite_at_least_one(
-call    0 returned 139
+      149:  228:    require_finite_at_least_one(
+call    0 returned 148
         -:  229:        options.bandwidth.rtt_inflation_decrease_threshold,
         -:  230:        "bandwidth RTT inflation decrease threshold must be finite and at least 1");
-      139:  231:    require_finite_unit_min(
-call    0 returned 138
+      148:  231:    require_finite_unit_min(
+call    0 returned 147
         -:  232:        options.bandwidth.multiplicative_decrease,
         -:  233:        "bandwidth multiplicative decrease must be finite and in the range (0, 1]");
-      138:  234:    require_finite_positive(
-call    0 returned 137
+      147:  234:    require_finite_positive(
+call    0 returned 146
         -:  235:        options.bandwidth.additive_increase_bytes_per_second,
         -:  236:        "bandwidth additive increase bytes per second must be finite and positive");
-      137:  237:    if (options.serialized_worker_threads == 0U) {
+      146:  237:    if (options.serialized_worker_threads == 0U) {
 branch  0 taken 1 (fallthrough)
-branch  1 taken 136
+branch  1 taken 145
         1:  238:        throw std::invalid_argument("serialized worker threads must be greater than zero");
 call    0 returned 1
 call    1 returned 1
@@ -523,22 +523,22 @@ branch  3 taken 0 (throw)
 call    4 returned 0
 call    5 never executed
         -:  239:    }
-      136:  240:    validate_protocol_descriptor(options.protocol);
-call    0 returned 131
-      131:  241:    require_finite_positive(options.fixed_dt_seconds, "fixed dt seconds must be finite and positive");
-call    0 returned 130
-      130:  242:    require_finite_positive(
-call    0 returned 130
+      145:  240:    validate_protocol_descriptor(options.protocol);
+call    0 returned 140
+      140:  241:    require_finite_positive(options.fixed_dt_seconds, "fixed dt seconds must be finite and positive");
+call    0 returned 139
+      139:  242:    require_finite_positive(
+call    0 returned 139
         -:  243:        options.connect_resend_interval_seconds,
         -:  244:        "connect resend interval seconds must be finite and positive");
-      130:  245:    require_finite_non_negative(
-call    0 returned 129
+      139:  245:    require_finite_non_negative(
+call    0 returned 138
         -:  246:        options.idle_client_timeout_seconds,
         -:  247:        "idle client timeout seconds must be finite and non-negative");
-      129:  248:    if (!is_power_of_two(options.input_buffer_capacity_frames)) {
-call    0 returned 129
+      138:  248:    if (!is_power_of_two(options.input_buffer_capacity_frames)) {
+call    0 returned 138
 branch  1 taken 0 (fallthrough)
-branch  2 taken 129
+branch  2 taken 138
     #####:  249:        throw std::invalid_argument("input buffer capacity must be a nonzero power of two");
 call    0 never executed
 call    1 never executed
@@ -547,20 +547,20 @@ branch  3 never executed (throw)
 call    4 never executed
 call    5 never executed
         -:  250:    }
-      129:  251:    if (!options.prioritizer) {
-call    0 returned 129
-branch  1 taken 112 (fallthrough)
+      138:  251:    if (!options.prioritizer) {
+call    0 returned 138
+branch  1 taken 121 (fallthrough)
 branch  2 taken 17
 function _ZZN4kage4sync6detail23validate_server_optionsENS0_24ReplicationServerOptionsEENKUlmNS0_25ReplicationPriorityObjectEE_clEmS3_ called 25010 returned 100% blocks executed 100%
-      112:  252:        options.prioritizer = [](ClientId, ReplicationPriorityObject) {
+      121:  252:        options.prioritizer = [](ClientId, ReplicationPriorityObject) {
     25010:  253:            ReplicationPriorityDecision decision;
     25010:  254:            decision.priority = 1.0f;
     25010:  255:            return decision;
-      112:  256:        };
-call    0 returned 112
+      121:  256:        };
+call    0 returned 121
         -:  257:    }
-      129:  258:    return options;
-call    0 returned 129
+      138:  258:    return options;
+call    0 returned 138
         -:  259:}
         -:  260:
         -:  261:}  // namespace kage::sync::detail

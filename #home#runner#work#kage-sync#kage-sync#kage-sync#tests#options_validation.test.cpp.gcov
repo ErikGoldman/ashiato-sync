@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/tests/options_validation.test.cpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/options_validation.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/options_validation.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#include "kage/sync/client.hpp"
         -:    2:#include "kage/sync/client_clock.hpp"
         -:    3:#include "kage/sync/server.hpp"
@@ -2028,13 +2028,13 @@ call   40 never executed
         -:   42:static_assert(std::is_move_assignable<kage::sync::ReplicationClient>::value,
         -:   43:              "ReplicationClient must remain movable");
         -:   44:static_assert(!std::is_copy_constructible<kage::sync::ReplicationServer>::value,
-        -:   45:              "ReplicationServer must remain move-only");
+        -:   45:              "ReplicationServer must remain non-copyable");
         -:   46:static_assert(!std::is_copy_assignable<kage::sync::ReplicationServer>::value,
-        -:   47:              "ReplicationServer must remain move-only");
-        -:   48:static_assert(std::is_move_constructible<kage::sync::ReplicationServer>::value,
-        -:   49:              "ReplicationServer must remain movable");
-        -:   50:static_assert(std::is_move_assignable<kage::sync::ReplicationServer>::value,
-        -:   51:              "ReplicationServer must remain movable");
+        -:   47:              "ReplicationServer must remain non-copyable");
+        -:   48:static_assert(!std::is_move_constructible<kage::sync::ReplicationServer>::value,
+        -:   49:              "ReplicationServer must remain non-movable");
+        -:   50:static_assert(!std::is_move_assignable<kage::sync::ReplicationServer>::value,
+        -:   51:              "ReplicationServer must remain non-movable");
         -:   52:
 function _ZL22CATCH2_INTERNAL_TEST_0v called 1 returned 100% blocks executed 68%
         1:   53:TEST_CASE("replication server rejects invalid option values") {

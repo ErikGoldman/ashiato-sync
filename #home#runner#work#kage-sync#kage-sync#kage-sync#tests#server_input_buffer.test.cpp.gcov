@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/tests/server_input_buffer.test.cpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_input_buffer.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_input_buffer.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#include "server/input_buffer.hpp"
         -:    2:
         -:    3:#include <catch2/catch_test_macros.hpp>
@@ -12,14 +12,14 @@ function _ZN12_GLOBAL__N_114byte_input_opsEv called 2 returned 100% blocks execu
         2:    7:kage::sync::SyncComponentOps byte_input_ops() {
         2:    8:    kage::sync::SyncComponentOps ops;
 call    0 returned 2
-        2:    9:    ops.quantized_size = 1;
-function _ZZN12_GLOBAL__N_114byte_input_opsEvENKUlRN3ecs9BitBufferEPKhPhPN4kage4sync22EntityReferenceContextEE_clES2_S4_S5_S9_ called 2 returned 100% blocks executed 83%
-        2:   10:    ops.deserialize = [](
+        2:    9:    ops.serialization.quantized_size = 1;
+function _ZZN12_GLOBAL__N_114byte_input_opsEvENKUlRN3ecs9BitBufferEPKhPhPNS0_29ComponentSerializationContextEE_clES2_S4_S5_S7_ called 2 returned 100% blocks executed 83%
+        2:   10:    ops.serialization.deserialize = [](
 call    0 returned 2
         -:   11:        ecs::BitBuffer& packet,
         -:   12:        const std::uint8_t*,
         -:   13:        std::uint8_t* out,
-        -:   14:        kage::sync::EntityReferenceContext*) {
+        -:   14:        ecs::ComponentSerializationContext*) {
         2:   15:        if (packet.remaining_bits() < 8U) {
 call    0 returned 2
 branch  1 taken 0 (fallthrough)

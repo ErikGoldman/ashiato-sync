@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/client/input_buffer.cpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/client/input_buffer.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/client/input_buffer.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#include "client/input_buffer.hpp"
         -:    2:
         -:    3:#include "kage/sync/protocol.hpp"
@@ -37,15 +37,15 @@ branch  2 taken 0 (throw)
       190:   19:    if (found_ops == settings.component_ops.end() ||
 call    0 returned 190
 call    1 returned 190
-      190:   20:        found_ops->second.quantize == nullptr ||
+      190:   20:        found_ops->second.serialization.quantize == nullptr ||
 call    0 returned 190
 branch  1 taken 190 (fallthrough)
 branch  2 taken 0
-      190:   21:        found_ops->second.serialize == nullptr ||
+      190:   21:        found_ops->second.serialization.serialize == nullptr ||
 call    0 returned 190
 branch  1 taken 190 (fallthrough)
 branch  2 taken 0
-     570*:   22:        found_ops->second.push_to_ecs == nullptr ||
+     570*:   22:        found_ops->second.serialization.push_to_registry == nullptr ||
 branch  0 taken 190 (fallthrough)
 branch  1 taken 0
 call    2 returned 190
@@ -53,7 +53,7 @@ branch  3 taken 190 (fallthrough)
 branch  4 taken 0
 branch  5 taken 0 (fallthrough)
 branch  6 taken 190
-      190:   23:        found_ops->second.quantized_size == 0U) {
+      190:   23:        found_ops->second.serialization.quantized_size == 0U) {
 call    0 returned 190
 branch  1 taken 0 (fallthrough)
 branch  2 taken 190
@@ -67,20 +67,20 @@ call    1 returned 190
 branch  2 taken 190 (fallthrough)
 branch  3 taken 0 (throw)
       190:   29:    has_ops_ = true;
-      190:   30:    latest_.assign(ops_.quantized_size, 0U);
+      190:   30:    latest_.assign(ops_.serialization.quantized_size, 0U);
 call    0 returned 190
 branch  1 taken 190 (fallthrough)
 branch  2 taken 0 (throw)
-      190:   31:    ops_.quantize(input, latest_.data());
+      190:   31:    ops_.serialization.quantize(input, latest_.data());
 call    0 returned 190
 call    1 returned 190
 branch  2 taken 190 (fallthrough)
 branch  3 taken 0 (throw)
-      190:   32:    if (acked_baseline_.size() != ops_.quantized_size) {
+      190:   32:    if (acked_baseline_.size() != ops_.serialization.quantized_size) {
 call    0 returned 190
 branch  1 taken 17 (fallthrough)
 branch  2 taken 173
-       17:   33:        acked_baseline_.assign(ops_.quantized_size, 0U);
+       17:   33:        acked_baseline_.assign(ops_.serialization.quantized_size, 0U);
 call    0 returned 17
 branch  1 taken 17 (fallthrough)
 branch  2 taken 0 (throw)
@@ -195,7 +195,7 @@ branch  1 taken 0 (fallthrough)
       189:   88:        InputFrame& stored = frames_[current & (frames_.size() - 1U)];
 call    0 returned 189
 call    1 returned 189
-     189*:   89:        if (stored.valid && stored.frame == current && stored.bytes.size() == ops_.quantized_size) {
+     189*:   89:        if (stored.valid && stored.frame == current && stored.bytes.size() == ops_.serialization.quantized_size) {
 branch  0 taken 82 (fallthrough)
 branch  1 taken 107
 branch  2 taken 0 (fallthrough)
@@ -256,7 +256,7 @@ branch  7 taken 1
         1:  112:    const InputFrame& stored = frames_[frame & (frames_.size() - 1U)];
 call    0 returned 1
 call    1 returned 1
-       1*:  113:    if (!stored.valid || stored.frame != frame || stored.bytes.size() != ops_.quantized_size) {
+       1*:  113:    if (!stored.valid || stored.frame != frame || stored.bytes.size() != ops_.serialization.quantized_size) {
 branch  0 taken 1 (fallthrough)
 branch  1 taken 0
 branch  2 taken 1 (fallthrough)
@@ -268,7 +268,7 @@ branch  7 taken 0 (fallthrough)
 branch  8 taken 1
     #####:  114:        return true;
         -:  115:    }
-        1:  116:    if (settings.local_client == invalid_client_id || ops_.push_to_ecs == nullptr) {
+        1:  116:    if (settings.local_client == invalid_client_id || ops_.serialization.push_to_registry == nullptr) {
 branch  0 taken 1 (fallthrough)
 branch  1 taken 0
 branch  2 taken 0 (fallthrough)
@@ -286,7 +286,7 @@ branch  5 taken 0 (throw)
     #####:  120:        if (owner.client == settings.local_client) {
 branch  0 never executed (fallthrough)
 branch  1 never executed
-    #####:  121:            (void)ops_.push_to_ecs(registry, entity, stored.bytes.data());
+    #####:  121:            (void)ops_.serialization.push_to_registry(registry, entity, stored.bytes.data());
 call    0 never executed
 call    1 never executed
         -:  122:        }
@@ -335,7 +335,7 @@ branch  3 taken 0
         -:  144:
 function _ZNK4kage4sync13client_detail17ClientInputBuffer30apply_latest_to_owned_entitiesERN3ecs8RegistryERKNS0_12SyncSettingsE called 190 returned 100% blocks executed 93%
       190:  145:void ClientInputBuffer::apply_latest_to_owned_entities(ecs::Registry& registry, const SyncSettings& settings) const {
-      190:  146:    if (settings.local_client == invalid_client_id || latest_.empty() || ops_.push_to_ecs == nullptr) {
+      190:  146:    if (settings.local_client == invalid_client_id || latest_.empty() || ops_.serialization.push_to_registry == nullptr) {
 branch  0 taken 187 (fallthrough)
 branch  1 taken 3
 call    2 returned 187
@@ -358,7 +358,7 @@ branch  5 taken 0 (throw)
         2:  150:        if (owner.client == settings.local_client) {
 branch  0 taken 1 (fallthrough)
 branch  1 taken 1
-        1:  151:            (void)ops_.push_to_ecs(registry, entity, latest_.data());
+        1:  151:            (void)ops_.serialization.push_to_registry(registry, entity, latest_.data());
 call    0 returned 1
 call    1 returned 1
         -:  152:        }
@@ -411,7 +411,7 @@ branch  1 taken 0 (fallthrough)
       274:  180:            const InputFrame& input = frames_[frame & (frames_.size() - 1U)];
 call    0 returned 274
 call    1 returned 274
-      274:  181:            if (input.valid && input.frame == frame && input.bytes.size() == ops_.quantized_size) {
+      274:  181:            if (input.valid && input.frame == frame && input.bytes.size() == ops_.serialization.quantized_size) {
 branch  0 taken 274 (fallthrough)
 branch  1 taken 0
 branch  2 taken 190 (fallthrough)
@@ -475,7 +475,7 @@ branch  0 taken 188 (fallthrough)
 branch  1 taken 2
       188:  203:            : acked_baseline_.data();
 call    0 returned 188
-      190:  204:        ops_.serialize(previous, first_input->bytes.data(), first_input_payload, nullptr);
+      190:  204:        ops_.serialization.serialize(previous, first_input->bytes.data(), first_input_payload, nullptr);
 call    0 returned 190
 call    1 returned 190
 branch  2 taken 190 (fallthrough)
@@ -593,7 +593,7 @@ branch  2 taken 2358
      2358:  247:            const InputFrame& input = frames_[frame & (frames_.size() - 1U)];
 call    0 returned 2358
 call    1 returned 2358
-    2358*:  248:            if (!input.valid || input.frame != frame || input.bytes.size() != ops_.quantized_size) {
+    2358*:  248:            if (!input.valid || input.frame != frame || input.bytes.size() != ops_.serialization.quantized_size) {
 branch  0 taken 2358 (fallthrough)
 branch  1 taken 0
 branch  2 taken 2358 (fallthrough)
@@ -610,7 +610,7 @@ branch  8 taken 2358
 call    0 returned 2358
 branch  1 taken 2358 (fallthrough)
 branch  2 taken 0 (throw)
-     2358:  253:            ops_.serialize(previous, input.bytes.data(), candidate, nullptr);
+     2358:  253:            ops_.serialization.serialize(previous, input.bytes.data(), candidate, nullptr);
 call    0 returned 2358
 call    1 returned 2358
 branch  2 taken 2358 (fallthrough)

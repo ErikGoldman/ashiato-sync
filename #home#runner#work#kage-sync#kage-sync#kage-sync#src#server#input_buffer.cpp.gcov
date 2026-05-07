@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/server/input_buffer.cpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/server/input_buffer.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/server/input_buffer.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#include "server/input_buffer.hpp"
         -:    2:
         -:    3:#include <algorithm>
@@ -113,7 +113,7 @@ branch  1 taken 0
       138:   58:        trace->baseline_frame = baseline_frame;
         -:   59:    }
         -:   60:
-      138:   61:    std::vector<std::uint8_t> previous(ops.quantized_size, 0U);
+      138:   61:    std::vector<std::uint8_t> previous(ops.serialization.quantized_size, 0U);
 call    0 returned 138
 branch  1 taken 138 (fallthrough)
 branch  2 taken 0 (throw)
@@ -143,7 +143,7 @@ branch  2 taken 103 (fallthrough)
 branch  3 taken 0
 branch  4 taken 103 (fallthrough)
 branch  5 taken 0
-      103:   70:                baseline.bytes.size() == ops.quantized_size) {
+      103:   70:                baseline.bytes.size() == ops.serialization.quantized_size) {
 call    0 returned 103
 branch  1 taken 103 (fallthrough)
 branch  2 taken 0
@@ -163,7 +163,7 @@ branch  4 never executed (fallthrough)
 branch  5 never executed
 branch  6 taken 0 (fallthrough)
 branch  7 taken 104
-    #####:   76:            latest_input_.size() == ops.quantized_size) {
+    #####:   76:            latest_input_.size() == ops.serialization.quantized_size) {
 call    0 never executed
 branch  1 never executed (fallthrough)
 branch  2 never executed
@@ -197,7 +197,7 @@ branch  1 taken 13 (fallthrough)
 branch  2 taken 0 (throw)
         -:   90:    }
         -:   91:
-      137:   92:    std::vector<std::uint8_t> decoded(ops.quantized_size, 0U);
+      137:   92:    std::vector<std::uint8_t> decoded(ops.serialization.quantized_size, 0U);
 call    0 returned 137
 branch  1 taken 137 (fallthrough)
 branch  2 taken 0 (throw)
@@ -212,7 +212,7 @@ branch  1 taken 876
 branch  2 taken 134 (fallthrough)
 branch  3 taken 3
 call    4 returned 1010
-     1013:   96:        if (!ops.deserialize(packet, previous_bytes, decoded.data(), nullptr)) {
+     1013:   96:        if (!ops.serialization.deserialize(packet, previous_bytes, decoded.data(), nullptr)) {
 call    0 returned 1013
 call    1 returned 1013
 branch  2 taken 1013 (fallthrough)

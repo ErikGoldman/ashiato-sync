@@ -1,7 +1,7 @@
         -:    0:Source:/usr/include/c++/13/bits/std_mutex.h
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_logging.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_logging.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:// std::mutex implementation -*- C++ -*-
         -:    2:
         -:    3:// Copyright (C) 2003-2023 Free Software Foundation, Inc.
@@ -68,8 +68,8 @@
         -:   64:#ifdef __GTHREAD_MUTEX_INIT
         -:   65:    __native_type  _M_mutex = __GTHREAD_MUTEX_INIT;
         -:   66:
-function _ZNSt12__mutex_baseC2Ev called 0 returned 0% blocks executed 0%
-    #####:   67:    constexpr __mutex_base() noexcept = default;
+function _ZNSt12__mutex_baseC2Ev called 319 returned 100% blocks executed 100%
+      319:   67:    constexpr __mutex_base() noexcept = default;
         -:   68:#else
         -:   69:    __native_type  _M_mutex;
         -:   70:
@@ -106,9 +106,9 @@ function _ZNSt12__mutex_baseC2Ev called 0 returned 0% blocks executed 0%
         -:  101:#ifdef __GTHREAD_MUTEX_INIT
         -:  102:    constexpr
         -:  103:#endif
-function _ZNSt5mutexC2Ev called 0 returned 0% blocks executed 0%
-    #####:  104:    mutex() noexcept = default;
-call    0 never executed
+function _ZNSt5mutexC2Ev called 319 returned 100% blocks executed 100%
+      319:  104:    mutex() noexcept = default;
+call    0 returned 319
         -:  105:    ~mutex() = default;
         -:  106:
         -:  107:    mutex(const mutex&) = delete;

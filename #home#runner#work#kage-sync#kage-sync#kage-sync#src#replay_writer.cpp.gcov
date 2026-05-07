@@ -1,0 +1,850 @@
+        -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/replay_writer.cpp
+        -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/replay_writer.cpp.gcno
+        -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/replay_writer.cpp.gcda
+        -:    0:Runs:317
+        -:    1:#include "kage/sync/replay_writer.hpp"
+        -:    2:
+        -:    3:#include "detail/frame_data.hpp"
+        -:    4:
+        -:    5:#include "kage/sync/components.hpp"
+        -:    6:#include "kage/sync/server.hpp"
+        -:    7:
+        -:    8:#include "server/dirty_slots.hpp"
+        -:    9:
+        -:   10:#include <algorithm>
+        -:   11:#include <cstdint>
+        -:   12:#include <limits>
+        -:   13:#include <utility>
+        -:   14:#include <vector>
+        -:   15:
+        -:   16:namespace kage::sync {
+        -:   17:namespace {
+        -:   18:
+function _ZN4kage4sync12_GLOBAL__N_118replay_id_for_slotEj called 19 returned 100% blocks executed 100%
+       19:   19:constexpr std::uint32_t replay_id_for_slot(std::uint32_t slot) noexcept {
+       19:   20:    return slot + 1U;
+        -:   21:}
+        -:   22:
+        -:   23:constexpr std::uint32_t invalid_replay_slot = std::numeric_limits<std::uint32_t>::max();
+        -:   24:
+        -:   25:struct ReplayReferenceContextData {
+        -:   26:    ReplicationServer* server = nullptr;
+        -:   27:};
+        -:   28:
+function _ZN4kage4sync12_GLOBAL__N_128replay_network_id_for_entityEPvN3ecs6EntityE called 1 returned 100% blocks executed 75%
+        1:   29:std::uint32_t replay_network_id_for_entity(void* userContext, ecs::Entity entity) {
+        1:   30:    auto& data = *static_cast<ReplayReferenceContextData*>(userContext);
+        1:   31:    if (data.server == nullptr) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 1
+    #####:   32:        return 0U;
+        -:   33:    }
+        1:   34:    const std::uint32_t slot = data.server->replicated_slot_for_entity(entity);
+call    0 returned 1
+       1*:   35:    if (slot == invalid_replay_slot || !data.server->replicated_slot_active(slot)) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 0
+call    2 returned 1
+branch  3 taken 0 (fallthrough)
+branch  4 taken 1
+branch  5 taken 0 (fallthrough)
+branch  6 taken 1
+    #####:   36:        return 0U;
+        -:   37:    }
+        1:   38:    return replay_id_for_slot(slot);
+call    0 returned 1
+        -:   39:}
+        -:   40:
+function _ZN4kage4sync12_GLOBAL__N_115replay_tag_maskERKN3ecs8RegistryERKNS0_13SyncArchetypeENS2_6EntityE called 0 returned 0% blocks executed 0%
+    #####:   41:std::uint64_t replay_tag_mask(const ecs::Registry& registry, const SyncArchetype& archetype, ecs::Entity entity) {
+    #####:   42:    std::uint64_t mask = 0;
+    #####:   43:    for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
+call    0 never executed
+branch  1 never executed
+branch  2 never executed (fallthrough)
+    #####:   44:        if (registry.has(entity, archetype.tags[tag_index].tag)) {
+call    0 never executed
+call    1 never executed
+branch  2 never executed (fallthrough)
+branch  3 never executed
+    #####:   45:            mask |= std::uint64_t{1} << tag_index;
+        -:   46:        }
+        -:   47:    }
+    #####:   48:    return mask;
+        -:   49:}
+        -:   50:
+function _ZN4kage4sync12_GLOBAL__N_122quantize_replay_entityERKN3ecs8RegistryERKNS0_13SyncArchetypeENS2_6EntityERNS0_18QuantizedFrameDataE called 13 returned 100% blocks executed 69%
+       13:   51:bool quantize_replay_entity(
+        -:   52:    const ecs::Registry& registry,
+        -:   53:    const SyncArchetype& archetype,
+        -:   54:    ecs::Entity entity,
+        -:   55:    QuantizedFrameData& out) {
+       13:   56:    if (!detail::init_frame_data(archetype, out)) {
+call    0 returned 13
+branch  1 taken 0 (fallthrough)
+branch  2 taken 13
+    #####:   57:        return false;
+        -:   58:    }
+       13:   59:    if (detail::has_tag_slot(archetype)) {
+call    0 returned 13
+branch  1 taken 0 (fallthrough)
+branch  2 taken 13
+    #####:   60:        out.tag_mask = replay_tag_mask(registry, archetype, entity);
+call    0 never executed
+        -:   61:    }
+       26:   62:    for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
+call    0 returned 26
+branch  1 taken 13
+branch  2 taken 13 (fallthrough)
+       13:   63:        if (component_index >= archetype.component_ops.size()) {
+call    0 returned 13
+branch  1 taken 0 (fallthrough)
+branch  2 taken 13
+    #####:   64:            return false;
+        -:   65:        }
+       13:   66:        const SyncComponentOps& ops = archetype.component_ops[component_index];
+call    0 returned 13
+       13:   67:        if (ops.serialization.quantize == nullptr) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 13
+    #####:   68:            return false;
+        -:   69:        }
+       13:   70:        const void* component = registry.get(entity, archetype.components[component_index].component);
+call    0 returned 13
+call    1 returned 13
+      13*:   71:        if (component == nullptr) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 13
+    #####:   72:            continue;
+        -:   73:        }
+       13:   74:        std::uint8_t* destination = detail::mutable_frame_component_data(archetype, out, component_index);
+call    0 returned 13
+       13:   75:        if (destination == nullptr) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 13
+    #####:   76:            return false;
+        -:   77:        }
+       13:   78:        ops.serialization.quantize(component, destination);
+call    0 returned 13
+        -:   79:    }
+      13*:   80:    return out.present_mask != 0U || detail::has_tag_slot(archetype);
+branch  0 taken 0 (fallthrough)
+branch  1 taken 13
+call    2 never executed
+branch  3 never executed (fallthrough)
+branch  4 never executed
+        -:   81:}
+        -:   82:
+function _ZN4kage4sync12_GLOBAL__N_118append_cue_entriesERKNS0_17QueuedSyncCueViewERKNS0_12SyncSettingsERNS0_17ReplicationServerERNS0_22EntityReferenceContextERSt6vectorIN3ecs9BitBufferESaISE_EE called 19 returned 100% blocks executed 80%
+       19:   83:void append_cue_entries(
+        -:   84:    const QueuedSyncCueView& cues,
+        -:   85:    const SyncSettings& settings,
+        -:   86:    ReplicationServer& server,
+        -:   87:    EntityReferenceContext& reference_context,
+        -:   88:    std::vector<ecs::BitBuffer>& out) {
+       19:   89:    const std::size_t count = std::min<std::size_t>(cues.size, std::numeric_limits<std::uint16_t>::max());
+call    0 returned 19
+call    1 returned 19
+       22:   90:    for (std::size_t index = 0; index < count; ++index) {
+branch  0 taken 3
+branch  1 taken 19 (fallthrough)
+        3:   91:        const QueuedSyncCue& cue = cues.data[index];
+       3*:   92:        if (cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].serialize == nullptr) {
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0
+call    3 returned 3
+branch  4 taken 0 (fallthrough)
+branch  5 taken 3
+branch  6 taken 0 (fallthrough)
+branch  7 taken 3
+    #####:   93:            continue;
+        -:   94:        }
+        3:   95:        ecs::BitBuffer payload = cue.payload;
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+        3:   96:        if (settings.cue_ops[cue.type].references_entities) {
+call    0 returned 3
+branch  1 taken 1 (fallthrough)
+branch  2 taken 2
+       1*:   97:            if (!cue.value) {
+call    0 returned 1
+branch  1 taken 0 (fallthrough)
+branch  2 taken 1
+    #####:   98:                continue;
+        -:   99:            }
+        1:  100:            payload.clear();
+call    0 returned 1
+        1:  101:            settings.cue_ops[cue.type].serialize(cue.value.get(), payload, &reference_context);
+call    0 returned 1
+call    1 returned 1
+call    2 returned 1
+branch  3 taken 1 (fallthrough)
+branch  4 taken 0 (throw)
+        -:  102:        }
+        3:  103:        const std::uint32_t slot = server.replicated_slot_for_entity(cue.entity);
+call    0 returned 3
+        3:  104:        ecs::BitBuffer entry;
+call    0 returned 3
+       6*:  105:        entry.push_bits(
+branch  0 taken 3 (fallthrough)
+branch  1 taken 0
+call    2 returned 3
+branch  3 taken 3 (fallthrough)
+branch  4 taken 0 (throw)
+        3:  106:            slot == invalid_replay_slot ? 0 : replay_id_for_slot(slot),
+call    0 returned 3
+        -:  107:            32U);
+        3:  108:        entry.push_bits(cue.frame, 32U);
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+        3:  109:        entry.push_bits(cue.type, 16U);
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+        3:  110:        entry.push_bytes(reinterpret_cast<const char*>(&cue.relevance_seconds), sizeof(cue.relevance_seconds));
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+        3:  111:        entry.push_bool(cue.only_replicate_to_owner);
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+        3:  112:        entry.push_bits(static_cast<std::int64_t>(std::min<std::size_t>(
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+        3:  113:                          payload.bit_size(),
+call    0 returned 3
+        3:  114:                          std::numeric_limits<std::uint16_t>::max())),
+call    0 returned 3
+call    1 returned 3
+        -:  115:            16U);
+        3:  116:        entry.push_buffer_bits(payload);
+call    0 returned 3
+branch  1 taken 3 (fallthrough)
+branch  2 taken 0 (throw)
+        3:  117:        out.push_back(std::move(entry));
+call    0 returned 3
+call    1 returned 3
+branch  2 taken 3 (fallthrough)
+branch  3 taken 0 (throw)
+        3:  118:    }
+call    0 returned 3
+call    1 returned 3
+branch  2 taken 3 (fallthrough)
+branch  3 taken 0
+call    4 never executed
+call    5 never executed
+       19:  119:}
+        -:  120:
+function _ZN4kage4sync12_GLOBAL__N_117write_cue_entriesERKSt6vectorIN3ecs9BitBufferESaIS4_EERS4_ called 14 returned 100% blocks executed 100%
+       14:  121:void write_cue_entries(const std::vector<ecs::BitBuffer>& cues, ecs::BitBuffer& out) {
+       14:  122:    const std::size_t count = std::min<std::size_t>(cues.size(), std::numeric_limits<std::uint16_t>::max());
+call    0 returned 14
+call    1 returned 14
+call    2 returned 14
+       14:  123:    out.push_bool(count != 0U);
+call    0 returned 14
+       14:  124:    if (count == 0U) {
+branch  0 taken 11 (fallthrough)
+branch  1 taken 3
+       11:  125:        return;
+        -:  126:    }
+        3:  127:    out.push_bits(static_cast<std::int64_t>(count), 16U);
+call    0 returned 3
+        6:  128:    for (std::size_t index = 0; index < count; ++index) {
+branch  0 taken 3
+branch  1 taken 3 (fallthrough)
+        3:  129:        out.push_buffer_bits(cues[index]);
+call    0 returned 3
+call    1 returned 3
+        -:  130:    }
+        -:  131:}
+        -:  132:
+        -:  133:}  // namespace
+        -:  134:
+        -:  135:struct ReplicationReplayWriter::State {
+        -:  136:    std::vector<std::uint8_t> pending_dirty_slots;
+        -:  137:    std::vector<std::uint32_t> slots;
+        -:  138:    std::vector<std::uint32_t> pending_slots;
+        -:  139:    std::vector<ServerDestroyedReplicatedSlot> pending_destroyed_slots;
+        -:  140:    std::vector<ecs::BitBuffer> pending_cues;
+        -:  141:    QuantizedFrameData scratch;
+        -:  142:    bool has_written = false;
+        -:  143:    SyncFrame last_full_frame = 0;
+        -:  144:};
+        -:  145:
+function _ZN4kage4sync23ReplicationReplayWriterC2ENS0_30ReplicationReplayWriterOptionsE called 7 returned 100% blocks executed 70%
+        7:  146:ReplicationReplayWriter::ReplicationReplayWriter(ReplicationReplayWriterOptions options)
+        7:  147:    : options_(std::move(options)),
+call    0 returned 7
+       14:  148:      state_(std::make_unique<State>()) {}
+call    0 returned 7
+call    1 returned 7
+call    2 returned 7
+branch  3 taken 7 (fallthrough)
+branch  4 taken 0 (throw)
+call    5 returned 7
+call    6 never executed
+call    7 never executed
+        -:  149:
+       7*:  150:ReplicationReplayWriter::~ReplicationReplayWriter() = default;
+------------------
+_ZN4kage4sync23ReplicationReplayWriterD0Ev:
+function _ZN4kage4sync23ReplicationReplayWriterD0Ev called 0 returned 0% blocks executed 0%
+    #####:  150:ReplicationReplayWriter::~ReplicationReplayWriter() = default;
+call    0 never executed
+call    1 never executed
+------------------
+_ZN4kage4sync23ReplicationReplayWriterD2Ev:
+function _ZN4kage4sync23ReplicationReplayWriterD2Ev called 7 returned 100% blocks executed 100%
+        7:  150:ReplicationReplayWriter::~ReplicationReplayWriter() = default;
+call    0 returned 7
+call    1 returned 7
+call    2 returned 7
+call    3 returned 7
+------------------
+        -:  151:
+function _ZN4kage4sync23ReplicationReplayWriterC2EOS1_ called 0 returned 0% blocks executed 0%
+    #####:  152:ReplicationReplayWriter::ReplicationReplayWriter(ReplicationReplayWriter&& other) noexcept
+    #####:  153:    : options_(std::move(other.options_)),
+call    0 never executed
+    #####:  154:      state_(std::move(other.state_)),
+call    0 never executed
+call    1 never executed
+    #####:  155:      server_(other.server_),
+    #####:  156:      subscription_(std::move(other.subscription_)) {
+call    0 never executed
+call    1 never executed
+call    2 never executed
+call    3 never executed
+    #####:  157:    other.server_ = nullptr;
+    #####:  158:    other.detach();
+call    0 never executed
+    #####:  159:}
+        -:  160:
+function _ZN4kage4sync23ReplicationReplayWriteraSEOS1_ called 0 returned 0% blocks executed 0%
+    #####:  161:ReplicationReplayWriter& ReplicationReplayWriter::operator=(ReplicationReplayWriter&& other) noexcept {
+    #####:  162:    if (this != &other) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:  163:        detach();
+call    0 never executed
+    #####:  164:        options_ = std::move(other.options_);
+call    0 never executed
+call    1 never executed
+    #####:  165:        state_ = std::move(other.state_);
+call    0 never executed
+call    1 never executed
+    #####:  166:        server_ = other.server_;
+    #####:  167:        subscription_ = std::move(other.subscription_);
+call    0 never executed
+call    1 never executed
+    #####:  168:        other.server_ = nullptr;
+    #####:  169:        other.detach();
+call    0 never executed
+        -:  170:    }
+    #####:  171:    return *this;
+        -:  172:}
+        -:  173:
+function _ZN4kage4sync23ReplicationReplayWriter6attachERNS0_17ReplicationServerE called 7 returned 100% blocks executed 100%
+        7:  174:void ReplicationReplayWriter::attach(ReplicationServer& server) {
+        7:  175:    detach();
+call    0 returned 7
+        7:  176:    server_ = &server;
+        7:  177:    subscription_ = server.subscribe_registry_dirty_frame_listener(*this);
+call    0 returned 7
+branch  1 taken 7 (fallthrough)
+branch  2 taken 0 (throw)
+call    3 returned 7
+call    4 returned 7
+        7:  178:}
+        -:  179:
+function _ZN4kage4sync23ReplicationReplayWriter6detachEv called 11 returned 100% blocks executed 100%
+       11:  180:void ReplicationReplayWriter::detach() {
+       11:  181:    subscription_.reset();
+call    0 returned 11
+       11:  182:    server_ = nullptr;
+       11:  183:}
+        -:  184:
+function _ZNK4kage4sync23ReplicationReplayWriter8attachedEv called 0 returned 0% blocks executed 0%
+    #####:  185:bool ReplicationReplayWriter::attached() const noexcept {
+    #####:  186:    return subscription_.active();
+call    0 never executed
+        -:  187:}
+        -:  188:
+function _ZN4kage4sync23ReplicationReplayWriter30on_server_registry_dirty_frameERKNS0_24ServerRegistryDirtyFrameE called 19 returned 100% blocks executed 80%
+       19:  189:void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistryDirtyFrame& frame) {
+      19*:  190:    if (!options_.write || state_ == nullptr || server_ == nullptr) {
+call    0 returned 19
+branch  1 taken 19 (fallthrough)
+branch  2 taken 0
+call    3 returned 19
+branch  4 taken 19 (fallthrough)
+branch  5 taken 0
+branch  6 taken 0 (fallthrough)
+branch  7 taken 19
+branch  8 taken 0 (fallthrough)
+branch  9 taken 19
+       5*:  191:        return;
+        -:  192:    }
+       19:  193:    if (&frame.server != server_) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 19
+    #####:  194:        return;
+        -:  195:    }
+       19:  196:    ReplicationServer& server = frame.server;
+       19:  197:    const SyncSettings& settings = frame.registry.get<SyncSettings>();
+call    0 returned 19
+branch  1 taken 19 (fallthrough)
+branch  2 taken 0 (throw)
+       19:  198:    const SyncFrame sync_frame = frame.frame;
+       19:  199:    const ServerDestroyedReplicatedSlotView destroyed_slots = frame.destroyed_slots;
+       19:  200:    const QueuedSyncCueView cues = frame.cues;
+        -:  201:
+       19:  202:    ReplayReferenceContextData reference_data{&server};
+       19:  203:    EntityReferenceContext reference_context;
+       19:  204:    reference_context.userContext = &reference_data;
+       19:  205:    reference_context.network_entity_id_tier0_bits = server.options().protocol.network_entity_id_tier0_bits;
+call    0 returned 19
+       19:  206:    reference_context.server_network_id_for_entity = &replay_network_id_for_entity;
+        -:  207:
+       19:  208:    append_cue_entries(cues, settings, server, reference_context, state_->pending_cues);
+call    0 returned 19
+call    1 returned 19
+branch  2 taken 19 (fallthrough)
+branch  3 taken 0 (throw)
+        -:  209:
+       21:  210:    for (const ServerDestroyedReplicatedSlot& destroyed : destroyed_slots) {
+call    0 returned 19
+call    1 returned 19
+branch  2 taken 2
+branch  3 taken 19 (fallthrough)
+        2:  211:        state_->pending_destroyed_slots.push_back(destroyed);
+call    0 returned 2
+call    1 returned 2
+branch  2 taken 2 (fallthrough)
+branch  3 taken 0 (throw)
+        -:  212:    }
+        -:  213:
+       19:  214:    if (state_->pending_dirty_slots.size() != server.replicated_slot_count()) {
+call    0 returned 19
+call    1 returned 19
+call    2 returned 19
+branch  3 taken 7 (fallthrough)
+branch  4 taken 12
+        7:  215:        state_->pending_dirty_slots.resize(server.replicated_slot_count(), std::uint8_t{0});
+call    0 returned 7
+call    1 returned 7
+call    2 returned 7
+branch  3 taken 7 (fallthrough)
+branch  4 taken 0 (throw)
+        -:  216:    }
+function _ZZN4kage4sync23ReplicationReplayWriter30on_server_registry_dirty_frameERKNS0_24ServerRegistryDirtyFrameEENKUljE_clEj called 22 returned 100% blocks executed 100%
+       22:  217:    auto mark_pending_slot = [&](std::uint32_t slot) {
+       22:  218:        if (slot >= state_->pending_dirty_slots.size() || state_->pending_dirty_slots[slot] != 0U) {
+call    0 returned 22
+call    1 returned 22
+branch  2 taken 22 (fallthrough)
+branch  3 taken 0
+call    4 returned 22
+call    5 returned 22
+branch  6 taken 9 (fallthrough)
+branch  7 taken 13
+branch  8 taken 9 (fallthrough)
+branch  9 taken 13
+        9:  219:            return;
+        -:  220:        }
+       13:  221:        state_->pending_dirty_slots[slot] = std::uint8_t{1};
+call    0 returned 13
+call    1 returned 13
+       13:  222:        state_->pending_slots.push_back(slot);
+call    0 returned 13
+call    1 returned 13
+       19:  223:    };
+       19:  224:    server_detail::each_dirty_replicated_slot(frame, settings, mark_pending_slot);
+call    0 returned 19
+branch  1 taken 19 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  225:
+      19*:  226:    const SyncFrame write_interval = options_.write_interval_frames == 0U ? 1U : options_.write_interval_frames;
+branch  0 taken 19 (fallthrough)
+branch  1 taken 0
+       19:  227:    const bool write_due = !state_->has_written || write_interval <= 1U || (sync_frame % write_interval) == 0U;
+call    0 returned 19
+branch  1 taken 12 (fallthrough)
+branch  2 taken 7
+branch  3 taken 8 (fallthrough)
+branch  4 taken 4
+branch  5 taken 3 (fallthrough)
+branch  6 taken 5
+       19:  228:    if (!write_due) {
+branch  0 taken 5 (fallthrough)
+branch  1 taken 14
+        5:  229:        return;
+        -:  230:    }
+        -:  231:
+       21:  232:    const bool full = !state_->has_written ||
+call    0 returned 14
+branch  1 taken 7 (fallthrough)
+branch  2 taken 7
+        7:  233:        (options_.full_frame_interval_frames != 0U &&
+branch  0 taken 7 (fallthrough)
+branch  1 taken 0
+        7:  234:            sync_frame - state_->last_full_frame >= options_.full_frame_interval_frames);
+call    0 returned 7
+branch  1 taken 0 (fallthrough)
+branch  2 taken 7
+        -:  235:
+       14:  236:    state_->slots.clear();
+call    0 returned 14
+call    1 returned 14
+       14:  237:    if (full) {
+branch  0 taken 7 (fallthrough)
+branch  1 taken 7
+        7:  238:        state_->slots.reserve(server.replicated_slot_count());
+call    0 returned 7
+call    1 returned 7
+call    2 returned 7
+branch  3 taken 7 (fallthrough)
+branch  4 taken 0 (throw)
+       15:  239:        for (std::uint32_t slot = 0; slot < server.replicated_slot_count(); ++slot) {
+call    0 returned 15
+branch  1 taken 8
+branch  2 taken 7 (fallthrough)
+        8:  240:            if (server.replicated_slot_is_replicable(frame.registry, slot)) {
+call    0 returned 8
+branch  1 taken 8 (fallthrough)
+branch  2 taken 0 (throw)
+branch  3 taken 8 (fallthrough)
+branch  4 taken 0
+        8:  241:                state_->slots.push_back(slot);
+call    0 returned 8
+call    1 returned 8
+branch  2 taken 8 (fallthrough)
+branch  3 taken 0 (throw)
+        -:  242:            }
+        -:  243:        }
+        -:  244:    } else {
+        7:  245:        state_->slots = state_->pending_slots;
+call    0 returned 7
+call    1 returned 7
+call    2 returned 7
+branch  3 taken 7 (fallthrough)
+branch  4 taken 0 (throw)
+        -:  246:    }
+        -:  247:
+       14:  248:    ecs::BitBuffer payload;
+call    0 returned 14
+       14:  249:    const std::size_t record_count_offset = payload.bit_size();
+call    0 returned 14
+       14:  250:    payload.push_bits(0, 16U);
+call    0 returned 14
+branch  1 taken 14 (fallthrough)
+branch  2 taken 0 (throw)
+       14:  251:    std::uint16_t record_count = 0;
+       14:  252:    std::vector<std::uint8_t> emitted_destroyed_slots;
+call    0 returned 14
+        -:  253:
+       14:  254:    if (!full) {
+branch  0 taken 7 (fallthrough)
+branch  1 taken 7
+        7:  255:        emitted_destroyed_slots.assign(server.replicated_slot_count(), std::uint8_t{0});
+call    0 returned 7
+call    1 returned 7
+branch  2 taken 7 (fallthrough)
+branch  3 taken 0 (throw)
+        9:  256:        for (const ServerDestroyedReplicatedSlot& destroyed : state_->pending_destroyed_slots) {
+call    0 returned 7
+call    1 returned 7
+call    2 returned 7
+call    3 returned 2
+call    4 returned 2
+call    5 returned 9
+branch  6 taken 2
+branch  7 taken 7 (fallthrough)
+        2:  257:            if (record_count == std::numeric_limits<std::uint16_t>::max()) {
+call    0 returned 2
+branch  1 taken 0 (fallthrough)
+branch  2 taken 2
+    #####:  258:                break;
+        -:  259:            }
+       2*:  260:            if (destroyed.slot < emitted_destroyed_slots.size() && emitted_destroyed_slots[destroyed.slot] != 0U) {
+call    0 returned 2
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0
+call    3 returned 2
+branch  4 taken 0 (fallthrough)
+branch  5 taken 2
+branch  6 taken 0 (fallthrough)
+branch  7 taken 2
+    #####:  261:                continue;
+        -:  262:            }
+        2:  263:            payload.push_bool(true);
+call    0 returned 2
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0 (throw)
+        2:  264:            payload.push_bits(replay_id_for_slot(destroyed.slot), 32U);
+call    0 returned 2
+call    1 returned 2
+branch  2 taken 2 (fallthrough)
+branch  3 taken 0 (throw)
+        2:  265:            if (destroyed.slot < emitted_destroyed_slots.size()) {
+call    0 returned 2
+branch  1 taken 2 (fallthrough)
+branch  2 taken 0
+        2:  266:                emitted_destroyed_slots[destroyed.slot] = std::uint8_t{1};
+call    0 returned 2
+        -:  267:            }
+        2:  268:            ++record_count;
+        -:  269:        }
+        -:  270:    }
+        -:  271:
+       27:  272:    for (const std::uint32_t slot : state_->slots) {
+call    0 returned 14
+call    1 returned 14
+call    2 returned 14
+call    3 returned 13
+call    4 returned 13
+call    5 returned 27
+branch  6 taken 13
+branch  7 taken 14 (fallthrough)
+      13*:  273:        if (slot == invalid_replay_slot || slot >= server.replicated_slot_count()) {
+branch  0 taken 13 (fallthrough)
+branch  1 taken 0
+call    2 returned 13
+branch  3 taken 0 (fallthrough)
+branch  4 taken 13
+branch  5 taken 0 (fallthrough)
+branch  6 taken 13
+    #####:  274:            continue;
+        -:  275:        }
+       13:  276:        const bool active = server.replicated_slot_is_replicable(frame.registry, slot);
+call    0 returned 13
+branch  1 taken 13 (fallthrough)
+branch  2 taken 0 (throw)
+      13*:  277:        if (!active && full) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 13
+branch  2 never executed (fallthrough)
+branch  3 never executed
+    #####:  278:            continue;
+        -:  279:        }
+      13*:  280:        if (!active && slot < emitted_destroyed_slots.size() && emitted_destroyed_slots[slot] != 0U) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 13
+call    2 never executed
+branch  3 never executed (fallthrough)
+branch  4 never executed
+call    5 never executed
+branch  6 never executed (fallthrough)
+branch  7 never executed
+branch  8 taken 0 (fallthrough)
+branch  9 taken 13
+    #####:  281:            continue;
+        -:  282:        }
+       13:  283:        if (record_count == std::numeric_limits<std::uint16_t>::max()) {
+call    0 returned 13
+branch  1 taken 0 (fallthrough)
+branch  2 taken 13
+    #####:  284:            break;
+        -:  285:        }
+       13:  286:        payload.push_bool(!active);
+call    0 returned 13
+branch  1 taken 13 (fallthrough)
+branch  2 taken 0 (throw)
+       13:  287:        payload.push_bits(replay_id_for_slot(slot), 32U);
+call    0 returned 13
+call    1 returned 13
+branch  2 taken 13 (fallthrough)
+branch  3 taken 0 (throw)
+      13*:  288:        if (!active) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 13
+    #####:  289:            ++record_count;
+    #####:  290:            continue;
+        -:  291:        }
+        -:  292:
+       13:  293:        const ecs::Entity entity = server.replicated_slot_entity(slot);
+call    0 returned 13
+       13:  294:        const SyncArchetypeId archetype_id = server.replicated_slot_archetype(slot);
+call    0 returned 13
+      13*:  295:        if (archetype_id.value >= settings.archetypes.size()) {
+call    0 returned 13
+branch  1 taken 0 (fallthrough)
+branch  2 taken 13
+    #####:  296:            continue;
+        -:  297:        }
+       13:  298:        const SyncArchetype& archetype = settings.archetypes[archetype_id.value];
+call    0 returned 13
+      13*:  299:        if (!quantize_replay_entity(frame.registry, archetype, entity, state_->scratch)) {
+call    0 returned 13
+call    1 returned 13
+branch  2 taken 13 (fallthrough)
+branch  3 taken 0 (throw)
+branch  4 taken 0 (fallthrough)
+branch  5 taken 13
+    #####:  300:            continue;
+        -:  301:        }
+       13:  302:        payload.push_bits(archetype_id.value, 32U);
+call    0 returned 13
+branch  1 taken 13 (fallthrough)
+branch  2 taken 0 (throw)
+       13:  303:        payload.push_unsigned_bits(state_->scratch.tag_mask, 64U);
+call    0 returned 13
+call    1 returned 13
+branch  2 taken 13 (fallthrough)
+branch  3 taken 0 (throw)
+       13:  304:        payload.push_unsigned_bits(state_->scratch.present_mask, 64U);
+call    0 returned 13
+call    1 returned 13
+branch  2 taken 13 (fallthrough)
+branch  3 taken 0 (throw)
+        -:  305:
+       13:  306:        const std::size_t component_count_offset = payload.bit_size();
+call    0 returned 13
+       13:  307:        payload.push_bits(0, 16U);
+call    0 returned 13
+branch  1 taken 13 (fallthrough)
+branch  2 taken 0 (throw)
+       13:  308:        std::uint16_t component_count = 0;
+       26:  309:        for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
+call    0 returned 26
+branch  1 taken 13
+branch  2 taken 13 (fallthrough)
+      26*:  310:            if (!detail::frame_has_component(state_->scratch, component_index) ||
+call    0 returned 13
+call    1 returned 13
+branch  2 taken 13 (fallthrough)
+branch  3 taken 0 (throw)
+branch  4 taken 13 (fallthrough)
+branch  5 taken 0
+branch  6 taken 0 (fallthrough)
+branch  7 taken 13
+branch  8 taken 0 (fallthrough)
+branch  9 taken 13
+       13:  311:                component_index >= archetype.component_ops.size()) {
+call    0 returned 13
+    #####:  312:                continue;
+        -:  313:            }
+       13:  314:            const SyncComponentOps& ops = archetype.component_ops[component_index];
+call    0 returned 13
+      13*:  315:            if (ops.serialization.serialize == nullptr) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 13
+    #####:  316:                continue;
+        -:  317:            }
+        -:  318:            const std::uint8_t* current =
+       13:  319:                detail::frame_component_data(archetype, state_->scratch, component_index);
+call    0 returned 13
+call    1 returned 13
+branch  2 taken 13 (fallthrough)
+branch  3 taken 0 (throw)
+      13*:  320:            if (current == nullptr) {
+branch  0 taken 0 (fallthrough)
+branch  1 taken 13
+    #####:  321:                continue;
+        -:  322:            }
+       13:  323:            ecs::BitBuffer component_payload;
+call    0 returned 13
+      13*:  324:            ecs::ComponentSerializationContext serialization_context{ops.references_entities ? &reference_context : nullptr};
+branch  0 taken 0 (fallthrough)
+branch  1 taken 13
+      13*:  325:            ops.serialization.serialize(
+call    0 returned 13
+branch  1 taken 13 (fallthrough)
+branch  2 taken 0 (throw)
+        -:  326:                nullptr,
+        -:  327:                current,
+        -:  328:                component_payload,
+       13:  329:                ops.references_entities ? &serialization_context : nullptr);
+branch  0 taken 0 (fallthrough)
+branch  1 taken 13
+       13:  330:            payload.push_bits(static_cast<std::int64_t>(component_index), 16U);
+call    0 returned 13
+branch  1 taken 13 (fallthrough)
+branch  2 taken 0 (throw)
+       13:  331:            payload.push_bits(static_cast<std::int64_t>(std::min<std::size_t>(
+call    0 returned 13
+branch  1 taken 13 (fallthrough)
+branch  2 taken 0 (throw)
+       13:  332:                                  component_payload.bit_size(),
+call    0 returned 13
+       13:  333:                                  std::numeric_limits<std::uint16_t>::max())),
+call    0 returned 13
+call    1 returned 13
+        -:  334:                16U);
+       13:  335:            payload.push_buffer_bits(component_payload);
+call    0 returned 13
+branch  1 taken 13 (fallthrough)
+branch  2 taken 0 (throw)
+       13:  336:            ++component_count;
+       13:  337:        }
+call    0 returned 13
+call    1 never executed
+       13:  338:        payload.overwrite_unsigned_bits(component_count_offset, component_count, 16U);
+call    0 returned 13
+branch  1 taken 13 (fallthrough)
+branch  2 taken 0 (throw)
+       13:  339:        ++record_count;
+        -:  340:    }
+        -:  341:
+       14:  342:    payload.overwrite_unsigned_bits(record_count_offset, record_count, 16U);
+call    0 returned 14
+branch  1 taken 14 (fallthrough)
+branch  2 taken 0 (throw)
+       14:  343:    write_cue_entries(state_->pending_cues, payload);
+call    0 returned 14
+call    1 returned 14
+branch  2 taken 14 (fallthrough)
+branch  3 taken 0 (throw)
+        -:  344:
+       14:  345:    options_.write(ReplicationReplayFrame{
+call    0 returned 14
+call    1 returned 14
+branch  2 taken 14 (fallthrough)
+branch  3 taken 0 (throw)
+call    4 returned 14
+call    5 never executed
+        -:  346:        sync_frame,
+       14:  347:        full ? ReplicationReplayFrameKind::Full : ReplicationReplayFrameKind::Delta,
+branch  0 taken 7 (fallthrough)
+branch  1 taken 7
+       14:  348:        std::move(payload)});
+call    0 returned 14
+        -:  349:
+       14:  350:    std::fill(state_->pending_dirty_slots.begin(), state_->pending_dirty_slots.end(), std::uint8_t{0});
+call    0 returned 14
+call    1 returned 14
+call    2 returned 14
+call    3 returned 14
+call    4 returned 14
+branch  5 taken 14 (fallthrough)
+branch  6 taken 0 (throw)
+       14:  351:    state_->pending_slots.clear();
+call    0 returned 14
+call    1 returned 14
+       14:  352:    state_->pending_destroyed_slots.clear();
+call    0 returned 14
+call    1 returned 14
+       14:  353:    state_->pending_cues.clear();
+call    0 returned 14
+call    1 returned 14
+       14:  354:    state_->has_written = true;
+call    0 returned 14
+       14:  355:    if (full) {
+branch  0 taken 7 (fallthrough)
+branch  1 taken 7
+        7:  356:        state_->last_full_frame = sync_frame;
+call    0 returned 7
+        -:  357:    }
+       14:  358:}
+call    0 returned 14
+call    1 returned 14
+call    2 never executed
+call    3 never executed
+        -:  359:
+        -:  360:}  // namespace kage::sync

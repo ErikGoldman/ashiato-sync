@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/include/kage/sync/detail/component_trait_adapters.hpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#pragma once
         -:    2:
         -:    3:#include "kage/sync/component_traits.hpp"

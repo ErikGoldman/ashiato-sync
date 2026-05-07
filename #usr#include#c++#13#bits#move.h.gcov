@@ -1,7 +1,7 @@
         -:    0:Source:/usr/include/c++/13/bits/move.h
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:// Move, forward and identity for C++11 + swap -*- C++ -*-
         -:    2:
         -:    3:// Copyright (C) 2007-2023 Free Software Foundation, Inc.
@@ -833,8 +833,8 @@ function _ZSt7forwardIRKZL22CATCH2_INTERNAL_TEST_6vEUlmRKN3ecs9BitBufferEE_EOT_R
     #####:   97:    move(_Tp&& __t) noexcept
     #####:   98:    { return static_cast<typename std::remove_reference<_Tp>::type&&>(__t); }
 ------------------
-_ZSt4moveIRZN15kage_sync_tests10packet_forERKSt6vectorISt4pairImN3ecs9BitBufferEESaIS5_EEmEUlRKT_E_EONSt16remove_referenceISA_E4typeEOSA_:
-function _ZSt4moveIRZN15kage_sync_tests10packet_forERKSt6vectorISt4pairImN3ecs9BitBufferEESaIS5_EEmEUlRKT_E_EONSt16remove_referenceISA_E4typeEOSA_ called 0 returned 0% blocks executed 0%
+_ZSt4moveIRPhEONSt16remove_referenceIT_E4typeEOS3_:
+function _ZSt4moveIRPhEONSt16remove_referenceIT_E4typeEOS3_ called 0 returned 0% blocks executed 0%
     #####:   97:    move(_Tp&& __t) noexcept
     #####:   98:    { return static_cast<typename std::remove_reference<_Tp>::type&&>(__t); }
 ------------------
@@ -878,6 +878,11 @@ function _ZSt4moveIRN3ecs6EntityEEONSt16remove_referenceIT_E4typeEOS4_ called 0 
     #####:   97:    move(_Tp&& __t) noexcept
     #####:   98:    { return static_cast<typename std::remove_reference<_Tp>::type&&>(__t); }
 ------------------
+_ZSt4moveIRN3ecs25ComponentSerializationOpsEEONSt16remove_referenceIT_E4typeEOS4_:
+function _ZSt4moveIRN3ecs25ComponentSerializationOpsEEONSt16remove_referenceIT_E4typeEOS4_ called 0 returned 0% blocks executed 0%
+    #####:   97:    move(_Tp&& __t) noexcept
+    #####:   98:    { return static_cast<typename std::remove_reference<_Tp>::type&&>(__t); }
+------------------
 _ZSt4moveIRNSt12_Vector_baseIhSaIhEE12_Vector_implEEONSt16remove_referenceIT_E4typeEOS6_:
 function _ZSt4moveIRNSt12_Vector_baseIhSaIhEE12_Vector_implEEONSt16remove_referenceIT_E4typeEOS6_ called 0 returned 0% blocks executed 0%
     #####:   97:    move(_Tp&& __t) noexcept
@@ -903,13 +908,13 @@ function _ZSt4moveIRN3ecs13ComponentDescEEONSt16remove_referenceIT_E4typeEOS4_ c
     #####:   97:    move(_Tp&& __t) noexcept
     #####:   98:    { return static_cast<typename std::remove_reference<_Tp>::type&&>(__t); }
 ------------------
-_ZSt4moveIRPhEONSt16remove_referenceIT_E4typeEOS3_:
-function _ZSt4moveIRPhEONSt16remove_referenceIT_E4typeEOS3_ called 0 returned 0% blocks executed 0%
+_ZSt4moveIRSt5tupleIJPN3ecs8Registry17TypeErasedStorageESt14default_deleteIS3_EEEEONSt16remove_referenceIT_E4typeEOSA_:
+function _ZSt4moveIRSt5tupleIJPN3ecs8Registry17TypeErasedStorageESt14default_deleteIS3_EEEEONSt16remove_referenceIT_E4typeEOSA_ called 0 returned 0% blocks executed 0%
     #####:   97:    move(_Tp&& __t) noexcept
     #####:   98:    { return static_cast<typename std::remove_reference<_Tp>::type&&>(__t); }
 ------------------
-_ZSt4moveIRSt5tupleIJPN3ecs8Registry17TypeErasedStorageESt14default_deleteIS3_EEEEONSt16remove_referenceIT_E4typeEOSA_:
-function _ZSt4moveIRSt5tupleIJPN3ecs8Registry17TypeErasedStorageESt14default_deleteIS3_EEEEONSt16remove_referenceIT_E4typeEOSA_ called 0 returned 0% blocks executed 0%
+_ZSt4moveIRZN15kage_sync_tests10packet_forERKSt6vectorISt4pairImN3ecs9BitBufferEESaIS5_EEmEUlRKT_E_EONSt16remove_referenceISA_E4typeEOSA_:
+function _ZSt4moveIRZN15kage_sync_tests10packet_forERKSt6vectorISt4pairImN3ecs9BitBufferEESaIS5_EEmEUlRKT_E_EONSt16remove_referenceISA_E4typeEOSA_ called 0 returned 0% blocks executed 0%
     #####:   97:    move(_Tp&& __t) noexcept
     #####:   98:    { return static_cast<typename std::remove_reference<_Tp>::type&&>(__t); }
 ------------------

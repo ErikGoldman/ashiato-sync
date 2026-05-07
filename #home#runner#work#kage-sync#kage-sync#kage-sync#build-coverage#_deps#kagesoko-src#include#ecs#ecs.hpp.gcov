@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/_deps/kagesoko-src/include/ecs/ecs.hpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#pragma once
         -:    2:
         -:    3:#include "ecs/bit_buffer.hpp"
@@ -3283,39 +3283,125 @@ call    5 never executed
         -: 1912:        std::declval<ComponentSerializationContext&>()))>> : std::true_type {};
         -: 1913:
         -: 1914:template <typename Traits, typename Quantized>
-        -: 1915:void serialize_component_quantized(
+    #####: 1915:void serialize_component_quantized(
         -: 1916:    const Quantized* previous,
         -: 1917:    const Quantized& current,
         -: 1918:    BitBuffer& out,
         -: 1919:    ComponentSerializationContext* context) {
         -: 1920:    if constexpr (has_context_component_serialize<Traits, Quantized>::value) {
-        -: 1921:        ComponentSerializationContext empty_context;
-        -: 1922:        Traits::serialize(previous, current, out, context != nullptr ? *context : empty_context);
+    #####: 1921:        ComponentSerializationContext empty_context;
+    #####: 1922:        Traits::serialize(previous, current, out, context != nullptr ? *context : empty_context);
         -: 1923:    } else {
         -: 1924:        (void)context;
         -: 1925:        Traits::serialize(previous, current, out);
         -: 1926:    }
-        -: 1927:}
+    #####: 1927:}
+------------------
+_ZN3ecs6detail29serialize_component_quantizedIN4kage4sync6detail39SyncComponentSerializationTraitsAdapterIN15kage_sync_tests6HealthENS3_19SyncComponentTraitsIS7_EEEES7_EEvPKT0_RSC_RNS_9BitBufferEPNS_29ComponentSerializationContextE:
+function _ZN3ecs6detail29serialize_component_quantizedIN4kage4sync6detail39SyncComponentSerializationTraitsAdapterIN15kage_sync_tests6HealthENS3_19SyncComponentTraitsIS7_EEEES7_EEvPKT0_RSC_RNS_9BitBufferEPNS_29ComponentSerializationContextE called 0 returned 0% blocks executed 0%
+    #####: 1915:void serialize_component_quantized(
+        -: 1916:    const Quantized* previous,
+        -: 1917:    const Quantized& current,
+        -: 1918:    BitBuffer& out,
+        -: 1919:    ComponentSerializationContext* context) {
+        -: 1920:    if constexpr (has_context_component_serialize<Traits, Quantized>::value) {
+    #####: 1921:        ComponentSerializationContext empty_context;
+    #####: 1922:        Traits::serialize(previous, current, out, context != nullptr ? *context : empty_context);
+branch  0 never executed (fallthrough)
+branch  1 never executed
+call    2 never executed
+branch  3 never executed (fallthrough)
+branch  4 never executed (throw)
+        -: 1923:    } else {
+        -: 1924:        (void)context;
+        -: 1925:        Traits::serialize(previous, current, out);
+        -: 1926:    }
+    #####: 1927:}
+------------------
+_ZN3ecs6detail29serialize_component_quantizedIN4kage4sync6detail39SyncComponentSerializationTraitsAdapterIN15kage_sync_tests17NetworkedPositionENS3_19SyncComponentTraitsIS7_EEEENS6_26QuantizedNetworkedPositionEEEvPKT0_RSD_RNS_9BitBufferEPNS_29ComponentSerializationContextE:
+function _ZN3ecs6detail29serialize_component_quantizedIN4kage4sync6detail39SyncComponentSerializationTraitsAdapterIN15kage_sync_tests17NetworkedPositionENS3_19SyncComponentTraitsIS7_EEEENS6_26QuantizedNetworkedPositionEEEvPKT0_RSD_RNS_9BitBufferEPNS_29ComponentSerializationContextE called 0 returned 0% blocks executed 0%
+    #####: 1915:void serialize_component_quantized(
+        -: 1916:    const Quantized* previous,
+        -: 1917:    const Quantized& current,
+        -: 1918:    BitBuffer& out,
+        -: 1919:    ComponentSerializationContext* context) {
+        -: 1920:    if constexpr (has_context_component_serialize<Traits, Quantized>::value) {
+    #####: 1921:        ComponentSerializationContext empty_context;
+    #####: 1922:        Traits::serialize(previous, current, out, context != nullptr ? *context : empty_context);
+branch  0 never executed (fallthrough)
+branch  1 never executed
+call    2 never executed
+branch  3 never executed (fallthrough)
+branch  4 never executed (throw)
+        -: 1923:    } else {
+        -: 1924:        (void)context;
+        -: 1925:        Traits::serialize(previous, current, out);
+        -: 1926:    }
+    #####: 1927:}
+------------------
         -: 1928:
         -: 1929:template <typename Traits, typename Quantized>
-        -: 1930:bool deserialize_component_quantized(
+    #####: 1930:bool deserialize_component_quantized(
         -: 1931:    BitBuffer& in,
         -: 1932:    const Quantized* previous,
         -: 1933:    Quantized& out,
         -: 1934:    ComponentSerializationContext* context) {
         -: 1935:    if constexpr (has_context_component_deserialize<Traits, Quantized>::value) {
-        -: 1936:        ComponentSerializationContext empty_context;
-        -: 1937:        return Traits::deserialize(in, previous, out, context != nullptr ? *context : empty_context);
+    #####: 1936:        ComponentSerializationContext empty_context;
+    #####: 1937:        return Traits::deserialize(in, previous, out, context != nullptr ? *context : empty_context);
         -: 1938:    } else {
         -: 1939:        (void)context;
         -: 1940:        return Traits::deserialize(in, previous, out);
         -: 1941:    }
         -: 1942:}
+------------------
+_ZN3ecs6detail31deserialize_component_quantizedIN4kage4sync6detail39SyncComponentSerializationTraitsAdapterIN15kage_sync_tests6HealthENS3_19SyncComponentTraitsIS7_EEEES7_EEbRNS_9BitBufferEPKT0_RSD_PNS_29ComponentSerializationContextE:
+function _ZN3ecs6detail31deserialize_component_quantizedIN4kage4sync6detail39SyncComponentSerializationTraitsAdapterIN15kage_sync_tests6HealthENS3_19SyncComponentTraitsIS7_EEEES7_EEbRNS_9BitBufferEPKT0_RSD_PNS_29ComponentSerializationContextE called 0 returned 0% blocks executed 0%
+    #####: 1930:bool deserialize_component_quantized(
+        -: 1931:    BitBuffer& in,
+        -: 1932:    const Quantized* previous,
+        -: 1933:    Quantized& out,
+        -: 1934:    ComponentSerializationContext* context) {
+        -: 1935:    if constexpr (has_context_component_deserialize<Traits, Quantized>::value) {
+    #####: 1936:        ComponentSerializationContext empty_context;
+    #####: 1937:        return Traits::deserialize(in, previous, out, context != nullptr ? *context : empty_context);
+branch  0 never executed (fallthrough)
+branch  1 never executed
+call    2 never executed
+branch  3 never executed (fallthrough)
+branch  4 never executed (throw)
+        -: 1938:    } else {
+        -: 1939:        (void)context;
+        -: 1940:        return Traits::deserialize(in, previous, out);
+        -: 1941:    }
+        -: 1942:}
+------------------
+_ZN3ecs6detail31deserialize_component_quantizedIN4kage4sync6detail39SyncComponentSerializationTraitsAdapterIN15kage_sync_tests17NetworkedPositionENS3_19SyncComponentTraitsIS7_EEEENS6_26QuantizedNetworkedPositionEEEbRNS_9BitBufferEPKT0_RSE_PNS_29ComponentSerializationContextE:
+function _ZN3ecs6detail31deserialize_component_quantizedIN4kage4sync6detail39SyncComponentSerializationTraitsAdapterIN15kage_sync_tests17NetworkedPositionENS3_19SyncComponentTraitsIS7_EEEENS6_26QuantizedNetworkedPositionEEEbRNS_9BitBufferEPKT0_RSE_PNS_29ComponentSerializationContextE called 0 returned 0% blocks executed 0%
+    #####: 1930:bool deserialize_component_quantized(
+        -: 1931:    BitBuffer& in,
+        -: 1932:    const Quantized* previous,
+        -: 1933:    Quantized& out,
+        -: 1934:    ComponentSerializationContext* context) {
+        -: 1935:    if constexpr (has_context_component_deserialize<Traits, Quantized>::value) {
+    #####: 1936:        ComponentSerializationContext empty_context;
+    #####: 1937:        return Traits::deserialize(in, previous, out, context != nullptr ? *context : empty_context);
+branch  0 never executed (fallthrough)
+branch  1 never executed
+call    2 never executed
+branch  3 never executed (fallthrough)
+branch  4 never executed (throw)
+        -: 1938:    } else {
+        -: 1939:        (void)context;
+        -: 1940:        return Traits::deserialize(in, previous, out);
+        -: 1941:    }
+        -: 1942:}
+------------------
         -: 1943:
         -: 1944:}  // namespace detail
         -: 1945:
         -: 1946:template <typename T, typename Traits = ComponentSerializationTraits<T>>
-        -: 1947:ComponentSerializationOps make_component_serialization_ops(std::string name = {}) {
+    #####: 1947:ComponentSerializationOps make_component_serialization_ops(std::string name = {}) {
         -: 1948:    using Quantized = typename Traits::Quantized;
         -: 1949:    static_assert(
         -: 1950:        std::is_trivially_copyable<Quantized>::value,
@@ -3324,70 +3410,112 @@ call    5 never executed
         -: 1953:        std::is_copy_constructible<T>::value,
         -: 1954:        "component serialization components must be copy constructible when decoded");
         -: 1955:
-        -: 1956:    ComponentSerializationOps ops;
-        -: 1957:    ops.name = std::move(name);
-        -: 1958:    ops.component_size = sizeof(T);
-        -: 1959:    ops.quantized_size = sizeof(Quantized);
-        -: 1960:    ops.quantize = [](const void* value, std::uint8_t* out) {
-        -: 1961:        const Quantized quantized = Traits::quantize(*static_cast<const T*>(value));
-        -: 1962:        std::memcpy(out, &quantized, sizeof(Quantized));
+    #####: 1956:    ComponentSerializationOps ops;
+    #####: 1957:    ops.name = std::move(name);
+    #####: 1958:    ops.component_size = sizeof(T);
+    #####: 1959:    ops.quantized_size = sizeof(Quantized);
+    #####: 1960:    ops.quantize = [](const void* value, std::uint8_t* out) {
+    #####: 1961:        const Quantized quantized = Traits::quantize(*static_cast<const T*>(value));
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+call    3 never executed
+    #####: 1962:        std::memcpy(out, &quantized, sizeof(Quantized));
         -: 1963:    };
-        -: 1964:    ops.dequantize = [](const std::uint8_t* quantized_bytes, void* out) {
-        -: 1965:        Quantized quantized{};
-        -: 1966:        std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
-        -: 1967:        *static_cast<T*>(out) = Traits::dequantize(quantized);
+    #####: 1964:    ops.dequantize = [](const std::uint8_t* quantized_bytes, void* out) {
+    #####: 1965:        Quantized quantized{};
+    #####: 1966:        std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
+    #####: 1967:        *static_cast<T*>(out) = Traits::dequantize(quantized);
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+call    3 never executed
         -: 1968:    };
-        -: 1969:    ops.push_to_registry = [](Registry& registry, Entity entity, const std::uint8_t* quantized_bytes) {
-        -: 1970:        Quantized quantized{};
-        -: 1971:        std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
+    #####: 1969:    ops.push_to_registry = [](Registry& registry, Entity entity, const std::uint8_t* quantized_bytes) {
+    #####: 1970:        Quantized quantized{};
+    #####: 1971:        std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
         -: 1972:        if constexpr (is_singleton_component<T>::value) {
         -: 1973:            (void)entity;
         -: 1974:            registry.write<T>() = Traits::dequantize(quantized);
         -: 1975:            return true;
         -: 1976:        } else {
-        -: 1977:            return registry.add<T>(entity, Traits::dequantize(quantized)) != nullptr;
+    #####: 1977:            return registry.add<T>(entity, Traits::dequantize(quantized)) != nullptr;
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+call    3 never executed
+branch  4 never executed (fallthrough)
+branch  5 never executed (throw)
+call    6 never executed
+call    7 never executed
+branch  8 never executed (fallthrough)
+branch  9 never executed (throw)
         -: 1978:        }
         -: 1979:    };
-        -: 1980:    ops.serialize = [](
+    #####: 1980:    ops.serialize = [](
         -: 1981:        const std::uint8_t* previous_bytes,
         -: 1982:        const std::uint8_t* current_bytes,
         -: 1983:        BitBuffer& out,
         -: 1984:        ComponentSerializationContext* context) {
-        -: 1985:        Quantized current{};
-        -: 1986:        std::memcpy(&current, current_bytes, sizeof(Quantized));
+    #####: 1985:        Quantized current{};
+    #####: 1986:        std::memcpy(&current, current_bytes, sizeof(Quantized));
         -: 1987:
-        -: 1988:        Quantized previous{};
-        -: 1989:        const Quantized* previous_ptr = nullptr;
-        -: 1990:        if (previous_bytes != nullptr) {
-        -: 1991:            std::memcpy(&previous, previous_bytes, sizeof(Quantized));
-        -: 1992:            previous_ptr = &previous;
+    #####: 1988:        Quantized previous{};
+    #####: 1989:        const Quantized* previous_ptr = nullptr;
+    #####: 1990:        if (previous_bytes != nullptr) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+branch  2 never executed (fallthrough)
+branch  3 never executed
+    #####: 1991:            std::memcpy(&previous, previous_bytes, sizeof(Quantized));
+    #####: 1992:            previous_ptr = &previous;
         -: 1993:        }
         -: 1994:
-        -: 1995:        detail::serialize_component_quantized<Traits, Quantized>(previous_ptr, current, out, context);
+    #####: 1995:        detail::serialize_component_quantized<Traits, Quantized>(previous_ptr, current, out, context);
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+call    3 never executed
+branch  4 never executed (fallthrough)
+branch  5 never executed (throw)
         -: 1996:    };
-        -: 1997:    ops.deserialize = [](
+    #####: 1997:    ops.deserialize = [](
         -: 1998:        BitBuffer& in,
         -: 1999:        const std::uint8_t* previous_bytes,
         -: 2000:        std::uint8_t* out,
         -: 2001:        ComponentSerializationContext* context) {
-        -: 2002:        Quantized previous{};
-        -: 2003:        const Quantized* previous_ptr = nullptr;
-        -: 2004:        if (previous_bytes != nullptr) {
-        -: 2005:            std::memcpy(&previous, previous_bytes, sizeof(Quantized));
-        -: 2006:            previous_ptr = &previous;
+    #####: 2002:        Quantized previous{};
+    #####: 2003:        const Quantized* previous_ptr = nullptr;
+    #####: 2004:        if (previous_bytes != nullptr) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+branch  2 never executed (fallthrough)
+branch  3 never executed
+    #####: 2005:            std::memcpy(&previous, previous_bytes, sizeof(Quantized));
+    #####: 2006:            previous_ptr = &previous;
         -: 2007:        }
         -: 2008:
-        -: 2009:        Quantized quantized{};
-        -: 2010:        if (!detail::deserialize_component_quantized<Traits, Quantized>(in, previous_ptr, quantized, context)) {
-        -: 2011:            return false;
+    #####: 2009:        Quantized quantized{};
+    #####: 2010:        if (!detail::deserialize_component_quantized<Traits, Quantized>(in, previous_ptr, quantized, context)) {
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+branch  3 never executed (fallthrough)
+branch  4 never executed
+call    5 never executed
+branch  6 never executed (fallthrough)
+branch  7 never executed (throw)
+branch  8 never executed (fallthrough)
+branch  9 never executed
+    #####: 2011:            return false;
         -: 2012:        }
-        -: 2013:        std::memcpy(out, &quantized, sizeof(Quantized));
-        -: 2014:        return true;
+    #####: 2013:        std::memcpy(out, &quantized, sizeof(Quantized));
+    #####: 2014:        return true;
         -: 2015:    };
-        -: 2016:    ops.uses_context =
+    #####: 2016:    ops.uses_context =
         -: 2017:        detail::has_context_component_serialize<Traits, Quantized>::value ||
         -: 2018:        detail::has_context_component_deserialize<Traits, Quantized>::value;
-        -: 2019:    return ops;
+    #####: 2019:    return ops;
         -: 2020:}
         -: 2021:
         -: 2022:class ComponentSerializationRegistry {

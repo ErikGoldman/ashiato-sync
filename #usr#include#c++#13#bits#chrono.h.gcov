@@ -1,7 +1,7 @@
         -:    0:Source:/usr/include/c++/13/bits/chrono.h
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/ball_stress.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/ball_stress.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:// chrono::duration and chrono::time_point -*- C++ -*-
         -:    2:
         -:    3:// Copyright (C) 2008-2023 Free Software Foundation, Inc.
@@ -579,8 +579,8 @@ call    0 returned 331
         -:  570:	template<typename _Rep2, typename = _Require<
         -:  571:		 is_convertible<const _Rep2&, rep>,
         -:  572:		 __or_<__is_float<rep>, __not_<__is_float<_Rep2>>>>>
-     1280:  573:	  constexpr explicit duration(const _Rep2& __rep)
-     1280:  574:	  : __r(static_cast<rep>(__rep)) { }
+     1294:  573:	  constexpr explicit duration(const _Rep2& __rep)
+     1294:  574:	  : __r(static_cast<rep>(__rep)) { }
 ------------------
 _ZNSt6chrono8durationIdSt5ratioILl1ELl1EEEC2IdvEERKT_:
 function _ZNSt6chrono8durationIdSt5ratioILl1ELl1EEEC2IdvEERKT_ called 331 returned 100% blocks executed 100%
@@ -588,9 +588,9 @@ function _ZNSt6chrono8durationIdSt5ratioILl1ELl1EEEC2IdvEERKT_ called 331 return
       331:  574:	  : __r(static_cast<rep>(__rep)) { }
 ------------------
 _ZNSt6chrono8durationIlSt5ratioILl1ELl1000000000EEEC1IlvEERKT_:
-function _ZNSt6chrono8durationIlSt5ratioILl1ELl1000000000EEEC1IlvEERKT_ called 949 returned 100% blocks executed 100%
-      949:  573:	  constexpr explicit duration(const _Rep2& __rep)
-      949:  574:	  : __r(static_cast<rep>(__rep)) { }
+function _ZNSt6chrono8durationIlSt5ratioILl1ELl1000000000EEEC1IlvEERKT_ called 963 returned 100% blocks executed 100%
+      963:  573:	  constexpr explicit duration(const _Rep2& __rep)
+      963:  574:	  : __r(static_cast<rep>(__rep)) { }
 ------------------
         -:  575:
         -:  576:	template<typename _Rep2, typename _Period2, typename = _Require<
@@ -611,8 +611,8 @@ call    3 returned 331
         -:  586:
         -:  587:	// 20.11.5.2 observer
         -:  588:	constexpr rep
-     2891:  589:	count() const
-     2891:  590:	{ return __r; }
+     2919:  589:	count() const
+     2919:  590:	{ return __r; }
 ------------------
 _ZNKSt6chrono8durationIdSt5ratioILl1ELl1EEE5countEv:
 function _ZNKSt6chrono8durationIdSt5ratioILl1ELl1EEE5countEv called 662 returned 100% blocks executed 100%
@@ -620,9 +620,9 @@ function _ZNKSt6chrono8durationIdSt5ratioILl1ELl1EEE5countEv called 662 returned
       662:  590:	{ return __r; }
 ------------------
 _ZNKSt6chrono8durationIlSt5ratioILl1ELl1000000000EEE5countEv:
-function _ZNKSt6chrono8durationIlSt5ratioILl1ELl1000000000EEE5countEv called 2229 returned 100% blocks executed 100%
-     2229:  589:	count() const
-     2229:  590:	{ return __r; }
+function _ZNKSt6chrono8durationIlSt5ratioILl1ELl1000000000EEE5countEv called 2257 returned 100% blocks executed 100%
+     2257:  589:	count() const
+     2257:  590:	{ return __r; }
 ------------------
         -:  591:
         -:  592:	// 20.11.5.3 arithmetic

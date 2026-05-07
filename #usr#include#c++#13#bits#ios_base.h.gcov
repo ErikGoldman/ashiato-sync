@@ -1,7 +1,7 @@
         -:    0:Source:/usr/include/c++/13/bits/ios_base.h
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/ball_stress.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/ball_stress.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:// Iostreams base classes -*- C++ -*-
         -:    2:
         -:    3:// Copyright (C) 1997-2023 Free Software Foundation, Inc.

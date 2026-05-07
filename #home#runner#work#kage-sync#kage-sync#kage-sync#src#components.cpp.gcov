@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/components.cpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/components.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/components.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#include "kage/sync/components.hpp"
         -:    2:
         -:    3:#include <cstdint>
@@ -21,17 +21,17 @@ function _ZN4kage4sync12_GLOBAL__N_118valid_archetype_idERKNS0_12SyncSettingsENS
 call    0 returned 3
         -:   16:}
         -:   17:
-function _ZN4kage4sync12_GLOBAL__N_130validate_component_replicationERKN3ecs8RegistryERKNS0_20ComponentReplicationE called 377 returned 99% blocks executed 85%
-      377:   18:void validate_component_replication(const ecs::Registry& registry, const ComponentReplication& replication) {
-      377:   19:    if (!replication.component || registry.component_info(replication.component) == nullptr) {
-call    0 returned 377
-branch  1 taken 377 (fallthrough)
+function _ZN4kage4sync12_GLOBAL__N_130validate_component_replicationERKN3ecs8RegistryERKNS0_20ComponentReplicationE called 388 returned 99% blocks executed 85%
+      388:   18:void validate_component_replication(const ecs::Registry& registry, const ComponentReplication& replication) {
+      388:   19:    if (!replication.component || registry.component_info(replication.component) == nullptr) {
+call    0 returned 388
+branch  1 taken 388 (fallthrough)
 branch  2 taken 0
-call    3 returned 377
+call    3 returned 388
 branch  4 taken 1 (fallthrough)
-branch  5 taken 376
+branch  5 taken 387
 branch  6 taken 1 (fallthrough)
-branch  7 taken 376
+branch  7 taken 387
         1:   20:        throw std::invalid_argument("sync archetype references an unregistered component");
 call    0 returned 1
 call    1 returned 1
@@ -40,10 +40,10 @@ branch  3 taken 0 (throw)
 call    4 returned 0
 call    5 never executed
         -:   21:    }
-      376:   22:    if (find_component_ops(registry, replication.component) == nullptr) {
-call    0 returned 376
+      387:   22:    if (find_component_ops(registry, replication.component) == nullptr) {
+call    0 returned 387
 branch  1 taken 1 (fallthrough)
-branch  2 taken 375
+branch  2 taken 386
         1:   23:        throw std::invalid_argument("sync archetype references a component without sync traits");
 call    0 returned 1
 call    1 returned 1
@@ -52,7 +52,7 @@ branch  3 taken 0 (throw)
 call    4 returned 0
 call    5 never executed
         -:   24:    }
-      375:   25:}
+      386:   25:}
         -:   26:
 function _ZN4kage4sync12_GLOBAL__N_124validate_tag_replicationERKN3ecs8RegistryERKNS0_18SyncTagReplicationE called 72 returned 99% blocks executed 93%
        72:   27:void validate_tag_replication(const ecs::Registry& registry, const SyncTagReplication& replication) {
@@ -80,104 +80,263 @@ call    5 never executed
         -:   33:
         -:   34:}  // namespace
         -:   35:
-function _ZN4kage4sync19register_componentsERN3ecs8RegistryE called 1395 returned 100% blocks executed 52%
-     1395:   36:void register_components(ecs::Registry& registry) {
-     2790:   37:    registry.register_component<SyncSettings>("kage.sync.SyncSettings");
-call    0 returned 1395
-branch  1 taken 1395 (fallthrough)
+function _ZN4kage4sync19register_componentsERN3ecs8RegistryE called 1303 returned 100% blocks executed 51%
+     1303:   36:void register_components(ecs::Registry& registry) {
+     2606:   37:    registry.register_component<SyncSettings>("kage.sync.SyncSettings");
+call    0 returned 1303
+branch  1 taken 1303 (fallthrough)
 branch  2 taken 0 (throw)
-call    3 returned 1395
-branch  4 taken 1395 (fallthrough)
+call    3 returned 1303
+branch  4 taken 1303 (fallthrough)
 branch  5 taken 0 (throw)
-call    6 returned 1395
+call    6 returned 1303
 call    7 never executed
 call    8 never executed
-     2790:   38:    registry.register_component<SyncAuthority>("kage.sync.SyncAuthority");
-call    0 returned 1395
-branch  1 taken 1395 (fallthrough)
+     2606:   38:    registry.register_component<FrameInfo>("kage.sync.FrameInfo");
+call    0 returned 1303
+branch  1 taken 1303 (fallthrough)
 branch  2 taken 0 (throw)
-call    3 returned 1395
-branch  4 taken 1395 (fallthrough)
+call    3 returned 1303
+branch  4 taken 1303 (fallthrough)
 branch  5 taken 0 (throw)
-call    6 returned 1395
+call    6 returned 1303
 call    7 never executed
 call    8 never executed
-     2790:   39:    registry.register_component<Replicated>("kage.sync.Replicated");
-call    0 returned 1395
-branch  1 taken 1395 (fallthrough)
+     2606:   39:    registry.register_component<CueDispatcher>("kage.sync.CueDispatcher");
+call    0 returned 1303
+branch  1 taken 1303 (fallthrough)
 branch  2 taken 0 (throw)
-call    3 returned 1395
-branch  4 taken 1395 (fallthrough)
+call    3 returned 1303
+branch  4 taken 1303 (fallthrough)
 branch  5 taken 0 (throw)
-call    6 returned 1395
+call    6 returned 1303
 call    7 never executed
 call    8 never executed
-     2790:   40:    registry.register_component<NetworkOwner>("kage.sync.NetworkOwner");
-call    0 returned 1395
-branch  1 taken 1395 (fallthrough)
+     2606:   40:    registry.register_component<SyncAuthority>("kage.sync.SyncAuthority");
+call    0 returned 1303
+branch  1 taken 1303 (fallthrough)
 branch  2 taken 0 (throw)
-call    3 returned 1395
-branch  4 taken 1395 (fallthrough)
+call    3 returned 1303
+branch  4 taken 1303 (fallthrough)
 branch  5 taken 0 (throw)
-call    6 returned 1395
+call    6 returned 1303
 call    7 never executed
 call    8 never executed
-     2790:   41:    registry.register_component<FractionalTickSampled>("kage.sync.FractionalTickSampled");
-call    0 returned 1395
-branch  1 taken 1395 (fallthrough)
+     2606:   41:    registry.register_component<Replicated>("kage.sync.Replicated");
+call    0 returned 1303
+branch  1 taken 1303 (fallthrough)
 branch  2 taken 0 (throw)
-call    3 returned 1395
-branch  4 taken 1395 (fallthrough)
+call    3 returned 1303
+branch  4 taken 1303 (fallthrough)
 branch  5 taken 0 (throw)
-call    6 returned 1395
+call    6 returned 1303
 call    7 never executed
 call    8 never executed
-     2790:   42:    registry.register_component<NoResim>("kage.sync.NoResim");
-call    0 returned 1395
-branch  1 taken 1395 (fallthrough)
+     2606:   42:    registry.register_component<NetworkOwner>("kage.sync.NetworkOwner");
+call    0 returned 1303
+branch  1 taken 1303 (fallthrough)
 branch  2 taken 0 (throw)
-call    3 returned 1395
-branch  4 taken 1395 (fallthrough)
+call    3 returned 1303
+branch  4 taken 1303 (fallthrough)
 branch  5 taken 0 (throw)
-call    6 returned 1395
+call    6 returned 1303
 call    7 never executed
 call    8 never executed
-     1395:   43:    registry.register_component<NoSimulate>("kage.sync.NoSimulate");
-call    0 returned 1395
-branch  1 taken 1395 (fallthrough)
+     2606:   43:    registry.register_component<FractionalTickSampled>("kage.sync.FractionalTickSampled");
+call    0 returned 1303
+branch  1 taken 1303 (fallthrough)
 branch  2 taken 0 (throw)
-call    3 returned 1395
-branch  4 taken 1395 (fallthrough)
+call    3 returned 1303
+branch  4 taken 1303 (fallthrough)
 branch  5 taken 0 (throw)
-call    6 returned 1395
+call    6 returned 1303
 call    7 never executed
-     1395:   44:}
-        -:   45:
-function _ZN4kage4sync18find_component_opsERKN3ecs8RegistryENS1_6EntityE called 429 returned 100% blocks executed 100%
-      429:   46:const SyncComponentOps* find_component_ops(const ecs::Registry& registry, ecs::Entity component) {
-      429:   47:    const SyncSettings& settings = registry.get<SyncSettings>();
-call    0 returned 429
-branch  1 taken 429 (fallthrough)
+call    8 never executed
+     2606:   44:    registry.register_component<NoResim>("kage.sync.NoResim");
+call    0 returned 1303
+branch  1 taken 1303 (fallthrough)
 branch  2 taken 0 (throw)
-      429:   48:    const auto found = settings.component_ops.find(component.value);
-call    0 returned 429
-branch  1 taken 429 (fallthrough)
+call    3 returned 1303
+branch  4 taken 1303 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1303
+call    7 never executed
+call    8 never executed
+     1303:   45:    registry.register_component<NoSimulate>("kage.sync.NoSimulate");
+call    0 returned 1303
+branch  1 taken 1303 (fallthrough)
 branch  2 taken 0 (throw)
-      429:   49:    return found != settings.component_ops.end() ? &found->second : nullptr;
-call    0 returned 429
-call    1 returned 429
-branch  2 taken 428 (fallthrough)
+call    3 returned 1303
+branch  4 taken 1303 (fallthrough)
+branch  5 taken 0 (throw)
+call    6 returned 1303
+call    7 never executed
+     1303:   46:}
+        -:   47:
+function _ZN4kage4sync13CueDispatcherC2ERKS1_ called 0 returned 0% blocks executed 0%
+    #####:   48:CueDispatcher::CueDispatcher(const CueDispatcher& other) {
+call    0 never executed
+call    1 never executed
+    #####:   49:    std::lock_guard<std::mutex> lock(other.mutex_);
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+    #####:   50:    cues_ = other.cues_;
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+    #####:   51:}
+call    0 never executed
+call    1 never executed
+call    2 never executed
+        -:   52:
+function _ZN4kage4sync13CueDispatcheraSERKS1_ called 0 returned 0% blocks executed 0%
+    #####:   53:CueDispatcher& CueDispatcher::operator=(const CueDispatcher& other) {
+    #####:   54:    if (this != &other) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:   55:        std::scoped_lock lock(mutex_, other.mutex_);
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+    #####:   56:        cues_ = other.cues_;
+call    0 never executed
+branch  1 never executed (fallthrough)
+branch  2 never executed (throw)
+    #####:   57:    }
+call    0 never executed
+call    1 never executed
+    #####:   58:    return *this;
+        -:   59:}
+        -:   60:
+function _ZN4kage4sync13CueDispatcherC2EOS1_ called 0 returned 0% blocks executed 0%
+    #####:   61:CueDispatcher::CueDispatcher(CueDispatcher&& other) noexcept {
+call    0 never executed
+call    1 never executed
+    #####:   62:    std::lock_guard<std::mutex> lock(other.mutex_);
+call    0 never executed
+    #####:   63:    cues_ = std::move(other.cues_);
+call    0 never executed
+call    1 never executed
+    #####:   64:}
+call    0 never executed
+        -:   65:
+function _ZN4kage4sync13CueDispatcheraSEOS1_ called 0 returned 0% blocks executed 0%
+    #####:   66:CueDispatcher& CueDispatcher::operator=(CueDispatcher&& other) noexcept {
+    #####:   67:    if (this != &other) {
+branch  0 never executed (fallthrough)
+branch  1 never executed
+    #####:   68:        std::scoped_lock lock(mutex_, other.mutex_);
+call    0 never executed
+    #####:   69:        cues_ = std::move(other.cues_);
+call    0 never executed
+call    1 never executed
+    #####:   70:    }
+call    0 never executed
+    #####:   71:    return *this;
+        -:   72:}
+        -:   73:
+function _ZN4kage4sync13CueDispatcher7enqueueENS0_13QueuedSyncCueE called 148 returned 100% blocks executed 75%
+      148:   74:bool CueDispatcher::enqueue(QueuedSyncCue cue) {
+     148*:   75:    if (!cue.entity || cue.relevance_seconds < 0.0f) {
+call    0 returned 148
+branch  1 taken 148 (fallthrough)
+branch  2 taken 0
+branch  3 taken 0 (fallthrough)
+branch  4 taken 148
+branch  5 taken 0 (fallthrough)
+branch  6 taken 148
+    #####:   76:        return false;
+        -:   77:    }
+      148:   78:    std::lock_guard<std::mutex> lock(mutex_);
+call    0 returned 148
+branch  1 taken 148 (fallthrough)
+branch  2 taken 0 (throw)
+      148:   79:    cues_.push_back(std::move(cue));
+call    0 returned 148
+call    1 returned 148
+branch  2 taken 148 (fallthrough)
+branch  3 taken 0 (throw)
+      148:   80:    return true;
+      148:   81:}
+call    0 returned 148
+call    1 never executed
+        -:   82:
+function _ZN4kage4sync13CueDispatcher5drainEv called 4411 returned 100% blocks executed 80%
+     4411:   83:std::vector<QueuedSyncCue> CueDispatcher::drain() {
+     4411:   84:    std::vector<QueuedSyncCue> drained;
+call    0 returned 4411
+     4411:   85:    std::lock_guard<std::mutex> lock(mutex_);
+call    0 returned 4411
+branch  1 taken 4411 (fallthrough)
+branch  2 taken 0 (throw)
+     4411:   86:    drained.swap(cues_);
+call    0 returned 4411
+     8822:   87:    return drained;
+     4411:   88:}
+call    0 returned 4411
+call    1 never executed
+        -:   89:
+function _ZN4kage4sync13CueDispatcher5clearEv called 1833 returned 100% blocks executed 100%
+     1833:   90:void CueDispatcher::clear() {
+     1833:   91:    std::lock_guard<std::mutex> lock(mutex_);
+call    0 returned 1833
+branch  1 taken 1833 (fallthrough)
+branch  2 taken 0 (throw)
+     1833:   92:    cues_.clear();
+call    0 returned 1833
+     1833:   93:}
+call    0 returned 1833
+        -:   94:
+function _ZNK4kage4sync13CueDispatcher4viewEv called 3666 returned 100% blocks executed 100%
+     3666:   95:QueuedSyncCueView CueDispatcher::view() const noexcept {
+        -:   96:    return QueuedSyncCueView{
+     3666:   97:        cues_.empty() ? nullptr : cues_.data(),
+call    0 returned 3666
+branch  1 taken 3528 (fallthrough)
+branch  2 taken 138
+call    3 returned 138
+     3666:   98:        cues_.size()};
+call    0 returned 3666
+        -:   99:}
+        -:  100:
+function _ZNK4kage4sync13CueDispatcher5emptyEv called 0 returned 0% blocks executed 0%
+    #####:  101:bool CueDispatcher::empty() const noexcept {
+    #####:  102:    return cues_.empty();
+call    0 never executed
+        -:  103:}
+        -:  104:
+function _ZNK4kage4sync13CueDispatcher4sizeEv called 0 returned 0% blocks executed 0%
+    #####:  105:std::size_t CueDispatcher::size() const noexcept {
+    #####:  106:    return cues_.size();
+call    0 never executed
+        -:  107:}
+        -:  108:
+function _ZN4kage4sync18find_component_opsERKN3ecs8RegistryENS1_6EntityE called 440 returned 100% blocks executed 100%
+      440:  109:const SyncComponentOps* find_component_ops(const ecs::Registry& registry, ecs::Entity component) {
+      440:  110:    const SyncSettings& settings = registry.get<SyncSettings>();
+call    0 returned 440
+branch  1 taken 440 (fallthrough)
+branch  2 taken 0 (throw)
+      440:  111:    const auto found = settings.component_ops.find(component.value);
+call    0 returned 440
+branch  1 taken 440 (fallthrough)
+branch  2 taken 0 (throw)
+      440:  112:    return found != settings.component_ops.end() ? &found->second : nullptr;
+call    0 returned 440
+call    1 returned 440
+branch  2 taken 439 (fallthrough)
 branch  3 taken 1
-call    4 returned 428
-        -:   50:}
-        -:   51:
+call    4 returned 439
+        -:  113:}
+        -:  114:
 function _ZN4kage4sync27set_fractional_tick_sampledERN3ecs8RegistryENS1_6EntityEb called 22 returned 100% blocks executed 88%
-       22:   52:bool set_fractional_tick_sampled(ecs::Registry& registry, ecs::Entity component, bool enabled) {
-       22:   53:    register_components(registry);
+       22:  115:bool set_fractional_tick_sampled(ecs::Registry& registry, ecs::Entity component, bool enabled) {
+       22:  116:    register_components(registry);
 call    0 returned 22
 branch  1 taken 22 (fallthrough)
 branch  2 taken 0 (throw)
-      22*:   54:    if (!component || registry.component_info(component) == nullptr) {
+      22*:  117:    if (!component || registry.component_info(component) == nullptr) {
 call    0 returned 22
 branch  1 taken 22 (fallthrough)
 branch  2 taken 0
@@ -188,51 +347,51 @@ branch  6 taken 0 (fallthrough)
 branch  7 taken 22
 branch  8 taken 0 (fallthrough)
 branch  9 taken 22
-    #####:   55:        return false;
-        -:   56:    }
-        -:   57:
-       22:   58:    const ecs::Entity tag = registry.component<FractionalTickSampled>();
+    #####:  118:        return false;
+        -:  119:    }
+        -:  120:
+       22:  121:    const ecs::Entity tag = registry.component<FractionalTickSampled>();
 call    0 returned 22
 branch  1 taken 22 (fallthrough)
 branch  2 taken 0 (throw)
-       22:   59:    if (!enabled) {
+       22:  122:    if (!enabled) {
 branch  0 taken 1 (fallthrough)
 branch  1 taken 21
-        1:   60:        if (!registry.has<FractionalTickSampled>(component)) {
+        1:  123:        if (!registry.has<FractionalTickSampled>(component)) {
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
 branch  3 taken 0 (fallthrough)
 branch  4 taken 1
-    #####:   61:            return true;
-        -:   62:        }
-        1:   63:        return registry.remove_tag(component, tag);
+    #####:  124:            return true;
+        -:  125:        }
+        1:  126:        return registry.remove_tag(component, tag);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        -:   64:    }
-        -:   65:
-       21:   66:    const SyncComponentOps* ops = find_component_ops(registry, component);
+        -:  127:    }
+        -:  128:
+       21:  129:    const SyncComponentOps* ops = find_component_ops(registry, component);
 call    0 returned 21
 branch  1 taken 21 (fallthrough)
 branch  2 taken 0 (throw)
-       21:   67:    if (ops == nullptr || ops->interpolate == nullptr) {
+       21:  130:    if (ops == nullptr || ops->interpolate == nullptr) {
 branch  0 taken 21 (fallthrough)
 branch  1 taken 0
 branch  2 taken 1 (fallthrough)
 branch  3 taken 20
-        1:   68:        return false;
-        -:   69:    }
-        -:   70:
-       20:   71:    return registry.add_tag(component, tag);
+        1:  131:        return false;
+        -:  132:    }
+        -:  133:
+       20:  134:    return registry.add_tag(component, tag);
 call    0 returned 20
 branch  1 taken 20 (fallthrough)
 branch  2 taken 0 (throw)
-        -:   72:}
-        -:   73:
+        -:  135:}
+        -:  136:
 function _ZN4kage4sync26is_fractional_tick_sampledERKN3ecs8RegistryENS1_6EntityE called 3 returned 100% blocks executed 82%
-        3:   74:bool is_fractional_tick_sampled(const ecs::Registry& registry, ecs::Entity component) {
-       3*:   75:    if (!component || registry.component_info(component) == nullptr) {
+        3:  137:bool is_fractional_tick_sampled(const ecs::Registry& registry, ecs::Entity component) {
+       3*:  138:    if (!component || registry.component_info(component) == nullptr) {
 call    0 returned 3
 branch  1 taken 3 (fallthrough)
 branch  2 taken 0
@@ -241,254 +400,254 @@ branch  4 taken 0 (fallthrough)
 branch  5 taken 3
 branch  6 taken 0 (fallthrough)
 branch  7 taken 3
-    #####:   76:        return false;
-        -:   77:    }
-        3:   78:    return registry.has<FractionalTickSampled>(component);
+    #####:  139:        return false;
+        -:  140:    }
+        3:  141:    return registry.has<FractionalTickSampled>(component);
 call    0 returned 3
-        -:   79:}
-        -:   80:
-function _ZN4kage4sync16configure_serverERN3ecs8RegistryE called 49 returned 100% blocks executed 100%
-       49:   81:void configure_server(ecs::Registry& registry) {
-       49:   82:    register_components(registry);
-call    0 returned 49
-        -:   83:
-       49:   84:    SyncSettings& settings = registry.write<SyncSettings>();
-call    0 returned 49
-       49:   85:    settings.role = SyncRole::Server;
-       49:   86:    settings.local_client = invalid_client_id;
-       49:   87:    registry.write<SyncAuthority>().authoritative = true;
-call    0 returned 49
-       49:   88:}
-        -:   89:
+        -:  142:}
+        -:  143:
+function _ZN4kage4sync16configure_serverERN3ecs8RegistryE called 60 returned 100% blocks executed 100%
+       60:  144:void configure_server(ecs::Registry& registry) {
+       60:  145:    register_components(registry);
+call    0 returned 60
+        -:  146:
+       60:  147:    SyncSettings& settings = registry.write<SyncSettings>();
+call    0 returned 60
+       60:  148:    settings.role = SyncRole::Server;
+       60:  149:    settings.local_client = invalid_client_id;
+       60:  150:    registry.write<SyncAuthority>().authoritative = true;
+call    0 returned 60
+       60:  151:}
+        -:  152:
 function _ZN4kage4sync16configure_clientERN3ecs8RegistryEm called 158 returned 99% blocks executed 90%
-      158:   90:void configure_client(ecs::Registry& registry, ClientId local_client) {
-      158:   91:    register_components(registry);
+      158:  153:void configure_client(ecs::Registry& registry, ClientId local_client) {
+      158:  154:    register_components(registry);
 call    0 returned 158
-      158:   92:    if (local_client > max_client_entity_network_id_client) {
+      158:  155:    if (local_client > max_client_entity_network_id_client) {
 branch  0 taken 1 (fallthrough)
 branch  1 taken 157
-        1:   93:        throw std::invalid_argument("client id exceeds ClientEntityNetworkId client field");
+        1:  156:        throw std::invalid_argument("client id exceeds ClientEntityNetworkId client field");
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
 call    4 returned 0
 call    5 never executed
-        -:   94:    }
-        -:   95:
-      157:   96:    SyncSettings& settings = registry.write<SyncSettings>();
+        -:  157:    }
+        -:  158:
+      157:  159:    SyncSettings& settings = registry.write<SyncSettings>();
 call    0 returned 157
-      157:   97:    settings.role = SyncRole::Client;
-      157:   98:    settings.local_client = local_client;
-      157:   99:    registry.write<SyncAuthority>().authoritative = false;
+      157:  160:    settings.role = SyncRole::Client;
+      157:  161:    settings.local_client = local_client;
+      157:  162:    registry.write<SyncAuthority>().authoritative = false;
 call    0 returned 157
-      157:  100:}
-        -:  101:
-function _ZN4kage4sync16define_archetypeERN3ecs8RegistryENS0_17SyncArchetypeDescE called 284 returned 98% blocks executed 64%
-      284:  102:SyncArchetypeId define_archetype(ecs::Registry& registry, SyncArchetypeDesc desc) {
-      284:  103:    register_components(registry);
-call    0 returned 284
-branch  1 taken 284 (fallthrough)
+      157:  163:}
+        -:  164:
+function _ZN4kage4sync16define_archetypeERN3ecs8RegistryENS0_17SyncArchetypeDescE called 295 returned 98% blocks executed 64%
+      295:  165:SyncArchetypeId define_archetype(ecs::Registry& registry, SyncArchetypeDesc desc) {
+      295:  166:    register_components(registry);
+call    0 returned 295
+branch  1 taken 295 (fallthrough)
 branch  2 taken 0 (throw)
-        -:  104:
-      284:  105:    if (desc.tags.size() > max_archetype_tags) {
-call    0 returned 284
+        -:  167:
+      295:  168:    if (desc.tags.size() > max_archetype_tags) {
+call    0 returned 295
 branch  1 taken 0 (fallthrough)
-branch  2 taken 284
-    #####:  106:        throw std::invalid_argument("sync archetypes may not contain more than 64 tags");
+branch  2 taken 295
+    #####:  169:        throw std::invalid_argument("sync archetypes may not contain more than 64 tags");
 call    0 never executed
 call    1 never executed
 branch  2 never executed (fallthrough)
 branch  3 never executed (throw)
 call    4 never executed
 call    5 never executed
-        -:  107:    }
-      284:  108:    if (desc.components.size() > max_archetype_components) {
-call    0 returned 284
+        -:  170:    }
+      295:  171:    if (desc.components.size() > max_archetype_components) {
+call    0 returned 295
 branch  1 taken 0 (fallthrough)
-branch  2 taken 284
-    #####:  109:        throw std::invalid_argument("sync archetypes may not contain more than 63 components");
+branch  2 taken 295
+    #####:  172:        throw std::invalid_argument("sync archetypes may not contain more than 63 components");
 call    0 never executed
 call    1 never executed
 branch  2 never executed (fallthrough)
 branch  3 never executed (throw)
 call    4 never executed
 call    5 never executed
-        -:  110:    }
-        -:  111:
-      355:  112:    for (const SyncTagReplication& replication : desc.tags) {
-call    0 returned 284
-call    1 returned 284
+        -:  173:    }
+        -:  174:
+      366:  175:    for (const SyncTagReplication& replication : desc.tags) {
+call    0 returned 295
+call    1 returned 295
 call    2 returned 72
 call    3 returned 71
-call    4 returned 355
+call    4 returned 366
 branch  5 taken 72
-branch  6 taken 283 (fallthrough)
-       72:  113:        validate_tag_replication(registry, replication);
+branch  6 taken 294 (fallthrough)
+       72:  176:        validate_tag_replication(registry, replication);
 call    0 returned 72
 branch  1 taken 71 (fallthrough)
 branch  2 taken 1 (throw)
-        -:  114:    }
-      352:  115:    for (std::size_t lhs = 0; lhs < desc.tags.size(); ++lhs) {
-call    0 returned 352
+        -:  177:    }
+      363:  178:    for (std::size_t lhs = 0; lhs < desc.tags.size(); ++lhs) {
+call    0 returned 363
 branch  1 taken 70
-branch  2 taken 282 (fallthrough)
-      104:  116:        for (std::size_t rhs = lhs + 1U; rhs < desc.tags.size(); ++rhs) {
+branch  2 taken 293 (fallthrough)
+      104:  179:        for (std::size_t rhs = lhs + 1U; rhs < desc.tags.size(); ++rhs) {
 call    0 returned 104
 branch  1 taken 35
 branch  2 taken 69 (fallthrough)
-       35:  117:            if (desc.tags[lhs].tag == desc.tags[rhs].tag) {
+       35:  180:            if (desc.tags[lhs].tag == desc.tags[rhs].tag) {
 call    0 returned 35
 call    1 returned 35
 call    2 returned 35
 branch  3 taken 1 (fallthrough)
 branch  4 taken 34
-        1:  118:                throw std::invalid_argument("sync archetype contains duplicate tags");
+        1:  181:                throw std::invalid_argument("sync archetype contains duplicate tags");
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
 call    4 returned 1
 call    5 never executed
-        -:  119:            }
-        -:  120:        }
-        -:  121:    }
-        -:  122:
-      657:  123:    for (const ComponentReplication& replication : desc.components) {
-call    0 returned 282
-call    1 returned 282
-call    2 returned 377
-call    3 returned 375
-call    4 returned 657
-branch  5 taken 377
-branch  6 taken 280 (fallthrough)
-      377:  124:        validate_component_replication(registry, replication);
-call    0 returned 377
-branch  1 taken 375 (fallthrough)
+        -:  182:            }
+        -:  183:        }
+        -:  184:    }
+        -:  185:
+      679:  186:    for (const ComponentReplication& replication : desc.components) {
+call    0 returned 293
+call    1 returned 293
+call    2 returned 388
+call    3 returned 386
+call    4 returned 679
+branch  5 taken 388
+branch  6 taken 291 (fallthrough)
+      388:  187:        validate_component_replication(registry, replication);
+call    0 returned 388
+branch  1 taken 386 (fallthrough)
 branch  2 taken 2 (throw)
-        -:  125:    }
-      653:  126:    for (std::size_t lhs = 0; lhs < desc.components.size(); ++lhs) {
-call    0 returned 653
-branch  1 taken 374
-branch  2 taken 279 (fallthrough)
-      544:  127:        for (std::size_t rhs = lhs + 1U; rhs < desc.components.size(); ++rhs) {
-call    0 returned 544
+        -:  188:    }
+      675:  189:    for (std::size_t lhs = 0; lhs < desc.components.size(); ++lhs) {
+call    0 returned 675
+branch  1 taken 385
+branch  2 taken 290 (fallthrough)
+      555:  190:        for (std::size_t rhs = lhs + 1U; rhs < desc.components.size(); ++rhs) {
+call    0 returned 555
 branch  1 taken 171
-branch  2 taken 373 (fallthrough)
-      171:  128:            if (desc.components[lhs].component == desc.components[rhs].component) {
+branch  2 taken 384 (fallthrough)
+      171:  191:            if (desc.components[lhs].component == desc.components[rhs].component) {
 call    0 returned 171
 call    1 returned 171
 call    2 returned 171
 branch  3 taken 1 (fallthrough)
 branch  4 taken 170
-        1:  129:                throw std::invalid_argument("sync archetype contains duplicate components");
+        1:  192:                throw std::invalid_argument("sync archetype contains duplicate components");
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
 call    4 returned 1
 call    5 never executed
-        -:  130:            }
-        -:  131:        }
-        -:  132:    }
-        -:  133:
-      279:  134:    SyncSettings& settings = registry.write<SyncSettings>();
-call    0 returned 279
-branch  1 taken 279 (fallthrough)
+        -:  193:            }
+        -:  194:        }
+        -:  195:    }
+        -:  196:
+      290:  197:    SyncSettings& settings = registry.write<SyncSettings>();
+call    0 returned 290
+branch  1 taken 290 (fallthrough)
 branch  2 taken 0 (throw)
-      279:  135:    std::vector<SyncComponentOps> component_ops;
-call    0 returned 279
-      279:  136:    std::vector<std::uint32_t> component_offsets;
-call    0 returned 279
-      279:  137:    component_ops.reserve(desc.components.size());
-call    0 returned 279
-call    1 returned 279
-branch  2 taken 279 (fallthrough)
+      290:  198:    std::vector<SyncComponentOps> component_ops;
+call    0 returned 290
+      290:  199:    std::vector<std::uint32_t> component_offsets;
+call    0 returned 290
+      290:  200:    component_ops.reserve(desc.components.size());
+call    0 returned 290
+call    1 returned 290
+branch  2 taken 290 (fallthrough)
 branch  3 taken 0 (throw)
-      279:  138:    component_offsets.reserve(desc.components.size());
-call    0 returned 279
-call    1 returned 279
-branch  2 taken 279 (fallthrough)
+      290:  201:    component_offsets.reserve(desc.components.size());
+call    0 returned 290
+call    1 returned 290
+branch  2 taken 290 (fallthrough)
 branch  3 taken 0 (throw)
-      279:  139:    std::size_t total_quantized_bytes = 0;
-      652:  140:    for (const ComponentReplication& replication : desc.components) {
-call    0 returned 279
-call    1 returned 279
-call    2 returned 373
-call    3 returned 373
-call    4 returned 652
-branch  5 taken 373
-branch  6 taken 279 (fallthrough)
-      373:  141:        const auto found_ops = settings.component_ops.find(replication.component.value);
-call    0 returned 373
-branch  1 taken 373 (fallthrough)
+      290:  202:    std::size_t total_quantized_bytes = 0;
+      674:  203:    for (const ComponentReplication& replication : desc.components) {
+call    0 returned 290
+call    1 returned 290
+call    2 returned 384
+call    3 returned 384
+call    4 returned 674
+branch  5 taken 384
+branch  6 taken 290 (fallthrough)
+      384:  204:        const auto found_ops = settings.component_ops.find(replication.component.value);
+call    0 returned 384
+branch  1 taken 384 (fallthrough)
 branch  2 taken 0 (throw)
-      373:  142:        if (found_ops == settings.component_ops.end()) {
-call    0 returned 373
-call    1 returned 373
+      384:  205:        if (found_ops == settings.component_ops.end()) {
+call    0 returned 384
+call    1 returned 384
 branch  2 taken 0 (fallthrough)
-branch  3 taken 373
-    #####:  143:            throw std::invalid_argument("sync archetype references a component without sync traits");
+branch  3 taken 384
+    #####:  206:            throw std::invalid_argument("sync archetype references a component without sync traits");
 call    0 never executed
 call    1 never executed
 branch  2 never executed (fallthrough)
 branch  3 never executed (throw)
 call    4 never executed
 call    5 never executed
-        -:  144:        }
-     746*:  145:        if (found_ops->second.quantized_size == 0 ||
-call    0 returned 373
-branch  1 taken 373 (fallthrough)
+        -:  207:        }
+     768*:  208:        if (found_ops->second.serialization.quantized_size == 0 ||
+call    0 returned 384
+branch  1 taken 384 (fallthrough)
 branch  2 taken 0
 branch  3 taken 0 (fallthrough)
-branch  4 taken 373
-      373:  146:            found_ops->second.quantized_size > SyncComponentOps::QuantizedBytes::max_size) {
-call    0 returned 373
+branch  4 taken 384
+      384:  209:            found_ops->second.serialization.quantized_size > SyncComponentOps::QuantizedBytes::max_size) {
+call    0 returned 384
 branch  1 taken 0 (fallthrough)
-branch  2 taken 373
-    #####:  147:            throw std::invalid_argument("sync archetype references a component with invalid quantized size");
+branch  2 taken 384
+    #####:  210:            throw std::invalid_argument("sync archetype references a component with invalid quantized size");
 call    0 never executed
 call    1 never executed
 branch  2 never executed (fallthrough)
 branch  3 never executed (throw)
 call    4 never executed
 call    5 never executed
-        -:  148:        }
-      373:  149:        component_offsets.push_back(static_cast<std::uint32_t>(total_quantized_bytes));
-call    0 returned 373
-branch  1 taken 373 (fallthrough)
+        -:  211:        }
+      384:  212:        component_offsets.push_back(static_cast<std::uint32_t>(total_quantized_bytes));
+call    0 returned 384
+branch  1 taken 384 (fallthrough)
 branch  2 taken 0 (throw)
-      373:  150:        total_quantized_bytes += found_ops->second.quantized_size;
-call    0 returned 373
-      373:  151:        if (total_quantized_bytes > max_archetype_quantized_bytes) {
+      384:  213:        total_quantized_bytes += found_ops->second.serialization.quantized_size;
+call    0 returned 384
+      384:  214:        if (total_quantized_bytes > max_archetype_quantized_bytes) {
 branch  0 taken 0 (fallthrough)
-branch  1 taken 373
-    #####:  152:            throw std::invalid_argument("sync archetype quantized state exceeds maximum size");
+branch  1 taken 384
+    #####:  215:            throw std::invalid_argument("sync archetype quantized state exceeds maximum size");
 call    0 never executed
 call    1 never executed
 branch  2 never executed (fallthrough)
 branch  3 never executed (throw)
 call    4 never executed
 call    5 never executed
-        -:  153:        }
-      373:  154:        component_ops.push_back(found_ops->second);
-call    0 returned 373
-call    1 returned 373
-branch  2 taken 373 (fallthrough)
+        -:  216:        }
+      384:  217:        component_ops.push_back(found_ops->second);
+call    0 returned 384
+call    1 returned 384
+branch  2 taken 384 (fallthrough)
 branch  3 taken 0 (throw)
-        -:  155:    }
-      279:  156:    const SyncArchetypeId id{static_cast<std::uint32_t>(settings.archetypes.size())};
-call    0 returned 279
-     1395:  157:    settings.archetypes.push_back(SyncArchetype{
-call    0 returned 279
-call    1 returned 279
-call    2 returned 279
-call    3 returned 279
-call    4 returned 279
-call    5 returned 279
-branch  6 taken 279 (fallthrough)
+        -:  218:    }
+      290:  219:    const SyncArchetypeId id{static_cast<std::uint32_t>(settings.archetypes.size())};
+call    0 returned 290
+     1450:  220:    settings.archetypes.push_back(SyncArchetype{
+call    0 returned 290
+call    1 returned 290
+call    2 returned 290
+call    3 returned 290
+call    4 returned 290
+call    5 returned 290
+branch  6 taken 290 (fallthrough)
 branch  7 taken 0 (throw)
-call    8 returned 279
+call    8 returned 290
 call    9 never executed
 branch 10 never executed (fallthrough)
 branch 11 never executed
@@ -505,54 +664,54 @@ call   21 never executed
 branch 22 never executed (fallthrough)
 branch 23 never executed
 call   24 never executed
-      279:  158:        std::move(desc.name),
-call    0 returned 279
-      279:  159:        std::move(desc.tags),
-call    0 returned 279
-      279:  160:        std::move(desc.components),
-call    0 returned 279
-      279:  161:        std::move(component_ops),
-call    0 returned 279
-      279:  162:        std::move(component_offsets),
-call    0 returned 279
-        -:  163:        static_cast<std::uint32_t>(total_quantized_bytes)});
-      279:  164:    return id;
-      279:  165:}
-call    0 returned 279
-call    1 returned 279
+      290:  221:        std::move(desc.name),
+call    0 returned 290
+      290:  222:        std::move(desc.tags),
+call    0 returned 290
+      290:  223:        std::move(desc.components),
+call    0 returned 290
+      290:  224:        std::move(component_ops),
+call    0 returned 290
+      290:  225:        std::move(component_offsets),
+call    0 returned 290
+        -:  226:        static_cast<std::uint32_t>(total_quantized_bytes)});
+      290:  227:    return id;
+      290:  228:}
+call    0 returned 290
+call    1 returned 290
 call    2 never executed
 call    3 never executed
-        -:  166:
+        -:  229:
 function _ZN4kage4sync14find_archetypeERKN3ecs8RegistryENS0_15SyncArchetypeIdE called 3 returned 100% blocks executed 100%
-        3:  167:const SyncArchetype* find_archetype(const ecs::Registry& registry, SyncArchetypeId id) {
-        3:  168:    const SyncSettings& settings = registry.get<SyncSettings>();
+        3:  230:const SyncArchetype* find_archetype(const ecs::Registry& registry, SyncArchetypeId id) {
+        3:  231:    const SyncSettings& settings = registry.get<SyncSettings>();
 call    0 returned 3
-        3:  169:    if (!valid_archetype_id(settings, id)) {
+        3:  232:    if (!valid_archetype_id(settings, id)) {
 call    0 returned 3
 branch  1 taken 1 (fallthrough)
 branch  2 taken 2
-        1:  170:        return nullptr;
-        -:  171:    }
-        -:  172:
-        2:  173:    return &settings.archetypes[id.value];
+        1:  233:        return nullptr;
+        -:  234:    }
+        -:  235:
+        2:  236:    return &settings.archetypes[id.value];
 call    0 returned 2
-        -:  174:}
-        -:  175:
-function _ZN4kage4sync16define_archetypeERN3ecs8RegistryENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt6vectorINS0_20ComponentReplicationESaISB_EE called 247 returned 99% blocks executed 89%
-      247:  176:SyncArchetypeId define_archetype(
-        -:  177:    ecs::Registry& registry,
-        -:  178:    std::string name,
-        -:  179:    std::vector<ComponentReplication> components) {
-      253:  180:    return define_archetype(registry, SyncArchetypeDesc{std::move(name), {}, std::move(components)});
-call    0 returned 247
-call    1 returned 247
-call    2 returned 247
-call    3 returned 247
-call    4 returned 247
-call    5 returned 247
-branch  6 taken 244 (fallthrough)
+        -:  237:}
+        -:  238:
+function _ZN4kage4sync16define_archetypeERN3ecs8RegistryENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt6vectorINS0_20ComponentReplicationESaISB_EE called 258 returned 99% blocks executed 89%
+      258:  239:SyncArchetypeId define_archetype(
+        -:  240:    ecs::Registry& registry,
+        -:  241:    std::string name,
+        -:  242:    std::vector<ComponentReplication> components) {
+      264:  243:    return define_archetype(registry, SyncArchetypeDesc{std::move(name), {}, std::move(components)});
+call    0 returned 258
+call    1 returned 258
+call    2 returned 258
+call    3 returned 258
+call    4 returned 258
+call    5 returned 258
+branch  6 taken 255 (fallthrough)
 branch  7 taken 3 (throw)
-call    8 returned 244
+call    8 returned 255
 call    9 returned 3
 branch 10 taken 0 (fallthrough)
 branch 11 taken 3
@@ -560,31 +719,31 @@ call   12 never executed
 branch 13 taken 0 (fallthrough)
 branch 14 taken 3
 call   15 never executed
-        -:  181:}
-        -:  182:
+        -:  244:}
+        -:  245:
 function _ZN4kage4sync9set_ownerERN3ecs8RegistryENS1_6EntityEm called 26 returned 100% blocks executed 100%
-       26:  183:bool set_owner(ecs::Registry& registry, ecs::Entity entity, ClientId client) {
-       26:  184:    register_components(registry);
+       26:  246:bool set_owner(ecs::Registry& registry, ecs::Entity entity, ClientId client) {
+       26:  247:    register_components(registry);
 call    0 returned 26
-        -:  185:
-       26:  186:    if (!registry.alive(entity)) {
+        -:  248:
+       26:  249:    if (!registry.alive(entity)) {
 call    0 returned 26
 branch  1 taken 1 (fallthrough)
 branch  2 taken 25
-        1:  187:        return false;
-        -:  188:    }
-        -:  189:
-       25:  190:    return registry.add<NetworkOwner>(entity, NetworkOwner{client}) != nullptr;
+        1:  250:        return false;
+        -:  251:    }
+        -:  252:
+       25:  253:    return registry.add<NetworkOwner>(entity, NetworkOwner{client}) != nullptr;
 call    0 returned 25
 branch  1 taken 25 (fallthrough)
 branch  2 taken 0 (throw)
-        -:  191:}
-        -:  192:
+        -:  254:}
+        -:  255:
 function _ZN4kage4sync26set_client_input_componentERN3ecs8RegistryENS1_6EntityE called 31 returned 100% blocks executed 80%
-       31:  193:bool set_client_input_component(ecs::Registry& registry, ecs::Entity component) {
-       31:  194:    register_components(registry);
+       31:  256:bool set_client_input_component(ecs::Registry& registry, ecs::Entity component) {
+       31:  257:    register_components(registry);
 call    0 returned 31
-      31*:  195:    if (!component || registry.component_info(component) == nullptr) {
+      31*:  258:    if (!component || registry.component_info(component) == nullptr) {
 call    0 returned 31
 branch  1 taken 31 (fallthrough)
 branch  2 taken 0
@@ -593,17 +752,17 @@ branch  4 taken 0 (fallthrough)
 branch  5 taken 31
 branch  6 taken 0 (fallthrough)
 branch  7 taken 31
-    #####:  196:        return false;
-        -:  197:    }
-       31:  198:    if (find_component_ops(registry, component) == nullptr) {
+    #####:  259:        return false;
+        -:  260:    }
+       31:  261:    if (find_component_ops(registry, component) == nullptr) {
 call    0 returned 31
 branch  1 taken 0 (fallthrough)
 branch  2 taken 31
-    #####:  199:        return false;
-        -:  200:    }
-       31:  201:    registry.write<SyncSettings>().input_component = component;
+    #####:  262:        return false;
+        -:  263:    }
+       31:  264:    registry.write<SyncSettings>().input_component = component;
 call    0 returned 31
-       31:  202:    return true;
-        -:  203:}
-        -:  204:
-        -:  205:}  // namespace kage::sync
+       31:  265:    return true;
+        -:  266:}
+        -:  267:
+        -:  268:}  // namespace kage::sync

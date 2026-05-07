@@ -1,7 +1,7 @@
         -:    0:Source:/usr/include/c++/13/bits/stl_tempbuf.h
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/server/client_update_scheduler.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/server/client_update_scheduler.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:// Temporary buffer implementation -*- C++ -*-
         -:    2:
         -:    3:// Copyright (C) 2001-2023 Free Software Foundation, Inc.

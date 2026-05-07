@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/tests/client_prediction.test.cpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/client_prediction.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/client_prediction.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#include "test_protocol.hpp"
         -:    2:
         -:    3:#include <catch2/catch_approx.hpp>
@@ -1045,20 +1045,28 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-        1:  171:    client.simulation_job<PredictedPosition, kage::sync::SyncSettings>(registry, 0).each(
+        -:  171:    client.simulation_job<
+        -:  172:        PredictedPosition,
+        -:  173:        kage::sync::SyncSettings,
+        -:  174:        kage::sync::FrameInfo,
+        1:  175:        kage::sync::CueDispatcher>(registry, 0).each(
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-function _ZZL22CATCH2_INTERNAL_TEST_6vENKUlN3ecs6EntityERN15kage_sync_tests17PredictedPositionERN4kage4sync12SyncSettingsEE_clES0_S3_S7_ called 1 returned 100% blocks executed 56%
-        1:  172:        [&](ecs::Entity entity, PredictedPosition& position, kage::sync::SyncSettings& settings) {
+function _ZZL22CATCH2_INTERNAL_TEST_6vENKUlN3ecs6EntityERN15kage_sync_tests17PredictedPositionERN4kage4sync12SyncSettingsERNS5_9FrameInfoERNS5_13CueDispatcherEE_clES0_S3_S7_S9_SB_ called 1 returned 100% blocks executed 56%
+        1:  176:        [&](ecs::Entity entity,
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  173:            position.x += 1.0f;
-        1:  174:            if (emit_prediction_cue) {
+        -:  177:            PredictedPosition& position,
+        -:  178:            kage::sync::SyncSettings& settings,
+        -:  179:            kage::sync::FrameInfo& frame,
+        -:  180:            kage::sync::CueDispatcher& cues) {
+        1:  181:            position.x += 1.0f;
+        1:  182:            if (emit_prediction_cue) {
 branch  0 taken 1 (fallthrough)
 branch  1 taken 0
-        1:  175:                REQUIRE(kage::sync::emit_cue(settings, entity, TestCue{7}, 1.0f));
+        1:  183:                REQUIRE(cues.emit(settings, frame, entity, TestCue{7}, 1.0f));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1087,15 +1095,15 @@ branch 24 never executed (fallthrough)
 branch 25 never executed (throw)
 call   26 never executed
 call   27 never executed
-        1:  176:                emit_prediction_cue = false;
-        -:  177:            }
-        1:  178:        });
-        -:  179:
-        1:  180:    const ecs::Entity server_entity = registry.create();
+        1:  184:                emit_prediction_cue = false;
+        -:  185:            }
+        1:  186:        });
+        -:  187:
+        1:  188:    const ecs::Entity server_entity = registry.create();
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  181:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+        1:  189:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1129,12 +1137,12 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  182:    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+        1:  190:    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
-        1:  183:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+        1:  191:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1164,7 +1172,7 @@ branch 25 never executed (fallthrough)
 branch 26 never executed (throw)
 call   27 never executed
 call   28 never executed
-        1:  184:    REQUIRE(registry.get<CuePlayback>(local).plays == 1);
+        1:  192:    REQUIRE(registry.get<CuePlayback>(local).plays == 1);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1198,7 +1206,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  185:    REQUIRE(registry.get<CuePlayback>(local).rollbacks == 0);
+        1:  193:    REQUIRE(registry.get<CuePlayback>(local).rollbacks == 0);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1232,8 +1240,8 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        -:  186:
-        1:  187:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
+        -:  194:
+        1:  195:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1267,7 +1275,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  188:    REQUIRE(registry.get<CuePlayback>(local).rollbacks == 1);
+        1:  196:    REQUIRE(registry.get<CuePlayback>(local).rollbacks == 1);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1301,22 +1309,22 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  189:}
+        1:  197:}
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
 call    3 never executed
 call    4 never executed
 call    5 never executed
-        -:  190:
+        -:  198:
 function _ZL22CATCH2_INTERNAL_TEST_8v called 1 returned 100% blocks executed 48%
-        1:  191:TEST_CASE("predicted client keeps locally predicted cues replayed during resimulation") {
-        1:  192:    ecs::Registry registry;
+        1:  199:TEST_CASE("predicted client keeps locally predicted cues replayed during resimulation") {
+        1:  200:    ecs::Registry registry;
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        -:  193:    const ecs::Entity position_component =
-        1:  194:        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+        -:  201:    const ecs::Entity position_component =
+        1:  202:        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -1325,7 +1333,7 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-        4:  195:    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        4:  203:    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -1339,10 +1347,10 @@ call    9 returned 1
 call   10 returned 1
 call   11 never executed
 call   12 never executed
-        -:  196:        registry,
-        -:  197:        "PredictedActor",
-        -:  198:        {{position_component, kage::sync::ReplicationAudience::All}});
-        1:  199:    REQUIRE(archetype.value == 0);
+        -:  204:        registry,
+        -:  205:        "PredictedActor",
+        -:  206:        {{position_component, kage::sync::ReplicationAudience::All}});
+        1:  207:    REQUIRE(archetype.value == 0);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1373,7 +1381,7 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        1:  200:    registry.register_component<CuePlayback>("CuePlayback");
+        1:  208:    registry.register_component<CuePlayback>("CuePlayback");
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -1382,23 +1390,23 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-        1:  201:    kage::sync::register_sync_cue<TestCue>(registry);
+        1:  209:    kage::sync::register_sync_cue<TestCue>(registry);
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
 call    4 returned 1
 call    5 never executed
-        1:  202:    kage::sync::configure_client(registry, 1);
+        1:  210:    kage::sync::configure_client(registry, 1);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        -:  203:
-        1:  204:    kage::sync::ReplicationClientOptions options;
+        -:  211:
+        1:  212:    kage::sync::ReplicationClientOptions options;
 call    0 returned 1
-        1:  205:    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
-        1:  206:    options.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
-        1:  207:    kage::sync::ReplicationClient client(options);
+        1:  213:    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+        1:  214:    options.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
+        1:  215:    kage::sync::ReplicationClient client(options);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -1407,24 +1415,32 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-        1:  208:    int prediction_jobs = 0;
-        1:  209:    client.simulation_job<PredictedPosition, kage::sync::SyncSettings>(registry, 0).each(
+        1:  216:    int prediction_jobs = 0;
+        -:  217:    client.simulation_job<
+        -:  218:        PredictedPosition,
+        -:  219:        kage::sync::SyncSettings,
+        -:  220:        kage::sync::FrameInfo,
+        1:  221:        kage::sync::CueDispatcher>(registry, 0).each(
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-function _ZZL22CATCH2_INTERNAL_TEST_8vENKUlN3ecs6EntityERN15kage_sync_tests17PredictedPositionERN4kage4sync12SyncSettingsEE_clES0_S3_S7_ called 4 returned 100% blocks executed 56%
-        1:  210:        [&](ecs::Entity entity, PredictedPosition& position, kage::sync::SyncSettings& settings) {
+function _ZZL22CATCH2_INTERNAL_TEST_8vENKUlN3ecs6EntityERN15kage_sync_tests17PredictedPositionERN4kage4sync12SyncSettingsERNS5_9FrameInfoERNS5_13CueDispatcherEE_clES0_S3_S7_S9_SB_ called 4 returned 100% blocks executed 56%
+        1:  222:        [&](ecs::Entity entity,
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        4:  211:            position.x += 1.0f;
-        4:  212:            ++prediction_jobs;
-        4:  213:            if (prediction_jobs == 2 || prediction_jobs == 3) {
+        -:  223:            PredictedPosition& position,
+        -:  224:            kage::sync::SyncSettings& settings,
+        -:  225:            kage::sync::FrameInfo& frame,
+        -:  226:            kage::sync::CueDispatcher& cues) {
+        4:  227:            position.x += 1.0f;
+        4:  228:            ++prediction_jobs;
+        4:  229:            if (prediction_jobs == 2 || prediction_jobs == 3) {
 branch  0 taken 3 (fallthrough)
 branch  1 taken 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 2
-        2:  214:                REQUIRE(kage::sync::emit_cue(settings, entity, TestCue{5}, 1.0f));
+        2:  230:                REQUIRE(cues.emit(settings, frame, entity, TestCue{5}, 1.0f));
 call    0 returned 2
 call    1 returned 2
 call    2 returned 2
@@ -1453,14 +1469,14 @@ branch 24 never executed (fallthrough)
 branch 25 never executed (throw)
 call   26 never executed
 call   27 never executed
-        -:  215:            }
-        4:  216:        });
-        -:  217:
-        1:  218:    const ecs::Entity server_entity = registry.create();
+        -:  231:            }
+        4:  232:        });
+        -:  233:
+        1:  234:    const ecs::Entity server_entity = registry.create();
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  219:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+        1:  235:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1494,12 +1510,12 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  220:    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+        1:  236:    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
-        1:  221:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+        1:  237:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1529,7 +1545,7 @@ branch 25 never executed (fallthrough)
 branch 26 never executed (throw)
 call   27 never executed
 call   28 never executed
-        1:  222:    REQUIRE_FALSE(registry.contains<CuePlayback>(local));
+        1:  238:    REQUIRE_FALSE(registry.contains<CuePlayback>(local));
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -1561,7 +1577,7 @@ branch 27 never executed (fallthrough)
 branch 28 never executed (throw)
 call   29 never executed
 call   30 never executed
-        1:  223:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+        1:  239:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1591,7 +1607,7 @@ branch 25 never executed (fallthrough)
 branch 26 never executed (throw)
 call   27 never executed
 call   28 never executed
-        1:  224:    REQUIRE(registry.get<CuePlayback>(local).plays == 1);
+        1:  240:    REQUIRE(registry.get<CuePlayback>(local).plays == 1);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1625,7 +1641,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  225:    REQUIRE(registry.get<CuePlayback>(local).rollbacks == 0);
+        1:  241:    REQUIRE(registry.get<CuePlayback>(local).rollbacks == 0);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1659,8 +1675,8 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        -:  226:
-        1:  227:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
+        -:  242:
+        1:  243:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1694,7 +1710,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  228:    REQUIRE(registry.get<CuePlayback>(local).rollbacks == 0);
+        1:  244:    REQUIRE(registry.get<CuePlayback>(local).rollbacks == 0);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1728,7 +1744,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  229:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+        1:  245:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1758,7 +1774,7 @@ branch 25 never executed (fallthrough)
 branch 26 never executed (throw)
 call   27 never executed
 call   28 never executed
-        1:  230:    REQUIRE(registry.get<CuePlayback>(local).rollbacks == 0);
+        1:  246:    REQUIRE(registry.get<CuePlayback>(local).rollbacks == 0);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -1792,163 +1808,179 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  231:}
+        1:  247:}
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
 call    3 never executed
 call    4 never executed
 call    5 never executed
-        -:  232:
-        -:  233:#ifdef KAGE_SYNC_ENABLE_TRACING
-        -:  234:
-        -:  235:TEST_CASE("predicted client traces rollback reason separately from rollback conflict") {
-        -:  236:    ecs::Registry registry;
-        -:  237:    const ecs::Entity position_component =
-        -:  238:        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
-        -:  239:    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
-        -:  240:        registry,
-        -:  241:        "PredictedActor",
-        -:  242:        {{position_component, kage::sync::ReplicationAudience::All}});
-        -:  243:    REQUIRE(archetype.value == 0);
-        -:  244:    kage::sync::configure_client(registry, 1);
-        -:  245:    kage::sync::ReplicationClientOptions options;
-        -:  246:    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
-        -:  247:    kage::sync::ReplicationClient client(options);
-        -:  248:    client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
-        -:  249:        position.x += 1.0f;
-        -:  250:    });
-        -:  251:
-        -:  252:    std::vector<kage::sync::SyncTraceEvent> events;
-        -:  253:    kage::sync::SyncTracer tracer;
-        -:  254:    tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
-        -:  255:        [&](const kage::sync::SyncTraceEvent& event) { events.push_back(event); }});
-        -:  256:    client.set_tracer(&tracer);
-        -:  257:
-        -:  258:    const ecs::Entity server_entity = registry.create();
-        -:  259:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
-        -:  260:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
-        -:  261:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
-        -:  262:
-        -:  263:    const auto conflict = std::find_if(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
-        -:  264:        return event.type == kage::sync::SyncTraceEventType::PredictionRollbackConflict;
-        -:  265:    });
-        -:  266:    REQUIRE(conflict != events.end());
-        -:  267:    REQUIRE(conflict->component == position_component);
-        -:  268:    REQUIRE(conflict->component_name == "PredictedPosition");
-        -:  269:    REQUIRE(conflict->data.empty());
-        -:  270:
-        -:  271:    const auto reason = std::find_if(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
-        -:  272:        return event.type == kage::sync::SyncTraceEventType::RollbackReason;
-        -:  273:    });
-        -:  274:    REQUIRE(reason != events.end());
-        -:  275:    REQUIRE(std::count_if(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
-        -:  276:        return event.type == kage::sync::SyncTraceEventType::RollbackReason;
-        -:  277:    }) == 1);
-        -:  278:    REQUIRE(reason->component == position_component);
-        -:  279:    REQUIRE(reason->component_name == "PredictedPosition");
-        -:  280:    REQUIRE(reason->data == "PredictedPosition.x mismatch");
-        -:  281:}
-        -:  282:
-        -:  283:TEST_CASE("predicted cue rollback tracing records server mismatch reason") {
-        -:  284:    ecs::Registry registry;
-        -:  285:    const ecs::Entity position_component =
-        -:  286:        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
-        -:  287:    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
-        -:  288:        registry,
-        -:  289:        "PredictedActor",
-        -:  290:        {{position_component, kage::sync::ReplicationAudience::All}});
-        -:  291:    REQUIRE(archetype.value == 0);
-        -:  292:    registry.register_component<CuePlayback>("CuePlayback");
-        -:  293:    kage::sync::register_sync_cue<TestCue>(registry);
-        -:  294:    kage::sync::configure_client(registry, 1);
-        -:  295:
-        -:  296:    bool emit_prediction_cue = true;
-        -:  297:    kage::sync::ReplicationClientOptions options;
-        -:  298:    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
-        -:  299:    kage::sync::ReplicationClient client(options);
-        -:  300:    client.simulation_job<PredictedPosition, kage::sync::SyncSettings>(registry, 0).each(
-        -:  301:        [&](ecs::Entity entity, PredictedPosition& position, kage::sync::SyncSettings& settings) {
-        -:  302:            position.x += 1.0f;
-        -:  303:            if (emit_prediction_cue) {
-        -:  304:                REQUIRE(kage::sync::emit_cue(settings, entity, TestCue{7}, 1.0f));
-        -:  305:                emit_prediction_cue = false;
-        -:  306:            }
-        -:  307:        });
-        -:  308:
-        -:  309:    std::vector<kage::sync::SyncTraceEvent> events;
-        -:  310:    kage::sync::SyncTracer tracer;
-        -:  311:    tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
-        -:  312:        [&](const kage::sync::SyncTraceEvent& event) { events.push_back(event); }});
-        -:  313:    client.set_tracer(&tracer);
-        -:  314:
-        -:  315:    const ecs::Entity server_entity = registry.create();
-        -:  316:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
-        -:  317:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
-        -:  318:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
-        -:  319:
-        -:  320:    REQUIRE(std::any_of(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
-        -:  321:        return event.type == kage::sync::SyncTraceEventType::CueRolledBack &&
-        -:  322:            event.data.find("rollback_reason=server_mismatch") != std::string::npos;
-        -:  323:    }));
-        -:  324:}
-        -:  325:
-        -:  326:TEST_CASE("predicted cue rollback tracing records resim omission reason") {
-        -:  327:    ecs::Registry registry;
-        -:  328:    const ecs::Entity position_component =
-        -:  329:        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
-        -:  330:    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
-        -:  331:        registry,
-        -:  332:        "PredictedActor",
-        -:  333:        {{position_component, kage::sync::ReplicationAudience::All}});
-        -:  334:    REQUIRE(archetype.value == 0);
-        -:  335:    registry.register_component<CuePlayback>("CuePlayback");
-        -:  336:    kage::sync::register_sync_cue<TestCue>(registry);
-        -:  337:    kage::sync::configure_client(registry, 1);
+        -:  248:
+        -:  249:#ifdef KAGE_SYNC_ENABLE_TRACING
+        -:  250:
+        -:  251:TEST_CASE("predicted client traces rollback reason separately from rollback conflict") {
+        -:  252:    ecs::Registry registry;
+        -:  253:    const ecs::Entity position_component =
+        -:  254:        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+        -:  255:    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        -:  256:        registry,
+        -:  257:        "PredictedActor",
+        -:  258:        {{position_component, kage::sync::ReplicationAudience::All}});
+        -:  259:    REQUIRE(archetype.value == 0);
+        -:  260:    kage::sync::configure_client(registry, 1);
+        -:  261:    kage::sync::ReplicationClientOptions options;
+        -:  262:    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+        -:  263:    kage::sync::ReplicationClient client(options);
+        -:  264:    client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
+        -:  265:        position.x += 1.0f;
+        -:  266:    });
+        -:  267:
+        -:  268:    std::vector<kage::sync::SyncTraceEvent> events;
+        -:  269:    kage::sync::SyncTracer tracer;
+        -:  270:    tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
+        -:  271:        [&](const kage::sync::SyncTraceEvent& event) { events.push_back(event); }});
+        -:  272:    client.set_tracer(&tracer);
+        -:  273:
+        -:  274:    const ecs::Entity server_entity = registry.create();
+        -:  275:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+        -:  276:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+        -:  277:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
+        -:  278:
+        -:  279:    const auto conflict = std::find_if(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
+        -:  280:        return event.type == kage::sync::SyncTraceEventType::PredictionRollbackConflict;
+        -:  281:    });
+        -:  282:    REQUIRE(conflict != events.end());
+        -:  283:    REQUIRE(conflict->component == position_component);
+        -:  284:    REQUIRE(conflict->component_name == "PredictedPosition");
+        -:  285:    REQUIRE(conflict->data.empty());
+        -:  286:
+        -:  287:    const auto reason = std::find_if(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
+        -:  288:        return event.type == kage::sync::SyncTraceEventType::RollbackReason;
+        -:  289:    });
+        -:  290:    REQUIRE(reason != events.end());
+        -:  291:    REQUIRE(std::count_if(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
+        -:  292:        return event.type == kage::sync::SyncTraceEventType::RollbackReason;
+        -:  293:    }) == 1);
+        -:  294:    REQUIRE(reason->component == position_component);
+        -:  295:    REQUIRE(reason->component_name == "PredictedPosition");
+        -:  296:    REQUIRE(reason->data == "PredictedPosition.x mismatch");
+        -:  297:}
+        -:  298:
+        -:  299:TEST_CASE("predicted cue rollback tracing records server mismatch reason") {
+        -:  300:    ecs::Registry registry;
+        -:  301:    const ecs::Entity position_component =
+        -:  302:        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+        -:  303:    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        -:  304:        registry,
+        -:  305:        "PredictedActor",
+        -:  306:        {{position_component, kage::sync::ReplicationAudience::All}});
+        -:  307:    REQUIRE(archetype.value == 0);
+        -:  308:    registry.register_component<CuePlayback>("CuePlayback");
+        -:  309:    kage::sync::register_sync_cue<TestCue>(registry);
+        -:  310:    kage::sync::configure_client(registry, 1);
+        -:  311:
+        -:  312:    bool emit_prediction_cue = true;
+        -:  313:    kage::sync::ReplicationClientOptions options;
+        -:  314:    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+        -:  315:    kage::sync::ReplicationClient client(options);
+        -:  316:    client.simulation_job<
+        -:  317:        PredictedPosition,
+        -:  318:        kage::sync::SyncSettings,
+        -:  319:        kage::sync::FrameInfo,
+        -:  320:        kage::sync::CueDispatcher>(registry, 0).each(
+        -:  321:        [&](ecs::Entity entity,
+        -:  322:            PredictedPosition& position,
+        -:  323:            kage::sync::SyncSettings& settings,
+        -:  324:            kage::sync::FrameInfo& frame,
+        -:  325:            kage::sync::CueDispatcher& cues) {
+        -:  326:            position.x += 1.0f;
+        -:  327:            if (emit_prediction_cue) {
+        -:  328:                REQUIRE(cues.emit(settings, frame, entity, TestCue{7}, 1.0f));
+        -:  329:                emit_prediction_cue = false;
+        -:  330:            }
+        -:  331:        });
+        -:  332:
+        -:  333:    std::vector<kage::sync::SyncTraceEvent> events;
+        -:  334:    kage::sync::SyncTracer tracer;
+        -:  335:    tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
+        -:  336:        [&](const kage::sync::SyncTraceEvent& event) { events.push_back(event); }});
+        -:  337:    client.set_tracer(&tracer);
         -:  338:
-        -:  339:    int prediction_jobs = 0;
-        -:  340:    bool emit_during_resim = false;
-        -:  341:    kage::sync::ReplicationClientOptions options;
-        -:  342:    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
-        -:  343:    options.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
-        -:  344:    kage::sync::ReplicationClient client(options);
-        -:  345:    client.simulation_job<PredictedPosition, kage::sync::SyncSettings>(registry, 0).each(
-        -:  346:        [&](ecs::Entity entity, PredictedPosition& position, kage::sync::SyncSettings& settings) {
-        -:  347:            position.x += 1.0f;
-        -:  348:            ++prediction_jobs;
-        -:  349:            if (prediction_jobs == 2 || emit_during_resim) {
-        -:  350:                REQUIRE(kage::sync::emit_cue(settings, entity, TestCue{9}, 1.0f));
-        -:  351:            }
-        -:  352:        });
-        -:  353:
-        -:  354:    std::vector<kage::sync::SyncTraceEvent> events;
-        -:  355:    kage::sync::SyncTracer tracer;
-        -:  356:    tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
-        -:  357:        [&](const kage::sync::SyncTraceEvent& event) { events.push_back(event); }});
-        -:  358:    client.set_tracer(&tracer);
-        -:  359:
-        -:  360:    const ecs::Entity server_entity = registry.create();
-        -:  361:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
-        -:  362:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
-        -:  363:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
-        -:  364:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
-        -:  365:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
-        -:  366:
-        -:  367:    REQUIRE(std::any_of(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
-        -:  368:        return event.type == kage::sync::SyncTraceEventType::CueRolledBack &&
-        -:  369:            event.data.find("rollback_reason=resim_not_replayed") != std::string::npos;
-        -:  370:    }));
-        -:  371:}
-        -:  372:#endif
-        -:  373:
+        -:  339:    const ecs::Entity server_entity = registry.create();
+        -:  340:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+        -:  341:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+        -:  342:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
+        -:  343:
+        -:  344:    REQUIRE(std::any_of(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
+        -:  345:        return event.type == kage::sync::SyncTraceEventType::CueRolledBack &&
+        -:  346:            event.data.find("rollback_reason=server_mismatch") != std::string::npos;
+        -:  347:    }));
+        -:  348:}
+        -:  349:
+        -:  350:TEST_CASE("predicted cue rollback tracing records resim omission reason") {
+        -:  351:    ecs::Registry registry;
+        -:  352:    const ecs::Entity position_component =
+        -:  353:        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+        -:  354:    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        -:  355:        registry,
+        -:  356:        "PredictedActor",
+        -:  357:        {{position_component, kage::sync::ReplicationAudience::All}});
+        -:  358:    REQUIRE(archetype.value == 0);
+        -:  359:    registry.register_component<CuePlayback>("CuePlayback");
+        -:  360:    kage::sync::register_sync_cue<TestCue>(registry);
+        -:  361:    kage::sync::configure_client(registry, 1);
+        -:  362:
+        -:  363:    int prediction_jobs = 0;
+        -:  364:    bool emit_during_resim = false;
+        -:  365:    kage::sync::ReplicationClientOptions options;
+        -:  366:    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+        -:  367:    options.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
+        -:  368:    kage::sync::ReplicationClient client(options);
+        -:  369:    client.simulation_job<
+        -:  370:        PredictedPosition,
+        -:  371:        kage::sync::SyncSettings,
+        -:  372:        kage::sync::FrameInfo,
+        -:  373:        kage::sync::CueDispatcher>(registry, 0).each(
+        -:  374:        [&](ecs::Entity entity,
+        -:  375:            PredictedPosition& position,
+        -:  376:            kage::sync::SyncSettings& settings,
+        -:  377:            kage::sync::FrameInfo& frame,
+        -:  378:            kage::sync::CueDispatcher& cues) {
+        -:  379:            position.x += 1.0f;
+        -:  380:            ++prediction_jobs;
+        -:  381:            if (prediction_jobs == 2 || emit_during_resim) {
+        -:  382:                REQUIRE(cues.emit(settings, frame, entity, TestCue{9}, 1.0f));
+        -:  383:            }
+        -:  384:        });
+        -:  385:
+        -:  386:    std::vector<kage::sync::SyncTraceEvent> events;
+        -:  387:    kage::sync::SyncTracer tracer;
+        -:  388:    tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
+        -:  389:        [&](const kage::sync::SyncTraceEvent& event) { events.push_back(event); }});
+        -:  390:    client.set_tracer(&tracer);
+        -:  391:
+        -:  392:    const ecs::Entity server_entity = registry.create();
+        -:  393:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+        -:  394:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+        -:  395:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+        -:  396:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
+        -:  397:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+        -:  398:
+        -:  399:    REQUIRE(std::any_of(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
+        -:  400:        return event.type == kage::sync::SyncTraceEventType::CueRolledBack &&
+        -:  401:            event.data.find("rollback_reason=resim_not_replayed") != std::string::npos;
+        -:  402:    }));
+        -:  403:}
+        -:  404:#endif
+        -:  405:
 function _ZL23CATCH2_INTERNAL_TEST_10v called 1 returned 100% blocks executed 48%
-        1:  374:TEST_CASE("predicted client keeps local prediction phase when authoritative frames arrive early") {
-        1:  375:    ecs::Registry registry;
+        1:  406:TEST_CASE("predicted client keeps local prediction phase when authoritative frames arrive early") {
+        1:  407:    ecs::Registry registry;
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        -:  376:    const ecs::Entity position_component =
-        1:  377:        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+        -:  408:    const ecs::Entity position_component =
+        1:  409:        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -1957,7 +1989,7 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-        4:  378:    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        4:  410:    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -1971,10 +2003,10 @@ call    9 returned 1
 call   10 returned 1
 call   11 never executed
 call   12 never executed
-        -:  379:        registry,
-        -:  380:        "PredictedActor",
-        -:  381:        {{position_component, kage::sync::ReplicationAudience::All}});
-        1:  382:    REQUIRE(archetype.value == 0);
+        -:  411:        registry,
+        -:  412:        "PredictedActor",
+        -:  413:        {{position_component, kage::sync::ReplicationAudience::All}});
+        1:  414:    REQUIRE(archetype.value == 0);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2005,15 +2037,15 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        1:  383:    kage::sync::configure_client(registry, 1);
+        1:  415:    kage::sync::configure_client(registry, 1);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        -:  384:
-        1:  385:    kage::sync::ReplicationClientOptions options;
+        -:  416:
+        1:  417:    kage::sync::ReplicationClientOptions options;
 call    0 returned 1
-        1:  386:    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
-        1:  387:    kage::sync::ReplicationClient client(options);
+        1:  418:    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+        1:  419:    kage::sync::ReplicationClient client(options);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -2023,21 +2055,21 @@ branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
 function _ZZL23CATCH2_INTERNAL_TEST_10vENKUlN3ecs6EntityERN15kage_sync_tests17PredictedPositionEE_clES0_S3_ called 1 returned 100% blocks executed 100%
-        1:  388:    client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
+        1:  420:    client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
 call    3 returned 1
 branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
-        1:  389:        position.x += 1.0f;
-        1:  390:    });
-        -:  391:
-        1:  392:    const ecs::Entity server_entity = registry.create();
+        1:  421:        position.x += 1.0f;
+        1:  422:    });
+        -:  423:
+        1:  424:    const ecs::Entity server_entity = registry.create();
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  393:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f}, 1)));
+        1:  425:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f}, 1)));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2071,12 +2103,12 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  394:    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+        1:  426:    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
-        1:  395:    REQUIRE(local);
+        1:  427:    REQUIRE(local);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2102,8 +2134,8 @@ branch 21 never executed (fallthrough)
 branch 22 never executed (throw)
 call   23 never executed
 call   24 never executed
-        -:  396:
-        1:  397:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds * 0.5));
+        -:  428:
+        1:  429:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds * 0.5));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2133,7 +2165,7 @@ branch 25 never executed (fallthrough)
 branch 26 never executed (throw)
 call   27 never executed
 call   28 never executed
-        1:  398:    REQUIRE(registry.get<PredictedPosition>(local).x == 0.0f);
+        1:  430:    REQUIRE(registry.get<PredictedPosition>(local).x == 0.0f);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2167,8 +2199,8 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        -:  399:
-        1:  400:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{1.0f, 0.0f}, 2)));
+        -:  431:
+        1:  432:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{1.0f, 0.0f}, 2)));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2202,7 +2234,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  401:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds * 0.5));
+        1:  433:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds * 0.5));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2232,7 +2264,7 @@ branch 25 never executed (fallthrough)
 branch 26 never executed (throw)
 call   27 never executed
 call   28 never executed
-        1:  402:    REQUIRE(registry.get<PredictedPosition>(local).x == 1.0f);
+        1:  434:    REQUIRE(registry.get<PredictedPosition>(local).x == 1.0f);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2266,22 +2298,22 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  403:}
+        1:  435:}
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
 call    3 never executed
 call    4 never executed
 call    5 never executed
-        -:  404:
+        -:  436:
 function _ZL23CATCH2_INTERNAL_TEST_12v called 1 returned 100% blocks executed 48%
-        1:  405:TEST_CASE("predicted client ONLY_AFFECTED resim runs jobs for affected entities") {
-        1:  406:    ecs::Registry registry;
+        1:  437:TEST_CASE("predicted client ONLY_AFFECTED resim runs jobs for affected entities") {
+        1:  438:    ecs::Registry registry;
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        -:  407:    const ecs::Entity position_component =
-        1:  408:        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+        -:  439:    const ecs::Entity position_component =
+        1:  440:        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -2290,7 +2322,7 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-        4:  409:    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        4:  441:    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -2304,10 +2336,10 @@ call    9 returned 1
 call   10 returned 1
 call   11 never executed
 call   12 never executed
-        -:  410:        registry,
-        -:  411:        "PredictedActor",
-        -:  412:        {{position_component, kage::sync::ReplicationAudience::All}});
-        1:  413:    REQUIRE(archetype.value == 0);
+        -:  442:        registry,
+        -:  443:        "PredictedActor",
+        -:  444:        {{position_component, kage::sync::ReplicationAudience::All}});
+        1:  445:    REQUIRE(archetype.value == 0);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2338,17 +2370,17 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        1:  414:    kage::sync::configure_client(registry, 1);
+        1:  446:    kage::sync::configure_client(registry, 1);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  415:    int calls = 0;
-        -:  416:
-        1:  417:    kage::sync::ReplicationClientOptions options;
+        1:  447:    int calls = 0;
+        -:  448:
+        1:  449:    kage::sync::ReplicationClientOptions options;
 call    0 returned 1
-        1:  418:    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
-        1:  419:    options.rollback_policy = kage::sync::ReplicationRollbackPolicy::OnlyAffected;
-        1:  420:    kage::sync::ReplicationClient client(options);
+        1:  450:    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+        1:  451:    options.rollback_policy = kage::sync::ReplicationRollbackPolicy::OnlyAffected;
+        1:  452:    kage::sync::ReplicationClient client(options);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -2358,26 +2390,26 @@ branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
 function _ZZL23CATCH2_INTERNAL_TEST_12vENKUlN3ecs6EntityERN15kage_sync_tests17PredictedPositionEE_clES0_S3_ called 7 returned 100% blocks executed 100%
-        1:  421:    client.simulation_job<PredictedPosition>(registry, 0).each([&](ecs::Entity, PredictedPosition& position) {
+        1:  453:    client.simulation_job<PredictedPosition>(registry, 0).each([&](ecs::Entity, PredictedPosition& position) {
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
 call    3 returned 1
 branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
-        7:  422:        ++calls;
-        7:  423:        position.x += 1.0f;
-        7:  424:    });
-        -:  425:
-        1:  426:    const ecs::Entity first_server = registry.create();
+        7:  454:        ++calls;
+        7:  455:        position.x += 1.0f;
+        7:  456:    });
+        -:  457:
+        1:  458:    const ecs::Entity first_server = registry.create();
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  427:    const ecs::Entity second_server = registry.create();
+        1:  459:    const ecs::Entity second_server = registry.create();
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  428:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, first_server, PredictedPosition{0.0f, 0.0f}, 1)));
+        1:  460:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, first_server, PredictedPosition{0.0f, 0.0f}, 1)));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2411,7 +2443,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  429:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, second_server, PredictedPosition{0.0f, 0.0f}, 2)));
+        1:  461:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, second_server, PredictedPosition{0.0f, 0.0f}, 2)));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2445,7 +2477,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  430:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+        1:  462:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2475,7 +2507,7 @@ branch 25 never executed (fallthrough)
 branch 26 never executed (throw)
 call   27 never executed
 call   28 never executed
-        1:  431:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+        1:  463:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2505,7 +2537,7 @@ branch 25 never executed (fallthrough)
 branch 26 never executed (throw)
 call   27 never executed
 call   28 never executed
-        1:  432:    REQUIRE(calls == 4);
+        1:  464:    REQUIRE(calls == 4);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2536,8 +2568,8 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        -:  433:
-        1:  434:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, first_server, PredictedPosition{2.0f, 0.0f}, 3)));
+        -:  465:
+        1:  466:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, first_server, PredictedPosition{2.0f, 0.0f}, 3)));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2571,7 +2603,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  435:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, second_server, PredictedPosition{1.0f, 0.0f}, 4)));
+        1:  467:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, second_server, PredictedPosition{1.0f, 0.0f}, 4)));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2605,7 +2637,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  436:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+        1:  468:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2635,8 +2667,8 @@ branch 25 never executed (fallthrough)
 branch 26 never executed (throw)
 call   27 never executed
 call   28 never executed
-        -:  437:
-        1:  438:    REQUIRE(calls == 7);
+        -:  469:
+        1:  470:    REQUIRE(calls == 7);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2667,7 +2699,7 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        1:  439:    REQUIRE(registry.get<PredictedPosition>(client.local_entity(test_client_entity_network_id(1, first_server))).x == 4.0f);
+        1:  471:    REQUIRE(registry.get<PredictedPosition>(client.local_entity(test_client_entity_network_id(1, first_server))).x == 4.0f);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2705,7 +2737,7 @@ branch 33 never executed (fallthrough)
 branch 34 never executed (throw)
 call   35 never executed
 call   36 never executed
-        1:  440:    REQUIRE(registry.get<PredictedPosition>(client.local_entity(test_client_entity_network_id(1, second_server))).x == 3.0f);
+        1:  472:    REQUIRE(registry.get<PredictedPosition>(client.local_entity(test_client_entity_network_id(1, second_server))).x == 3.0f);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2743,22 +2775,22 @@ branch 33 never executed (fallthrough)
 branch 34 never executed (throw)
 call   35 never executed
 call   36 never executed
-        1:  441:}
+        1:  473:}
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
 call    3 never executed
 call    4 never executed
 call    5 never executed
-        -:  442:
+        -:  474:
 function _ZL23CATCH2_INTERNAL_TEST_14v called 1 returned 100% blocks executed 47%
-        1:  443:TEST_CASE("predicted client cosmetic jobs do not run during resimulation") {
-        1:  444:    ecs::Registry registry;
+        1:  475:TEST_CASE("predicted client cosmetic jobs do not run during resimulation") {
+        1:  476:    ecs::Registry registry;
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        -:  445:    const ecs::Entity position_component =
-        1:  446:        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+        -:  477:    const ecs::Entity position_component =
+        1:  478:        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -2767,7 +2799,7 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-        4:  447:    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        4:  479:    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -2781,10 +2813,10 @@ call    9 returned 1
 call   10 returned 1
 call   11 never executed
 call   12 never executed
-        -:  448:        registry,
-        -:  449:        "PredictedActor",
-        -:  450:        {{position_component, kage::sync::ReplicationAudience::All}});
-        1:  451:    REQUIRE(archetype.value == 0);
+        -:  480:        registry,
+        -:  481:        "PredictedActor",
+        -:  482:        {{position_component, kage::sync::ReplicationAudience::All}});
+        1:  483:    REQUIRE(archetype.value == 0);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2815,19 +2847,19 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        1:  452:    kage::sync::configure_client(registry, 1);
+        1:  484:    kage::sync::configure_client(registry, 1);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        -:  453:
-        1:  454:    int simulation_calls = 0;
-        1:  455:    int cosmetic_calls = 0;
-        -:  456:
-        1:  457:    kage::sync::ReplicationClientOptions options;
+        -:  485:
+        1:  486:    int simulation_calls = 0;
+        1:  487:    int cosmetic_calls = 0;
+        -:  488:
+        1:  489:    kage::sync::ReplicationClientOptions options;
 call    0 returned 1
-        1:  458:    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
-        1:  459:    options.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
-        1:  460:    kage::sync::ReplicationClient client(options);
+        1:  490:    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+        1:  491:    options.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
+        1:  492:    kage::sync::ReplicationClient client(options);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -2836,30 +2868,30 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-        -:  461:
+        -:  493:
 function _ZZL23CATCH2_INTERNAL_TEST_14vENKUlN3ecs6EntityERN15kage_sync_tests17PredictedPositionEE_clES0_S3_ called 4 returned 100% blocks executed 100%
-        1:  462:    client.simulation_job<PredictedPosition>(registry, 0).each([&](ecs::Entity, PredictedPosition& position) {
+        1:  494:    client.simulation_job<PredictedPosition>(registry, 0).each([&](ecs::Entity, PredictedPosition& position) {
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
 call    3 returned 1
 branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
-        4:  463:        ++simulation_calls;
-        4:  464:        position.x += 1.0f;
-        4:  465:    });
-        -:  466:    const ecs::Entity cosmetic_job =
+        4:  495:        ++simulation_calls;
+        4:  496:        position.x += 1.0f;
+        4:  497:    });
+        -:  498:    const ecs::Entity cosmetic_job =
 function _ZZL23CATCH2_INTERNAL_TEST_14vENKUlN3ecs6EntityERN15kage_sync_tests17PredictedPositionEE0_clES0_S3_ called 3 returned 100% blocks executed 100%
-        1:  467:        client.cosmetic_job<PredictedPosition>(registry, 1).each([&](ecs::Entity, PredictedPosition&) {
+        1:  499:        client.cosmetic_job<PredictedPosition>(registry, 1).each([&](ecs::Entity, PredictedPosition&) {
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
 call    3 returned 1
 branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
-        3:  468:            ++cosmetic_calls;
-        3:  469:        });
-        1:  470:    REQUIRE(registry.has<kage::sync::NoResim>(cosmetic_job));
+        3:  500:            ++cosmetic_calls;
+        3:  501:        });
+        1:  502:    REQUIRE(registry.has<kage::sync::NoResim>(cosmetic_job));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2888,12 +2920,12 @@ branch 24 never executed (fallthrough)
 branch 25 never executed (throw)
 call   26 never executed
 call   27 never executed
-        -:  471:
-        1:  472:    const ecs::Entity server_entity = registry.create();
+        -:  503:
+        1:  504:    const ecs::Entity server_entity = registry.create();
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  473:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+        1:  505:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2927,7 +2959,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  474:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+        1:  506:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2957,7 +2989,7 @@ branch 25 never executed (fallthrough)
 branch 26 never executed (throw)
 call   27 never executed
 call   28 never executed
-        1:  475:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+        1:  507:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -2987,7 +3019,7 @@ branch 25 never executed (fallthrough)
 branch 26 never executed (throw)
 call   27 never executed
 call   28 never executed
-        1:  476:    REQUIRE(simulation_calls == 2);
+        1:  508:    REQUIRE(simulation_calls == 2);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3018,7 +3050,7 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        1:  477:    REQUIRE(cosmetic_calls == 2);
+        1:  509:    REQUIRE(cosmetic_calls == 2);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3049,8 +3081,8 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        -:  478:
-        1:  479:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
+        -:  510:
+        1:  511:    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3084,7 +3116,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  480:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+        1:  512:    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3114,8 +3146,8 @@ branch 25 never executed (fallthrough)
 branch 26 never executed (throw)
 call   27 never executed
 call   28 never executed
-        -:  481:
-        1:  482:    REQUIRE(simulation_calls == 4);
+        -:  513:
+        1:  514:    REQUIRE(simulation_calls == 4);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3146,7 +3178,7 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        1:  483:    REQUIRE(cosmetic_calls == 3);
+        1:  515:    REQUIRE(cosmetic_calls == 3);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3177,21 +3209,21 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        1:  484:}
+        1:  516:}
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
 call    3 never executed
 call    4 never executed
 call    5 never executed
-        -:  485:
+        -:  517:
 function _ZL23CATCH2_INTERNAL_TEST_16v called 1 returned 100% blocks executed 46%
-        1:  486:TEST_CASE("client simulation jobs skip NoSimulate entities") {
-        1:  487:    ecs::Registry registry;
+        1:  518:TEST_CASE("client simulation jobs skip NoSimulate entities") {
+        1:  519:    ecs::Registry registry;
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  488:    registry.register_component<PredictedPosition>("PredictedPosition");
+        1:  520:    registry.register_component<PredictedPosition>("PredictedPosition");
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -3200,20 +3232,20 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-        1:  489:    kage::sync::configure_client(registry, 1);
+        1:  521:    kage::sync::configure_client(registry, 1);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        -:  490:
-        1:  491:    const ecs::Entity simulated = registry.create();
+        -:  522:
+        1:  523:    const ecs::Entity simulated = registry.create();
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  492:    const ecs::Entity skipped = registry.create();
+        1:  524:    const ecs::Entity skipped = registry.create();
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  493:    REQUIRE(registry.add<PredictedPosition>(simulated, PredictedPosition{0.0f, 0.0f}) != nullptr);
+        1:  525:    REQUIRE(registry.add<PredictedPosition>(simulated, PredictedPosition{0.0f, 0.0f}) != nullptr);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3247,7 +3279,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  494:    REQUIRE(registry.add<PredictedPosition>(skipped, PredictedPosition{0.0f, 0.0f}) != nullptr);
+        1:  526:    REQUIRE(registry.add<PredictedPosition>(skipped, PredictedPosition{0.0f, 0.0f}) != nullptr);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3281,7 +3313,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  495:    REQUIRE(registry.add<kage::sync::NoSimulate>(skipped));
+        1:  527:    REQUIRE(registry.add<kage::sync::NoSimulate>(skipped));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3310,29 +3342,29 @@ branch 24 never executed (fallthrough)
 branch 25 never executed (throw)
 call   26 never executed
 call   27 never executed
-        -:  496:
-        1:  497:    kage::sync::ReplicationClient client;
+        -:  528:
+        1:  529:    kage::sync::ReplicationClient client;
 call    0 returned 1
 call    1 never executed
 function _ZZL23CATCH2_INTERNAL_TEST_16vENKUlN3ecs6EntityERN15kage_sync_tests17PredictedPositionEE_clES0_S3_ called 1 returned 100% blocks executed 100%
-        1:  498:    client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
+        1:  530:    client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
 call    3 returned 1
 branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
-        1:  499:        position.x += 1.0f;
-        1:  500:    });
-        -:  501:
-        1:  502:    registry.run_jobs();
+        1:  531:        position.x += 1.0f;
+        1:  532:    });
+        -:  533:
+        1:  534:    registry.run_jobs();
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
 call    3 returned 1
 call    4 never executed
-        -:  503:
-        1:  504:    REQUIRE(registry.get<PredictedPosition>(simulated).x == 1.0f);
+        -:  535:
+        1:  536:    REQUIRE(registry.get<PredictedPosition>(simulated).x == 1.0f);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3366,7 +3398,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  505:    REQUIRE(registry.get<PredictedPosition>(skipped).x == 0.0f);
+        1:  537:    REQUIRE(registry.get<PredictedPosition>(skipped).x == 0.0f);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3400,7 +3432,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        3:  506:}
+        3:  538:}
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3417,15 +3449,15 @@ branch 12 never executed
 call   13 never executed
 call   14 never executed
 call   15 never executed
-        -:  507:
+        -:  539:
 function _ZL23CATCH2_INTERNAL_TEST_18v called 1 returned 100% blocks executed 49%
-        1:  508:TEST_CASE("predicted client applies authoritative destroys immediately") {
-        1:  509:    ecs::Registry registry;
+        1:  540:TEST_CASE("predicted client applies authoritative destroys immediately") {
+        1:  541:    ecs::Registry registry;
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        -:  510:    const ecs::Entity position_component =
-        1:  511:        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+        -:  542:    const ecs::Entity position_component =
+        1:  543:        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -3434,7 +3466,7 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-        4:  512:    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+        4:  544:    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -3448,10 +3480,10 @@ call    9 returned 1
 call   10 returned 1
 call   11 never executed
 call   12 never executed
-        -:  513:        registry,
-        -:  514:        "PredictedActor",
-        -:  515:        {{position_component, kage::sync::ReplicationAudience::All}});
-        1:  516:    REQUIRE(archetype.value == 0);
+        -:  545:        registry,
+        -:  546:        "PredictedActor",
+        -:  547:        {{position_component, kage::sync::ReplicationAudience::All}});
+        1:  548:    REQUIRE(archetype.value == 0);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3482,19 +3514,19 @@ branch 26 never executed (fallthrough)
 branch 27 never executed (throw)
 call   28 never executed
 call   29 never executed
-        1:  517:    kage::sync::configure_client(registry, 1);
+        1:  549:    kage::sync::configure_client(registry, 1);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        -:  518:
-        1:  519:    const ecs::Entity server_entity = registry.create();
+        -:  550:
+        1:  551:    const ecs::Entity server_entity = registry.create();
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:  520:    kage::sync::ReplicationClientOptions options;
+        1:  552:    kage::sync::ReplicationClientOptions options;
 call    0 returned 1
-        1:  521:    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
-        1:  522:    kage::sync::ReplicationClient client(options);
+        1:  553:    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
+        1:  554:    kage::sync::ReplicationClient client(options);
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -3503,8 +3535,8 @@ branch  4 taken 1 (fallthrough)
 branch  5 taken 0 (throw)
 call    6 returned 1
 call    7 never executed
-        -:  523:
-        1:  524:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+        -:  555:
+        1:  556:    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3538,12 +3570,12 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  525:    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+        1:  557:    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
 call    0 returned 1
 call    1 returned 1
 branch  2 taken 1 (fallthrough)
 branch  3 taken 0 (throw)
-        1:  526:    REQUIRE(local);
+        1:  558:    REQUIRE(local);
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3569,7 +3601,7 @@ branch 21 never executed (fallthrough)
 branch 22 never executed (throw)
 call   23 never executed
 call   24 never executed
-        1:  527:    REQUIRE(registry.alive(local));
+        1:  559:    REQUIRE(registry.alive(local));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3596,8 +3628,8 @@ branch 22 never executed (fallthrough)
 branch 23 never executed (throw)
 call   24 never executed
 call   25 never executed
-        -:  528:
-        1:  529:    REQUIRE(client.receive(registry, make_destroy_packet(2, server_entity)));
+        -:  560:
+        1:  561:    REQUIRE(client.receive(registry, make_destroy_packet(2, server_entity)));
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1
@@ -3631,7 +3663,7 @@ branch 29 never executed (fallthrough)
 branch 30 never executed (throw)
 call   31 never executed
 call   32 never executed
-        1:  530:    REQUIRE_FALSE(registry.alive(local));
+        1:  562:    REQUIRE_FALSE(registry.alive(local));
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -3661,7 +3693,7 @@ branch 25 never executed (fallthrough)
 branch 26 never executed (throw)
 call   27 never executed
 call   28 never executed
-        1:  531:    REQUIRE_FALSE(client.local_entity(test_client_entity_network_id(1, server_entity)));
+        1:  563:    REQUIRE_FALSE(client.local_entity(test_client_entity_network_id(1, server_entity)));
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
@@ -3694,7 +3726,7 @@ branch 28 never executed (fallthrough)
 branch 29 never executed (throw)
 call   30 never executed
 call   31 never executed
-        1:  532:}
+        1:  564:}
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1

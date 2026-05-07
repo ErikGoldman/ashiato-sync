@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/tests/header_api.test.cpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/header_api.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/header_api.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#include "test_components.hpp"
         -:    2:
         -:    3:#include "../examples/network_simulator.hpp"
@@ -250,7 +250,7 @@ call    5 never executed
 call    0 returned 1
 branch  1 taken 1 (fallthrough)
 branch  2 taken 0 (throw)
-        1:   93:    REQUIRE(settings.component_ops.at(component.value).name.empty());
+        1:   93:    REQUIRE(settings.component_ops.at(component.value).serialization.name.empty());
 call    0 returned 1
 call    1 returned 1
 call    2 returned 1

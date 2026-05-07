@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/src/client_clock.cpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/client_clock.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/src/CMakeFiles/kage_sync.dir/client_clock.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#include "kage/sync/client_clock.hpp"
         -:    2:
         -:    3:#include "detail/options_validation.hpp"

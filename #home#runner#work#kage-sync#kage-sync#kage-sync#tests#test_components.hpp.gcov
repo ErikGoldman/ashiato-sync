@@ -1,7 +1,7 @@
         -:    0:Source:/home/runner/work/kage-sync/kage-sync/kage-sync/tests/test_components.hpp
         -:    0:Graph:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcno
         -:    0:Data:/home/runner/work/kage-sync/kage-sync/kage-sync/build-coverage/tests/CMakeFiles/kage_sync_tests.dir/server_transport.test.cpp.gcda
-        -:    0:Runs:310
+        -:    0:Runs:317
         -:    1:#pragma once
         -:    2:
         -:    3:#include "kage/sync/sync.hpp"
@@ -72,404 +72,448 @@
         -:   68:    std::int32_t plays = 0;
         -:   69:    std::int32_t rollbacks = 0;
         -:   70:    std::int32_t last_id = 0;
-        -:   71:    ecs::Entity last_target;
-        -:   72:    kage::sync::ClientEntityNetworkId last_target_network_id = kage::sync::invalid_client_entity_network_id;
-        -:   73:    float last_late_seconds = 0.0f;
-        -:   74:};
-        -:   75:
+        -:   71:    kage::sync::SyncFrame last_frame = 0;
+        -:   72:    ecs::Entity last_target;
+        -:   73:    kage::sync::ClientEntityNetworkId last_target_network_id = kage::sync::invalid_client_entity_network_id;
+        -:   74:    float last_late_seconds = 0.0f;
+        -:   75:};
+        -:   76:
 function _ZN15kage_sync_tests22read_networked_payloadEN3ecs9BitBufferE called 0 returned 0% blocks executed 0%
-    #####:   76:inline NetworkedPayload read_networked_payload(ecs::BitBuffer payload) {
-        -:   77:    return NetworkedPayload{
-    #####:   78:        payload.read_bool(),
+    #####:   77:inline NetworkedPayload read_networked_payload(ecs::BitBuffer payload) {
+        -:   78:    return NetworkedPayload{
+    #####:   79:        payload.read_bool(),
 call    0 never executed
-    #####:   79:        payload.read_bits(8U),
     #####:   80:        payload.read_bits(8U),
-    #####:   81:    };
+    #####:   81:        payload.read_bits(8U),
+    #####:   82:    };
 call    0 never executed
 call    1 never executed
-        -:   82:}
-        -:   83:
-        -:   84:inline kage::sync::SyncArchetypeId define_position_archetype(ecs::Registry& registry) {
-        -:   85:    const ecs::Entity position_component =
-        -:   86:        kage::sync::register_sync_component<Position>(registry, "Position");
-        -:   87:    return kage::sync::define_archetype(
-        -:   88:        registry,
-        -:   89:        "PositionActor",
-        -:   90:        {{position_component, kage::sync::ReplicationAudience::All}});
-        -:   91:}
-        -:   92:
-        -:   93:}  // namespace kage_sync_tests
-        -:   94:
-        -:   95:namespace kage::sync {
-        -:   96:
-        -:   97:template <>
-        -:   98:struct SyncCueTraits<kage_sync_tests::TestCue> {
-        -:   99:    static void serialize(const kage_sync_tests::TestCue& cue, ecs::BitBuffer& out) {
-        -:  100:        out.push_bits(cue.id, 16U);
-        -:  101:    }
-        -:  102:
-        -:  103:    static bool deserialize(ecs::BitBuffer& in, kage_sync_tests::TestCue& out) {
-        -:  104:        out.id = static_cast<std::int32_t>(in.read_bits(16U));
-        -:  105:        return true;
-        -:  106:    }
-        -:  107:
-        -:  108:    static bool play(
-        -:  109:        ecs::Registry& registry,
-        -:  110:        ecs::Entity owner,
-        -:  111:        const kage_sync_tests::TestCue& cue,
-        -:  112:        float late_seconds) {
-        -:  113:        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
-        -:  114:            registry.add<kage_sync_tests::CuePlayback>(owner);
-        -:  115:        }
-        -:  116:        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
-        -:  117:            return false;
-        -:  118:        }
-        -:  119:        kage_sync_tests::CuePlayback& playback = registry.write<kage_sync_tests::CuePlayback>(owner);
-        -:  120:        ++playback.plays;
-        -:  121:        playback.last_id = cue.id;
-        -:  122:        playback.last_late_seconds = late_seconds;
-        -:  123:        return true;
-        -:  124:    }
-        -:  125:
-        -:  126:    static bool rollback(ecs::Registry& registry, ecs::Entity owner, const kage_sync_tests::TestCue&) {
-        -:  127:        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
-        -:  128:            registry.add<kage_sync_tests::CuePlayback>(owner);
-        -:  129:        }
-        -:  130:        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
-        -:  131:            return false;
-        -:  132:        }
-        -:  133:        ++registry.write<kage_sync_tests::CuePlayback>(owner).rollbacks;
-        -:  134:        return true;
-        -:  135:    }
+        -:   83:}
+        -:   84:
+        -:   85:inline kage::sync::SyncArchetypeId define_position_archetype(ecs::Registry& registry) {
+        -:   86:    const ecs::Entity position_component =
+        -:   87:        kage::sync::register_sync_component<Position>(registry, "Position");
+        -:   88:    return kage::sync::define_archetype(
+        -:   89:        registry,
+        -:   90:        "PositionActor",
+        -:   91:        {{position_component, kage::sync::ReplicationAudience::All}});
+        -:   92:}
+        -:   93:
+        -:   94:template <typename T>
+        -:   95:bool emit_test_cue(
+        -:   96:    ecs::Registry& registry,
+        -:   97:    ecs::Entity entity,
+        -:   98:    kage::sync::SyncFrame frame,
+        -:   99:    const T& cue,
+        -:  100:    float relevance_seconds,
+        -:  101:    bool only_replicate_to_owner = false) {
+        -:  102:    kage::sync::register_components(registry);
+        -:  103:    if (!registry.alive(entity)) {
+        -:  104:        return false;
+        -:  105:    }
+        -:  106:    return registry.write<kage::sync::CueDispatcher>().emit(
+        -:  107:        registry.get<kage::sync::SyncSettings>(),
+        -:  108:        frame,
+        -:  109:        entity,
+        -:  110:        cue,
+        -:  111:        relevance_seconds,
+        -:  112:        only_replicate_to_owner);
+        -:  113:}
+        -:  114:
+        -:  115:template <typename T>
+        -:  116:bool emit_test_cue(
+        -:  117:    ecs::Registry& registry,
+        -:  118:    ecs::Entity entity,
+        -:  119:    const T& cue,
+        -:  120:    float relevance_seconds,
+        -:  121:    bool only_replicate_to_owner = false) {
+        -:  122:    kage::sync::register_components(registry);
+        -:  123:    if (!registry.alive(entity)) {
+        -:  124:        return false;
+        -:  125:    }
+        -:  126:    return registry.write<kage::sync::CueDispatcher>().emit(
+        -:  127:        registry.get<kage::sync::SyncSettings>(),
+        -:  128:        registry.get<kage::sync::FrameInfo>(),
+        -:  129:        entity,
+        -:  130:        cue,
+        -:  131:        relevance_seconds,
+        -:  132:        only_replicate_to_owner);
+        -:  133:}
+        -:  134:
+        -:  135:}  // namespace kage_sync_tests
         -:  136:
-        -:  137:    static bool equals_cue(const kage_sync_tests::TestCue& lhs, const kage_sync_tests::TestCue& rhs) {
-        -:  138:        return lhs.id == rhs.id;
-        -:  139:    }
-        -:  140:
-        -:  141:#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
-        -:  142:    static void trace(const kage_sync_tests::TestCue& cue, SyncTraceStringBuilder& out) {
-        -:  143:        out.append("id=");
-        -:  144:        out.append_number(cue.id);
-        -:  145:    }
-        -:  146:#endif
-        -:  147:};
-        -:  148:
-        -:  149:template <>
-        -:  150:struct SyncCueTraits<kage_sync_tests::ReferenceCue> {
-        -:  151:    static void serialize(
-        -:  152:        const kage_sync_tests::ReferenceCue& cue,
-        -:  153:        ecs::BitBuffer& out,
-        -:  154:        EntityReferenceContext& references) {
-        -:  155:        (void)write_entity_reference(out, cue.target, references);
-        -:  156:    }
-        -:  157:
-        -:  158:    static bool deserialize(
-        -:  159:        ecs::BitBuffer& in,
-        -:  160:        kage_sync_tests::ReferenceCue& out,
-        -:  161:        EntityReferenceContext& references) {
-        -:  162:        return read_entity_reference(in, references, out.target);
-        -:  163:    }
-        -:  164:
-        -:  165:    static bool play(
-        -:  166:        ecs::Registry& registry,
-        -:  167:        ecs::Entity owner,
-        -:  168:        const kage_sync_tests::ReferenceCue& cue,
-        -:  169:        float late_seconds) {
-        -:  170:        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
-        -:  171:            registry.add<kage_sync_tests::CuePlayback>(owner);
-        -:  172:        }
-        -:  173:        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
-        -:  174:            return false;
-        -:  175:        }
-        -:  176:        kage_sync_tests::CuePlayback& playback = registry.write<kage_sync_tests::CuePlayback>(owner);
-        -:  177:        ++playback.plays;
-        -:  178:        playback.last_target = cue.target.entity;
-        -:  179:        playback.last_target_network_id = cue.target.client_entity_network_id;
-        -:  180:        playback.last_late_seconds = late_seconds;
-        -:  181:        return true;
-        -:  182:    }
-        -:  183:
-        -:  184:    static bool rollback(ecs::Registry& registry, ecs::Entity owner, const kage_sync_tests::ReferenceCue&) {
-        -:  185:        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
-        -:  186:            registry.add<kage_sync_tests::CuePlayback>(owner);
-        -:  187:        }
-        -:  188:        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
-        -:  189:            return false;
-        -:  190:        }
-        -:  191:        ++registry.write<kage_sync_tests::CuePlayback>(owner).rollbacks;
-        -:  192:        return true;
-        -:  193:    }
-        -:  194:
-        -:  195:    static bool equals_cue(const kage_sync_tests::ReferenceCue& lhs, const kage_sync_tests::ReferenceCue& rhs) {
-        -:  196:        return lhs.target.client_entity_network_id == rhs.target.client_entity_network_id &&
-        -:  197:            lhs.target.entity == rhs.target.entity;
-        -:  198:    }
-        -:  199:};
-        -:  200:
-        -:  201:template <>
-        -:  202:struct SyncComponentTraits<kage_sync_tests::PredictedPosition> {
-        -:  203:    using Quantized = kage_sync_tests::QuantizedPredictedPosition;
-        -:  204:    using Error = kage_sync_tests::QuantizedPredictedPosition;
-        -:  205:
-        -:  206:    static Quantized quantize(const kage_sync_tests::PredictedPosition& value) {
-        -:  207:        return Quantized{
-        -:  208:            static_cast<std::int32_t>(value.x * 10.0f),
-        -:  209:            static_cast<std::int32_t>(value.y * 10.0f),
-        -:  210:        };
-        -:  211:    }
-        -:  212:
-        -:  213:    static kage_sync_tests::PredictedPosition dequantize(const Quantized& value) {
-        -:  214:        return kage_sync_tests::PredictedPosition{
-        -:  215:            static_cast<float>(value.x) / 10.0f,
-        -:  216:            static_cast<float>(value.y) / 10.0f,
-        -:  217:        };
-        -:  218:    }
-        -:  219:
-        -:  220:    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
-        -:  221:        out.push_bits(current.x, 16U);
-        -:  222:        out.push_bits(current.y, 16U);
-        -:  223:    }
-        -:  224:
-        -:  225:    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
-        -:  226:        out.x = static_cast<std::int32_t>(in.read_bits(16U));
-        -:  227:        out.y = static_cast<std::int32_t>(in.read_bits(16U));
-        -:  228:        return true;
-        -:  229:    }
-        -:  230:
-        -:  231:    static bool should_roll_back(const Quantized& predicted, const Quantized& authoritative) {
-        -:  232:        TRACE_ROLLBACK_IF(predicted.x != authoritative.x, "PredictedPosition.x mismatch");
-        -:  233:        TRACE_ROLLBACK_IF(predicted.y != authoritative.y, "PredictedPosition.y mismatch");
-        -:  234:        return false;
-        -:  235:    }
-        -:  236:
-        -:  237:#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
-        -:  238:    static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
-        -:  239:        out.append("x=");
-        -:  240:        out.append_number(value.x);
-        -:  241:        out.append(",y=");
-        -:  242:        out.append_number(value.y);
-        -:  243:    }
-        -:  244:#endif
-        -:  245:
-        -:  246:    static Quantized interpolate(const Quantized& from, const Quantized& to, float alpha) {
-        -:  247:        return Quantized{
-        -:  248:            static_cast<std::int32_t>(static_cast<float>(from.x) + static_cast<float>(to.x - from.x) * alpha),
-        -:  249:            static_cast<std::int32_t>(static_cast<float>(from.y) + static_cast<float>(to.y - from.y) * alpha),
-        -:  250:        };
-        -:  251:    }
-        -:  252:
-        -:  253:    static Error compute_error(const Quantized& current, const Quantized& previous) {
-        -:  254:        return Error{previous.x - current.x, previous.y - current.y};
+        -:  137:namespace kage::sync {
+        -:  138:
+        -:  139:template <>
+        -:  140:struct SyncCueTraits<kage_sync_tests::TestCue> {
+        -:  141:    static void serialize(const kage_sync_tests::TestCue& cue, ecs::BitBuffer& out) {
+        -:  142:        out.push_bits(cue.id, 16U);
+        -:  143:    }
+        -:  144:
+        -:  145:    static bool deserialize(ecs::BitBuffer& in, kage_sync_tests::TestCue& out) {
+        -:  146:        out.id = static_cast<std::int32_t>(in.read_bits(16U));
+        -:  147:        return true;
+        -:  148:    }
+        -:  149:
+        -:  150:    static bool play(
+        -:  151:        ecs::Registry& registry,
+        -:  152:        ecs::Entity owner,
+        -:  153:        const kage_sync_tests::TestCue& cue,
+        -:  154:        float late_seconds,
+        -:  155:        SyncFrame frame) {
+        -:  156:        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
+        -:  157:            registry.add<kage_sync_tests::CuePlayback>(owner);
+        -:  158:        }
+        -:  159:        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
+        -:  160:            return false;
+        -:  161:        }
+        -:  162:        kage_sync_tests::CuePlayback& playback = registry.write<kage_sync_tests::CuePlayback>(owner);
+        -:  163:        ++playback.plays;
+        -:  164:        playback.last_id = cue.id;
+        -:  165:        playback.last_frame = frame;
+        -:  166:        playback.last_late_seconds = late_seconds;
+        -:  167:        return true;
+        -:  168:    }
+        -:  169:
+        -:  170:    static bool rollback(ecs::Registry& registry, ecs::Entity owner, const kage_sync_tests::TestCue&) {
+        -:  171:        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
+        -:  172:            registry.add<kage_sync_tests::CuePlayback>(owner);
+        -:  173:        }
+        -:  174:        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
+        -:  175:            return false;
+        -:  176:        }
+        -:  177:        ++registry.write<kage_sync_tests::CuePlayback>(owner).rollbacks;
+        -:  178:        return true;
+        -:  179:    }
+        -:  180:
+        -:  181:    static bool equals_cue(const kage_sync_tests::TestCue& lhs, const kage_sync_tests::TestCue& rhs) {
+        -:  182:        return lhs.id == rhs.id;
+        -:  183:    }
+        -:  184:
+        -:  185:#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+        -:  186:    static void trace(const kage_sync_tests::TestCue& cue, SyncTraceStringBuilder& out) {
+        -:  187:        out.append("id=");
+        -:  188:        out.append_number(cue.id);
+        -:  189:    }
+        -:  190:#endif
+        -:  191:};
+        -:  192:
+        -:  193:template <>
+        -:  194:struct SyncCueTraits<kage_sync_tests::ReferenceCue> {
+        -:  195:    static void serialize(
+        -:  196:        const kage_sync_tests::ReferenceCue& cue,
+        -:  197:        ecs::BitBuffer& out,
+        -:  198:        EntityReferenceContext& references) {
+        -:  199:        (void)write_entity_reference(out, cue.target, references);
+        -:  200:    }
+        -:  201:
+        -:  202:    static bool deserialize(
+        -:  203:        ecs::BitBuffer& in,
+        -:  204:        kage_sync_tests::ReferenceCue& out,
+        -:  205:        EntityReferenceContext& references) {
+        -:  206:        return read_entity_reference(in, references, out.target);
+        -:  207:    }
+        -:  208:
+        -:  209:    static bool play(
+        -:  210:        ecs::Registry& registry,
+        -:  211:        ecs::Entity owner,
+        -:  212:        const kage_sync_tests::ReferenceCue& cue,
+        -:  213:        float late_seconds) {
+        -:  214:        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
+        -:  215:            registry.add<kage_sync_tests::CuePlayback>(owner);
+        -:  216:        }
+        -:  217:        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
+        -:  218:            return false;
+        -:  219:        }
+        -:  220:        kage_sync_tests::CuePlayback& playback = registry.write<kage_sync_tests::CuePlayback>(owner);
+        -:  221:        ++playback.plays;
+        -:  222:        playback.last_target = cue.target.entity;
+        -:  223:        playback.last_target_network_id = cue.target.client_entity_network_id;
+        -:  224:        playback.last_late_seconds = late_seconds;
+        -:  225:        return true;
+        -:  226:    }
+        -:  227:
+        -:  228:    static bool rollback(ecs::Registry& registry, ecs::Entity owner, const kage_sync_tests::ReferenceCue&) {
+        -:  229:        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
+        -:  230:            registry.add<kage_sync_tests::CuePlayback>(owner);
+        -:  231:        }
+        -:  232:        if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
+        -:  233:            return false;
+        -:  234:        }
+        -:  235:        ++registry.write<kage_sync_tests::CuePlayback>(owner).rollbacks;
+        -:  236:        return true;
+        -:  237:    }
+        -:  238:
+        -:  239:    static bool equals_cue(const kage_sync_tests::ReferenceCue& lhs, const kage_sync_tests::ReferenceCue& rhs) {
+        -:  240:        return lhs.target.client_entity_network_id == rhs.target.client_entity_network_id &&
+        -:  241:            lhs.target.entity == rhs.target.entity;
+        -:  242:    }
+        -:  243:};
+        -:  244:
+        -:  245:template <>
+        -:  246:struct SyncComponentTraits<kage_sync_tests::PredictedPosition> {
+        -:  247:    using Quantized = kage_sync_tests::QuantizedPredictedPosition;
+        -:  248:    using Error = kage_sync_tests::QuantizedPredictedPosition;
+        -:  249:
+        -:  250:    static Quantized quantize(const kage_sync_tests::PredictedPosition& value) {
+        -:  251:        return Quantized{
+        -:  252:            static_cast<std::int32_t>(value.x * 10.0f),
+        -:  253:            static_cast<std::int32_t>(value.y * 10.0f),
+        -:  254:        };
         -:  255:    }
         -:  256:
-        -:  257:    static Quantized apply_error(const Quantized& current, const Error& error) {
-        -:  258:        return Quantized{current.x + error.x, current.y + error.y};
-        -:  259:    }
-        -:  260:
-        -:  261:    static Error blend_out_error(const Error& error, float dt_seconds) {
-        -:  262:        if (dt_seconds <= 0.0f) {
-        -:  263:            return error;
-        -:  264:        }
-        -:  265:        if (dt_seconds >= 1.0f) {
-        -:  266:            return Error{};
-        -:  267:        }
-        -:  268:        const float scale = 1.0f - dt_seconds;
-        -:  269:        return Error{
-        -:  270:            static_cast<std::int32_t>(static_cast<float>(error.x) * scale),
-        -:  271:            static_cast<std::int32_t>(static_cast<float>(error.y) * scale),
-        -:  272:        };
+        -:  257:    static kage_sync_tests::PredictedPosition dequantize(const Quantized& value) {
+        -:  258:        return kage_sync_tests::PredictedPosition{
+        -:  259:            static_cast<float>(value.x) / 10.0f,
+        -:  260:            static_cast<float>(value.y) / 10.0f,
+        -:  261:        };
+        -:  262:    }
+        -:  263:
+        -:  264:    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+        -:  265:        out.push_bits(current.x, 16U);
+        -:  266:        out.push_bits(current.y, 16U);
+        -:  267:    }
+        -:  268:
+        -:  269:    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+        -:  270:        out.x = static_cast<std::int32_t>(in.read_bits(16U));
+        -:  271:        out.y = static_cast<std::int32_t>(in.read_bits(16U));
+        -:  272:        return true;
         -:  273:    }
-        -:  274:};
-        -:  275:
-        -:  276:template <>
-        -:  277:struct SyncComponentTraits<kage_sync_tests::NetworkedPosition> {
-        -:  278:    using Quantized = kage_sync_tests::QuantizedNetworkedPosition;
-        -:  279:
+        -:  274:
+        -:  275:    static bool should_roll_back(const Quantized& predicted, const Quantized& authoritative) {
+        -:  276:        TRACE_ROLLBACK_IF(predicted.x != authoritative.x, "PredictedPosition.x mismatch");
+        -:  277:        TRACE_ROLLBACK_IF(predicted.y != authoritative.y, "PredictedPosition.y mismatch");
+        -:  278:        return false;
+        -:  279:    }
+        -:  280:
+        -:  281:#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+        -:  282:    static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
+        -:  283:        out.append("x=");
+        -:  284:        out.append_number(value.x);
+        -:  285:        out.append(",y=");
+        -:  286:        out.append_number(value.y);
+        -:  287:    }
+        -:  288:#endif
+        -:  289:
+        -:  290:    static Quantized interpolate(const Quantized& from, const Quantized& to, float alpha) {
+        -:  291:        return Quantized{
+        -:  292:            static_cast<std::int32_t>(static_cast<float>(from.x) + static_cast<float>(to.x - from.x) * alpha),
+        -:  293:            static_cast<std::int32_t>(static_cast<float>(from.y) + static_cast<float>(to.y - from.y) * alpha),
+        -:  294:        };
+        -:  295:    }
+        -:  296:
+        -:  297:    static Error compute_error(const Quantized& current, const Quantized& previous) {
+        -:  298:        return Error{previous.x - current.x, previous.y - current.y};
+        -:  299:    }
+        -:  300:
+        -:  301:    static Quantized apply_error(const Quantized& current, const Error& error) {
+        -:  302:        return Quantized{current.x + error.x, current.y + error.y};
+        -:  303:    }
+        -:  304:
+        -:  305:    static Error blend_out_error(const Error& error, float dt_seconds) {
+        -:  306:        if (dt_seconds <= 0.0f) {
+        -:  307:            return error;
+        -:  308:        }
+        -:  309:        if (dt_seconds >= 1.0f) {
+        -:  310:            return Error{};
+        -:  311:        }
+        -:  312:        const float scale = 1.0f - dt_seconds;
+        -:  313:        return Error{
+        -:  314:            static_cast<std::int32_t>(static_cast<float>(error.x) * scale),
+        -:  315:            static_cast<std::int32_t>(static_cast<float>(error.y) * scale),
+        -:  316:        };
+        -:  317:    }
+        -:  318:};
+        -:  319:
+        -:  320:template <>
+        -:  321:struct SyncComponentTraits<kage_sync_tests::NetworkedPosition> {
+        -:  322:    using Quantized = kage_sync_tests::QuantizedNetworkedPosition;
+        -:  323:
 function _ZN4kage4sync19SyncComponentTraitsIN15kage_sync_tests17NetworkedPositionEE8quantizeERKS3_ called 0 returned 0% blocks executed 0%
-    #####:  280:    static Quantized quantize(const kage_sync_tests::NetworkedPosition& value) {
-        -:  281:        return Quantized{
-    #####:  282:            static_cast<std::int32_t>(value.x * 10.0f),
-    #####:  283:            static_cast<std::int32_t>(value.y * 10.0f),
-    #####:  284:        };
-        -:  285:    }
-        -:  286:
+    #####:  324:    static Quantized quantize(const kage_sync_tests::NetworkedPosition& value) {
+        -:  325:        return Quantized{
+    #####:  326:            static_cast<std::int32_t>(value.x * 10.0f),
+    #####:  327:            static_cast<std::int32_t>(value.y * 10.0f),
+    #####:  328:        };
+        -:  329:    }
+        -:  330:
 function _ZN4kage4sync19SyncComponentTraitsIN15kage_sync_tests17NetworkedPositionEE10dequantizeERKNS2_26QuantizedNetworkedPositionE called 0 returned 0% blocks executed 0%
-    #####:  287:    static kage_sync_tests::NetworkedPosition dequantize(const Quantized& value) {
-        -:  288:        return kage_sync_tests::NetworkedPosition{
-    #####:  289:            static_cast<float>(value.x) / 10.0f,
-    #####:  290:            static_cast<float>(value.y) / 10.0f,
-    #####:  291:        };
-        -:  292:    }
-        -:  293:
+    #####:  331:    static kage_sync_tests::NetworkedPosition dequantize(const Quantized& value) {
+        -:  332:        return kage_sync_tests::NetworkedPosition{
+    #####:  333:            static_cast<float>(value.x) / 10.0f,
+    #####:  334:            static_cast<float>(value.y) / 10.0f,
+    #####:  335:        };
+        -:  336:    }
+        -:  337:
 function _ZN4kage4sync19SyncComponentTraitsIN15kage_sync_tests17NetworkedPositionEE9serializeEPKNS2_26QuantizedNetworkedPositionERS6_RN3ecs9BitBufferE called 0 returned 0% blocks executed 0%
-    #####:  294:    static void serialize(const Quantized* previous, const Quantized& current, ecs::BitBuffer& out) {
-    #####:  295:        out.push_bool(previous != nullptr);
+    #####:  338:    static void serialize(const Quantized* previous, const Quantized& current, ecs::BitBuffer& out) {
+    #####:  339:        out.push_bool(previous != nullptr);
 call    0 never executed
-    #####:  296:        const std::int32_t x = previous == nullptr ? current.x : current.x - previous->x;
+    #####:  340:        const std::int32_t x = previous == nullptr ? current.x : current.x - previous->x;
 branch  0 never executed (fallthrough)
 branch  1 never executed
-    #####:  297:        const std::int32_t y = previous == nullptr ? current.y : current.y - previous->y;
+    #####:  341:        const std::int32_t y = previous == nullptr ? current.y : current.y - previous->y;
 branch  0 never executed (fallthrough)
 branch  1 never executed
-    #####:  298:        out.push_bits(x, 8U);
+    #####:  342:        out.push_bits(x, 8U);
 call    0 never executed
-    #####:  299:        out.push_bits(y, 8U);
+    #####:  343:        out.push_bits(y, 8U);
 call    0 never executed
-    #####:  300:    }
-        -:  301:
+    #####:  344:    }
+        -:  345:
 function _ZN4kage4sync19SyncComponentTraitsIN15kage_sync_tests17NetworkedPositionEE11deserializeERN3ecs9BitBufferEPKNS2_26QuantizedNetworkedPositionERS8_ called 0 returned 0% blocks executed 0%
-    #####:  302:    static bool deserialize(ecs::BitBuffer& in, const Quantized* previous, Quantized& out) {
-    #####:  303:        const bool delta = in.read_bool();
+    #####:  346:    static bool deserialize(ecs::BitBuffer& in, const Quantized* previous, Quantized& out) {
+    #####:  347:        const bool delta = in.read_bool();
 call    0 never executed
-    #####:  304:        const auto x = static_cast<std::int32_t>(in.read_bits(8U));
+    #####:  348:        const auto x = static_cast<std::int32_t>(in.read_bits(8U));
 call    0 never executed
-    #####:  305:        const auto y = static_cast<std::int32_t>(in.read_bits(8U));
+    #####:  349:        const auto y = static_cast<std::int32_t>(in.read_bits(8U));
 call    0 never executed
-    #####:  306:        if (!delta) {
+    #####:  350:        if (!delta) {
 branch  0 never executed (fallthrough)
 branch  1 never executed
-    #####:  307:            out = Quantized{x, y};
-    #####:  308:            return true;
-        -:  309:        }
-    #####:  310:        if (previous != nullptr) {
+    #####:  351:            out = Quantized{x, y};
+    #####:  352:            return true;
+        -:  353:        }
+    #####:  354:        if (previous != nullptr) {
 branch  0 never executed (fallthrough)
 branch  1 never executed
-    #####:  311:            out = Quantized{previous->x + x, previous->y + y};
-    #####:  312:            return true;
-        -:  313:        }
-    #####:  314:        return false;
-        -:  315:    }
-        -:  316:
-        -:  317:#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
-        -:  318:    static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
-        -:  319:        out.append("x=");
-        -:  320:        out.append_number(value.x);
-        -:  321:        out.append(",y=");
-        -:  322:        out.append_number(value.y);
-        -:  323:    }
-        -:  324:#endif
-        -:  325:};
-        -:  326:
-        -:  327:template <>
-        -:  328:struct SyncComponentTraits<kage_sync_tests::SmoothPosition> {
-        -:  329:    using Quantized = kage_sync_tests::SmoothPosition;
-        -:  330:    using Error = kage_sync_tests::SmoothPosition;
-        -:  331:
-        -:  332:    static Quantized quantize(const kage_sync_tests::SmoothPosition& value) {
-        -:  333:        return value;
-        -:  334:    }
-        -:  335:
-        -:  336:    static kage_sync_tests::SmoothPosition dequantize(const Quantized& value) {
-        -:  337:        return value;
-        -:  338:    }
-        -:  339:
-        -:  340:    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
-        -:  341:        out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
-        -:  342:    }
-        -:  343:
-        -:  344:    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
-        -:  345:        in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
-        -:  346:        return true;
-        -:  347:    }
-        -:  348:
-        -:  349:    static Quantized interpolate(const Quantized& from, const Quantized& to, float alpha) {
-        -:  350:        return Quantized{
-        -:  351:            from.x + (to.x - from.x) * alpha,
-        -:  352:            from.y + (to.y - from.y) * alpha,
-        -:  353:        };
-        -:  354:    }
-        -:  355:
-        -:  356:    static Error compute_error(const Quantized& current, const Quantized& previous) {
-        -:  357:        return Error{
-        -:  358:            previous.x - current.x,
-        -:  359:            previous.y - current.y,
-        -:  360:        };
-        -:  361:    }
-        -:  362:
-        -:  363:    static Quantized apply_error(const Quantized& current, const Error& error) {
-        -:  364:        return Quantized{
-        -:  365:            current.x + error.x,
-        -:  366:            current.y + error.y,
-        -:  367:        };
-        -:  368:    }
-        -:  369:
-        -:  370:    static Error blend_out_error(const Error& error, float dt_seconds) {
-        -:  371:        if (dt_seconds <= 0.0f) {
-        -:  372:            return error;
-        -:  373:        }
-        -:  374:        if (dt_seconds >= 1.0f) {
-        -:  375:            return Error{};
-        -:  376:        }
-        -:  377:        const float scale = 1.0f - dt_seconds;
-        -:  378:        return Error{
-        -:  379:            error.x * scale,
-        -:  380:            error.y * scale,
-        -:  381:        };
+    #####:  355:            out = Quantized{previous->x + x, previous->y + y};
+    #####:  356:            return true;
+        -:  357:        }
+    #####:  358:        return false;
+        -:  359:    }
+        -:  360:
+        -:  361:#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+        -:  362:    static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
+        -:  363:        out.append("x=");
+        -:  364:        out.append_number(value.x);
+        -:  365:        out.append(",y=");
+        -:  366:        out.append_number(value.y);
+        -:  367:    }
+        -:  368:#endif
+        -:  369:};
+        -:  370:
+        -:  371:template <>
+        -:  372:struct SyncComponentTraits<kage_sync_tests::SmoothPosition> {
+        -:  373:    using Quantized = kage_sync_tests::SmoothPosition;
+        -:  374:    using Error = kage_sync_tests::SmoothPosition;
+        -:  375:
+        -:  376:    static Quantized quantize(const kage_sync_tests::SmoothPosition& value) {
+        -:  377:        return value;
+        -:  378:    }
+        -:  379:
+        -:  380:    static kage_sync_tests::SmoothPosition dequantize(const Quantized& value) {
+        -:  381:        return value;
         -:  382:    }
-        -:  383:};
-        -:  384:
-        -:  385:template <>
-        -:  386:struct SyncComponentTraits<kage_sync_tests::TargetReference> {
-        -:  387:    using Quantized = kage_sync_tests::TargetReference;
-        -:  388:
-        -:  389:    static Quantized quantize(const kage_sync_tests::TargetReference& value) {
-        -:  390:        return value;
+        -:  383:
+        -:  384:    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+        -:  385:        out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
+        -:  386:    }
+        -:  387:
+        -:  388:    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+        -:  389:        in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
+        -:  390:        return true;
         -:  391:    }
         -:  392:
-        -:  393:    static kage_sync_tests::TargetReference dequantize(const Quantized& value) {
-        -:  394:        return value;
-        -:  395:    }
-        -:  396:
-        -:  397:    static void serialize(
-        -:  398:        const Quantized*,
-        -:  399:        const Quantized& current,
-        -:  400:        ecs::BitBuffer& out,
-        -:  401:        EntityReferenceContext& references) {
-        -:  402:        (void)write_entity_reference(out, current.target, references);
-        -:  403:    }
-        -:  404:
-        -:  405:    static bool deserialize(
-        -:  406:        ecs::BitBuffer& in,
-        -:  407:        const Quantized*,
-        -:  408:        Quantized& out,
-        -:  409:        EntityReferenceContext& references) {
-        -:  410:        return read_entity_reference(in, references, out.target);
-        -:  411:    }
-        -:  412:};
+        -:  393:    static Quantized interpolate(const Quantized& from, const Quantized& to, float alpha) {
+        -:  394:        return Quantized{
+        -:  395:            from.x + (to.x - from.x) * alpha,
+        -:  396:            from.y + (to.y - from.y) * alpha,
+        -:  397:        };
+        -:  398:    }
+        -:  399:
+        -:  400:    static Error compute_error(const Quantized& current, const Quantized& previous) {
+        -:  401:        return Error{
+        -:  402:            previous.x - current.x,
+        -:  403:            previous.y - current.y,
+        -:  404:        };
+        -:  405:    }
+        -:  406:
+        -:  407:    static Quantized apply_error(const Quantized& current, const Error& error) {
+        -:  408:        return Quantized{
+        -:  409:            current.x + error.x,
+        -:  410:            current.y + error.y,
+        -:  411:        };
+        -:  412:    }
         -:  413:
-        -:  414:template <>
-        -:  415:struct SyncComponentTraits<kage_sync_tests::BandwidthProbe> {
-        -:  416:    using Quantized = std::int32_t;
-        -:  417:
-        -:  418:    static Quantized quantize(const kage_sync_tests::BandwidthProbe& value) {
-        -:  419:        return value.value;
-        -:  420:    }
-        -:  421:
-        -:  422:    static kage_sync_tests::BandwidthProbe dequantize(const Quantized& value) {
-        -:  423:        return kage_sync_tests::BandwidthProbe{value};
-        -:  424:    }
-        -:  425:
-        -:  426:    static void serialize(const Quantized* previous, const Quantized& current, ecs::BitBuffer& out) {
-        -:  427:        out.push_bool(previous != nullptr);
-        -:  428:        if (previous == nullptr) {
-        -:  429:            out.push_bits(current, 32U);
-        -:  430:            return;
-        -:  431:        }
-        -:  432:        out.push_bits(current - *previous, 8U);
-        -:  433:    }
-        -:  434:
-        -:  435:    static bool deserialize(ecs::BitBuffer& in, const Quantized* previous, Quantized& out) {
-        -:  436:        const bool delta = in.read_bool();
-        -:  437:        if (!delta) {
-        -:  438:            out = static_cast<std::int32_t>(in.read_bits(32U));
-        -:  439:            return true;
-        -:  440:        }
-        -:  441:        if (previous == nullptr) {
-        -:  442:            return false;
-        -:  443:        }
-        -:  444:        out = *previous + static_cast<std::int32_t>(in.read_bits(8U));
-        -:  445:        return true;
-        -:  446:    }
-        -:  447:};
+        -:  414:    static Error blend_out_error(const Error& error, float dt_seconds) {
+        -:  415:        if (dt_seconds <= 0.0f) {
+        -:  416:            return error;
+        -:  417:        }
+        -:  418:        if (dt_seconds >= 1.0f) {
+        -:  419:            return Error{};
+        -:  420:        }
+        -:  421:        const float scale = 1.0f - dt_seconds;
+        -:  422:        return Error{
+        -:  423:            error.x * scale,
+        -:  424:            error.y * scale,
+        -:  425:        };
+        -:  426:    }
+        -:  427:};
+        -:  428:
+        -:  429:template <>
+        -:  430:struct SyncComponentTraits<kage_sync_tests::TargetReference> {
+        -:  431:    using Quantized = kage_sync_tests::TargetReference;
+        -:  432:
+        -:  433:    static Quantized quantize(const kage_sync_tests::TargetReference& value) {
+        -:  434:        return value;
+        -:  435:    }
+        -:  436:
+        -:  437:    static kage_sync_tests::TargetReference dequantize(const Quantized& value) {
+        -:  438:        return value;
+        -:  439:    }
+        -:  440:
+        -:  441:    static void serialize(
+        -:  442:        const Quantized*,
+        -:  443:        const Quantized& current,
+        -:  444:        ecs::BitBuffer& out,
+        -:  445:        EntityReferenceContext& references) {
+        -:  446:        (void)write_entity_reference(out, current.target, references);
+        -:  447:    }
         -:  448:
-        -:  449:}  // namespace kage::sync
+        -:  449:    static bool deserialize(
+        -:  450:        ecs::BitBuffer& in,
+        -:  451:        const Quantized*,
+        -:  452:        Quantized& out,
+        -:  453:        EntityReferenceContext& references) {
+        -:  454:        return read_entity_reference(in, references, out.target);
+        -:  455:    }
+        -:  456:};
+        -:  457:
+        -:  458:template <>
+        -:  459:struct SyncComponentTraits<kage_sync_tests::BandwidthProbe> {
+        -:  460:    using Quantized = std::int32_t;
+        -:  461:
+        -:  462:    static Quantized quantize(const kage_sync_tests::BandwidthProbe& value) {
+        -:  463:        return value.value;
+        -:  464:    }
+        -:  465:
+        -:  466:    static kage_sync_tests::BandwidthProbe dequantize(const Quantized& value) {
+        -:  467:        return kage_sync_tests::BandwidthProbe{value};
+        -:  468:    }
+        -:  469:
+        -:  470:    static void serialize(const Quantized* previous, const Quantized& current, ecs::BitBuffer& out) {
+        -:  471:        out.push_bool(previous != nullptr);
+        -:  472:        if (previous == nullptr) {
+        -:  473:            out.push_bits(current, 32U);
+        -:  474:            return;
+        -:  475:        }
+        -:  476:        out.push_bits(current - *previous, 8U);
+        -:  477:    }
+        -:  478:
+        -:  479:    static bool deserialize(ecs::BitBuffer& in, const Quantized* previous, Quantized& out) {
+        -:  480:        const bool delta = in.read_bool();
+        -:  481:        if (!delta) {
+        -:  482:            out = static_cast<std::int32_t>(in.read_bits(32U));
+        -:  483:            return true;
+        -:  484:        }
+        -:  485:        if (previous == nullptr) {
+        -:  486:            return false;
+        -:  487:        }
+        -:  488:        out = *previous + static_cast<std::int32_t>(in.read_bits(8U));
+        -:  489:        return true;
+        -:  490:    }
+        -:  491:};
+        -:  492:
+        -:  493:}  // namespace kage::sync
