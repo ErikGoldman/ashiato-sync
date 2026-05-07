@@ -21,6 +21,7 @@ add_executable(kage_sync_tests
     integration_smoke.test.cpp
     options_validation.test.cpp
     quantized_bytes.test.cpp
+    replay_network_correctness.test.cpp
     replay_streamer.test.cpp
     replay_writer.test.cpp
     server_connection.test.cpp
@@ -50,6 +51,10 @@ target_include_directories(kage_sync_tests
     PRIVATE
         ${PROJECT_SOURCE_DIR}/src
 )
+
+if(WIN32)
+    target_link_libraries(kage_sync_tests PRIVATE ws2_32)
+endif()
 
 if(KAGE_SYNC_ENABLE_COVERAGE)
     kage_sync_enable_coverage(kage_sync_tests)
