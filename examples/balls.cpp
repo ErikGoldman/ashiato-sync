@@ -748,10 +748,10 @@ void update_server_world(
                 registry.add_tag(ball.entity, schema.bounced);
             }
             static std::uint32_t bounce_sequence = 1;
-            (void)kage::sync::emit_cue(
-                registry,
-                ball.entity,
+            (void)registry.write<kage::sync::CueDispatcher>().emit(
+                registry.get<kage::sync::SyncSettings>(),
                 frame,
+                ball.entity,
                 BallBounceCue{bounce_sequence++, 1.0f},
                 0.35f);
         }

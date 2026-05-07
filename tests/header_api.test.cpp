@@ -90,7 +90,7 @@ TEST_CASE("header registration APIs assign default names for components and cues
     const kage::sync::SyncCueTypeId cue = kage::sync::register_sync_cue<HeaderApiDefaultNamedCue>(registry);
 
     const kage::sync::SyncSettings& settings = registry.get<kage::sync::SyncSettings>();
-    REQUIRE(settings.component_ops.at(component.value).name.empty());
+    REQUIRE(settings.component_ops.at(component.value).serialization.name.empty());
     REQUIRE(settings.cue_ops.at(cue).name == "HeaderApiDefaultNamedCue");
 }
 

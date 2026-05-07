@@ -1,6 +1,7 @@
 #include "kage/sync/server.hpp"
 
 #include "server/detail.hpp"
+#include "server/dirty_slots.hpp"
 #include "server/state.hpp"
 
 #include <algorithm>
@@ -14,62 +15,31 @@ server_detail::ServerClientReplicator::ServerClientReplicator()
 
 server_detail::ServerClientReplicator::~ServerClientReplicator() = default;
 
-void server_detail::ServerClientReplicator::accumulate_frame_delta(const ServerFrameDelta& frame) {
+void server_detail::ServerClientReplicator::on_server_registry_dirty_frame(const ServerRegistryDirtyFrame& frame) {
+    if (server == nullptr) {
+        return;
+    }
+    if (&frame.server != server) {
+        return;
+    }
+    ReplicationServer& replication_server = frame.server;
+    const SyncFrame sync_frame = frame.frame;
     const SyncSettings& settings = frame.registry.get<SyncSettings>();
-    for (const SyncArchetype& archetype : settings.archetypes) {
-        for (const SyncTagReplication& tag_replication : archetype.tags) {
-            frame.dirty.each_dirty(tag_replication.tag, [&](ecs::Entity entity, const void*) {
-                const std::uint32_t slot = frame.server.replicated_slot_for_entity(entity);
-                if (slot != server_detail::invalid_quantized_frame_id) {
-                    mark_dirty(frame.server, slot, frame.frame);
-                }
-            });
-            frame.dirty.each_removed(tag_replication.tag, [&](ecs::Registry::ComponentRemoval removal) {
-                const std::uint32_t slot = frame.server.replicated_slot_for_entity_index(removal.entity_index);
-                if (slot != server_detail::invalid_quantized_frame_id) {
-                    mark_dirty(frame.server, slot, frame.frame);
-                }
-            });
-        }
-    }
-
-    for (const auto& component_ops : settings.component_ops) {
-        const ecs::Entity component{component_ops.first};
-        frame.dirty.each_dirty(component, [&](ecs::Entity entity, const void*) {
-            const std::uint32_t slot = frame.server.replicated_slot_for_entity(entity);
-            if (slot != server_detail::invalid_quantized_frame_id) {
-                mark_dirty(frame.server, slot, frame.frame);
-            }
-        });
-        frame.dirty.each_removed(component, [&](ecs::Registry::ComponentRemoval removal) {
-            const std::uint32_t slot = frame.server.replicated_slot_for_entity_index(removal.entity_index);
-            if (slot != server_detail::invalid_quantized_frame_id) {
-                mark_dirty(frame.server, slot, frame.frame);
-            }
-        });
-    }
-
-    frame.dirty.each_dirty<NetworkOwner>([&](ecs::Entity entity, const void*) {
-        const std::uint32_t slot = frame.server.replicated_slot_for_entity(entity);
-        if (slot != server_detail::invalid_quantized_frame_id) {
-            mark_dirty(frame.server, slot, frame.frame);
-        }
-    });
-    frame.dirty.each_removed<NetworkOwner>([&](ecs::Registry::ComponentRemoval removal) {
-        const std::uint32_t slot = frame.server.replicated_slot_for_entity_index(removal.entity_index);
-        if (slot != server_detail::invalid_quantized_frame_id) {
-            mark_dirty(frame.server, slot, frame.frame);
-        }
+    each_dirty_replicated_slot(frame, settings, [&](std::uint32_t slot) {
+        mark_dirty(replication_server, slot, sync_frame);
     });
 }
 
-void server_detail::ServerClientReplicator::flush(const ServerFrameFlushContext& context) {
-    (void)context.completed_frames;
-    if (!context.server.prepare_client_update_send(*this)) {
+void server_detail::ServerClientReplicator::on_server_frame_batch_complete(const ServerFrameBatch& batch) {
+    if (&batch.server != server) {
         return;
     }
-    const SyncSettings& settings = context.registry.get<SyncSettings>();
-    update_scheduler->send_client(context.server, context.registry, settings, *this, context.completed_frames);
+    ReplicationServer& replication_server = batch.server;
+    if (!replication_server.prepare_client_update_send(*this)) {
+        return;
+    }
+    const SyncSettings& settings = batch.registry.get<SyncSettings>();
+    update_scheduler->send_client(replication_server, batch.registry, settings, *this, batch.completed_frames);
 }
 
 void server_detail::ServerClientReplicator::EntityStates::ensure_capacity(std::size_t size) {
@@ -296,25 +266,25 @@ void server_detail::ServerClientReplicator::ensure_capacity(std::size_t replicat
 }
 
 void server_detail::ServerClientReplicator::initialize_marking_all_dirty(
-    ReplicationServer& server,
+    ReplicationServer& replication_server,
     SyncFrame frame) {
-    ensure_capacity(server.replicated_slot_count());
-    dirty_queue.dirty_replicated_indices.reserve(server.active_replicated_slot_count());
-    for (std::uint32_t replicated_index = 0; replicated_index < server.replicated_slot_count(); ++replicated_index) {
-        if (server.replicated_slot_active(replicated_index)) {
-            mark_dirty(server, replicated_index, frame);
+    ensure_capacity(replication_server.replicated_slot_count());
+    dirty_queue.dirty_replicated_indices.reserve(replication_server.active_replicated_slot_count());
+    for (std::uint32_t replicated_index = 0; replicated_index < replication_server.replicated_slot_count(); ++replicated_index) {
+        if (replication_server.replicated_slot_active(replicated_index)) {
+            mark_dirty(replication_server, replicated_index, frame);
         }
     }
 }
 
 void server_detail::ServerClientReplicator::mark_dirty(
-    const ReplicationServer& server,
+    const ReplicationServer& replication_server,
     std::uint32_t replicated_index,
     SyncFrame frame) {
-    if (replicated_index >= server.replicated_slot_count()) {
+    if (replicated_index >= replication_server.replicated_slot_count()) {
         return;
     }
-    ensure_capacity(server.replicated_slot_count());
+    ensure_capacity(replication_server.replicated_slot_count());
     ClientDirtyQueue::Entry& entry = dirty_queue.entries[replicated_index];
     if (!entry.queued) {
         entry.queued = true;
@@ -324,8 +294,8 @@ void server_detail::ServerClientReplicator::mark_dirty(
         if (const ClientEntityState* state = entities.try_get(replicated_index)) {
             entry.last_priority = state->last_priority;
             if (state->baseline != server_detail::invalid_quantized_frame_id &&
-                server.quantized_frame_active(state->baseline)) {
-                entry.baseline_frame = server.quantized_frame_frame(state->baseline);
+                replication_server.quantized_frame_active(state->baseline)) {
+                entry.baseline_frame = replication_server.quantized_frame_frame(state->baseline);
             }
         }
     }
@@ -354,9 +324,9 @@ void server_detail::ServerClientReplicator::expire_pending_cues(SyncFrame frame)
 }
 
 std::uint32_t server_detail::ServerClientReplicator::network_id_for(
-    ReplicationServer& server,
+    ReplicationServer& replication_server,
     std::uint32_t replicated_index) {
-    return network_ids.network_id_for(server, *this, replicated_index);
+    return network_ids.network_id_for(replication_server, *this, replicated_index);
 }
 
 void server_detail::ServerClientReplicator::free_network_id(std::uint32_t network_id) {
@@ -364,7 +334,7 @@ void server_detail::ServerClientReplicator::free_network_id(std::uint32_t networ
 }
 
 bool server_detail::ServerClientReplicator::enqueue_destroy(
-    ReplicationServer& server,
+    ReplicationServer& replication_server,
     std::uint32_t replicated_index,
     ecs::Entity entity,
     SyncFrame frame) {
@@ -373,7 +343,7 @@ bool server_detail::ServerClientReplicator::enqueue_destroy(
     if (ClientEntityState* state = entities.try_get(replicated_index)) {
         network_id = state->network_id;
         network_version = state->network_version;
-        entities.clear(server, replicated_index);
+        entities.clear(replication_server, replicated_index);
     }
     clear_dirty(replicated_index);
     if (!network_ids.mark_pending_destroy(network_id)) {
@@ -384,7 +354,7 @@ bool server_detail::ServerClientReplicator::enqueue_destroy(
 }
 
 bool server_detail::ServerClientReplicator::acknowledge_entity(
-    ReplicationServer& server,
+    ReplicationServer& replication_server,
     std::uint32_t replicated_index,
     SyncFrame frame) {
     ClientEntityState* entity_state = entities.try_get(replicated_index);
@@ -404,14 +374,14 @@ bool server_detail::ServerClientReplicator::acknowledge_entity(
 
     const std::uint32_t acked_quantized_frame = found_pending->quantized_frame;
     if (acked_quantized_frame == server_detail::invalid_quantized_frame_id ||
-        !server.quantized_frame_active(acked_quantized_frame)) {
+        !replication_server.quantized_frame_active(acked_quantized_frame)) {
         return false;
     }
 
     if (entity_state->baseline != acked_quantized_frame) {
-        server.release_server_quantized_frame(entity_state->baseline);
+        replication_server.release_server_quantized_frame(entity_state->baseline);
         entity_state->baseline = acked_quantized_frame;
-        server.retain_server_quantized_frame(entity_state->baseline);
+        replication_server.retain_server_quantized_frame(entity_state->baseline);
     }
     if (replicated_index < dirty_queue.entries.size()) {
         ClientDirtyQueue::Entry& entry = dirty_queue.entries[replicated_index];
@@ -424,13 +394,13 @@ bool server_detail::ServerClientReplicator::acknowledge_entity(
 
     for (auto pending = entity_state->pending.begin(); pending != entity_state->pending.end();) {
         if (pending->frame <= frame) {
-            server.release_server_quantized_frame(pending->quantized_frame);
+            replication_server.release_server_quantized_frame(pending->quantized_frame);
             pending = entity_state->pending.erase(pending);
         } else {
             ++pending;
         }
     }
-    server.acknowledge_server_cues(*entity_state, frame);
+    replication_server.acknowledge_server_cues(*entity_state, frame);
     return true;
 }
 

@@ -100,7 +100,7 @@ TEST_CASE("cue tracing records lifecycle events and uses frame data gating") {
 
         REQUIRE(server.add_client(1));
         REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-        REQUIRE(kage::sync::emit_cue(server_registry, server_entity, 1, kage_sync_tests::TestCue{7}, 1.0f));
+        REQUIRE(kage_sync_tests::emit_test_cue(server_registry, server_entity, 1, kage_sync_tests::TestCue{7}, 1.0f));
         server.tick(server_registry, server.options().fixed_dt_seconds);
         REQUIRE(packets.size() == 1);
         REQUIRE(has_cue_event(server_events, kage::sync::SyncTraceEventType::CueEmitted, cue_type));
@@ -157,10 +157,18 @@ TEST_CASE("server transport traces job-emitted cues at authoritative snapshot fr
         kage_sync_tests::Position{1.0f, 2.0f}) != nullptr);
 
     bool fired = false;
-    server_registry.job<kage_sync_tests::Position, kage::sync::SyncSettings>(0).each(
-        [&](ecs::Entity entity, kage_sync_tests::Position&, kage::sync::SyncSettings& settings) {
+    server_registry.job<
+        kage_sync_tests::Position,
+        kage::sync::SyncSettings,
+        kage::sync::FrameInfo,
+        kage::sync::CueDispatcher>(0).each(
+        [&](ecs::Entity entity,
+            kage_sync_tests::Position&,
+            kage::sync::SyncSettings& settings,
+            kage::sync::FrameInfo& frame,
+            kage::sync::CueDispatcher& cues) {
             if (entity == server_entity && !fired) {
-                REQUIRE(kage::sync::emit_cue(settings, entity, kage_sync_tests::TestCue{7}, 1.0f));
+                REQUIRE(cues.emit(settings, frame, entity, kage_sync_tests::TestCue{7}, 1.0f));
                 fired = true;
             }
         });

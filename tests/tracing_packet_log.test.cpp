@@ -175,7 +175,7 @@ TEST_CASE("packet log tracing records cue summaries and cue payload data") {
     server.set_tracer(&server_tracer);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-    REQUIRE(kage::sync::emit_cue(server_registry, server_entity, 1, kage_sync_tests::TestCue{7}, 1.0f));
+    REQUIRE(kage_sync_tests::emit_test_cue(server_registry, server_entity, 1, kage_sync_tests::TestCue{7}, 1.0f));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
     REQUIRE(std::any_of(server_events.begin(), server_events.end(), [](const kage::sync::SyncTraceEvent& event) {

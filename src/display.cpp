@@ -87,13 +87,13 @@ void FractionalTickSampler::capture_server_frame(ecs::Registry& registry) {
                 continue;
             }
             const SyncComponentOps& ops = archetype.component_ops[component_index];
-            if (ops.quantize == nullptr || ops.quantized_size == 0U) {
+            if (ops.serialization.quantize == nullptr || ops.serialization.quantized_size == 0U) {
                 continue;
             }
             ReplicatedComponentUpdate update;
             update.component = replication.component;
-            update.bytes.resize(ops.quantized_size);
-            ops.quantize(value, update.bytes.data());
+            update.bytes.resize(ops.serialization.quantized_size);
+            ops.serialization.quantize(value, update.bytes.data());
             entity.sample.components_.push_back(std::move(update));
         }
         next.entities.push_back(std::move(entity));
@@ -167,12 +167,12 @@ void FractionalTickSampler::rebuild_from_server(const ecs::Registry& registry) {
             }
             const auto found_ops = settings.component_ops.find(component.component.value);
             if (found_ops == settings.component_ops.end() || found_ops->second.interpolate == nullptr ||
-                component.bytes.size() != found_ops->second.quantized_size ||
-                previous_component->bytes.size() != found_ops->second.quantized_size) {
+                component.bytes.size() != found_ops->second.serialization.quantized_size ||
+                previous_component->bytes.size() != found_ops->second.serialization.quantized_size) {
                 continue;
             }
             SyncComponentOps::QuantizedBytes blended;
-            blended.resize(found_ops->second.quantized_size);
+            blended.resize(found_ops->second.serialization.quantized_size);
             if (found_ops->second.interpolate(
                     previous_component->bytes.data(),
                     component.bytes.data(),

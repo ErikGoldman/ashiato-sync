@@ -17,20 +17,20 @@ bool ClientInputBuffer::set_latest(
     }
     const auto found_ops = settings.component_ops.find(component.value);
     if (found_ops == settings.component_ops.end() ||
-        found_ops->second.quantize == nullptr ||
-        found_ops->second.serialize == nullptr ||
-        found_ops->second.push_to_ecs == nullptr ||
-        found_ops->second.quantized_size == 0U) {
+        found_ops->second.serialization.quantize == nullptr ||
+        found_ops->second.serialization.serialize == nullptr ||
+        found_ops->second.serialization.push_to_registry == nullptr ||
+        found_ops->second.serialization.quantized_size == 0U) {
         return false;
     }
 
     component_ = component;
     ops_ = found_ops->second;
     has_ops_ = true;
-    latest_.assign(ops_.quantized_size, 0U);
-    ops_.quantize(input, latest_.data());
-    if (acked_baseline_.size() != ops_.quantized_size) {
-        acked_baseline_.assign(ops_.quantized_size, 0U);
+    latest_.assign(ops_.serialization.quantized_size, 0U);
+    ops_.serialization.quantize(input, latest_.data());
+    if (acked_baseline_.size() != ops_.serialization.quantized_size) {
+        acked_baseline_.assign(ops_.serialization.quantized_size, 0U);
     }
     has_acked_baseline_ = true;
     has_latest_ = true;
@@ -86,7 +86,7 @@ bool ClientInputBuffer::fill_frames_through(
     recorded.reserve(recorded.size() + (frame >= begin ? static_cast<std::size_t>(frame - begin + 1U) : 0U));
     for (SyncFrame current = begin; current <= frame; ++current) {
         InputFrame& stored = frames_[current & (frames_.size() - 1U)];
-        if (stored.valid && stored.frame == current && stored.bytes.size() == ops_.quantized_size) {
+        if (stored.valid && stored.frame == current && stored.bytes.size() == ops_.serialization.quantized_size) {
             last_recorded_frame_ = std::max(last_recorded_frame_, current);
             continue;
         }
@@ -110,15 +110,15 @@ bool ClientInputBuffer::apply_frame(ecs::Registry& registry, const SyncSettings&
         return true;
     }
     const InputFrame& stored = frames_[frame & (frames_.size() - 1U)];
-    if (!stored.valid || stored.frame != frame || stored.bytes.size() != ops_.quantized_size) {
+    if (!stored.valid || stored.frame != frame || stored.bytes.size() != ops_.serialization.quantized_size) {
         return true;
     }
-    if (settings.local_client == invalid_client_id || ops_.push_to_ecs == nullptr) {
+    if (settings.local_client == invalid_client_id || ops_.serialization.push_to_registry == nullptr) {
         return true;
     }
     registry.view<const NetworkOwner>().each([&](ecs::Entity entity, const NetworkOwner& owner) {
         if (owner.client == settings.local_client) {
-            (void)ops_.push_to_ecs(registry, entity, stored.bytes.data());
+            (void)ops_.serialization.push_to_registry(registry, entity, stored.bytes.data());
         }
     });
     return true;
@@ -143,12 +143,12 @@ void ClientInputBuffer::acknowledge_frame(SyncFrame frame) {
 }
 
 void ClientInputBuffer::apply_latest_to_owned_entities(ecs::Registry& registry, const SyncSettings& settings) const {
-    if (settings.local_client == invalid_client_id || latest_.empty() || ops_.push_to_ecs == nullptr) {
+    if (settings.local_client == invalid_client_id || latest_.empty() || ops_.serialization.push_to_registry == nullptr) {
         return;
     }
     registry.view<const NetworkOwner>().each([&](ecs::Entity entity, const NetworkOwner& owner) {
         if (owner.client == settings.local_client) {
-            (void)ops_.push_to_ecs(registry, entity, latest_.data());
+            (void)ops_.serialization.push_to_registry(registry, entity, latest_.data());
         }
     });
 }
@@ -178,7 +178,7 @@ bool ClientInputBuffer::drain_packet(
     if (!frames_.empty()) {
         for (SyncFrame frame = acked_frame_ + 1U; frame <= last_recorded_frame_; ++frame) {
             const InputFrame& input = frames_[frame & (frames_.size() - 1U)];
-            if (input.valid && input.frame == frame && input.bytes.size() == ops_.quantized_size) {
+            if (input.valid && input.frame == frame && input.bytes.size() == ops_.serialization.quantized_size) {
                 first_input_frame = frame;
                 first_input = &input;
                 break;
@@ -201,7 +201,7 @@ bool ClientInputBuffer::drain_packet(
         const std::uint8_t* previous = first_input_full || acked_baseline_.empty()
             ? nullptr
             : acked_baseline_.data();
-        ops_.serialize(previous, first_input->bytes.data(), first_input_payload, nullptr);
+        ops_.serialization.serialize(previous, first_input->bytes.data(), first_input_payload, nullptr);
         reserved_first_input_bits = first_input_payload.bit_size();
     }
 
@@ -245,12 +245,12 @@ bool ClientInputBuffer::drain_packet(
                 break;
             }
             const InputFrame& input = frames_[frame & (frames_.size() - 1U)];
-            if (!input.valid || input.frame != frame || input.bytes.size() != ops_.quantized_size) {
+            if (!input.valid || input.frame != frame || input.bytes.size() != ops_.serialization.quantized_size) {
                 break;
             }
 
             ecs::BitBuffer candidate = packet;
-            ops_.serialize(previous, input.bytes.data(), candidate, nullptr);
+            ops_.serialization.serialize(previous, input.bytes.data(), candidate, nullptr);
             if (protocol::bytes_for_bits(candidate.bit_size()) > mtu_bytes) {
                 break;
             }

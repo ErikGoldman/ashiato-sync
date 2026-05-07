@@ -41,7 +41,7 @@ const std::uint8_t* frame_component_data(
         return nullptr;
     }
     const std::size_t offset = archetype.component_offsets[component_index];
-    const std::size_t size = archetype.component_ops[component_index].quantized_size;
+    const std::size_t size = archetype.component_ops[component_index].serialization.quantized_size;
     if (offset + size > frame.bytes.size()) {
         return nullptr;
     }
@@ -65,7 +65,7 @@ std::uint8_t* mutable_frame_component_data(
         return nullptr;
     }
     const std::size_t offset = archetype.component_offsets[component_index];
-    const std::size_t size = archetype.component_ops[component_index].quantized_size;
+    const std::size_t size = archetype.component_ops[component_index].serialization.quantized_size;
     if (offset + size > frame.bytes.size()) {
         return nullptr;
     }

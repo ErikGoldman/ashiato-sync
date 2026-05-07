@@ -107,7 +107,7 @@ struct SerializedCandidate {
     std::uint64_t component_mask = std::numeric_limits<std::uint64_t>::max();
 };
 
-struct ServerClientReplicator final : ServerFrameConsumer {
+struct ServerClientReplicator final : ServerRegistryDirtyFrameListener, ServerFrameBatchListener {
     struct UpdateScheduler;
     struct UpdateWriter;
     struct EntityStates {
@@ -192,7 +192,9 @@ struct ServerClientReplicator final : ServerFrameConsumer {
     BandwidthController bandwidth{ReplicationBandwidthOptions{}};
     AckTracker ack_tracker;
     std::unique_ptr<UpdateScheduler> update_scheduler;
-    ServerFrameConsumerSubscription frame_subscription;
+    ReplicationServer* server = nullptr;
+    ServerRegistryDirtyFrameSubscription registry_dirty_frame_subscription;
+    ServerFrameBatchListenerSubscription frame_batch_subscription;
 
     ServerClientReplicator();
     ~ServerClientReplicator() override;
@@ -201,22 +203,22 @@ struct ServerClientReplicator final : ServerFrameConsumer {
     ServerClientReplicator(ServerClientReplicator&& other) = delete;
     ServerClientReplicator& operator=(ServerClientReplicator&& other) = delete;
 
-    void accumulate_frame_delta(const ServerFrameDelta& frame) override;
-    void flush(const ServerFrameFlushContext& context) override;
+    void on_server_registry_dirty_frame(const ServerRegistryDirtyFrame& frame) override;
+    void on_server_frame_batch_complete(const ServerFrameBatch& batch) override;
 
     void ensure_capacity(std::size_t replicated_count);
-    void initialize_marking_all_dirty(ReplicationServer& server, SyncFrame frame);
-    void mark_dirty(const ReplicationServer& server, std::uint32_t replicated_index, SyncFrame frame);
+    void initialize_marking_all_dirty(ReplicationServer& replication_server, SyncFrame frame);
+    void mark_dirty(const ReplicationServer& replication_server, std::uint32_t replicated_index, SyncFrame frame);
     void clear_dirty(std::uint32_t replicated_index);
     void expire_pending_cues(SyncFrame frame);
-    std::uint32_t network_id_for(ReplicationServer& server, std::uint32_t replicated_index);
+    std::uint32_t network_id_for(ReplicationServer& replication_server, std::uint32_t replicated_index);
     void free_network_id(std::uint32_t network_id);
     bool enqueue_destroy(
-        ReplicationServer& server,
+        ReplicationServer& replication_server,
         std::uint32_t replicated_index,
         ecs::Entity entity,
         SyncFrame frame);
-    bool acknowledge_entity(ReplicationServer& server, std::uint32_t replicated_index, SyncFrame frame);
+    bool acknowledge_entity(ReplicationServer& replication_server, std::uint32_t replicated_index, SyncFrame frame);
 };
 
 struct ServerClientReplicator::UpdateWriter {

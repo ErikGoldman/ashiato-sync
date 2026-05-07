@@ -26,7 +26,7 @@ struct ServerClientReplicator;
 struct SerializedEntity;
 }
 
-class ReplicationServer {
+class ReplicationServer : private ecs::RegistryDirtyFrameBroadcastListener {
 public:
     struct ClientInputStats {
         std::uint64_t input_frames_applied = 0;
@@ -60,8 +60,8 @@ public:
     ~ReplicationServer();
     ReplicationServer(const ReplicationServer& other) = delete;
     ReplicationServer& operator=(const ReplicationServer& other) = delete;
-    ReplicationServer(ReplicationServer&& other) noexcept;
-    ReplicationServer& operator=(ReplicationServer&& other) noexcept;
+    ReplicationServer(ReplicationServer&& other) noexcept = delete;
+    ReplicationServer& operator=(ReplicationServer&& other) noexcept = delete;
 
     const ReplicationServerOptions& options() const noexcept {
         return options_;
@@ -116,9 +116,13 @@ public:
     }
     std::size_t retained_quantized_frame_count() const noexcept;
     std::size_t retained_quantized_frame_bytes() const noexcept;
-    ServerFrameConsumerSubscription subscribe_frame_consumer(ServerFrameConsumer& consumer);
+    ServerRegistryDirtyFrameSubscription subscribe_registry_dirty_frame_listener(
+        ServerRegistryDirtyFrameListener& listener);
+    ServerFrameBatchListenerSubscription subscribe_frame_batch_listener(ServerFrameBatchListener& listener);
 
     bool tick(ecs::Registry& registry, double dt_seconds);
+    bool advance_frame_without_simulating(ecs::Registry& registry);
+    bool advance_frame_without_simulating(ecs::Registry& registry, SyncFrame frame);
     // Current server simulation frame; remains 0 until the first tick begins.
     SyncFrame frame() const noexcept {
         return frame_;
@@ -214,10 +218,14 @@ private:
     bool replicated_is_replicable(const ecs::Registry& registry, ReplicatedSlotIndex replicated_index) const;
     void push_dirty_info_to_listeners(ecs::Registry& registry);
     void push_frame_to_listeners(ecs::Registry& registry, double dt_seconds, std::uint32_t completed_frames);
-    void remove_unsubscribed_frame_consumers();
+    void on_registry_dirty_frame(const ecs::RegistryDirtyFrame& frame) override;
+    void broadcast_registry_dirty_frame(const ecs::RegistryDirtyFrame& frame);
+    void remove_unsubscribed_registry_dirty_frame_listeners();
+    void broadcast_frame_batch(ecs::Registry& registry, double dt_seconds, std::uint32_t completed_frames);
+    void remove_unsubscribed_frame_batch_listeners();
     void rediscover_replicated_entities(ecs::Registry& registry, ecs::Registry::DirtyView dirty);
     void capture_dirty_generations(ecs::Registry::DirtyView dirty, const SyncSettings& settings);
-    void capture_queued_cues(ecs::Registry& registry, const SyncSettings& settings);
+    void capture_queued_cues(ecs::Registry& registry, const SyncSettings& settings, CueDispatcher& cues);
     bool play_local_cue(ecs::Registry& registry, const SyncSettings& settings, const QueuedSyncCue& cue);
     void attach_cue_to_clients(const ecs::Registry& registry, const SyncSettings& settings, std::uint32_t slot, const QueuedSyncCue& cue);
     void mark_dirty_component(const SyncSettings& settings, std::uint32_t slot, ecs::Entity component);
@@ -332,9 +340,12 @@ private:
     std::vector<ClientState> clients_;
     std::unordered_map<ClientId, std::size_t> client_to_index_;
     std::unordered_map<ClientId, std::size_t> peer_to_index_;
-    std::shared_ptr<ServerFrameConsumerSubscription::State> frame_consumers_;
+    ecs::RegistryDirtyFrameBroadcaster registry_dirty_frame_broadcaster_;
+    ecs::RegistryDirtyFrameBroadcastSubscription server_dirty_frame_subscription_;
+    std::shared_ptr<ServerRegistryDirtyFrameSubscription::State> registry_dirty_frame_listeners_;
+    std::shared_ptr<ServerFrameBatchListenerSubscription::State> frame_batch_listeners_;
     std::vector<PendingInboundPacket> inbound_packets_;
-    std::vector<QueuedSyncCue> post_tick_cues_;
+    std::vector<ServerDestroyedReplicatedSlot> post_tick_destroyed_slots_;
     std::shared_ptr<spdlog::logger> logger_;
     ObservabilityStats observability_stats_;
     std::unordered_map<ClientId, std::uint32_t> warning_logs_by_peer_;

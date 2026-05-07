@@ -26,7 +26,7 @@ TEST_CASE("replicated snap cues play once with late time and stop resending afte
     kage::sync::ReplicationServer server(server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-    REQUIRE(kage::sync::emit_cue(server_registry, server_entity, 1, TestCue{7}, 1.0f));
+    REQUIRE(kage_sync_tests::emit_test_cue(server_registry, server_entity, 1, TestCue{7}, 1.0f));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
 
@@ -79,7 +79,7 @@ TEST_CASE("owner-only cues replicate only to the cue owner") {
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-    REQUIRE(kage::sync::emit_cue(server_registry, server_entity, 1, TestCue{11}, 1.0f, true));
+    REQUIRE(kage_sync_tests::emit_test_cue(server_registry, server_entity, 1, TestCue{11}, 1.0f, true));
     server.tick(server_registry, server.options().fixed_dt_seconds);
 
     ecs::Registry owner_registry;
@@ -122,7 +122,7 @@ TEST_CASE("default cues still replicate to all clients") {
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-    REQUIRE(kage::sync::emit_cue(server_registry, server_entity, 1, TestCue{12}, 1.0f));
+    REQUIRE(kage_sync_tests::emit_test_cue(server_registry, server_entity, 1, TestCue{12}, 1.0f));
     server.tick(server_registry, server.options().fixed_dt_seconds);
 
     ecs::Registry first_registry;
@@ -165,7 +165,7 @@ TEST_CASE("cue entity references resolve to client-local entities") {
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, target, server_archetype));
     REQUIRE(start_sync(server_registry, source, server_archetype));
-    REQUIRE(kage::sync::emit_cue(
+    REQUIRE(kage_sync_tests::emit_test_cue(
         server_registry,
         source,
         1,

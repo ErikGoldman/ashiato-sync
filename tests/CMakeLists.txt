@@ -21,6 +21,8 @@ add_executable(kage_sync_tests
     integration_smoke.test.cpp
     options_validation.test.cpp
     quantized_bytes.test.cpp
+    replay_streamer.test.cpp
+    replay_writer.test.cpp
     server_connection.test.cpp
     server_bandwidth_controller.test.cpp
     server_destroy_ack.test.cpp

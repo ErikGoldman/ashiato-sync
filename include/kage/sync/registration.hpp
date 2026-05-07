@@ -19,10 +19,52 @@
 
 namespace kage::sync {
 
+namespace detail {
+
+template <typename T, typename Traits>
+struct SyncComponentSerializationTraitsAdapter {
+    using Quantized = typename Traits::Quantized;
+
+    static Quantized quantize(const T& value) {
+        return Traits::quantize(value);
+    }
+
+    static T dequantize(const Quantized& value) {
+        return Traits::dequantize(value);
+    }
+
+    static void serialize(
+        const Quantized* previous,
+        const Quantized& current,
+        ecs::BitBuffer& out,
+        ecs::ComponentSerializationContext& context) {
+        serialize_quantized<Traits, Quantized>(
+            previous,
+            current,
+            out,
+            static_cast<EntityReferenceContext*>(context.userContext));
+    }
+
+    static bool deserialize(
+        ecs::BitBuffer& in,
+        const Quantized* previous,
+        Quantized& out,
+        ecs::ComponentSerializationContext& context) {
+        return deserialize_quantized<Traits, Quantized>(
+            in,
+            previous,
+            out,
+            static_cast<EntityReferenceContext*>(context.userContext));
+    }
+};
+
+}  // namespace detail
+
 template <typename T>
 ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = {}) {
     using Traits = SyncComponentTraits<T>;
     using Quantized = typename Traits::Quantized;
+    using SerializationTraits = detail::SyncComponentSerializationTraitsAdapter<T, Traits>;
     static_assert(
         std::is_trivially_copyable<Quantized>::value,
         "SyncComponentTraits<T>::Quantized must be trivially copyable");
@@ -32,60 +74,12 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
     std::string component_name = name;
     const ecs::Entity component = registry.register_component<T>(std::move(name));
 
+    ecs::ComponentSerializationOps serialization_ops =
+        ecs::make_component_serialization_ops<T, SerializationTraits>(component_name);
+    serialization_ops.component = component;
+
     SyncComponentOps ops;
-    ops.name = std::move(component_name);
-    ops.quantized_size = sizeof(Quantized);
-    ops.quantize = [](const void* value, std::uint8_t* out) {
-        const Quantized quantized = Traits::quantize(*static_cast<const T*>(value));
-        std::memcpy(out, &quantized, sizeof(Quantized));
-    };
-    ops.dequantize = [](const std::uint8_t* quantized_bytes, void* out) {
-        Quantized quantized{};
-        std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
-        *static_cast<T*>(out) = Traits::dequantize(quantized);
-    };
-    ops.push_to_ecs = [](ecs::Registry& registry, ecs::Entity entity, const std::uint8_t* quantized_bytes) {
-        Quantized quantized{};
-        std::memcpy(&quantized, quantized_bytes, sizeof(Quantized));
-        return registry.add<T>(entity, Traits::dequantize(quantized)) != nullptr;
-    };
-    ops.serialize = [](
-        const std::uint8_t* previous_bytes,
-        const std::uint8_t* current_bytes,
-        ecs::BitBuffer& out,
-        EntityReferenceContext* references) {
-        Quantized current{};
-        std::memcpy(&current, current_bytes, sizeof(Quantized));
-
-        Quantized previous{};
-        const Quantized* previous_ptr = nullptr;
-        if (previous_bytes != nullptr) {
-            std::memcpy(&previous, previous_bytes, sizeof(Quantized));
-            previous_ptr = &previous;
-        }
-
-        detail::serialize_quantized<Traits, Quantized>(previous_ptr, current, out, references);
-    };
-    ops.deserialize = [](
-        ecs::BitBuffer& in,
-        const std::uint8_t* previous_bytes,
-        std::uint8_t* out,
-        EntityReferenceContext* references) {
-        Quantized previous{};
-        const Quantized* previous_ptr = nullptr;
-        if (previous_bytes != nullptr) {
-            std::memcpy(&previous, previous_bytes, sizeof(Quantized));
-            previous_ptr = &previous;
-        }
-
-        Quantized quantized{};
-        if (!detail::deserialize_quantized<Traits, Quantized>(in, previous_ptr, quantized, references)) {
-            return false;
-        }
-
-        std::memcpy(out, &quantized, sizeof(Quantized));
-        return true;
-    };
+    ops.serialization = std::move(serialization_ops);
     ops.references_entities =
         detail::has_context_serialize<Traits, Quantized>::value ||
         detail::has_context_deserialize<Traits, Quantized>::value;
@@ -135,6 +129,13 @@ SyncCueTypeId register_sync_cue(ecs::Registry& registry, std::string name = {}) 
     ops.serialize = [](const void* value, ecs::BitBuffer& out, EntityReferenceContext* references) {
         detail::serialize_cue_payload<T>(*static_cast<const T*>(value), out, references);
     };
+    ops.deserialize_value = [](const ecs::BitBuffer& payload, EntityReferenceContext* references) -> std::shared_ptr<void> {
+        T value{};
+        if (!detail::read_cue_payload(payload, value, references)) {
+            return {};
+        }
+        return std::make_shared<T>(std::move(value));
+    };
     ops.play = &detail::play_cue_payload<T>;
     ops.rollback = &detail::rollback_cue_payload<T>;
     ops.equals = &detail::equal_cue_payloads<T>;
@@ -152,14 +153,25 @@ SyncCueTypeId register_sync_cue(ecs::Registry& registry, std::string name = {}) 
 }
 
 template <typename T>
-bool emit_cue(
-    SyncSettings& settings,
+bool CueDispatcher::emit(
+    const SyncSettings& settings,
+    const FrameInfo& frame,
     ecs::Entity entity,
-    SyncFrame frame,
     const T& cue,
     float relevance_seconds,
-    bool only_replicate_to_owner = false) {
-    if (!entity || relevance_seconds < 0.0f) {
+    bool only_replicate_to_owner) {
+    return emit(settings, frame.frame, entity, cue, relevance_seconds, only_replicate_to_owner);
+}
+
+template <typename T>
+bool CueDispatcher::emit(
+    const SyncSettings& settings,
+    SyncFrame frame,
+    ecs::Entity entity,
+    const T& cue,
+    float relevance_seconds,
+    bool only_replicate_to_owner) {
+    if (!entity || frame == 0U || relevance_seconds < 0.0f) {
         return false;
     }
 
@@ -170,9 +182,6 @@ bool emit_cue(
     const SyncCueTypeId type = found_type->second;
     if (type >= settings.cue_ops.size() || settings.cue_ops[type].serialize == nullptr) {
         return false;
-    }
-    if (!settings.cue_queue) {
-        settings.cue_queue = std::make_shared<SyncCueQueue>();
     }
 
     QueuedSyncCue queued;
@@ -186,44 +195,7 @@ bool emit_cue(
     } else {
         settings.cue_ops[type].serialize(&cue, queued.payload, nullptr);
     }
-    std::lock_guard<std::mutex> lock(settings.cue_queue->mutex);
-    settings.cue_queue->cues.push_back(std::move(queued));
-    return true;
-}
-
-template <typename T>
-bool emit_cue(
-    SyncSettings& settings,
-    ecs::Entity entity,
-    const T& cue,
-    float relevance_seconds,
-    bool only_replicate_to_owner = false) {
-    return emit_cue(settings, entity, SyncFrame{0}, cue, relevance_seconds, only_replicate_to_owner);
-}
-
-template <typename T>
-bool emit_cue(
-    ecs::Registry& registry,
-    ecs::Entity entity,
-    SyncFrame frame,
-    const T& cue,
-    float relevance_seconds,
-    bool only_replicate_to_owner = false) {
-    register_components(registry);
-    if (!registry.alive(entity)) {
-        return false;
-    }
-    return emit_cue(registry.write<SyncSettings>(), entity, frame, cue, relevance_seconds, only_replicate_to_owner);
-}
-
-template <typename T>
-bool emit_cue(
-    ecs::Registry& registry,
-    ecs::Entity entity,
-    const T& cue,
-    float relevance_seconds,
-    bool only_replicate_to_owner = false) {
-    return emit_cue(registry, entity, SyncFrame{0}, cue, relevance_seconds, only_replicate_to_owner);
+    return enqueue(std::move(queued));
 }
 
 }  // namespace kage::sync

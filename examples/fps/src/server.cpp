@@ -14,7 +14,6 @@
 #include <cmath>
 #include <iostream>
 #include <memory>
-#include <typeindex>
 #include <unordered_map>
 #include <vector>
 
@@ -102,34 +101,6 @@ kage::sync::ReplicationServerOptions make_fps_server_options(
     return options;
 }
 
-kage::sync::FrameDelegate::Subscription subscribe_replay_deaths(
-    kage::sync::ReplicationServer& server,
-    FpsReplayServer& replay_server) {
-    return server.after_frame().subscribe(
-        [&replay_server](const kage::sync::ServerFrameContext& frame_context) {
-            const ecs::Registry& tick_registry = frame_context.registry;
-            const kage::sync::SyncSettings& settings = tick_registry.get<kage::sync::SyncSettings>();
-            const auto found_death_type = settings.cue_type_ids.find(std::type_index(typeid(PlayerDeathCue)));
-            if (found_death_type == settings.cue_type_ids.end()) {
-                return;
-            }
-            for (const kage::sync::QueuedSyncCue& cue : frame_context.cues) {
-                if (cue.type != found_death_type->second || cue.value == nullptr) {
-                    continue;
-                }
-                const kage::sync::NetworkOwner* victim_owner = tick_registry.try_get<kage::sync::NetworkOwner>(cue.entity);
-                if (victim_owner == nullptr) {
-                    continue;
-                }
-                const auto death = std::static_pointer_cast<PlayerDeathCue>(cue.value);
-                if (death == nullptr) {
-                    continue;
-                }
-                replay_server.record_death(victim_owner->client, frame_context.frame, death->shooter.entity);
-            }
-        });
-}
-
 void receive_server_packets(
     SocketHandle socket,
     std::unordered_map<kage::sync::ClientId, sockaddr_in>& peers,
@@ -180,7 +151,7 @@ void run_server_mode(const AppConfig& config, bool listen_mode) {
     kage::sync::configure_server(registry);
     const SyncSchema schema = define_schema(registry);
     register_game_jobs(registry);
-    FpsReplayRecorder replay_recorder(registry, config.replay_dir);
+    FpsReplayRecorder replay_recorder(config.replay_dir);
     FpsReplayServer replay_server(replay_recorder, config.replay_port);
 
     SocketHandle socket = make_udp_socket(config.port);
@@ -192,7 +163,7 @@ void run_server_mode(const AppConfig& config, bool listen_mode) {
 
     kage::sync::ReplicationServer server(make_fps_server_options(config, peers, downstream_links, link_time_seconds, pending_spawns));
     replay_recorder.attach(server);
-    auto replay_death_subscription = subscribe_replay_deaths(server, replay_server);
+    replay_server.attach(server);
 
     std::unique_ptr<ListenServerFrontend> listen;
     if (listen_mode) {

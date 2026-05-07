@@ -58,7 +58,7 @@ bool ServerInputBuffer::process_packet_payload(
         trace->baseline_frame = baseline_frame;
     }
 
-    std::vector<std::uint8_t> previous(ops.quantized_size, 0U);
+    std::vector<std::uint8_t> previous(ops.serialization.quantized_size, 0U);
     if (baseline_frame > input_ack_frame_) {
         input_ack_frame_ = baseline_frame;
     }
@@ -67,13 +67,13 @@ bool ServerInputBuffer::process_packet_payload(
         if (!input_frames_.empty()) {
             const InputFrame& baseline = input_frames_[baseline_frame & (input_frames_.size() - 1U)];
             if (baseline.valid && baseline.frame == baseline_frame &&
-                baseline.bytes.size() == ops.quantized_size) {
+                baseline.bytes.size() == ops.serialization.quantized_size) {
                 previous = baseline.bytes;
                 found_baseline = true;
             }
         }
         if (!found_baseline && has_latest_input_ && baseline_frame == input_ack_frame_ &&
-            latest_input_.size() == ops.quantized_size) {
+            latest_input_.size() == ops.serialization.quantized_size) {
             previous = latest_input_;
             found_baseline = true;
         }
@@ -89,11 +89,11 @@ bool ServerInputBuffer::process_packet_payload(
         input_frames_.resize(capacity_frames);
     }
 
-    std::vector<std::uint8_t> decoded(ops.quantized_size, 0U);
+    std::vector<std::uint8_t> decoded(ops.serialization.quantized_size, 0U);
     for (std::uint16_t index = 0; index < input_count; ++index) {
         const SyncFrame frame = first_input_frame + static_cast<SyncFrame>(index);
         const std::uint8_t* previous_bytes = index == 0U && first_input_full ? nullptr : previous.data();
-        if (!ops.deserialize(packet, previous_bytes, decoded.data(), nullptr)) {
+        if (!ops.serialization.deserialize(packet, previous_bytes, decoded.data(), nullptr)) {
             return false;
         }
         if (trace != nullptr) {

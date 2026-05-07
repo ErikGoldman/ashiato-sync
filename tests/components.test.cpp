@@ -200,10 +200,10 @@ TEST_CASE("sync component traits provide type-erased quantization and serializat
 
     const NetworkedPosition position{1.0f, 2.0f};
     std::array<std::uint8_t, sizeof(kage_sync_tests::QuantizedNetworkedPosition)> quantized{};
-    ops->quantize(&position, quantized.data());
+    ops->serialization.quantize(&position, quantized.data());
 
     ecs::BitBuffer payload;
-    ops->serialize(nullptr, quantized.data(), payload, nullptr);
+    ops->serialization.serialize(nullptr, quantized.data(), payload, nullptr);
     const NetworkedPayload fields = read_networked_payload(payload);
     REQUIRE_FALSE(fields.delta);
     REQUIRE(fields.x == 10);
@@ -211,15 +211,15 @@ TEST_CASE("sync component traits provide type-erased quantization and serializat
 
     payload.reset_read();
     std::array<std::uint8_t, sizeof(kage_sync_tests::QuantizedNetworkedPosition)> decoded{};
-    REQUIRE(ops->deserialize(payload, nullptr, decoded.data(), nullptr));
+    REQUIRE(ops->serialization.deserialize(payload, nullptr, decoded.data(), nullptr));
 
     NetworkedPosition dequantized;
-    ops->dequantize(decoded.data(), &dequantized);
+    ops->serialization.dequantize(decoded.data(), &dequantized);
     REQUIRE(dequantized.x == 1.0f);
     REQUIRE(dequantized.y == 2.0f);
 
     const ecs::Entity entity = registry.create();
-    REQUIRE(ops->push_to_ecs(registry, entity, decoded.data()));
+    REQUIRE(ops->serialization.push_to_registry(registry, entity, decoded.data()));
     REQUIRE(registry.contains<NetworkedPosition>(entity));
     REQUIRE(registry.remove(entity, position_component));
     REQUIRE_FALSE(registry.contains<NetworkedPosition>(entity));

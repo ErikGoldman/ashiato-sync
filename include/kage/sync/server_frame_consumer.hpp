@@ -10,39 +10,43 @@ namespace kage::sync {
 
 class ReplicationServer;
 
-struct ServerFrameDelta {
+struct ServerDestroyedReplicatedSlot {
+    std::uint32_t slot = 0;
+    ecs::Entity entity;
+};
+
+struct ServerDestroyedReplicatedSlotView {
+    const ServerDestroyedReplicatedSlot* data = nullptr;
+    std::size_t size = 0;
+
+    const ServerDestroyedReplicatedSlot* begin() const noexcept { return data; }
+    const ServerDestroyedReplicatedSlot* end() const noexcept { return data == nullptr ? nullptr : data + size; }
+    bool empty() const noexcept { return size == 0U; }
+};
+
+struct ServerRegistryDirtyFrame {
     ReplicationServer& server;
     ecs::Registry& registry;
-    SyncFrame frame = 0;
     ecs::Registry::DirtyView dirty;
-    QueuedSyncCueView cues;
-};
-
-struct ServerFrameFlushContext {
-    ReplicationServer& server;
-    ecs::Registry& registry;
     SyncFrame frame = 0;
-    double dt_seconds = 0.0;
-    std::uint32_t completed_frames = 0;
+    QueuedSyncCueView cues;
+    ServerDestroyedReplicatedSlotView destroyed_slots;
 };
 
-class ServerFrameConsumer {
+class ServerRegistryDirtyFrameListener {
 public:
-    virtual ~ServerFrameConsumer() = default;
-    virtual void accumulate_frame_delta(const ServerFrameDelta& frame) = 0;
-    virtual void flush(const ServerFrameFlushContext& context) {
-        (void)context;
-    }
+    virtual ~ServerRegistryDirtyFrameListener() = default;
+    virtual void on_server_registry_dirty_frame(const ServerRegistryDirtyFrame& frame) = 0;
 };
 
-class ServerFrameConsumerSubscription {
+class ServerRegistryDirtyFrameSubscription {
 public:
-    ServerFrameConsumerSubscription() = default;
-    ServerFrameConsumerSubscription(const ServerFrameConsumerSubscription&) = delete;
-    ServerFrameConsumerSubscription& operator=(const ServerFrameConsumerSubscription&) = delete;
-    ServerFrameConsumerSubscription(ServerFrameConsumerSubscription&& other) noexcept;
-    ServerFrameConsumerSubscription& operator=(ServerFrameConsumerSubscription&& other) noexcept;
-    ~ServerFrameConsumerSubscription();
+    ServerRegistryDirtyFrameSubscription() = default;
+    ServerRegistryDirtyFrameSubscription(const ServerRegistryDirtyFrameSubscription&) = delete;
+    ServerRegistryDirtyFrameSubscription& operator=(const ServerRegistryDirtyFrameSubscription&) = delete;
+    ServerRegistryDirtyFrameSubscription(ServerRegistryDirtyFrameSubscription&& other) noexcept;
+    ServerRegistryDirtyFrameSubscription& operator=(ServerRegistryDirtyFrameSubscription&& other) noexcept;
+    ~ServerRegistryDirtyFrameSubscription();
 
     void reset();
     bool active() const noexcept;
@@ -52,15 +56,59 @@ private:
 
     struct Entry {
         std::uint64_t id = 0;
-        ServerFrameConsumer* consumer = nullptr;
+        ServerRegistryDirtyFrameListener* listener = nullptr;
     };
 
     struct State {
         std::uint64_t next_id = 1;
-        std::vector<Entry> consumers;
+        std::vector<Entry> listeners;
     };
 
-    ServerFrameConsumerSubscription(std::shared_ptr<State> state, std::uint64_t id);
+    ServerRegistryDirtyFrameSubscription(std::shared_ptr<State> state, std::uint64_t id);
+
+    std::weak_ptr<State> state_;
+    std::uint64_t id_ = 0;
+};
+
+struct ServerFrameBatch {
+    ReplicationServer& server;
+    ecs::Registry& registry;
+    double dt_seconds = 0.0;
+    std::uint32_t completed_frames = 0;
+};
+
+class ServerFrameBatchListener {
+public:
+    virtual ~ServerFrameBatchListener() = default;
+    virtual void on_server_frame_batch_complete(const ServerFrameBatch& batch) = 0;
+};
+
+class ServerFrameBatchListenerSubscription {
+public:
+    ServerFrameBatchListenerSubscription() = default;
+    ServerFrameBatchListenerSubscription(const ServerFrameBatchListenerSubscription&) = delete;
+    ServerFrameBatchListenerSubscription& operator=(const ServerFrameBatchListenerSubscription&) = delete;
+    ServerFrameBatchListenerSubscription(ServerFrameBatchListenerSubscription&& other) noexcept;
+    ServerFrameBatchListenerSubscription& operator=(ServerFrameBatchListenerSubscription&& other) noexcept;
+    ~ServerFrameBatchListenerSubscription();
+
+    void reset();
+    bool active() const noexcept;
+
+private:
+    friend class ReplicationServer;
+
+    struct Entry {
+        std::uint64_t id = 0;
+        ServerFrameBatchListener* listener = nullptr;
+    };
+
+    struct State {
+        std::uint64_t next_id = 1;
+        std::vector<Entry> listeners;
+    };
+
+    ServerFrameBatchListenerSubscription(std::shared_ptr<State> state, std::uint64_t id);
 
     std::weak_ptr<State> state_;
     std::uint64_t id_ = 0;

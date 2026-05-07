@@ -35,12 +35,75 @@ void validate_tag_replication(const ecs::Registry& registry, const SyncTagReplic
 
 void register_components(ecs::Registry& registry) {
     registry.register_component<SyncSettings>("kage.sync.SyncSettings");
+    registry.register_component<FrameInfo>("kage.sync.FrameInfo");
+    registry.register_component<CueDispatcher>("kage.sync.CueDispatcher");
     registry.register_component<SyncAuthority>("kage.sync.SyncAuthority");
     registry.register_component<Replicated>("kage.sync.Replicated");
     registry.register_component<NetworkOwner>("kage.sync.NetworkOwner");
     registry.register_component<FractionalTickSampled>("kage.sync.FractionalTickSampled");
     registry.register_component<NoResim>("kage.sync.NoResim");
     registry.register_component<NoSimulate>("kage.sync.NoSimulate");
+}
+
+CueDispatcher::CueDispatcher(const CueDispatcher& other) {
+    std::lock_guard<std::mutex> lock(other.mutex_);
+    cues_ = other.cues_;
+}
+
+CueDispatcher& CueDispatcher::operator=(const CueDispatcher& other) {
+    if (this != &other) {
+        std::scoped_lock lock(mutex_, other.mutex_);
+        cues_ = other.cues_;
+    }
+    return *this;
+}
+
+CueDispatcher::CueDispatcher(CueDispatcher&& other) noexcept {
+    std::lock_guard<std::mutex> lock(other.mutex_);
+    cues_ = std::move(other.cues_);
+}
+
+CueDispatcher& CueDispatcher::operator=(CueDispatcher&& other) noexcept {
+    if (this != &other) {
+        std::scoped_lock lock(mutex_, other.mutex_);
+        cues_ = std::move(other.cues_);
+    }
+    return *this;
+}
+
+bool CueDispatcher::enqueue(QueuedSyncCue cue) {
+    if (!cue.entity || cue.relevance_seconds < 0.0f) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    cues_.push_back(std::move(cue));
+    return true;
+}
+
+std::vector<QueuedSyncCue> CueDispatcher::drain() {
+    std::vector<QueuedSyncCue> drained;
+    std::lock_guard<std::mutex> lock(mutex_);
+    drained.swap(cues_);
+    return drained;
+}
+
+void CueDispatcher::clear() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    cues_.clear();
+}
+
+QueuedSyncCueView CueDispatcher::view() const noexcept {
+    return QueuedSyncCueView{
+        cues_.empty() ? nullptr : cues_.data(),
+        cues_.size()};
+}
+
+bool CueDispatcher::empty() const noexcept {
+    return cues_.empty();
+}
+
+std::size_t CueDispatcher::size() const noexcept {
+    return cues_.size();
 }
 
 const SyncComponentOps* find_component_ops(const ecs::Registry& registry, ecs::Entity component) {
@@ -142,12 +205,12 @@ SyncArchetypeId define_archetype(ecs::Registry& registry, SyncArchetypeDesc desc
         if (found_ops == settings.component_ops.end()) {
             throw std::invalid_argument("sync archetype references a component without sync traits");
         }
-        if (found_ops->second.quantized_size == 0 ||
-            found_ops->second.quantized_size > SyncComponentOps::QuantizedBytes::max_size) {
+        if (found_ops->second.serialization.quantized_size == 0 ||
+            found_ops->second.serialization.quantized_size > SyncComponentOps::QuantizedBytes::max_size) {
             throw std::invalid_argument("sync archetype references a component with invalid quantized size");
         }
         component_offsets.push_back(static_cast<std::uint32_t>(total_quantized_bytes));
-        total_quantized_bytes += found_ops->second.quantized_size;
+        total_quantized_bytes += found_ops->second.serialization.quantized_size;
         if (total_quantized_bytes > max_archetype_quantized_bytes) {
             throw std::invalid_argument("sync archetype quantized state exceeds maximum size");
         }

@@ -1032,10 +1032,10 @@ inline void update_server_world(
             BallBounceCue cue;
             cue.sequence = static_cast<std::uint32_t>(++report.bounce_cues_emitted);
             cue.energy = 255U;
-            (void)emit_cue(
-                registry,
-                ball.entity,
+            (void)registry.write<CueDispatcher>().emit(
+                registry.get<SyncSettings>(),
                 static_cast<SyncFrame>(report.ticks + 1U),
+                ball.entity,
                 cue,
                 0.25f);
             add_poison(registry, ball.entity, config, rng, report);

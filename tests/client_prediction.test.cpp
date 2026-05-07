@@ -168,11 +168,19 @@ TEST_CASE("predicted client rolls back locally predicted cues missing from autho
     options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
     options.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
     kage::sync::ReplicationClient client(options);
-    client.simulation_job<PredictedPosition, kage::sync::SyncSettings>(registry, 0).each(
-        [&](ecs::Entity entity, PredictedPosition& position, kage::sync::SyncSettings& settings) {
+    client.simulation_job<
+        PredictedPosition,
+        kage::sync::SyncSettings,
+        kage::sync::FrameInfo,
+        kage::sync::CueDispatcher>(registry, 0).each(
+        [&](ecs::Entity entity,
+            PredictedPosition& position,
+            kage::sync::SyncSettings& settings,
+            kage::sync::FrameInfo& frame,
+            kage::sync::CueDispatcher& cues) {
             position.x += 1.0f;
             if (emit_prediction_cue) {
-                REQUIRE(kage::sync::emit_cue(settings, entity, TestCue{7}, 1.0f));
+                REQUIRE(cues.emit(settings, frame, entity, TestCue{7}, 1.0f));
                 emit_prediction_cue = false;
             }
         });
@@ -206,12 +214,20 @@ TEST_CASE("predicted client keeps locally predicted cues replayed during resimul
     options.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
     kage::sync::ReplicationClient client(options);
     int prediction_jobs = 0;
-    client.simulation_job<PredictedPosition, kage::sync::SyncSettings>(registry, 0).each(
-        [&](ecs::Entity entity, PredictedPosition& position, kage::sync::SyncSettings& settings) {
+    client.simulation_job<
+        PredictedPosition,
+        kage::sync::SyncSettings,
+        kage::sync::FrameInfo,
+        kage::sync::CueDispatcher>(registry, 0).each(
+        [&](ecs::Entity entity,
+            PredictedPosition& position,
+            kage::sync::SyncSettings& settings,
+            kage::sync::FrameInfo& frame,
+            kage::sync::CueDispatcher& cues) {
             position.x += 1.0f;
             ++prediction_jobs;
             if (prediction_jobs == 2 || prediction_jobs == 3) {
-                REQUIRE(kage::sync::emit_cue(settings, entity, TestCue{5}, 1.0f));
+                REQUIRE(cues.emit(settings, frame, entity, TestCue{5}, 1.0f));
             }
         });
 
@@ -297,11 +313,19 @@ TEST_CASE("predicted cue rollback tracing records server mismatch reason") {
     kage::sync::ReplicationClientOptions options;
     options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
     kage::sync::ReplicationClient client(options);
-    client.simulation_job<PredictedPosition, kage::sync::SyncSettings>(registry, 0).each(
-        [&](ecs::Entity entity, PredictedPosition& position, kage::sync::SyncSettings& settings) {
+    client.simulation_job<
+        PredictedPosition,
+        kage::sync::SyncSettings,
+        kage::sync::FrameInfo,
+        kage::sync::CueDispatcher>(registry, 0).each(
+        [&](ecs::Entity entity,
+            PredictedPosition& position,
+            kage::sync::SyncSettings& settings,
+            kage::sync::FrameInfo& frame,
+            kage::sync::CueDispatcher& cues) {
             position.x += 1.0f;
             if (emit_prediction_cue) {
-                REQUIRE(kage::sync::emit_cue(settings, entity, TestCue{7}, 1.0f));
+                REQUIRE(cues.emit(settings, frame, entity, TestCue{7}, 1.0f));
                 emit_prediction_cue = false;
             }
         });
@@ -342,12 +366,20 @@ TEST_CASE("predicted cue rollback tracing records resim omission reason") {
     options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
     options.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
     kage::sync::ReplicationClient client(options);
-    client.simulation_job<PredictedPosition, kage::sync::SyncSettings>(registry, 0).each(
-        [&](ecs::Entity entity, PredictedPosition& position, kage::sync::SyncSettings& settings) {
+    client.simulation_job<
+        PredictedPosition,
+        kage::sync::SyncSettings,
+        kage::sync::FrameInfo,
+        kage::sync::CueDispatcher>(registry, 0).each(
+        [&](ecs::Entity entity,
+            PredictedPosition& position,
+            kage::sync::SyncSettings& settings,
+            kage::sync::FrameInfo& frame,
+            kage::sync::CueDispatcher& cues) {
             position.x += 1.0f;
             ++prediction_jobs;
             if (prediction_jobs == 2 || emit_during_resim) {
-                REQUIRE(kage::sync::emit_cue(settings, entity, TestCue{9}, 1.0f));
+                REQUIRE(cues.emit(settings, frame, entity, TestCue{9}, 1.0f));
             }
         });
 

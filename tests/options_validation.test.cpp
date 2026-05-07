@@ -42,13 +42,13 @@ static_assert(std::is_move_constructible<kage::sync::ReplicationClient>::value,
 static_assert(std::is_move_assignable<kage::sync::ReplicationClient>::value,
               "ReplicationClient must remain movable");
 static_assert(!std::is_copy_constructible<kage::sync::ReplicationServer>::value,
-              "ReplicationServer must remain move-only");
+              "ReplicationServer must remain non-copyable");
 static_assert(!std::is_copy_assignable<kage::sync::ReplicationServer>::value,
-              "ReplicationServer must remain move-only");
-static_assert(std::is_move_constructible<kage::sync::ReplicationServer>::value,
-              "ReplicationServer must remain movable");
-static_assert(std::is_move_assignable<kage::sync::ReplicationServer>::value,
-              "ReplicationServer must remain movable");
+              "ReplicationServer must remain non-copyable");
+static_assert(!std::is_move_constructible<kage::sync::ReplicationServer>::value,
+              "ReplicationServer must remain non-movable");
+static_assert(!std::is_move_assignable<kage::sync::ReplicationServer>::value,
+              "ReplicationServer must remain non-movable");
 
 TEST_CASE("replication server rejects invalid option values") {
     require_invalid_server_options([](auto& options) { options.mtu_bytes = 0; });

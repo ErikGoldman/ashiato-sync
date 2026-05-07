@@ -32,6 +32,12 @@ using ClientEntityNetworkId = std::uint64_t;
 using TransportFn = std::function<void(ClientId, const ecs::BitBuffer&)>;
 using ConnectHandlerFn = std::function<bool(const std::string&, ClientId&, std::string&)>;
 
+struct SyncSettings;
+struct QueuedSyncCueView;
+class ReplicationClient;
+class ReplicationReplayStreamer;
+class ReplicationServer;
+
 struct ReplicationPriorityObject {
     ecs::Entity entity;
 };
@@ -296,7 +302,7 @@ struct EntityReferenceContext {
     using ClientEntityNetworkIdForWireFn = ClientEntityNetworkId (*)(void*, std::uint32_t);
     using ClientLocalEntityFn = ecs::Entity (*)(void*, ClientEntityNetworkId);
 
-    void* user = nullptr;
+    void* userContext = nullptr;
     std::size_t network_entity_id_tier0_bits = protocol::default_network_entity_id_tier0_bits;
     ServerNetworkIdForEntityFn server_network_id_for_entity = nullptr;
     ClientEntityNetworkIdForWireFn client_entity_network_id_for_wire = nullptr;
@@ -306,21 +312,21 @@ struct EntityReferenceContext {
         if (!entity || server_network_id_for_entity == nullptr) {
             return 0U;
         }
-        return server_network_id_for_entity(user, entity);
+        return server_network_id_for_entity(userContext, entity);
     }
 
     ClientEntityNetworkId network_id_for_wire(std::uint32_t wire_network_id) const {
         if (wire_network_id == 0U || client_entity_network_id_for_wire == nullptr) {
             return invalid_client_entity_network_id;
         }
-        return client_entity_network_id_for_wire(user, wire_network_id);
+        return client_entity_network_id_for_wire(userContext, wire_network_id);
     }
 
     ecs::Entity local_entity(ClientEntityNetworkId network_id) const {
         if (network_id == invalid_client_entity_network_id || client_local_entity == nullptr) {
             return ecs::Entity{};
         }
-        return client_local_entity(user, network_id);
+        return client_local_entity(userContext, network_id);
     }
 };
 
@@ -374,11 +380,6 @@ inline bool read_entity_reference(
 
 struct SyncComponentOps {
     using QuantizedBytes = kage::sync::QuantizedBytes;
-    using QuantizeFn = void (*)(const void*, std::uint8_t*);
-    using DequantizeFn = void (*)(const std::uint8_t*, void*);
-    using PushToEcsFn = bool (*)(ecs::Registry&, ecs::Entity, const std::uint8_t*);
-    using SerializeFn = void (*)(const std::uint8_t*, const std::uint8_t*, ecs::BitBuffer&, EntityReferenceContext*);
-    using DeserializeFn = bool (*)(ecs::BitBuffer&, const std::uint8_t*, std::uint8_t*, EntityReferenceContext*);
     using InterpolateFn = bool (*)(const std::uint8_t*, const std::uint8_t*, float, std::uint8_t*);
     using ComputeErrorFn = bool (*)(const std::uint8_t*, const std::uint8_t*, QuantizedBytes&);
     using ApplyErrorFn = bool (*)(const std::uint8_t*, const QuantizedBytes&, QuantizedBytes&);
@@ -388,14 +389,8 @@ struct SyncComponentOps {
     using TraceFn = void (*)(const std::uint8_t*, SyncTraceStringBuilder&);
 #endif
 
-    std::string name;
-    std::size_t quantized_size = 0;
+    ecs::ComponentSerializationOps serialization;
     std::size_t error_size = 0;
-    QuantizeFn quantize = nullptr;
-    DequantizeFn dequantize = nullptr;
-    PushToEcsFn push_to_ecs = nullptr;
-    SerializeFn serialize = nullptr;
-    DeserializeFn deserialize = nullptr;
     bool references_entities = false;
     InterpolateFn interpolate = nullptr;
     ComputeErrorFn compute_error = nullptr;
@@ -409,6 +404,7 @@ struct SyncComponentOps {
 
 struct SyncCueOps {
     using SerializeFn = void (*)(const void*, ecs::BitBuffer&, EntityReferenceContext*);
+    using DeserializeValueFn = std::shared_ptr<void> (*)(const ecs::BitBuffer&, EntityReferenceContext*);
     using PlayFn = bool (*)(ecs::Registry&, ecs::Entity, const ecs::BitBuffer&, float, SyncFrame, EntityReferenceContext*);
     using RollbackFn = bool (*)(ecs::Registry&, ecs::Entity, const ecs::BitBuffer&, EntityReferenceContext*);
     using EqualsFn = bool (*)(const ecs::BitBuffer&, const ecs::BitBuffer&, EntityReferenceContext*);
@@ -417,6 +413,7 @@ struct SyncCueOps {
 #endif
 
     SerializeFn serialize = nullptr;
+    DeserializeValueFn deserialize_value = nullptr;
     PlayFn play = nullptr;
     RollbackFn rollback = nullptr;
     EqualsFn equals = nullptr;
@@ -437,9 +434,50 @@ struct QueuedSyncCue {
     bool only_replicate_to_owner = false;
 };
 
-struct SyncCueQueue {
-    mutable std::mutex mutex;
-    std::vector<QueuedSyncCue> cues;
+struct FrameInfo {
+    SyncFrame frame = 0;
+};
+
+class CueDispatcher {
+public:
+    CueDispatcher() = default;
+    CueDispatcher(const CueDispatcher& other);
+    CueDispatcher& operator=(const CueDispatcher& other);
+
+    CueDispatcher(CueDispatcher&& other) noexcept;
+    CueDispatcher& operator=(CueDispatcher&& other) noexcept;
+
+    template <typename T>
+    bool emit(
+        const SyncSettings& settings,
+        const FrameInfo& frame,
+        ecs::Entity entity,
+        const T& cue,
+        float relevance_seconds,
+        bool only_replicate_to_owner = false);
+
+    template <typename T>
+    bool emit(
+        const SyncSettings& settings,
+        SyncFrame frame,
+        ecs::Entity entity,
+        const T& cue,
+        float relevance_seconds,
+        bool only_replicate_to_owner = false);
+
+private:
+    friend class ReplicationClient;
+    friend class ReplicationReplayStreamer;
+    friend class ReplicationServer;
+
+    bool enqueue(QueuedSyncCue cue);
+    std::vector<QueuedSyncCue> drain();
+    void clear();
+    QueuedSyncCueView view() const noexcept;
+    bool empty() const noexcept;
+    std::size_t size() const noexcept;
+    mutable std::mutex mutex_;
+    std::vector<QueuedSyncCue> cues_;
 };
 
 struct SyncArchetype {
@@ -464,9 +502,7 @@ struct QuantizedFrameData {
 };
 
 struct SyncSettings {
-    SyncSettings()
-        : cue_queue(std::make_shared<SyncCueQueue>()) {}
-
+    SyncSettings() = default;
     SyncSettings(const SyncSettings&) = default;
     SyncSettings& operator=(const SyncSettings&) = default;
 
@@ -491,7 +527,7 @@ struct SyncSettings {
         component_ops.swap(other.component_ops);
         cue_ops.swap(other.cue_ops);
         cue_type_ids.swap(other.cue_type_ids);
-        cue_queue.swap(other.cue_queue);
+        swap(fixed_dt_seconds, other.fixed_dt_seconds);
     }
 
     SyncRole role = SyncRole::Server;
@@ -501,7 +537,7 @@ struct SyncSettings {
     std::unordered_map<std::uint64_t, SyncComponentOps> component_ops;
     std::vector<SyncCueOps> cue_ops;
     std::unordered_map<std::type_index, SyncCueTypeId> cue_type_ids;
-    std::shared_ptr<SyncCueQueue> cue_queue;
+    double fixed_dt_seconds = 1.0 / 60.0;
 };
 
 struct QueuedSyncCueView {
@@ -574,6 +610,12 @@ namespace ecs {
 
 template <>
 struct is_singleton_component<kage::sync::SyncSettings> : std::true_type {};
+
+template <>
+struct is_singleton_component<kage::sync::FrameInfo> : std::true_type {};
+
+template <>
+struct is_singleton_component<kage::sync::CueDispatcher> : std::true_type {};
 
 template <>
 struct is_singleton_component<kage::sync::SyncAuthority> : std::true_type {};

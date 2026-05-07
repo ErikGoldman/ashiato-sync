@@ -72,6 +72,8 @@ template <typename View>
 void simulate_fire(
     View& view,
     kage::sync::SyncSettings& sync,
+    const kage::sync::FrameInfo& frame,
+    kage::sync::CueDispatcher& cues,
     const kage::sync::SyncAuthority& authority,
     ecs::Entity shooter,
     const FpsTransform& transform,
@@ -118,7 +120,7 @@ void simulate_fire(
 
     if (best_entity && best_combat != nullptr) {
         if (authority.is_authoritative()) {
-            (void)kage::sync::emit_cue(sync, best_entity, PlayerHitCue{kage::sync::EntityReference{shooter}}, 0.5f);
+            (void)cues.emit(sync, frame, best_entity, PlayerHitCue{kage::sync::EntityReference{shooter}}, 0.5f);
 
             const BotBrain* brain = view.template try_get<const BotBrain>(shooter);
             const bool stun_attack = brain != nullptr && brain->stun_attacks != 0U;
@@ -127,18 +129,14 @@ void simulate_fire(
             } else {
                 best_combat->health = static_cast<std::int16_t>(std::max<int>(0, best_combat->health - shot_damage));
             }
-            (void)kage::sync::emit_cue(
-                sync,
-                shooter,
+            (void)cues.emit(sync, frame, shooter,
                 HitConfirmCue{kage::sync::EntityReference{best_entity}},
                 0.5f,
                 true);
             if (!stun_attack && best_combat->health <= 0 && best_combat->dead == 0U) {
                 best_combat->dead = 1;
                 best_combat->respawn_remaining = respawn_seconds;
-                (void)kage::sync::emit_cue(
-                    sync,
-                    best_entity,
+                (void)cues.emit(sync, frame, best_entity,
                     PlayerDeathCue{kage::sync::EntityReference{shooter}},
                     0.75f,
                     true);
@@ -151,9 +149,7 @@ void simulate_fire(
             }
         }
     } else if (wall_t < shot_range) {
-        (void)kage::sync::emit_cue(
-            sync,
-            shooter,
+        (void)cues.emit(sync, frame, shooter,
             SurfaceHitCue{add(origin, scale(dir, wall_t)), wall_normal},
             0.5f);
     }
@@ -190,6 +186,8 @@ void simulate_character_step(
     FpsCombatState& combat,
     const FpsInput& input,
     kage::sync::SyncSettings& sync,
+    const kage::sync::FrameInfo& frame,
+    kage::sync::CueDispatcher& cues,
     const kage::sync::SyncAuthority& authority,
     bool stunned) {
     if (combat.dead != 0U) {
@@ -215,8 +213,8 @@ void simulate_character_step(
         combat.last_fire_seq = input.fire_seq;
         if (combat.reload_remaining <= 0.0f && combat.ammo > 0U) {
             --combat.ammo;
-            (void)kage::sync::emit_cue(sync, entity, ShotCue{}, 0.35f);
-            simulate_fire(view, sync, authority, entity, transform, input.shot_interpolation_frame);
+            (void)cues.emit(sync, frame, entity, ShotCue{}, 0.35f);
+            simulate_fire(view, sync, frame, cues, authority, entity, transform, input.shot_interpolation_frame);
         }
     }
 }
@@ -310,7 +308,7 @@ void register_game_jobs(ecs::Registry& registry) {
         input.move_y = dot(move_dir, forward);
     });;
 
-    auto character_job = registry.job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>(0);
+    auto character_job = registry.job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::FrameInfo, kage::sync::CueDispatcher, const kage::sync::SyncAuthority>(0);
         character_job.single_thread().without_tags<const FpsStunned>().access_other_entities<const FpsVisual, const FpsTransformHistory, const kage::sync::NetworkOwner, const BotBrain, FpsStunState>().structural<FpsStunned, FpsStunState>().each([](
         auto& view,
         ecs::Entity entity,
@@ -320,12 +318,14 @@ void register_game_jobs(ecs::Registry& registry) {
         FpsDeathInfo& death,
         const FpsInput& input,
         kage::sync::SyncSettings& sync,
+        const kage::sync::FrameInfo& frame,
+        kage::sync::CueDispatcher& cues,
         const kage::sync::SyncAuthority& authority) {
         (void)death;
-        simulate_character_step(view, entity, transform, velocity, combat, input, sync, authority, false);
+        simulate_character_step(view, entity, transform, velocity, combat, input, sync, frame, cues, authority, false);
     });;
 
-    auto stunned_character_job = registry.job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>(0);
+    auto stunned_character_job = registry.job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::FrameInfo, kage::sync::CueDispatcher, const kage::sync::SyncAuthority>(0);
         stunned_character_job.single_thread().with_tags<const FpsStunned>().access_other_entities<const FpsVisual, const FpsTransformHistory, const kage::sync::NetworkOwner, const BotBrain, FpsStunState>().structural<FpsStunned, FpsStunState>().each([](
         auto& view,
         ecs::Entity entity,
@@ -335,9 +335,11 @@ void register_game_jobs(ecs::Registry& registry) {
         FpsDeathInfo& death,
         const FpsInput& input,
         kage::sync::SyncSettings& sync,
+        const kage::sync::FrameInfo& frame,
+        kage::sync::CueDispatcher& cues,
         const kage::sync::SyncAuthority& authority) {
         (void)death;
-        simulate_character_step(view, entity, transform, velocity, combat, input, sync, authority, true);
+        simulate_character_step(view, entity, transform, velocity, combat, input, sync, frame, cues, authority, true);
     });;
 
     auto history_job = registry.job<const FpsTransform, FpsTransformHistory, const FpsServerFrame>(1);
@@ -422,7 +424,7 @@ void register_game_jobs(ecs::Registry& registry, kage::sync::ReplicationClient& 
         input.move_y = dot(move_dir, forward);
     });;
 
-    auto character_job = client.simulation_job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>(registry, 0);
+    auto character_job = client.simulation_job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::FrameInfo, kage::sync::CueDispatcher, const kage::sync::SyncAuthority>(registry, 0);
         character_job.single_thread().without_tags<const FpsStunned>().access_other_entities<const FpsVisual, const FpsTransformHistory, const kage::sync::NetworkOwner, const BotBrain>().each([](
         auto& view,
         ecs::Entity entity,
@@ -432,12 +434,14 @@ void register_game_jobs(ecs::Registry& registry, kage::sync::ReplicationClient& 
         FpsDeathInfo& death,
         const FpsInput& input,
         kage::sync::SyncSettings& sync,
+        const kage::sync::FrameInfo& frame,
+        kage::sync::CueDispatcher& cues,
         const kage::sync::SyncAuthority& authority) {
         (void)death;
-        simulate_character_step(view, entity, transform, velocity, combat, input, sync, authority, false);
+        simulate_character_step(view, entity, transform, velocity, combat, input, sync, frame, cues, authority, false);
     });;
 
-    auto stunned_character_job = client.simulation_job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>(registry, 0);
+    auto stunned_character_job = client.simulation_job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::FrameInfo, kage::sync::CueDispatcher, const kage::sync::SyncAuthority>(registry, 0);
         stunned_character_job.single_thread().with_tags<const FpsStunned>().access_other_entities<const FpsVisual, const FpsTransformHistory, const kage::sync::NetworkOwner, const BotBrain>().each([](
         auto& view,
         ecs::Entity entity,
@@ -447,9 +451,11 @@ void register_game_jobs(ecs::Registry& registry, kage::sync::ReplicationClient& 
         FpsDeathInfo& death,
         const FpsInput& input,
         kage::sync::SyncSettings& sync,
+        const kage::sync::FrameInfo& frame,
+        kage::sync::CueDispatcher& cues,
         const kage::sync::SyncAuthority& authority) {
         (void)death;
-        simulate_character_step(view, entity, transform, velocity, combat, input, sync, authority, true);
+        simulate_character_step(view, entity, transform, velocity, combat, input, sync, frame, cues, authority, true);
     });;
 }
 

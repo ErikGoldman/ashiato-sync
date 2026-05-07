@@ -173,7 +173,7 @@ void append_trace_component_data(
     const std::uint8_t* bytes,
     SyncTraceEvent& event) {
     if (component_index < archetype.component_ops.size()) {
-        event.component_name = archetype.component_ops[component_index].name;
+        event.component_name = archetype.component_ops[component_index].serialization.name;
     }
 #ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
     if (tracer == nullptr || !tracer->frame_data_enabled() || bytes == nullptr ||
@@ -201,7 +201,7 @@ void append_trace_input_component_data(
     const SyncComponentOps& ops,
     const std::uint8_t* bytes,
     SyncTraceEvent& event) {
-    event.component_name = ops.name;
+    event.component_name = ops.serialization.name;
 #ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
     if (tracer == nullptr || !tracer->frame_data_enabled() || bytes == nullptr || ops.trace == nullptr) {
         return;
@@ -222,7 +222,7 @@ void append_trace_component_name(
     std::size_t component_index,
     SyncTraceEvent& event) {
     if (component_index < archetype.component_ops.size()) {
-        event.component_name = archetype.component_ops[component_index].name;
+        event.component_name = archetype.component_ops[component_index].serialization.name;
     }
 }
 
@@ -306,14 +306,14 @@ bool ReplicatedEntityUpdateView::try_get(
 
     const SyncSettings& settings = registry.get<SyncSettings>();
     const auto found_ops = settings.component_ops.find(component.value);
-    if (found_ops == settings.component_ops.end() || found_ops->second.dequantize == nullptr) {
+    if (found_ops == settings.component_ops.end() || found_ops->second.serialization.dequantize == nullptr) {
         return false;
     }
 
-    if (found->bytes.size() != found_ops->second.quantized_size) {
+    if (found->bytes.size() != found_ops->second.serialization.quantized_size) {
         return false;
     }
-    found_ops->second.dequantize(found->bytes.data(), out);
+    found_ops->second.serialization.dequantize(found->bytes.data(), out);
     return true;
 }
 
@@ -354,14 +354,14 @@ bool FractionalTickSample::try_get_sampled_value(
 
     const SyncSettings& settings = registry.get<SyncSettings>();
     const auto found_ops = settings.component_ops.find(component.value);
-    if (found_ops == settings.component_ops.end() || found_ops->second.dequantize == nullptr) {
+    if (found_ops == settings.component_ops.end() || found_ops->second.serialization.dequantize == nullptr) {
         return false;
     }
 
-    if (found->bytes.size() != found_ops->second.quantized_size) {
+    if (found->bytes.size() != found_ops->second.serialization.quantized_size) {
         return false;
     }
-    found_ops->second.dequantize(found->bytes.data(), out);
+    found_ops->second.serialization.dequantize(found->bytes.data(), out);
     return true;
 }
 
@@ -1041,12 +1041,12 @@ void ReplicationClient::trace_frame_components(
                 continue;
             }
             const SyncComponentOps& ops = archetype.component_ops[component_index];
-            if (ops.quantize == nullptr) {
+            if (ops.serialization.quantize == nullptr) {
                 continue;
             }
             SyncComponentOps::QuantizedBytes bytes;
-            bytes.resize(ops.quantized_size);
-            ops.quantize(value, bytes.data());
+            bytes.resize(ops.serialization.quantized_size);
+            ops.serialization.quantize(value, bytes.data());
             SyncTraceEvent event = make_client_trace_event(
                 resimulated ? SyncTraceEventType::ResimulatedFrameComponent : SyncTraceEventType::FrameComponent,
                 client_id_,
@@ -1326,6 +1326,7 @@ bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds, ecs::Ru
     if (dt_seconds < 0.0 || !std::isfinite(dt_seconds)) {
         return false;
     }
+    registry.write<SyncSettings>().fixed_dt_seconds = options_.fixed_dt_seconds;
 
     ReplicationClientClock::AdvanceResult advance;
     advance.receive = clock_.advance_receive(dt_seconds);
@@ -1432,6 +1433,7 @@ bool ReplicationClient::run_prediction_frame(ecs::Registry& registry, SyncFrame 
     if (!apply_input_frame(registry, settings, frame)) {
         return false;
     }
+    registry.write<FrameInfo>().frame = frame;
     registry.run_jobs(options);
 
     drain_emitted_prediction_cues(registry, settings, frame, true);
@@ -1928,13 +1930,13 @@ bool ReplicationClient::apply_upsert(
     bool reference_context_initialized = false;
     auto references_for_component = [&]() -> EntityReferenceContext* {
         if (!reference_context_initialized) {
-            reference_context.user = this;
+            reference_context.userContext = this;
             reference_context.network_entity_id_tier0_bits = options_.protocol.network_entity_id_tier0_bits;
-            reference_context.client_entity_network_id_for_wire = [](void* user, std::uint32_t wire_network_id) {
-                return static_cast<ReplicationClient*>(user)->client_entity_network_id_for_wire(wire_network_id);
+            reference_context.client_entity_network_id_for_wire = [](void* userContext, std::uint32_t wire_network_id) {
+                return static_cast<ReplicationClient*>(userContext)->client_entity_network_id_for_wire(wire_network_id);
             };
-            reference_context.client_local_entity = [](void* user, ClientEntityNetworkId network_id) {
-                return static_cast<ReplicationClient*>(user)->local_entity(network_id);
+            reference_context.client_local_entity = [](void* userContext, ClientEntityNetworkId network_id) {
+                return static_cast<ReplicationClient*>(userContext)->local_entity(network_id);
             };
             reference_context_initialized = true;
         }
@@ -1990,7 +1992,7 @@ bool ReplicationClient::apply_upsert(
                 return false;
             }
             const SyncComponentOps& ops = definition.component_ops[component_index];
-            if (ops.deserialize == nullptr || ops.push_to_ecs == nullptr) {
+            if (ops.serialization.deserialize == nullptr || ops.serialization.push_to_registry == nullptr) {
                 return false;
             }
 
@@ -2000,11 +2002,13 @@ bool ReplicationClient::apply_upsert(
             if (received_bytes == nullptr) {
                 return false;
             }
-            if (!ops.deserialize(
+            EntityReferenceContext* references = ops.references_entities ? references_for_component() : nullptr;
+            ecs::ComponentSerializationContext serialization_context{references};
+            if (!ops.serialization.deserialize(
                     packet,
                     nullptr,
                     received_bytes,
-                    ops.references_entities ? references_for_component() : nullptr)) {
+                    references != nullptr ? &serialization_context : nullptr)) {
                 return false;
             }
 #ifdef KAGE_SYNC_ENABLE_TRACING
@@ -2021,7 +2025,7 @@ bool ReplicationClient::apply_upsert(
             }
 #endif
             if (collect_decoded_updates) {
-                baseline.bytes.assign(received_bytes, ops.quantized_size);
+                baseline.bytes.assign(received_bytes, ops.serialization.quantized_size);
             }
             if (collect_decoded_updates) {
                 decoded_updates.push_back(std::move(baseline));
@@ -2076,7 +2080,7 @@ bool ReplicationClient::apply_upsert(
                 return false;
             }
             const SyncComponentOps& ops = definition.component_ops[component_index];
-            if (ops.deserialize == nullptr || ops.push_to_ecs == nullptr) {
+            if (ops.serialization.deserialize == nullptr || ops.serialization.push_to_registry == nullptr) {
                 return false;
             }
 
@@ -2092,11 +2096,13 @@ bool ReplicationClient::apply_upsert(
                 (!buffered_without_selector && decoded_bytes == nullptr)) {
                 return false;
             }
-            if (!ops.deserialize(
+            EntityReferenceContext* references = ops.references_entities ? references_for_component() : nullptr;
+            ecs::ComponentSerializationContext serialization_context{references};
+            if (!ops.serialization.deserialize(
                     packet,
                     previous_bytes,
                     merged_bytes,
-                    ops.references_entities ? references_for_component() : nullptr)) {
+                    references != nullptr ? &serialization_context : nullptr)) {
                 return false;
             }
 #ifdef KAGE_SYNC_ENABLE_TRACING
@@ -2113,10 +2119,10 @@ bool ReplicationClient::apply_upsert(
             }
 #endif
             if (!buffered_without_selector) {
-                std::memcpy(decoded_bytes, merged_bytes, ops.quantized_size);
+                std::memcpy(decoded_bytes, merged_bytes, ops.serialization.quantized_size);
             }
             if (collect_decoded_updates) {
-                baseline.bytes.assign(merged_bytes, ops.quantized_size);
+                baseline.bytes.assign(merged_bytes, ops.serialization.quantized_size);
             }
             if (collect_decoded_updates) {
                 decoded_updates.push_back(std::move(baseline));
@@ -2352,13 +2358,13 @@ bool ReplicationClient::play_cue(
         return false;
     }
     EntityReferenceContext reference_context;
-    reference_context.user = this;
+    reference_context.userContext = this;
     reference_context.network_entity_id_tier0_bits = options_.protocol.network_entity_id_tier0_bits;
-    reference_context.client_entity_network_id_for_wire = [](void* user, std::uint32_t wire_network_id) {
-        return static_cast<ReplicationClient*>(user)->client_entity_network_id_for_wire(wire_network_id);
+    reference_context.client_entity_network_id_for_wire = [](void* userContext, std::uint32_t wire_network_id) {
+        return static_cast<ReplicationClient*>(userContext)->client_entity_network_id_for_wire(wire_network_id);
     };
-    reference_context.client_local_entity = [](void* user, ClientEntityNetworkId network_id) {
-        return static_cast<ReplicationClient*>(user)->local_entity(network_id);
+    reference_context.client_local_entity = [](void* userContext, ClientEntityNetworkId network_id) {
+        return static_cast<ReplicationClient*>(userContext)->local_entity(network_id);
     };
     EntityReferenceContext* references = settings.cue_ops[cue.type].references_entities ? &reference_context : nullptr;
     auto existing = std::find_if(
@@ -2424,13 +2430,13 @@ bool ReplicationClient::rollback_played_cue(
         return true;
     }
     EntityReferenceContext reference_context;
-    reference_context.user = this;
+    reference_context.userContext = this;
     reference_context.network_entity_id_tier0_bits = options_.protocol.network_entity_id_tier0_bits;
-    reference_context.client_entity_network_id_for_wire = [](void* user, std::uint32_t wire_network_id) {
-        return static_cast<ReplicationClient*>(user)->client_entity_network_id_for_wire(wire_network_id);
+    reference_context.client_entity_network_id_for_wire = [](void* userContext, std::uint32_t wire_network_id) {
+        return static_cast<ReplicationClient*>(userContext)->client_entity_network_id_for_wire(wire_network_id);
     };
-    reference_context.client_local_entity = [](void* user, ClientEntityNetworkId network_id) {
-        return static_cast<ReplicationClient*>(user)->local_entity(network_id);
+    reference_context.client_local_entity = [](void* userContext, ClientEntityNetworkId network_id) {
+        return static_cast<ReplicationClient*>(userContext)->local_entity(network_id);
     };
     EntityReferenceContext* references = settings.cue_ops[cue.type].references_entities ? &reference_context : nullptr;
     const bool rolled_back = settings.cue_ops[cue.type].rollback(registry, state.local, cue.payload, references);
@@ -2552,14 +2558,8 @@ void ReplicationClient::drain_emitted_prediction_cues(
     const SyncSettings& settings,
     SyncFrame frame,
     bool play) {
-    if (!settings.cue_queue) {
-        return;
-    }
-    std::vector<QueuedSyncCue> cues;
-    {
-        std::lock_guard<std::mutex> lock(settings.cue_queue->mutex);
-        cues.swap(settings.cue_queue->cues);
-    }
+    (void)frame;
+    std::vector<QueuedSyncCue> cues = registry.write<CueDispatcher>().drain();
 
     for (const QueuedSyncCue& emitted : cues) {
         EntityState* state = find_entity_state_for_local(emitted.entity);
@@ -2567,7 +2567,7 @@ void ReplicationClient::drain_emitted_prediction_cues(
             continue;
         }
         EntityCue cue;
-        cue.frame = emitted.frame != 0 ? emitted.frame : frame;
+        cue.frame = emitted.frame;
         cue.type = emitted.type;
         cue.relevance_seconds = emitted.relevance_seconds;
         cue.payload = emitted.payload;
@@ -2980,7 +2980,7 @@ bool ReplicationClient::write_buffered_frame(
         if (previous == nullptr || value == nullptr) {
             return false;
         }
-        std::memcpy(value, previous, ops.quantized_size);
+        std::memcpy(value, previous, ops.serialization.quantized_size);
         if (to != nullptr &&
             frame_has_component(*to, component_index) &&
             archetype.components[component_index].interpolation == ComponentInterpolation::Interpolate) {
@@ -3112,7 +3112,7 @@ bool ReplicationClient::apply_buffered_sample(
         if (bytes == nullptr) {
             return false;
         }
-        if (ops.push_to_ecs == nullptr || !ops.push_to_ecs(registry, state.local, bytes)) {
+        if (ops.serialization.push_to_registry == nullptr || !ops.serialization.push_to_registry(registry, state.local, bytes)) {
             return false;
         }
     }
@@ -3179,11 +3179,11 @@ bool ReplicationClient::quantize_predicted_entity(
             return false;
         }
         const SyncComponentOps& ops = archetype.component_ops[component_index];
-        if (ops.quantize == nullptr) {
+        if (ops.serialization.quantize == nullptr) {
             return false;
         }
         std::uint8_t* out = unchecked_mutable_frame_component_data(archetype, sample.baseline, component_index);
-        ops.quantize(value, out);
+        ops.serialization.quantize(value, out);
     }
     return true;
 }
@@ -3282,7 +3282,7 @@ bool ReplicationClient::compare_predicted_frame(
         rollback_reason_context.archetype = state.archetype;
         rollback_reason_context.component = rollback_trace_component;
         rollback_reason_context.component_name = component_index < archetype.component_ops.size()
-            ? archetype.component_ops[component_index].name
+            ? archetype.component_ops[component_index].serialization.name
             : std::string{};
         ScopedRollbackReasonTraceContext scoped_rollback_reason_context(rollback_reason_context);
 #endif
@@ -3536,7 +3536,7 @@ bool ReplicationClient::apply_snap_sample(
         if (bytes == nullptr) {
             return false;
         }
-        if (ops.push_to_ecs == nullptr || !ops.push_to_ecs(registry, state.local, bytes)) {
+        if (ops.serialization.push_to_registry == nullptr || !ops.serialization.push_to_registry(registry, state.local, bytes)) {
             return false;
         }
         const std::uint8_t* previous_bytes = frame_component_data(archetype, state.baseline, component_index);
@@ -3569,7 +3569,7 @@ bool ReplicationClient::apply_snap_sample(
         std::memcpy(
             unchecked_mutable_frame_component_data(archetype, state.baseline, component_index),
             bytes,
-            ops.quantized_size);
+            ops.serialization.quantized_size);
     }
 
     state.entity_present = true;
@@ -3783,6 +3783,7 @@ bool ReplicationClient::resimulate_all_predicted(
         if (!apply_input_frame(registry, settings, frame)) {
             return false;
         }
+        registry.write<FrameInfo>().frame = frame;
         resim_job_graph(registry).tick(registry, options);
         drain_emitted_prediction_cues(registry, settings, frame, true);
         for (std::uint32_t entity_index : active_entities_) {
@@ -3854,6 +3855,7 @@ bool ReplicationClient::resimulate_affected_predicted(
         if (!apply_input_frame(registry, settings, frame)) {
             return false;
         }
+        registry.write<FrameInfo>().frame = frame;
         resim_job_graph(registry).tick_for_entities(registry, rollback_affected_entities_scratch_, options);
         drain_emitted_prediction_cues(registry, settings, frame, true);
         for (std::uint32_t entity_index : active_entities_) {
@@ -4004,12 +4006,12 @@ bool ReplicationClient::write_fractional_tick_samples(
                 }
                 const std::uint8_t* next_bytes =
                     frame_component_data(display_archetype, next_sample->baseline, component_index);
-                value.bytes.resize(ops.quantized_size);
+                value.bytes.resize(ops.serialization.quantized_size);
                 if (next_bytes == nullptr || !ops.interpolate(baseline_bytes, next_bytes, display_alpha, value.bytes.data())) {
                     return false;
                 }
             } else {
-                value.bytes.assign(baseline_bytes, ops.quantized_size);
+                value.bytes.assign(baseline_bytes, ops.serialization.quantized_size);
             }
             display.components_.push_back(std::move(value));
         }
@@ -4116,13 +4118,13 @@ bool ReplicationClient::write_fractional_tick_samples(
                             }
                             const std::uint8_t* next_bytes =
                                 frame_component_data(display_archetype, next_sample->baseline, component_index);
-                            value.bytes.resize(ops.quantized_size);
+                            value.bytes.resize(ops.serialization.quantized_size);
                             if (next_bytes == nullptr ||
                                 !ops.interpolate(floor_bytes, next_bytes, predicted_alpha, value.bytes.data())) {
                                 return false;
                             }
                         } else {
-                            value.bytes.assign(floor_bytes, ops.quantized_size);
+                            value.bytes.assign(floor_bytes, ops.serialization.quantized_size);
                         }
 
                         auto found_error = std::find_if(
@@ -4169,7 +4171,7 @@ bool ReplicationClient::write_fractional_tick_samples(
                     return false;
                 }
                 const SyncComponentOps& ops = display_archetype.component_ops[component_index];
-                if (ops.quantize == nullptr) {
+                if (ops.serialization.quantize == nullptr) {
                     return false;
                 }
                 const void* current = registry.get(state.local, component);
@@ -4179,8 +4181,8 @@ bool ReplicationClient::write_fractional_tick_samples(
 
                 ReplicatedComponentUpdate value;
                 value.component = component;
-                value.bytes.resize(ops.quantized_size);
-                ops.quantize(current, value.bytes.data());
+                value.bytes.resize(ops.serialization.quantized_size);
+                ops.serialization.quantize(current, value.bytes.data());
                 const auto found_error = std::find_if(
                     state.snap_errors.begin(),
                     state.snap_errors.end(),

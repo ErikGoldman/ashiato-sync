@@ -6,12 +6,12 @@ namespace {
 
 kage::sync::SyncComponentOps byte_input_ops() {
     kage::sync::SyncComponentOps ops;
-    ops.quantized_size = 1;
-    ops.deserialize = [](
+    ops.serialization.quantized_size = 1;
+    ops.serialization.deserialize = [](
         ecs::BitBuffer& packet,
         const std::uint8_t*,
         std::uint8_t* out,
-        kage::sync::EntityReferenceContext*) {
+        ecs::ComponentSerializationContext*) {
         if (packet.remaining_bits() < 8U) {
             return false;
         }

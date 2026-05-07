@@ -17,7 +17,8 @@ add_library(kage_sync
     server/packet_ack.cpp
     server/quantized_frame.cpp
     server/transport.cpp
-    snapshot_writer.cpp
+    replay_streamer.cpp
+    replay_writer.cpp
     tracing.cpp
 )
 

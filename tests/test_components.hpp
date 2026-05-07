@@ -68,6 +68,7 @@ struct CuePlayback {
     std::int32_t plays = 0;
     std::int32_t rollbacks = 0;
     std::int32_t last_id = 0;
+    kage::sync::SyncFrame last_frame = 0;
     ecs::Entity last_target;
     kage::sync::ClientEntityNetworkId last_target_network_id = kage::sync::invalid_client_entity_network_id;
     float last_late_seconds = 0.0f;
@@ -90,6 +91,47 @@ inline kage::sync::SyncArchetypeId define_position_archetype(ecs::Registry& regi
         {{position_component, kage::sync::ReplicationAudience::All}});
 }
 
+template <typename T>
+bool emit_test_cue(
+    ecs::Registry& registry,
+    ecs::Entity entity,
+    kage::sync::SyncFrame frame,
+    const T& cue,
+    float relevance_seconds,
+    bool only_replicate_to_owner = false) {
+    kage::sync::register_components(registry);
+    if (!registry.alive(entity)) {
+        return false;
+    }
+    return registry.write<kage::sync::CueDispatcher>().emit(
+        registry.get<kage::sync::SyncSettings>(),
+        frame,
+        entity,
+        cue,
+        relevance_seconds,
+        only_replicate_to_owner);
+}
+
+template <typename T>
+bool emit_test_cue(
+    ecs::Registry& registry,
+    ecs::Entity entity,
+    const T& cue,
+    float relevance_seconds,
+    bool only_replicate_to_owner = false) {
+    kage::sync::register_components(registry);
+    if (!registry.alive(entity)) {
+        return false;
+    }
+    return registry.write<kage::sync::CueDispatcher>().emit(
+        registry.get<kage::sync::SyncSettings>(),
+        registry.get<kage::sync::FrameInfo>(),
+        entity,
+        cue,
+        relevance_seconds,
+        only_replicate_to_owner);
+}
+
 }  // namespace kage_sync_tests
 
 namespace kage::sync {
@@ -109,7 +151,8 @@ struct SyncCueTraits<kage_sync_tests::TestCue> {
         ecs::Registry& registry,
         ecs::Entity owner,
         const kage_sync_tests::TestCue& cue,
-        float late_seconds) {
+        float late_seconds,
+        SyncFrame frame) {
         if (!registry.contains<kage_sync_tests::CuePlayback>(owner)) {
             registry.add<kage_sync_tests::CuePlayback>(owner);
         }
@@ -119,6 +162,7 @@ struct SyncCueTraits<kage_sync_tests::TestCue> {
         kage_sync_tests::CuePlayback& playback = registry.write<kage_sync_tests::CuePlayback>(owner);
         ++playback.plays;
         playback.last_id = cue.id;
+        playback.last_frame = frame;
         playback.last_late_seconds = late_seconds;
         return true;
     }

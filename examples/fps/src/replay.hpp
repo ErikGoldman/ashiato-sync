@@ -17,12 +17,12 @@ public:
     struct FrameEntry {
         std::uint64_t offset = 0;
         std::uint64_t payload_size = 0;
-        std::uint32_t cue_count = 0;
+        std::uint64_t payload_bits = 0;
         kage::sync::SyncFrame frame = 0;
         std::uint32_t kind = 0;
     };
 
-    explicit FpsReplayRecorder(const ecs::Registry& registry, const std::string& directory);
+    explicit FpsReplayRecorder(const std::string& directory);
 
     FpsReplayRecorder(const FpsReplayRecorder&) = delete;
     FpsReplayRecorder& operator=(const FpsReplayRecorder&) = delete;
@@ -31,27 +31,19 @@ public:
     void detach();
     const std::string& frame_path() const noexcept { return frame_path_; }
     const std::vector<FrameEntry>& entries() const noexcept { return entries_; }
+    const kage::sync::ReplicationReplayStreamer& streamer() const noexcept { return streamer_; }
 
 private:
-    enum class FrameKind : std::uint32_t {
-        Full = 1,
-        Delta = 2
-    };
-
     std::string frame_path_;
     std::ofstream frames_;
     std::vector<FrameEntry> entries_;
-    kage::sync::SnapshotWriter writer_;
+    kage::sync::ReplicationReplayStreamer streamer_;
+    kage::sync::ReplicationReplayWriter writer_;
 
-    void write_frame(
-        const ecs::Registry& registry,
-        FrameKind kind,
-        kage::sync::SyncFrame frame,
-        const std::string& payload,
-        kage::sync::QueuedSyncCueView cues);
+    void write_frame(const kage::sync::ReplicationReplayFrame& frame);
 };
 
-class FpsReplayServer {
+class FpsReplayServer : private kage::sync::ServerRegistryDirtyFrameListener {
 public:
     FpsReplayServer(const FpsReplayRecorder& recorder, std::uint16_t port);
     ~FpsReplayServer();
@@ -59,24 +51,28 @@ public:
     FpsReplayServer(const FpsReplayServer&) = delete;
     FpsReplayServer& operator=(const FpsReplayServer&) = delete;
 
-    void record_death(kage::sync::ClientId client, kage::sync::SyncFrame frame, ecs::Entity killer_entity);
+    void record_death(kage::sync::ClientId client, kage::sync::SyncFrame frame, std::uint64_t killer_player_id);
+    void attach(kage::sync::ReplicationServer& server);
+    void detach();
     void tick(double dt_seconds);
 
 private:
     struct DeathInfo {
         kage::sync::SyncFrame frame = 0;
-        std::uint64_t killer_entity_value = 0;
+        std::uint64_t killer_player_id = 0;
     };
 
     struct Session;
 
     const FpsReplayRecorder* recorder_ = nullptr;
     SocketHandle socket_ = invalid_socket_handle;
+    kage::sync::ServerRegistryDirtyFrameSubscription death_subscription_;
     double accumulator_seconds_ = 0.0;
     std::unordered_map<kage::sync::ClientId, DeathInfo> deaths_;
     std::vector<std::unique_ptr<Session>> sessions_;
 
     bool begin_session(kage::sync::ClientId peer, const sockaddr_in& address, const ecs::BitBuffer& packet);
+    void on_server_registry_dirty_frame(const kage::sync::ServerRegistryDirtyFrame& frame) override;
 };
 
 class FpsDeathCamClient {
