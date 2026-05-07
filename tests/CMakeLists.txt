@@ -27,6 +27,7 @@ add_executable(kage_sync_tests
     server_input_buffer.test.cpp
     server_input.test.cpp
     server_lifecycle.test.cpp
+    server_logging.test.cpp
     server_packet_ack_tracker.test.cpp
     server_packet.test.cpp
     server_prioritization.test.cpp

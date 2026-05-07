@@ -36,6 +36,7 @@ target_include_directories(kage_sync
 target_link_libraries(kage_sync
     PUBLIC
         ecs::ecs
+        spdlog::spdlog
 )
 
 target_compile_definitions(kage_sync

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
 
 namespace kage::sync {
 
@@ -35,7 +36,12 @@ void ReplicationServer::send_packet(
 #if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
     trace_outgoing_update_packet(client, frame, packet_id, client.input_ack_frame, ack_records);
 #endif
-    options_.transport(client.peer, packet);
+    try {
+        options_.transport(client.peer, packet);
+    } catch (const std::exception& ex) {
+        log_server_error(client.peer, "transport_error_server_update", ex.what());
+        throw;
+    }
 }
 
 void ReplicationServer::send_connect_response(ClientState& client) {
@@ -47,7 +53,12 @@ void ReplicationServer::send_connect_response(ClientState& client) {
     packet.push_bits(protocol::server_connect_response_message, 8U);
     packet.push_bool(true);
     packet.push_unsigned_bits(client.id, 64U);
-    options_.transport(client.peer, packet);
+    try {
+        options_.transport(client.peer, packet);
+    } catch (const std::exception& ex) {
+        log_server_error(client.peer, "transport_error_connect_response", ex.what());
+        throw;
+    }
     client.connect_resend_accumulator_seconds = 0.0;
 }
 
@@ -72,7 +83,12 @@ void ReplicationServer::send_pong(
     packet.push_bits(send_subframe, protocol::frame_subframe_bits);
     packet.push_bits(frame_, 32U);
     packet.push_bits(server_subframe, protocol::frame_subframe_bits);
-    options_.transport(peer, packet);
+    try {
+        options_.transport(peer, packet);
+    } catch (const std::exception& ex) {
+        log_server_error(peer, "transport_error_pong", ex.what());
+        throw;
+    }
 }
 
 }  // namespace kage::sync

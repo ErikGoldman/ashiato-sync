@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ecs/bit_buffer.hpp"
+#include "kage/sync/logging.hpp"
 #include "kage/sync/protocol.hpp"
 
 #include "ecs/ecs.hpp"
@@ -561,6 +562,7 @@ struct ReplicationServerOptions {
     ReplicationPrioritizerFn prioritizer;
     ConnectHandlerFn connect_handler;
     TransportFn transport;
+    LoggingOptions logging;
 #ifdef KAGE_SYNC_ENABLE_TRACING
     TraceOptions trace;
 #endif

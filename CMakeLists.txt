@@ -65,6 +65,7 @@ if(KAGE_SYNC_BUILD_FUZZERS)
 endif()
 
 kage_sync_add_ecs_dependency()
+kage_sync_fetch_spdlog()
 
 add_subdirectory(src)
 

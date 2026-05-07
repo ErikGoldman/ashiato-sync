@@ -6,6 +6,7 @@
 #include "kage/sync/components.hpp"
 #include "kage/sync/delta.hpp"
 #include "kage/sync/display.hpp"
+#include "kage/sync/logging.hpp"
 #include "kage/sync/protocol.hpp"
 #include "kage/sync/registration.hpp"
 #include "kage/sync/server.hpp"

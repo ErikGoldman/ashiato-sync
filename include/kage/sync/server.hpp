@@ -45,6 +45,17 @@ public:
         float loss_rate = 0.0f;
     };
 
+    struct ObservabilityStats {
+        std::uint64_t client_packet_warnings = 0;
+        std::uint64_t suppressed_client_packet_warnings = 0;
+        std::uint64_t server_errors = 0;
+        std::uint64_t client_connects_accepted = 0;
+        std::uint64_t client_connects_rejected = 0;
+        std::uint64_t clients_ready = 0;
+        std::uint64_t clients_removed = 0;
+        std::uint64_t clients_timed_out = 0;
+    };
+
     explicit ReplicationServer(ReplicationServerOptions options = {});
     ~ReplicationServer();
     ReplicationServer(const ReplicationServer& other) = delete;
@@ -57,6 +68,11 @@ public:
     }
 
     void set_transport(TransportFn transport);
+    void set_logger(std::shared_ptr<spdlog::logger> logger);
+    void set_log_level(LogLevel level);
+    LogLevel log_level() const noexcept {
+        return options_.logging.level;
+    }
 #ifdef KAGE_SYNC_ENABLE_TRACING
     void set_tracer(SyncTracer* tracer) noexcept;
     void set_trace_options(TraceOptions options);
@@ -95,6 +111,9 @@ public:
     bool set_local_input_bytes(ecs::Registry& registry, ecs::Entity component, const void* input);
     ClientInputStats input_stats(ClientId client) const noexcept;
     ClientBandwidthStats bandwidth_stats(ClientId client) const noexcept;
+    ObservabilityStats observability_stats() const noexcept {
+        return observability_stats_;
+    }
     std::size_t retained_quantized_frame_count() const noexcept;
     std::size_t retained_quantized_frame_bytes() const noexcept;
     ServerFrameConsumerSubscription subscribe_frame_consumer(ServerFrameConsumer& consumer);
@@ -242,6 +261,9 @@ private:
 #endif
     );
     bool process_input_with_acks_packet(ecs::Registry& registry, ClientState& client, ecs::BitBuffer& packet);
+    void log_info(const char* event, const std::string& fields) const;
+    void log_client_packet_warning(ClientId peer, std::uint8_t message, const char* reason_code, const char* reason_detail);
+    void log_server_error(ClientId peer, const char* event, const char* reason);
     void push_client_inputs_to_ecs(ecs::Registry& registry);
     void acknowledge_cues(ClientEntityState& state, SyncFrame frame);
     bool same_quantized_frame_components(
@@ -313,6 +335,11 @@ private:
     std::shared_ptr<ServerFrameConsumerSubscription::State> frame_consumers_;
     std::vector<PendingInboundPacket> inbound_packets_;
     std::vector<QueuedSyncCue> post_tick_cues_;
+    std::shared_ptr<spdlog::logger> logger_;
+    ObservabilityStats observability_stats_;
+    std::unordered_map<ClientId, std::uint32_t> warning_logs_by_peer_;
+    mutable bool processing_client_packet_ = false;
+    mutable bool server_error_logged_ = false;
     std::size_t active_replicated_count_ = 0;
     ClientId next_connect_client_id_ = 1;
     ClientId local_client_ = invalid_client_id;

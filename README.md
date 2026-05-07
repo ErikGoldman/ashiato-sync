@@ -166,6 +166,8 @@ int main() {
     server_options.bandwidth.initial_bytes_per_second = 32 * 1024;
     server_options.bandwidth.max_bytes_per_second = 512 * 1024;
     server_options.bandwidth.max_burst_bytes = server_options.mtu_bytes * 4;
+    server_options.logging.level = kage::sync::LogLevel::Warning;
+    server_options.logging.format = kage::sync::LogFormat::Json;
     server_options.transport =
         [](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
             // Enqueue `packet` for `client` on your UDP/socket transport here.
@@ -199,6 +201,14 @@ naturally receive older unsent state first.
   since the last tick.
 - Use `set_owner` or add `NetworkOwner` directly when assigning owner-only
   replicated state.
+- `ReplicationServerOptions::logging` configures server logs. Malformed or
+  malicious client packets are warnings; server-side callback/configuration
+  failures are errors. Set `logging.logger` to use an existing `spdlog` logger,
+  including async or application-specific JSON loggers. Built-in JSON logs emit
+  stable top-level fields such as `event`, `peer`, `client`, `frame`, and
+  `reason`. Client packet warnings are capped per peer by
+  `logging.max_warning_logs_per_peer`; `observability_stats()` exposes warning,
+  suppression, server error, and connection lifecycle counters.
 - `ReplicationClientOptions::default_entity_mode` selects the fallback client
   mode for newly received entities. Set `entity_mode_selector` to choose snap,
   buffered interpolation, or prediction on the first upsert for each entity from
