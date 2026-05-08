@@ -12,18 +12,21 @@
 
 namespace kage::sync {
 
-void server_detail::ServerClientReplicator::UpdateScheduler::send_client(
+ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::UpdateScheduler::send_client(
     ReplicationServer& server,
     ecs::Registry& registry,
     const SyncSettings& settings,
     ServerClientReplicator& replication,
     std::uint32_t completed_frames) {
     (void)completed_frames;
+    ReplicationServer::ReplicationSendResult result;
     ++replication.epoch;
     replication.expire_pending_cues(server.frame());
 
     const ReplicationServerOptions& options = server.options();
-    std::size_t remaining = server.begin_client_bandwidth_tick(replication);
+    std::size_t remaining = replication.bandwidth == nullptr
+        ? options.bandwidth_limit_bytes_per_tick
+        : replication.bandwidth->send_available_bytes();
     std::uint16_t packet_entities = 0;
     candidates_.clear();
     candidates_.reserve(replication.dirty_queue.dirty_replicated_indices.size() + replication.destroys.size());
@@ -109,6 +112,7 @@ void server_detail::ServerClientReplicator::UpdateScheduler::send_client(
         }
         candidates_.insert(candidates_.end(), update_candidates_.begin(), update_candidates_.end());
     }
+    result.had_pending_data = !candidates_.empty();
 
     const std::size_t update_header_bits = server_detail::server_update_header_bits(options);
     for (const SerializedCandidate& candidate : candidates_) {
@@ -128,10 +132,12 @@ void server_detail::ServerClientReplicator::UpdateScheduler::send_client(
                     protocol::bytes_for_bits(update_header_bits + records_.bit_size());
                 const std::size_t charged_bytes = server.charged_packet_bytes(packet_bytes);
                 if (charged_bytes > remaining) {
+                    result.stopped_for_budget = true;
                     break;
                 }
                 server.send_server_update_packet(replication, server.frame(), packet_entities, records_, packet_ack_records_);
                 remaining -= charged_bytes;
+                result.charged_bytes += charged_bytes;
                 records_.clear();
                 packet_ack_records_.clear();
                 packet_entities = 0;
@@ -141,6 +147,9 @@ void server_detail::ServerClientReplicator::UpdateScheduler::send_client(
                 protocol::bytes_for_bits(update_header_bits + records_.bit_size() + destroy_bits);
             const std::size_t charged_bytes = server.charged_packet_bytes(packet_bytes);
             if (packet_bytes > options.mtu_bytes || charged_bytes > remaining) {
+                if (packet_bytes <= options.mtu_bytes) {
+                    result.stopped_for_budget = true;
+                }
                 continue;
             }
 
@@ -186,10 +195,12 @@ void server_detail::ServerClientReplicator::UpdateScheduler::send_client(
             const std::size_t charged_bytes = server.charged_packet_bytes(packet_bytes);
             if (charged_bytes > remaining) {
                 server.release_server_quantized_frame(serialized_.quantized_frame);
+                result.stopped_for_budget = true;
                 continue;
             }
             server.send_server_update_packet(replication, server.frame(), packet_entities, records_, packet_ack_records_);
             remaining -= charged_bytes;
+            result.charged_bytes += charged_bytes;
             records_.clear();
             packet_ack_records_.clear();
             packet_entities = 0;
@@ -201,6 +212,9 @@ void server_detail::ServerClientReplicator::UpdateScheduler::send_client(
         const std::size_t charged_bytes = server.charged_packet_bytes(packet_bytes);
         if (packet_bytes > options.mtu_bytes || charged_bytes > remaining) {
             server.release_server_quantized_frame(serialized_.quantized_frame);
+            if (packet_bytes <= options.mtu_bytes) {
+                result.stopped_for_budget = true;
+            }
             continue;
         }
 
@@ -240,9 +254,13 @@ void server_detail::ServerClientReplicator::UpdateScheduler::send_client(
         if (charged_bytes <= remaining) {
             server.send_server_update_packet(replication, server.frame(), packet_entities, records_, packet_ack_records_);
             remaining -= charged_bytes;
+            result.charged_bytes += charged_bytes;
+        } else {
+            result.stopped_for_budget = true;
         }
     }
     cleanup_dirty_queue(replication);
+    return result;
 }
 
 void server_detail::ServerClientReplicator::UpdateScheduler::refresh_priority_if_due(

@@ -177,6 +177,171 @@ TEST_CASE("replication server dynamic bandwidth sends when charged packet fits")
     REQUIRE(read_server_update(payloads.back()).entities.size() == 1);
 }
 
+TEST_CASE("shared dynamic bandwidth budget splits replay and live before redistributing") {
+    ecs::Registry replay_registry;
+    const kage::sync::SyncArchetypeId replay_archetype = define_networked_position_archetype(replay_registry);
+    const ecs::Entity replay_entity = replay_registry.create();
+    REQUIRE(replay_registry.add<NetworkedPosition>(replay_entity, NetworkedPosition{}) != nullptr);
+    REQUIRE(start_sync(replay_registry, replay_entity, replay_archetype));
+
+    ecs::Registry live_registry;
+    const kage::sync::SyncArchetypeId live_archetype = define_networked_position_archetype(live_registry);
+    const ecs::Entity live_entity = live_registry.create();
+    REQUIRE(live_registry.add<NetworkedPosition>(live_entity, NetworkedPosition{}) != nullptr);
+    REQUIRE(start_sync(live_registry, live_entity, live_archetype));
+
+    std::vector<ecs::BitBuffer> replay_payloads;
+    std::vector<ecs::BitBuffer> live_payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth.enabled = true;
+    options.bandwidth.min_bytes_per_second = 49;
+    options.bandwidth.initial_bytes_per_second = 49;
+    options.bandwidth.max_bytes_per_second = 49;
+    options.bandwidth.max_burst_bytes = 98;
+    options.bandwidth.transport_overhead_bytes_per_packet = 28;
+
+    kage::sync::ReplicationServer replay_server(options);
+    kage::sync::ReplicationServer live_server(options);
+    replay_server.set_transport([&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+        replay_payloads.push_back(payload);
+    });
+    live_server.set_transport([&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+        live_payloads.push_back(payload);
+    });
+    REQUIRE(replay_server.add_client(1));
+    REQUIRE(live_server.add_client(1));
+    kage::sync::ReplicationReplayStreamer replay_streamer;
+    REQUIRE(replay_streamer.attach_network_session_bandwidth(
+        replay_server,
+        kage::sync::ReplicationReplayNetworkSessionOptions{
+            &live_server,
+            1,
+            kage::sync::ReplicationBandwidthParticipantOptions{1U, 1}}));
+
+    run_server_tick(replay_server, replay_registry);
+    run_server_tick(live_server, live_registry);
+
+    REQUIRE(replay_payloads.size() == 1);
+    REQUIRE(live_payloads.size() == 1);
+
+    const ServerUpdatePacket replay_update = read_server_update(replay_payloads.back());
+    REQUIRE(replay_server.process_packet(1, write_ack_packet(replay_update.packet_id)));
+    REQUIRE(live_server.bandwidth_stats(1).delivered_bytes_window == 49);
+}
+
+TEST_CASE("live replication uses shared bandwidth when replay has nothing to send") {
+    ecs::Registry replay_registry;
+    kage::sync::configure_server(replay_registry);
+    (void)define_networked_position_archetype(replay_registry);
+
+    ecs::Registry live_registry;
+    const kage::sync::SyncArchetypeId live_archetype = define_networked_position_archetype(live_registry);
+    const ecs::Entity live_entity = live_registry.create();
+    REQUIRE(live_registry.add<NetworkedPosition>(live_entity, NetworkedPosition{}) != nullptr);
+    REQUIRE(start_sync(live_registry, live_entity, live_archetype));
+
+    std::vector<ecs::BitBuffer> replay_payloads;
+    std::vector<ecs::BitBuffer> live_payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth.enabled = true;
+    options.bandwidth.min_bytes_per_second = 49;
+    options.bandwidth.initial_bytes_per_second = 49;
+    options.bandwidth.max_bytes_per_second = 49;
+    options.bandwidth.max_burst_bytes = 49;
+    options.bandwidth.transport_overhead_bytes_per_packet = 28;
+
+    kage::sync::ReplicationServer replay_server(options);
+    kage::sync::ReplicationServer live_server(options);
+    replay_server.set_transport([&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+        replay_payloads.push_back(payload);
+    });
+    live_server.set_transport([&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+        live_payloads.push_back(payload);
+    });
+    REQUIRE(replay_server.add_client(1));
+    REQUIRE(live_server.add_client(1));
+    kage::sync::ReplicationReplayStreamer replay_streamer;
+    REQUIRE(replay_streamer.attach_network_session_bandwidth(
+        replay_server,
+        kage::sync::ReplicationReplayNetworkSessionOptions{
+            &live_server,
+            1,
+            kage::sync::ReplicationBandwidthParticipantOptions{1U, 1}}));
+
+    run_server_tick(replay_server, replay_registry);
+    run_server_tick(live_server, live_registry);
+
+    REQUIRE(replay_payloads.empty());
+    REQUIRE(live_payloads.size() == 1);
+}
+
+TEST_CASE("detaching replay participant releases queued live bandwidth flush") {
+    ecs::Registry replay_registry;
+    kage::sync::configure_server(replay_registry);
+    (void)define_networked_position_archetype(replay_registry);
+
+    ecs::Registry live_registry;
+    const kage::sync::SyncArchetypeId live_archetype = define_networked_position_archetype(live_registry);
+    const ecs::Entity live_entity = live_registry.create();
+    REQUIRE(live_registry.add<NetworkedPosition>(live_entity, NetworkedPosition{}) != nullptr);
+    REQUIRE(start_sync(live_registry, live_entity, live_archetype));
+
+    std::vector<ecs::BitBuffer> live_payloads;
+    kage::sync::ReplicationServerOptions options;
+    options.bandwidth.enabled = true;
+    options.bandwidth.min_bytes_per_second = 49;
+    options.bandwidth.initial_bytes_per_second = 49;
+    options.bandwidth.max_bytes_per_second = 49;
+    options.bandwidth.max_burst_bytes = 49;
+    options.bandwidth.transport_overhead_bytes_per_packet = 28;
+
+    kage::sync::ReplicationServer replay_server(options);
+    kage::sync::ReplicationServer live_server(options);
+    replay_server.set_transport([](kage::sync::ClientId, const ecs::BitBuffer&) {});
+    live_server.set_transport([&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+        live_payloads.push_back(payload);
+    });
+    REQUIRE(replay_server.add_client(1));
+    REQUIRE(live_server.add_client(1));
+    kage::sync::ReplicationReplayStreamer replay_streamer;
+    REQUIRE(replay_streamer.attach_network_session_bandwidth(
+        replay_server,
+        kage::sync::ReplicationReplayNetworkSessionOptions{
+            &live_server,
+            1,
+            kage::sync::ReplicationBandwidthParticipantOptions{1U, 1}}));
+
+    run_server_tick(live_server, live_registry);
+    REQUIRE(live_payloads.empty());
+
+    REQUIRE(replay_server.remove_client(1));
+    REQUIRE(live_payloads.size() == 1);
+}
+
+TEST_CASE("client bandwidth share options are tunable after joining a shared budget") {
+    kage::sync::ReplicationServerOptions options;
+    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
+
+    kage::sync::ReplicationServer live_server(options);
+    kage::sync::ReplicationServer replay_server(options);
+    REQUIRE(live_server.add_client(1));
+    REQUIRE(replay_server.add_client(1));
+    REQUIRE(replay_server.set_client_bandwidth_budget(
+        1,
+        live_server.client_bandwidth_budget(1),
+        kage::sync::ReplicationBandwidthParticipantOptions{1U, 1}));
+
+    REQUIRE(live_server.set_client_bandwidth_share(1, kage::sync::ReplicationBandwidthParticipantOptions{1U, 0}));
+    REQUIRE(replay_server.set_client_bandwidth_share(1, kage::sync::ReplicationBandwidthParticipantOptions{3U, 1}));
+
+    const kage::sync::ReplicationBandwidthParticipantOptions live_share = live_server.client_bandwidth_share(1);
+    const kage::sync::ReplicationBandwidthParticipantOptions replay_share = replay_server.client_bandwidth_share(1);
+    REQUIRE(live_share.weight == 1U);
+    REQUIRE(live_share.priority == 0);
+    REQUIRE(replay_share.weight == 3U);
+    REQUIRE(replay_share.priority == 1);
+}
+
 TEST_CASE("replication server prioritizes pending destroys over creates when bandwidth limited") {
     ecs::Registry registry;
     const kage::sync::SyncArchetypeId archetype = define_networked_position_archetype(registry);

@@ -189,7 +189,8 @@ struct ServerClientReplicator final : ServerRegistryDirtyFrameListener, ServerFr
     EntityStates entities;
     DestroyQueue destroys;
     NetworkIds network_ids;
-    BandwidthController bandwidth{ReplicationBandwidthOptions{}};
+    std::shared_ptr<ReplicationBandwidthBudget> bandwidth;
+    ReplicationBandwidthParticipantId bandwidth_participant = invalid_bandwidth_participant_id;
     AckTracker ack_tracker;
     std::unique_ptr<UpdateScheduler> update_scheduler;
     ReplicationServer* server = nullptr;
@@ -248,7 +249,7 @@ private:
 };
 
 struct ServerClientReplicator::UpdateScheduler {
-    void send_client(
+    ReplicationServer::ReplicationSendResult send_client(
         ReplicationServer& server,
         ecs::Registry& registry,
         const SyncSettings& settings,

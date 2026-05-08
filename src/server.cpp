@@ -1,5 +1,6 @@
 #include "kage/sync/server.hpp"
 
+#include "kage/sync/bandwidth_budget.hpp"
 #include "detail/frame_data.hpp"
 #include "detail/options_validation.hpp"
 #include "server/detail.hpp"
@@ -358,7 +359,13 @@ ReplicationServer::ReplicationServer(ReplicationServerOptions options)
 #endif
 }
 
-ReplicationServer::~ReplicationServer() = default;
+ReplicationServer::~ReplicationServer() {
+    for (ClientState& client : clients_) {
+        if (client.replication != nullptr) {
+            detach_client_bandwidth_participant(*client.replication);
+        }
+    }
+}
 
 void ReplicationServer::set_transport(TransportFn transport) {
     options_.transport = std::move(transport);
@@ -562,7 +569,9 @@ void ReplicationServer::create_client_replicator(ClientState& client) {
     client.replication = std::make_unique<ServerClientReplicator>();
     client.replication->id = client.id;
     client.replication->peer = client.peer;
-    client.replication->bandwidth = server_detail::BandwidthController(options_.bandwidth);
+    client.replication->bandwidth = std::make_shared<ReplicationBandwidthBudget>(options_.bandwidth);
+    client.replication->bandwidth_participant =
+        client.replication->bandwidth->attach_participant(ReplicationBandwidthParticipantOptions{1U, 0});
     client.replication->server = this;
     client.replication->initialize_marking_all_dirty(*this, frame_);
     client.replication->registry_dirty_frame_subscription = subscribe_registry_dirty_frame_listener(*client.replication);
@@ -848,6 +857,7 @@ bool ReplicationServer::remove_client(ClientId client) {
 #endif
     if (clients_[index].replication != nullptr) {
         clients_[index].replication->entities.clear_all(*this);
+        detach_client_bandwidth_participant(*clients_[index].replication);
     }
 
     const std::size_t last = clients_.size() - 1;
@@ -886,6 +896,15 @@ std::size_t ReplicationServer::client_count() const noexcept {
     return clients_.size();
 }
 
+std::vector<ClientId> ReplicationServer::client_ids() const {
+    std::vector<ClientId> ids;
+    ids.reserve(clients_.size());
+    for (const ClientState& client : clients_) {
+        ids.push_back(client.id);
+    }
+    return ids;
+}
+
 ReplicationServer::ClientInputStats ReplicationServer::input_stats(ClientId client) const noexcept {
     const auto found = client_to_index_.find(client);
     if (found == client_to_index_.end()) {
@@ -913,13 +932,107 @@ ReplicationServer::ClientBandwidthStats ReplicationServer::bandwidth_stats(Clien
         return ClientBandwidthStats{};
     }
     const ServerClientReplicator& replication = *state.replication;
+    if (replication.bandwidth == nullptr) {
+        return ClientBandwidthStats{};
+    }
     return ClientBandwidthStats{
         true,
-        replication.bandwidth.target_bytes_per_second(),
-        replication.bandwidth.available_bytes(),
-        replication.bandwidth.in_flight_bytes(),
-        replication.bandwidth.delivered_bytes(),
-        replication.bandwidth.loss_rate()};
+        replication.bandwidth->target_bytes_per_second(),
+        replication.bandwidth->available_bytes(),
+        replication.bandwidth->in_flight_bytes(),
+        replication.bandwidth->delivered_bytes(),
+        replication.bandwidth->loss_rate()};
+}
+
+std::shared_ptr<ReplicationBandwidthBudget> ReplicationServer::client_bandwidth_budget(ClientId client) const noexcept {
+    const auto found = client_to_index_.find(client);
+    if (found == client_to_index_.end()) {
+        return {};
+    }
+    const ClientState& state = clients_[found->second];
+    return state.replication == nullptr ? std::shared_ptr<ReplicationBandwidthBudget>{} : state.replication->bandwidth;
+}
+
+bool ReplicationServer::set_client_bandwidth_budget(
+    ClientId client,
+    std::shared_ptr<ReplicationBandwidthBudget> budget) {
+    return set_client_bandwidth_budget(client, std::move(budget), client_bandwidth_share(client));
+}
+
+bool ReplicationServer::set_client_bandwidth_budget(
+    ClientId client,
+    std::shared_ptr<ReplicationBandwidthBudget> budget,
+    ReplicationBandwidthParticipantOptions share) {
+    const auto found = client_to_index_.find(client);
+    if (found == client_to_index_.end() || found->second >= clients_.size()) {
+        return false;
+    }
+    ClientState& state = clients_[found->second];
+    if (state.replication == nullptr) {
+        return false;
+    }
+    detach_client_bandwidth_participant(*state.replication);
+    state.replication->bandwidth = budget != nullptr
+        ? std::move(budget)
+        : std::make_shared<ReplicationBandwidthBudget>(options_.bandwidth);
+    state.replication->bandwidth_participant =
+        state.replication->bandwidth->attach_participant(share);
+    return true;
+}
+
+bool ReplicationServer::set_client_bandwidth_share(
+    ClientId client,
+    ReplicationBandwidthParticipantOptions share) {
+    const auto found = client_to_index_.find(client);
+    if (found == client_to_index_.end() || found->second >= clients_.size()) {
+        return false;
+    }
+    ClientState& state = clients_[found->second];
+    if (state.replication == nullptr || state.replication->bandwidth == nullptr ||
+        state.replication->bandwidth_participant == invalid_bandwidth_participant_id) {
+        return false;
+    }
+    return state.replication->bandwidth->set_participant_options(
+        state.replication->bandwidth_participant,
+        share);
+}
+
+ReplicationBandwidthParticipantOptions ReplicationServer::client_bandwidth_share(ClientId client) const noexcept {
+    const auto found = client_to_index_.find(client);
+    if (found == client_to_index_.end() || found->second >= clients_.size()) {
+        return {};
+    }
+    const ClientState& state = clients_[found->second];
+    if (state.replication == nullptr || state.replication->bandwidth == nullptr) {
+        return {};
+    }
+    return state.replication->bandwidth->participant_options(state.replication->bandwidth_participant);
+}
+
+std::size_t ReplicationServer::begin_client_bandwidth_tick(ClientId client) {
+    const auto found = client_to_index_.find(client);
+    if (found == client_to_index_.end() || found->second >= clients_.size()) {
+        return 0U;
+    }
+    ClientState& state = clients_[found->second];
+    if (state.replication == nullptr) {
+        return 0U;
+    }
+    return begin_client_bandwidth_tick(*state.replication);
+}
+
+ReplicationServer::ReplicationSendResult ReplicationServer::flush_client_updates(
+    ecs::Registry& registry,
+    ClientId client) {
+    const auto found = client_to_index_.find(client);
+    if (found == client_to_index_.end() || found->second >= clients_.size()) {
+        return {};
+    }
+    ClientState& state = clients_[found->second];
+    if (state.replication == nullptr) {
+        return {};
+    }
+    return flush_client_updates(registry, *state.replication);
 }
 
 void ReplicationServer::rediscover_all_replicated_entities(ecs::Registry& registry) {
@@ -1083,6 +1196,24 @@ bool ReplicationServer::prepare_client_update_send(server_detail::ServerClientRe
 
     replication.input_ack_frame = client_state.input.ack_frame();
     return true;
+}
+
+ReplicationServer::ReplicationSendResult ReplicationServer::flush_client_updates(
+    ecs::Registry& registry,
+    server_detail::ServerClientReplicator& replication) {
+    if (!prepare_client_update_send(replication)) {
+        return {};
+    }
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    return replication.update_scheduler->send_client(*this, registry, settings, replication, 1U);
+}
+
+void ReplicationServer::detach_client_bandwidth_participant(ServerClientReplicator& replication) {
+    if (replication.bandwidth != nullptr &&
+        replication.bandwidth_participant != invalid_bandwidth_participant_id) {
+        replication.bandwidth->detach_participant(replication.bandwidth_participant);
+    }
+    replication.bandwidth_participant = invalid_bandwidth_participant_id;
 }
 
 #ifdef KAGE_SYNC_ENABLE_TRACING

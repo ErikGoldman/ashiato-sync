@@ -18,6 +18,12 @@ struct ReplicationReplayStreamerOptions {
     SyncFrame tail_frames = 120;
 };
 
+struct ReplicationReplayNetworkSessionOptions {
+    ReplicationServer* source_server = nullptr;
+    ClientId client = invalid_client_id;
+    ReplicationBandwidthParticipantOptions bandwidth_share{1U, 1};
+};
+
 struct ReplicationReplayStreamSession {
     std::size_t next_frame_index = 0;
     SyncFrame playback_frame = 0;
@@ -49,6 +55,15 @@ public:
         ecs::Registry& registry,
         ReplicationServer& server,
         ReplicationReplayStreamSession& session) const;
+    bool begin_network_session(
+        SyncFrame focus_frame,
+        ecs::Registry& registry,
+        ReplicationServer& server,
+        ReplicationReplayStreamSession& session,
+        ReplicationReplayNetworkSessionOptions options) const;
+    bool attach_network_session_bandwidth(
+        ReplicationServer& replay_server,
+        ReplicationReplayNetworkSessionOptions options) const;
     bool tick_session(
         ReplicationReplayStreamSession& session,
         ecs::Registry& registry,

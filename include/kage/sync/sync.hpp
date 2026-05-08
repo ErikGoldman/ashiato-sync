@@ -2,6 +2,7 @@
 
 #include "ecs/bit_buffer.hpp"
 #include "kage/sync/client.hpp"
+#include "kage/sync/bandwidth_budget.hpp"
 #include "kage/sync/component_traits.hpp"
 #include "kage/sync/components.hpp"
 #include "kage/sync/delta.hpp"

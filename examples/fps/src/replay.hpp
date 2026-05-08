@@ -65,6 +65,7 @@ private:
     struct Session;
 
     const FpsReplayRecorder* recorder_ = nullptr;
+    kage::sync::ReplicationServer* live_server_ = nullptr;
     SocketHandle socket_ = invalid_socket_handle;
     kage::sync::ServerRegistryDirtyFrameSubscription death_subscription_;
     double accumulator_seconds_ = 0.0;

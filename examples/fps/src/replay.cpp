@@ -87,9 +87,12 @@ bool read_replay_target(ecs::BitBuffer packet, std::uint64_t& player_id) {
 }  // namespace
 
 struct FpsReplayServer::Session {
+    const FpsReplayRecorder* source_recorder = nullptr;
     SocketHandle socket = invalid_socket_handle;
     sockaddr_in address{};
+    kage::sync::ClientId client = kage::sync::invalid_client_id;
     std::uint64_t killer_player_id = 0;
+    kage::sync::ReplicationServer* live_server = nullptr;
     ecs::Registry registry;
     std::unique_ptr<kage::sync::ReplicationServer> server;
     kage::sync::ReplicationReplayStreamSession replay_session;
@@ -104,11 +107,15 @@ struct FpsReplayServer::Session {
         kage::sync::ClientId peer,
         const sockaddr_in& peer_address,
         kage::sync::ClientId victim_client,
+        kage::sync::ReplicationServer* source_server,
         kage::sync::SyncFrame death_frame,
         std::uint64_t recorded_killer_player_id,
         const ecs::BitBuffer& connect_packet)
-        : socket(socket),
+        : source_recorder(&recorder),
+          socket(socket),
           address(peer_address),
+          client(victim_client),
+          live_server(source_server),
           killer_player_id(recorded_killer_player_id) {
         kage::sync::configure_server(registry);
         (void)define_schema(registry);
@@ -144,6 +151,14 @@ struct FpsReplayServer::Session {
         const bool ack = message == kage::sync::protocol::client_connect_ack_message;
         const bool processed = server->process_packet(registry, peer, std::move(packet));
         if (processed && ack) {
+            if (live_server != nullptr) {
+                (void)source_recorder->streamer().attach_network_session_bandwidth(
+                    *server,
+                    kage::sync::ReplicationReplayNetworkSessionOptions{
+                        live_server,
+                        client,
+                        kage::sync::ReplicationBandwidthParticipantOptions{1U, 1}});
+            }
             ready = true;
             send_replay_target(socket, address, killer_player_id);
         }
@@ -156,16 +171,28 @@ struct FpsReplayServer::Session {
             return;
         }
         if (lifetime_seconds >= replay_session_timeout_seconds) {
-            done = true;
+            finish();
             return;
         }
         if (!ready) {
             return;
         }
         if (!recorder.streamer().tick_session(replay_session, registry, *server)) {
-            done = true;
+            finish();
+            return;
         }
     }
+
+    void finish() {
+        if (done) {
+            return;
+        }
+        done = true;
+        if (server != nullptr) {
+            (void)server->remove_client(client);
+        }
+    }
+
 };
 
 FpsReplayRecorder::FpsReplayRecorder(const std::string& directory)
@@ -244,11 +271,13 @@ void FpsReplayServer::record_death(
 
 void FpsReplayServer::attach(kage::sync::ReplicationServer& server) {
     detach();
+    live_server_ = &server;
     death_subscription_ = server.subscribe_registry_dirty_frame_listener(*this);
 }
 
 void FpsReplayServer::detach() {
     death_subscription_.reset();
+    live_server_ = nullptr;
 }
 
 void FpsReplayServer::on_server_registry_dirty_frame(const kage::sync::ServerRegistryDirtyFrame& frame) {
@@ -305,6 +334,7 @@ bool FpsReplayServer::begin_session(
             peer,
             address,
             client,
+            live_server_,
             found->second.frame,
             found->second.killer_player_id,
             packet));

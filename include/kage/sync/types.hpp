@@ -35,6 +35,7 @@ using ConnectHandlerFn = std::function<bool(const std::string&, ClientId&, std::
 struct SyncSettings;
 struct QueuedSyncCueView;
 class ReplicationClient;
+class ReplicationBandwidthBudget;
 class ReplicationReplayStreamer;
 class ReplicationServer;
 
@@ -581,6 +582,14 @@ struct ReplicationBandwidthOptions {
     float rtt_inflation_decrease_threshold = 1.5f;
     float multiplicative_decrease = 0.75f;
     float additive_increase_bytes_per_second = 2400.0f;
+};
+
+using ReplicationBandwidthParticipantId = std::uint32_t;
+inline constexpr ReplicationBandwidthParticipantId invalid_bandwidth_participant_id = 0;
+
+struct ReplicationBandwidthParticipantOptions {
+    std::size_t weight = 1;
+    int priority = 0;
 };
 
 struct ReplicationServerOptions {

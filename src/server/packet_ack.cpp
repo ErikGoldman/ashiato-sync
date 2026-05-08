@@ -1,5 +1,6 @@
 #include "kage/sync/server.hpp"
 
+#include "kage/sync/bandwidth_budget.hpp"
 #include "server/packet.hpp"
 #include "server/packet_ack_tracker.hpp"
 #include "server/state.hpp"
@@ -39,8 +40,8 @@ bool server_detail::ServerClientReplicator::AckTracker::acknowledge_packet(
             : server.acknowledge_entity(client.id, record.entity, record.frame);
         all_valid = accepted && all_valid;
     }
-    if (server.options().bandwidth.enabled) {
-        client.bandwidth.packet_acked(server.options().bandwidth, found->sent_frame, server.frame(), found->charged_bytes);
+    if (server.options().bandwidth.enabled && client.bandwidth != nullptr) {
+        client.bandwidth->packet_acked(server.options().bandwidth, found->sent_frame, server.frame(), found->charged_bytes);
     }
     pending_packet_acks.erase(found);
     return all_valid;
@@ -84,8 +85,8 @@ void server_detail::ServerClientReplicator::AckTracker::cleanup_packet_acks(
                     [&](const PacketAckRecord& record) {
                         return packet_ack_record_pending(server, client, record);
                     });
-                if (stale && server.options().bandwidth.enabled) {
-                    client.bandwidth.packet_lost(server.options().bandwidth, server.frame(), pending_packet.charged_bytes);
+                if (stale && server.options().bandwidth.enabled && client.bandwidth != nullptr) {
+                    client.bandwidth->packet_lost(server.options().bandwidth, server.frame(), pending_packet.charged_bytes);
                 }
                 return stale;
             }),
@@ -106,8 +107,8 @@ std::uint32_t server_detail::ServerClientReplicator::AckTracker::allocate_packet
                 if (pending.packet_id != packet_id) {
                     return false;
                 }
-                if (options.bandwidth.enabled) {
-                    client.bandwidth.packet_lost(options.bandwidth, server.frame(), pending.charged_bytes);
+                if (options.bandwidth.enabled && client.bandwidth != nullptr) {
+                    client.bandwidth->packet_lost(options.bandwidth, server.frame(), pending.charged_bytes);
                 }
                 return true;
             }),
@@ -124,9 +125,9 @@ void server_detail::ServerClientReplicator::AckTracker::enforce_pending_packet_a
         return;
     }
     const std::size_t drop_count = pending_packet_acks.size() - max_pending;
-    if (options.bandwidth.enabled) {
+    if (options.bandwidth.enabled && client.bandwidth != nullptr) {
         for (std::size_t index = 0; index < drop_count; ++index) {
-            client.bandwidth.packet_lost(
+            client.bandwidth->packet_lost(
                 options.bandwidth,
                 server.frame(),
                 pending_packet_acks[index].charged_bytes);
@@ -139,10 +140,13 @@ void server_detail::ServerClientReplicator::AckTracker::enforce_pending_packet_a
 }
 
 std::size_t ReplicationServer::begin_client_bandwidth_tick(ServerClientReplicator& client) {
-    if (!options_.bandwidth.enabled) {
-        return options_.bandwidth_limit_bytes_per_tick;
+    if (client.bandwidth == nullptr) {
+        client.bandwidth = std::make_shared<ReplicationBandwidthBudget>(options_.bandwidth);
     }
-    return client.bandwidth.begin_tick(options_.bandwidth, options_.fixed_dt_seconds);
+    if (!options_.bandwidth.enabled) {
+        return client.bandwidth->begin_fixed_tick_once(options_.bandwidth_limit_bytes_per_tick);
+    }
+    return client.bandwidth->begin_tick_once(options_.bandwidth, options_.fixed_dt_seconds);
 }
 
 std::size_t ReplicationServer::charged_packet_bytes(std::size_t payload_bytes) const noexcept {
@@ -159,8 +163,8 @@ void server_detail::ServerClientReplicator::AckTracker::track_packet_ack(
         return;
     }
     server_detail::track_packet_ack(pending_packet_acks, packet_id, sent_frame, charged_bytes, records);
-    if (charged_bytes != 0U) {
-        client.bandwidth.packet_sent(charged_bytes);
+    if (charged_bytes != 0U && client.bandwidth != nullptr) {
+        client.bandwidth->packet_sent(charged_bytes);
     }
 }
 

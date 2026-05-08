@@ -31,7 +31,9 @@ void ReplicationServer::send_packet(
             records);
     const std::size_t charged_bytes = charged_packet_bytes(packet.byte_size());
     client.ack_tracker.track_packet_ack(client, packet_id, frame, charged_bytes, ack_records);
-    client.bandwidth.spend(charged_bytes);
+    if (client.bandwidth != nullptr) {
+        client.bandwidth->spend(charged_bytes);
+    }
     client.ack_tracker.enforce_pending_packet_ack_limit(*this, client);
 #if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
     trace_outgoing_update_packet(client, frame, packet_id, client.input_ack_frame, ack_records);

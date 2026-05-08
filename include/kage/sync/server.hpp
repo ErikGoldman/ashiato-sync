@@ -45,6 +45,12 @@ public:
         float loss_rate = 0.0f;
     };
 
+    struct ReplicationSendResult {
+        std::size_t charged_bytes = 0;
+        bool had_pending_data = false;
+        bool stopped_for_budget = false;
+    };
+
     struct ObservabilityStats {
         std::uint64_t client_packet_warnings = 0;
         std::uint64_t suppressed_client_packet_warnings = 0;
@@ -89,6 +95,7 @@ public:
     bool remove_client(ClientId client);
     bool has_client(ClientId client) const;
     std::size_t client_count() const noexcept;
+    std::vector<ClientId> client_ids() const;
 
     void rediscover_all_replicated_entities(ecs::Registry& registry);
     bool is_replicated(ecs::Entity entity) const;
@@ -111,6 +118,16 @@ public:
     bool set_local_input_bytes(ecs::Registry& registry, ecs::Entity component, const void* input);
     ClientInputStats input_stats(ClientId client) const noexcept;
     ClientBandwidthStats bandwidth_stats(ClientId client) const noexcept;
+    std::shared_ptr<ReplicationBandwidthBudget> client_bandwidth_budget(ClientId client) const noexcept;
+    bool set_client_bandwidth_budget(ClientId client, std::shared_ptr<ReplicationBandwidthBudget> budget);
+    bool set_client_bandwidth_budget(
+        ClientId client,
+        std::shared_ptr<ReplicationBandwidthBudget> budget,
+        ReplicationBandwidthParticipantOptions share);
+    bool set_client_bandwidth_share(ClientId client, ReplicationBandwidthParticipantOptions share);
+    ReplicationBandwidthParticipantOptions client_bandwidth_share(ClientId client) const noexcept;
+    std::size_t begin_client_bandwidth_tick(ClientId client);
+    ReplicationSendResult flush_client_updates(ecs::Registry& registry, ClientId client);
     ObservabilityStats observability_stats() const noexcept {
         return observability_stats_;
     }
@@ -169,6 +186,7 @@ public:
         const std::vector<server_detail::PacketAckRecord>& ack_records);
     bool prepare_client_update_send(server_detail::ServerClientReplicator& client);
     std::size_t begin_client_bandwidth_tick(server_detail::ServerClientReplicator& client);
+    ReplicationSendResult flush_client_updates(ecs::Registry& registry, server_detail::ServerClientReplicator& client);
     std::size_t charged_packet_bytes(std::size_t payload_bytes) const noexcept;
 #ifdef KAGE_SYNC_ENABLE_TRACING
     SyncTracer* server_tracer() const noexcept;
@@ -269,6 +287,7 @@ private:
 #endif
     );
     bool process_input_with_acks_packet(ecs::Registry& registry, ClientState& client, ecs::BitBuffer& packet);
+    void detach_client_bandwidth_participant(ServerClientReplicator& replication);
     void log_info(const char* event, const std::string& fields) const;
     void log_client_packet_warning(ClientId peer, std::uint8_t message, const char* reason_code, const char* reason_detail);
     void log_server_error(ClientId peer, const char* event, const char* reason);

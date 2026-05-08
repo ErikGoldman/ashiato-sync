@@ -35,11 +35,22 @@ void server_detail::ServerClientReplicator::on_server_frame_batch_complete(const
         return;
     }
     ReplicationServer& replication_server = batch.server;
-    if (!replication_server.prepare_client_update_send(*this)) {
+    if (bandwidth == nullptr || bandwidth_participant == invalid_bandwidth_participant_id) {
         return;
     }
-    const SyncSettings& settings = batch.registry.get<SyncSettings>();
-    update_scheduler->send_client(replication_server, batch.registry, settings, *this, batch.completed_frames);
+    (void)replication_server.begin_client_bandwidth_tick(*this);
+    ReplicationBandwidthBudget& budget = *bandwidth;
+    (void)budget.submit_flush(
+        bandwidth_participant,
+        ReplicationBandwidthBudget::FlushRequest{
+            [&replication_server, &registry = batch.registry, this]() {
+                const ReplicationServer::ReplicationSendResult result =
+                    replication_server.flush_client_updates(registry, *this);
+                return ReplicationBandwidthBudget::FlushResult{
+                    result.charged_bytes,
+                    result.had_pending_data,
+                    result.stopped_for_budget};
+            }});
 }
 
 void server_detail::ServerClientReplicator::EntityStates::ensure_capacity(std::size_t size) {

@@ -242,6 +242,39 @@ bool ReplicationReplayStreamer::begin_session(
     return true;
 }
 
+bool ReplicationReplayStreamer::begin_network_session(
+    SyncFrame focus_frame,
+    ecs::Registry& registry,
+    ReplicationServer& server,
+    ReplicationReplayStreamSession& session,
+    ReplicationReplayNetworkSessionOptions options) const {
+    if (!begin_session(focus_frame, registry, server, session)) {
+        return false;
+    }
+    if (!attach_network_session_bandwidth(server, options)) {
+        session = {};
+        return false;
+    }
+    return true;
+}
+
+bool ReplicationReplayStreamer::attach_network_session_bandwidth(
+    ReplicationServer& replay_server,
+    ReplicationReplayNetworkSessionOptions options) const {
+    if (options.source_server == nullptr || options.client == invalid_client_id) {
+        return false;
+    }
+    std::shared_ptr<ReplicationBandwidthBudget> budget =
+        options.source_server->client_bandwidth_budget(options.client);
+    if (budget == nullptr) {
+        return false;
+    }
+    return replay_server.set_client_bandwidth_budget(
+        options.client,
+        std::move(budget),
+        options.bandwidth_share);
+}
+
 bool ReplicationReplayStreamer::tick_session(
     ReplicationReplayStreamSession& session,
     ecs::Registry& registry,
