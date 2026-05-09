@@ -1376,8 +1376,12 @@ int main(int argc, char** argv) {
             }
         }
 
-        while (server_accumulator >= server_fixed_dt) {
+        std::uint32_t server_steps = 0;
+        while (server_accumulator >= server_fixed_dt &&
+               (server.options().max_fixed_steps_per_tick == 0U ||
+                server_steps < server.options().max_fixed_steps_per_tick)) {
             server_accumulator -= server_fixed_dt;
+            ++server_steps;
             ++server_frame;
             update_server_world(
                 server_registry,
@@ -1388,6 +1392,9 @@ int main(int argc, char** argv) {
                 spawn_index,
                 target_ball_count);
             server.tick(server_registry, server_fixed_dt);
+        }
+        if (server.options().max_fixed_steps_per_tick != 0U && server_accumulator >= server_fixed_dt) {
+            server_accumulator = std::fmod(server_accumulator, server_fixed_dt);
         }
         stats.server_entities = static_cast<int>(balls.size());
 

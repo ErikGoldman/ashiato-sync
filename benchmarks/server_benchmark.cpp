@@ -918,6 +918,41 @@ void BM_ServerTickInputUpsert(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(entity_count));
 }
 
+void BM_ServerTickCappedLargeDelta(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int backlog_frames = static_cast<int>(state.range(1));
+    const int cap_frames = static_cast<int>(state.range(2));
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        ecs::Registry registry;
+        kage::sync::configure_server(registry);
+        struct TickCounter {
+            int frames = 0;
+        };
+        registry.register_component<TickCounter>("TickCounter");
+        for (int index = 0; index < entity_count; ++index) {
+            const ecs::Entity entity = registry.create();
+            registry.add<TickCounter>(entity, TickCounter{});
+        }
+        registry.job<TickCounter>(0).each([](ecs::Entity, TickCounter& counter) {
+            ++counter.frames;
+        });
+        kage::sync::ReplicationServerOptions options;
+        options.max_fixed_steps_per_tick = static_cast<std::uint32_t>(cap_frames);
+        options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
+        kage::sync::ReplicationServer server(options);
+        state.ResumeTiming();
+
+        benchmark::DoNotOptimize(server.tick(
+            registry,
+            static_cast<double>(backlog_frames) * server.options().fixed_dt_seconds));
+    }
+
+    state.SetItemsProcessed(
+        state.iterations() * static_cast<std::int64_t>(entity_count) * static_cast<std::int64_t>(cap_frames));
+}
+
 void TickArgs(benchmark::internal::Benchmark* benchmark) {
     benchmark->Args({1024, 1})->Args({16384, 1})->Args({16384, 8})->Args({65536, 8});
 }
@@ -975,6 +1010,7 @@ BENCHMARK(BM_ServerTickArchetypeDiversity)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickStressScheduler)->Args({4096, 4, 1})->Args({4096, 4, 2})->Args({4096, 4, 4});
 BENCHMARK(BM_ServerProcessInputPacket)->Apply(InputFrameArgs);
 BENCHMARK(BM_ServerTickInputUpsert)->Arg(1024)->Arg(16384);
+BENCHMARK(BM_ServerTickCappedLargeDelta)->Args({1024, 64, 4})->Args({16384, 64, 4});
 BENCHMARK(BM_BitBufferUnalignedBytes)->Arg(64)->Arg(1024)->Arg(16384);
 BENCHMARK(BM_BitBufferUnalignedReadUnsigned)->Arg(1024)->Arg(16384);
 BENCHMARK(BM_BitBufferAppendBits)->Arg(512)->Arg(8192)->Arg(131072);

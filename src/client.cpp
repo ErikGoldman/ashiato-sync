@@ -69,6 +69,7 @@ ReplicationClientClockConfig make_clock_config(const ReplicationClientOptions& o
     config.auto_timing_warmup_samples = options.auto_timing_warmup_samples;
     config.auto_timing_fast_recovery = options.auto_timing_fast_recovery;
     config.auto_timing_fast_recovery_min_frame_gap = options.auto_timing_fast_recovery_min_frame_gap;
+    config.max_fixed_steps_per_tick = options.max_fixed_steps_per_tick;
     return config;
 }
 
@@ -90,6 +91,10 @@ std::uint16_t encode_subframe(double subframe) noexcept {
 double decode_continuous_frame(SyncFrame frame, std::uint16_t subframe) noexcept {
     return static_cast<double>(frame) +
         static_cast<double>(subframe) / static_cast<double>(protocol::frame_subframe_scale);
+}
+
+std::uint32_t frame_range_count(const ReplicationClientClock::FrameRange& range) noexcept {
+    return range.empty() || range.last < range.first ? 0U : range.last - range.first + 1U;
 }
 
 #ifdef KAGE_SYNC_ENABLE_TRACING
@@ -1367,7 +1372,14 @@ bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds, ecs::Ru
         has_predicted_frame_ &&
         pending_prediction_catchup_frame_ > clock_.input_frame()) {
         const SyncFrame first = clock_.input_frame() + 1U;
-        const SyncFrame last = pending_prediction_catchup_frame_;
+        const std::uint32_t input_steps = frame_range_count(advance.input);
+        const std::uint32_t max_steps = options_.max_fixed_steps_per_tick;
+        const std::uint32_t remaining_steps = max_steps == 0U || input_steps >= max_steps ? 0U : max_steps - input_steps;
+        const SyncFrame last = max_steps == 0U
+            ? pending_prediction_catchup_frame_
+            : std::min(
+                  pending_prediction_catchup_frame_,
+                  static_cast<SyncFrame>(clock_.input_frame() + remaining_steps));
         const SyncSettings& settings = registry.get<SyncSettings>();
         for (SyncFrame frame = first; frame <= last; ++frame) {
             (void)record_input_frame(registry, settings, frame);
@@ -1391,6 +1403,11 @@ bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds, ecs::Ru
                 input_->last_recorded_frame(),
                 clock_.input_frame());
 #endif
+        }
+        if (max_steps != 0U && pending_prediction_catchup_frame_ > clock_.input_frame()) {
+            const std::uint64_t dropped = static_cast<std::uint64_t>(pending_prediction_catchup_frame_ - clock_.input_frame());
+            clock_.mutable_stats().dropped_input_frames += dropped;
+            pending_prediction_catchup_frame_ = clock_.input_frame();
         }
     }
     if (pending_prediction_catchup_frame_ <= clock_.input_frame()) {

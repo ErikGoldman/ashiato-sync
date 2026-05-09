@@ -166,6 +166,7 @@ struct ReplicationClientOptions {
     std::uint32_t adaptive_ping_stable_samples = 4;
     float adaptive_ping_stable_threshold_frames = 0.5f;
     float adaptive_ping_jump_threshold_frames = 3.0f;
+    std::uint32_t max_fixed_steps_per_tick = 0;
 #ifdef KAGE_SYNC_ENABLE_TRACING
     TraceOptions trace;
 #endif

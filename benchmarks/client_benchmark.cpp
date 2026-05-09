@@ -404,6 +404,32 @@ void BM_ClientTickBufferedAutoInterpolation(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(packets.size()));
 }
 
+void BM_ClientTickCappedLargeDelta(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const int backlog_frames = static_cast<int>(state.range(1));
+    const int cap_frames = static_cast<int>(state.range(2));
+    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, 1);
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        ecs::Registry registry;
+        define_client_delta_schema(registry, true);
+        kage::sync::ReplicationClientOptions options;
+        options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+        options.interpolation_buffer_capacity_frames = 64;
+        options.max_fixed_steps_per_tick = static_cast<std::uint32_t>(cap_frames);
+        kage::sync::ReplicationClient client(options);
+        benchmark::DoNotOptimize(client.receive(registry, packets.front()));
+        state.ResumeTiming();
+
+        benchmark::DoNotOptimize(client.tick(
+            registry,
+            static_cast<double>(backlog_frames) * client.options().fixed_dt_seconds));
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(cap_frames));
+}
+
 void BM_ClientInputRecordAndDrain(benchmark::State& state) {
     const int frame_count = static_cast<int>(state.range(0));
 
@@ -443,6 +469,7 @@ BENCHMARK(BM_ClientReceiveDestroySnap)->Apply(DestroyArgs);
 BENCHMARK(BM_ClientReceiveDestroyBuffered)->Apply(DestroyArgs);
 BENCHMARK(BM_ClientReceiveSpawnDestroyChurn)->Apply(DestroyArgs);
 BENCHMARK(BM_ClientTickBufferedAutoInterpolation)->Apply(ClientArgs);
+BENCHMARK(BM_ClientTickCappedLargeDelta)->Args({1024, 64, 4})->Args({4096, 64, 4});
 BENCHMARK(BM_ClientInputRecordAndDrain)->Arg(16)->Arg(64);
 
 }  // namespace

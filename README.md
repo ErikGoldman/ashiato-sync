@@ -190,6 +190,8 @@ serializes due entity updates into server update packets, and sends those packet
 through `ReplicationServerOptions::transport`. Entities sent in the current tick
 are moved behind unsent entities for that client, so bandwidth-limited clients
 naturally receive older unsent state first.
+Set `ReplicationServerOptions::max_fixed_steps_per_tick` to cap continuous
+fixed-step catch-up work; `0` keeps the default unlimited behavior.
 
 ## API Notes
 
@@ -237,7 +239,10 @@ naturally receive older unsent state first.
   owns receive/playback frame counters, records continuous receive delay from
   server update frames, applies fixed buffered frames, runs prediction
   rollback/resimulation and ECS jobs for predicted entities, and adjusts
-  playback with `timing_stats().time_dilation`. Disable
+  playback with `timing_stats().time_dilation`. Set
+  `ReplicationClientOptions::max_fixed_steps_per_tick` to cap and drop
+  excessive receive/playback/input catch-up work; `0` leaves it unlimited.
+  Disable
   `auto_interpolation_buffer_frames` for a fixed manual buffer. Fast auto timing
   recovery is enabled by default; tune it with
   `auto_timing_fast_recovery_min_frame_gap` or disable it with

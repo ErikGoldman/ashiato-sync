@@ -24,6 +24,9 @@ struct ReplicationClientTimingStats {
     std::uint64_t server_update_packets_received = 0;
     std::uint64_t server_update_packets_missing = 0;
     std::uint64_t server_update_packets_reordered_or_duplicate = 0;
+    std::uint64_t dropped_receive_frames = 0;
+    std::uint64_t dropped_playback_frames = 0;
+    std::uint64_t dropped_input_frames = 0;
     float server_update_packet_loss = 0.0f;
 };
 
@@ -50,6 +53,7 @@ struct ReplicationClientClockConfig {
     std::uint32_t auto_timing_warmup_samples = 3;
     bool auto_timing_fast_recovery = true;
     SyncFrame auto_timing_fast_recovery_min_frame_gap = 4;
+    std::uint32_t max_fixed_steps_per_tick = 0;
 };
 
 class ReplicationClientClock {

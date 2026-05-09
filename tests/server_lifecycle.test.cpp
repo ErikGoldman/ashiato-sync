@@ -2,6 +2,7 @@
 
 #include "kage/sync/simulated_link.hpp"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -206,6 +207,39 @@ TEST_CASE("replication server continuous tick owns the fixed-step accumulator") 
     REQUIRE(server.frame() == 2);
     REQUIRE(server.accumulator_seconds() == 0.125);
     REQUIRE(server.continuous_frame() == 2.5);
+}
+
+TEST_CASE("replication server caps and drops continuous tick backlog when configured") {
+    ecs::Registry registry;
+    kage::sync::configure_server(registry);
+
+    struct TickCounter {
+        int frames = 0;
+    };
+    registry.register_component<TickCounter>("TickCounter");
+    const ecs::Entity counter = registry.create();
+    REQUIRE(registry.add<TickCounter>(counter, TickCounter{}) != nullptr);
+    registry.job<TickCounter>(0).each([](ecs::Entity, TickCounter& state) {
+        ++state.frames;
+    });
+
+    kage::sync::ReplicationServerOptions options;
+    options.fixed_dt_seconds = 0.25;
+    options.max_fixed_steps_per_tick = 2;
+    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
+    kage::sync::ReplicationServer server(options);
+
+    REQUIRE(server.tick(registry, 5.5 * server.options().fixed_dt_seconds));
+    REQUIRE(registry.get<TickCounter>(counter).frames == 2);
+    REQUIRE(server.frame() == 2);
+    REQUIRE(server.accumulator_seconds() == Catch::Approx(0.125));
+    REQUIRE(server.observability_stats().dropped_fixed_step_frames == 3);
+    REQUIRE(server.observability_stats().fixed_step_overflow_events == 1);
+
+    REQUIRE(server.tick(registry, 0.5 * server.options().fixed_dt_seconds));
+    REQUIRE(registry.get<TickCounter>(counter).frames == 3);
+    REQUIRE(server.frame() == 3);
+    REQUIRE(server.observability_stats().dropped_fixed_step_frames == 3);
 }
 
 TEST_CASE("replication server frame consumer receives once per completed fixed step") {

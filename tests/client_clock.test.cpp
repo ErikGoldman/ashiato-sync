@@ -86,6 +86,27 @@ TEST_CASE("client clock advances only receive frames before bootstrap") {
     REQUIRE(clock.input_frame() == 0);
 }
 
+TEST_CASE("client clock caps and drops receive accumulator backlog when configured") {
+    kage::sync::ReplicationClientClockConfig config = test_config();
+    config.max_fixed_steps_per_tick = 2;
+    kage::sync::ReplicationClientClock clock(config);
+
+    const kage::sync::ReplicationClientClock::FrameRange advanced =
+        clock.advance_receive(5.5 * clock.config().fixed_dt_seconds);
+
+    REQUIRE(advanced.first == 1);
+    REQUIRE(advanced.last == 2);
+    REQUIRE(clock.receive_frame() == 2);
+    REQUIRE(clock.receive_subframe() == Catch::Approx(0.5));
+    REQUIRE(clock.stats().dropped_receive_frames == 3);
+
+    const kage::sync::ReplicationClientClock::FrameRange next =
+        clock.advance_receive(0.51 * clock.config().fixed_dt_seconds);
+    REQUIRE(next.first == 3);
+    REQUIRE(next.last == 3);
+    REQUIRE(clock.receive_frame() == 3);
+}
+
 TEST_CASE("client clock bootstrap anchors playback and input without catchup burst") {
     kage::sync::ReplicationClientClock clock(test_config());
     (void)clock.advance(20.0 * clock.config().fixed_dt_seconds);
@@ -106,6 +127,28 @@ TEST_CASE("client clock bootstrap anchors playback and input without catchup bur
     REQUIRE(one.playback.last == 11);
     REQUIRE(one.input.first == 13);
     REQUIRE(one.input.last == 13);
+}
+
+TEST_CASE("client clock caps playback and input accumulator backlog when configured") {
+    kage::sync::ReplicationClientClockConfig config = test_config();
+    config.max_fixed_steps_per_tick = 3;
+    kage::sync::ReplicationClientClock clock(config);
+    REQUIRE(clock.bootstrap_from_server_update(10));
+
+    clock.mutable_stats().time_dilation = 1.5f;
+    const kage::sync::ReplicationClientClock::AdvanceResult advanced =
+        clock.advance_playback_input(4.0 * clock.config().fixed_dt_seconds);
+
+    REQUIRE(advanced.playback.first == 11);
+    REQUIRE(advanced.playback.last == 13);
+    REQUIRE(advanced.input.first == 13);
+    REQUIRE(advanced.input.last == 15);
+    REQUIRE(clock.playback_frame() == 13);
+    REQUIRE(clock.input_frame() == 15);
+    REQUIRE(clock.playback_subframe() == Catch::Approx(0.0));
+    REQUIRE(clock.input_subframe() == Catch::Approx(0.0));
+    REQUIRE(clock.stats().dropped_playback_frames == 3);
+    REQUIRE(clock.stats().dropped_input_frames == 1);
 }
 
 TEST_CASE("client clock clamps bootstrap playback at zero") {

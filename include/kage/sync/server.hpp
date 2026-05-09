@@ -60,6 +60,8 @@ public:
         std::uint64_t clients_ready = 0;
         std::uint64_t clients_removed = 0;
         std::uint64_t clients_timed_out = 0;
+        std::uint64_t dropped_fixed_step_frames = 0;
+        std::uint64_t fixed_step_overflow_events = 0;
     };
 
     explicit ReplicationServer(ReplicationServerOptions options = {});

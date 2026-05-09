@@ -521,6 +521,31 @@ TEST_CASE("normal receive records timing from the client-owned clock without mov
     REQUIRE(client.current_interpolation_buffer_frames() == 2);
 }
 
+TEST_CASE("client tick caps receive playback and input backlog when configured") {
+    ecs::Registry client_registry;
+    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    kage::sync::configure_client(client_registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.max_fixed_steps_per_tick = 2;
+    kage::sync::ReplicationClient client(options);
+    const ecs::Entity server_entity{42};
+
+    REQUIRE(client.receive(client_registry, make_position_packet(10, {{server_entity, Position{1.0f, 2.0f}}})));
+    REQUIRE(client.playback_frame() == 0);
+    REQUIRE(client.input_frame() == 0);
+
+    REQUIRE(client.tick(client_registry, 5.5 * client.options().fixed_dt_seconds));
+
+    REQUIRE(client.receive_frame() == 2);
+    REQUIRE(client.playback_frame() == 2);
+    REQUIRE(client.input_frame() == 2);
+    REQUIRE(client.timing_stats().dropped_receive_frames == 3);
+    REQUIRE(client.timing_stats().dropped_playback_frames == 3);
+    REQUIRE(client.timing_stats().dropped_input_frames == 4);
+}
+
 TEST_CASE("adaptive ping interval samples frequently until latency stabilizes") {
     ecs::Registry client_registry;
     kage_sync_tests::define_position_archetype(client_registry);

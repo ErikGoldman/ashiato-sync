@@ -35,6 +35,11 @@ namespace {
 constexpr std::size_t max_pending_quantized_frames_per_entity = 64;
 constexpr std::size_t max_cues_per_entity_record = server_detail::max_cues_per_entity_record;
 
+struct FixedStepAdvance {
+    std::uint32_t steps = 0;
+    std::uint64_t dropped_steps = 0;
+};
+
 using detail::frame_component_data;
 using detail::frame_has_component;
 using detail::has_tag_slot;
@@ -47,6 +52,33 @@ using server_detail::configured_packet_id_bits;
 using server_detail::destroy_record_bits;
 using server_detail::make_server_packet;
 using server_detail::server_update_header_bits;
+
+FixedStepAdvance consume_fixed_steps(
+    double& accumulator_seconds,
+    double fixed_dt_seconds,
+    std::uint32_t max_fixed_steps_per_tick) noexcept {
+    if (accumulator_seconds < fixed_dt_seconds) {
+        return {};
+    }
+    const double whole_step_count = std::floor(accumulator_seconds / fixed_dt_seconds);
+    if (!std::isfinite(whole_step_count) || whole_step_count <= 0.0) {
+        accumulator_seconds = 0.0;
+        return {};
+    }
+
+    const double remainder = accumulator_seconds - whole_step_count * fixed_dt_seconds;
+    const double clamped_remainder = remainder > 0.0 && std::isfinite(remainder) ? remainder : 0.0;
+    const std::uint64_t whole_steps = whole_step_count >= static_cast<double>(std::numeric_limits<std::uint64_t>::max())
+        ? std::numeric_limits<std::uint64_t>::max()
+        : static_cast<std::uint64_t>(whole_step_count);
+    const std::uint64_t capped_steps = max_fixed_steps_per_tick == 0U
+        ? whole_steps
+        : std::min<std::uint64_t>(whole_steps, max_fixed_steps_per_tick);
+    accumulator_seconds = clamped_remainder;
+    return FixedStepAdvance{
+        static_cast<std::uint32_t>(std::min<std::uint64_t>(capped_steps, std::numeric_limits<std::uint32_t>::max())),
+        whole_steps - capped_steps};
+}
 
 struct OutboundPacket {
     ClientId client = invalid_client_id;
@@ -1756,11 +1788,17 @@ bool ReplicationServer::tick(ecs::Registry& registry, double dt_seconds) {
     resend_pending_connect_responses(dt_seconds);
     disconnect_timed_out_clients();
 
-    std::uint32_t completed_frames = 0;
-    while (tick_accumulator_seconds_ >= options_.fixed_dt_seconds) {
-        tick_accumulator_seconds_ -= options_.fixed_dt_seconds;
+    const FixedStepAdvance advance = consume_fixed_steps(
+        tick_accumulator_seconds_,
+        options_.fixed_dt_seconds,
+        options_.max_fixed_steps_per_tick);
+    if (advance.dropped_steps != 0U) {
+        observability_stats_.dropped_fixed_step_frames += advance.dropped_steps;
+        ++observability_stats_.fixed_step_overflow_events;
+    }
+    const std::uint32_t completed_frames = advance.steps;
+    for (std::uint32_t step = 0; step < completed_frames; ++step) {
         ++frame_;
-        ++completed_frames;
         registry.write<SyncSettings>().fixed_dt_seconds = options_.fixed_dt_seconds;
         registry.write<FrameInfo>().frame = frame_;
         push_client_inputs_to_ecs(registry);

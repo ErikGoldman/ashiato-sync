@@ -608,6 +608,7 @@ struct ReplicationServerOptions {
     ConnectHandlerFn connect_handler;
     TransportFn transport;
     LoggingOptions logging;
+    std::uint32_t max_fixed_steps_per_tick = 0;
 #ifdef KAGE_SYNC_ENABLE_TRACING
     TraceOptions trace;
 #endif

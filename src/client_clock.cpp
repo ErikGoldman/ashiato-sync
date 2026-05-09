@@ -4,10 +4,16 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace kage::sync {
 
 namespace {
+
+struct FixedStepAdvance {
+    SyncFrame steps = 0;
+    std::uint64_t dropped_steps = 0;
+};
 
 float dilation_from_error(float error, float gain, float min_dilation, float max_dilation) noexcept {
     constexpr float deadband_frames = 0.25f;
@@ -23,6 +29,36 @@ SyncFrame rounded_frame_count(double frames) noexcept {
         return 0;
     }
     return static_cast<SyncFrame>(std::round(frames));
+}
+
+FixedStepAdvance consume_fixed_steps(
+    double& accumulator_seconds,
+    double dt_seconds,
+    double fixed_dt_seconds,
+    std::uint32_t max_fixed_steps_per_tick) noexcept {
+    accumulator_seconds += dt_seconds;
+    if (accumulator_seconds < fixed_dt_seconds) {
+        return {};
+    }
+
+    const double whole_step_count = std::floor(accumulator_seconds / fixed_dt_seconds);
+    if (!std::isfinite(whole_step_count) || whole_step_count <= 0.0) {
+        accumulator_seconds = 0.0;
+        return {};
+    }
+
+    const double remainder = accumulator_seconds - whole_step_count * fixed_dt_seconds;
+    const double clamped_remainder = remainder > 0.0 && std::isfinite(remainder) ? remainder : 0.0;
+    const std::uint64_t whole_steps = whole_step_count >= static_cast<double>(std::numeric_limits<std::uint64_t>::max())
+        ? std::numeric_limits<std::uint64_t>::max()
+        : static_cast<std::uint64_t>(whole_step_count);
+    const std::uint64_t max_steps = max_fixed_steps_per_tick == 0U
+        ? whole_steps
+        : std::min<std::uint64_t>(whole_steps, max_fixed_steps_per_tick);
+    accumulator_seconds = clamped_remainder;
+    return FixedStepAdvance{
+        static_cast<SyncFrame>(std::min<std::uint64_t>(max_steps, std::numeric_limits<SyncFrame>::max())),
+        whole_steps - max_steps};
 }
 
 }  // namespace
@@ -54,11 +90,13 @@ ReplicationClientClock::FrameRange ReplicationClientClock::advance_receive(doubl
     }
 
     const SyncFrame previous_receive_frame = receive_frame_;
-    receive_accumulator_seconds_ += dt_seconds;
-    while (receive_accumulator_seconds_ >= config_.fixed_dt_seconds) {
-        receive_accumulator_seconds_ -= config_.fixed_dt_seconds;
-        ++receive_frame_;
-    }
+    const FixedStepAdvance advance = consume_fixed_steps(
+        receive_accumulator_seconds_,
+        dt_seconds,
+        config_.fixed_dt_seconds,
+        config_.max_fixed_steps_per_tick);
+    receive_frame_ += advance.steps;
+    stats_.dropped_receive_frames += advance.dropped_steps;
     if (receive_frame_ != previous_receive_frame) {
         result.first = previous_receive_frame + 1U;
         result.last = receive_frame_;
@@ -79,22 +117,26 @@ ReplicationClientClock::AdvanceResult ReplicationClientClock::advance_playback_i
     }
 
     const SyncFrame previous_playback_frame = playback_frame_;
-    playback_accumulator_seconds_ += dt_seconds * static_cast<double>(stats_.time_dilation);
-    while (playback_accumulator_seconds_ >= config_.fixed_dt_seconds) {
-        playback_accumulator_seconds_ -= config_.fixed_dt_seconds;
-        ++playback_frame_;
-    }
+    const FixedStepAdvance playback_advance = consume_fixed_steps(
+        playback_accumulator_seconds_,
+        dt_seconds * static_cast<double>(stats_.time_dilation),
+        config_.fixed_dt_seconds,
+        config_.max_fixed_steps_per_tick);
+    playback_frame_ += playback_advance.steps;
+    stats_.dropped_playback_frames += playback_advance.dropped_steps;
     if (playback_frame_ != previous_playback_frame) {
         result.playback.first = previous_playback_frame + 1U;
         result.playback.last = playback_frame_;
     }
 
     const SyncFrame previous_input_frame = input_frame_;
-    input_accumulator_seconds_ += dt_seconds * static_cast<double>(stats_.prediction_time_dilation);
-    while (input_accumulator_seconds_ >= config_.fixed_dt_seconds) {
-        input_accumulator_seconds_ -= config_.fixed_dt_seconds;
-        ++input_frame_;
-    }
+    const FixedStepAdvance input_advance = consume_fixed_steps(
+        input_accumulator_seconds_,
+        dt_seconds * static_cast<double>(stats_.prediction_time_dilation),
+        config_.fixed_dt_seconds,
+        config_.max_fixed_steps_per_tick);
+    input_frame_ += input_advance.steps;
+    stats_.dropped_input_frames += input_advance.dropped_steps;
     if (input_frame_ != previous_input_frame) {
         result.input.first = previous_input_frame + 1U;
         result.input.last = input_frame_;
