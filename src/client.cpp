@@ -1,4 +1,4 @@
-#include "kage/sync/client.hpp"
+#include "ashiato/sync/client.hpp"
 
 #include "client/store/ack_queue.hpp"
 #include "client/runtime/buffered_runtime.hpp"
@@ -18,7 +18,7 @@
 #include "detail/logging.hpp"
 #include "detail/options_validation.hpp"
 
-#include "kage/sync/protocol.hpp"
+#include "ashiato/sync/protocol.hpp"
 
 #include <spdlog/logger.h>
 
@@ -33,7 +33,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace kage::sync {
+namespace ashiato::sync {
 namespace {
 
 constexpr std::size_t max_baseline_history_per_entity = 64;
@@ -104,8 +104,8 @@ struct ReplicationClient::RegistryFrameApplyInfo {
 };
 
 bool ReplicatedEntityUpdateView::try_get(
-    const ecs::Registry& registry,
-    ecs::Entity component,
+    const ashiato::Registry& registry,
+    ashiato::Entity component,
     void* out) const {
     if (components == nullptr || out == nullptr) {
         return false;
@@ -134,7 +134,7 @@ bool ReplicatedEntityUpdateView::try_get(
     return true;
 }
 
-bool ReplicatedEntityUpdateView::has_tag(const ecs::Registry& registry, ecs::Entity tag) const {
+bool ReplicatedEntityUpdateView::has_tag(const ashiato::Registry& registry, ashiato::Entity tag) const {
     const SyncSettings& settings = registry.get<SyncSettings>();
     if (archetype.value >= settings.archetypes.size()) {
         return false;
@@ -149,8 +149,8 @@ bool ReplicatedEntityUpdateView::has_tag(const ecs::Registry& registry, ecs::Ent
 }
 
 bool FractionalTickSample::try_get_sampled_value(
-    const ecs::Registry& registry,
-    ecs::Entity component,
+    const ashiato::Registry& registry,
+    ashiato::Entity component,
     void* out) const {
     if (out == nullptr) {
         return false;
@@ -182,14 +182,14 @@ bool FractionalTickSample::try_get_sampled_value(
     return true;
 }
 
-ReplicationClient::ReplicationClient(ecs::Registry& registry, ReplicationClientOptions options)
+ReplicationClient::ReplicationClient(ashiato::Registry& registry, ReplicationClientOptions options)
     : ReplicationClient(
           registry,
           std::move(options),
           FrameHistoryCapacities{buffered_frame_capacity, prediction_frame_capacity}) {}
 
 ReplicationClient::ReplicationClient(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     ReplicationClientOptions options,
     FrameHistoryCapacities capacities)
     : options_(detail::validate_client_options(std::move(options), capacities.buffered, capacities.predicted)),
@@ -205,14 +205,14 @@ ReplicationClient::ReplicationClient(
           options_.network.protocol.max_pending_packet_acks_per_client)),
       update_runtime_(std::make_unique<client_detail::ClientUpdateRuntime>()),
       input_(std::make_unique<client_detail::ClientInputBuffer>()),
-      logger_(detail::make_logger(options_.logging, "kage.sync.client")) {
+      logger_(detail::make_logger(options_.logging, "ashiato.sync.client")) {
     register_components(registry);
     SyncSettings& settings = registry.write<SyncSettings>();
     settings.role = SyncRole::Client;
     settings.fixed_dt_seconds = fixed_dt_seconds_;
     registry.write<SyncAuthority>().authoritative = false;
     set_client_id(registry, options_.session.local_client);
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     set_trace_options(options_.trace);
 #endif
     session_transport_->adaptive_ping_active = true;
@@ -230,19 +230,19 @@ ReplicationClient& ReplicationClient::operator=(ReplicationClient&& other) noexc
 
 void ReplicationClient::set_logger(std::shared_ptr<spdlog::logger> logger) {
     options_.logging.logger = std::move(logger);
-    logger_ = detail::make_logger(options_.logging, "kage.sync.client");
+    logger_ = detail::make_logger(options_.logging, "ashiato.sync.client");
 }
 
 void ReplicationClient::set_log_level(LogLevel level) {
     options_.logging.level = level;
     if (logger_ == nullptr) {
-        logger_ = detail::make_logger(options_.logging, "kage.sync.client");
+        logger_ = detail::make_logger(options_.logging, "ashiato.sync.client");
     } else {
         logger_->set_level(detail::to_spdlog_level(level));
     }
 }
 
-void ReplicationClient::set_client_id(ecs::Registry& registry, ClientId client) noexcept {
+void ReplicationClient::set_client_id(ashiato::Registry& registry, ClientId client) noexcept {
     client_id_ = client;
     SyncSettings& settings = registry.write<SyncSettings>();
     settings.local_client = client;
@@ -256,7 +256,7 @@ const std::string& ReplicationClient::connect_error() const noexcept {
     return session_transport_->connect_error;
 }
 
-bool ReplicationClient::receive(ecs::Registry& registry, ecs::BitBuffer packet) {
+bool ReplicationClient::receive(ashiato::Registry& registry, ashiato::BitBuffer packet) {
     const ReceiveContext context{
         clock_.local_time_seconds(),
         clock_.estimated_server_time_seconds(),
@@ -363,7 +363,7 @@ bool ReplicationClient::set_default_entity_mode(ReplicationClientMode mode) noex
 }
 
 void ReplicationClient::set_entity_mode(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     ClientEntityNetworkId client_entity_network_id,
     ReplicationClientMode mode) {
     EntityState* state = find_entity_state(client_entity_network_id);
@@ -385,16 +385,16 @@ void ReplicationClient::set_entity_mode(
     if (mode == ReplicationClientMode::Predict && !has_predicted_entities()) {
         prediction_->reset_predicted_frame();
     }
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     const ReplicationClientMode previous_mode = state->mode.current;
 #endif
     const bool switched = switch_entity_mode(registry, settings, *state, mode);
     if (switched) {
         sync_entity_memberships(*state);
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
         if (tracer_ != nullptr && tracer_->enabled() && previous_mode != state->mode.current) {
             SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ModeChanged, client_id_, state->replication.frame);
-            event.server_entity = ecs::Entity{state->identity.client_entity_network_id};
+            event.server_entity = ashiato::Entity{state->identity.client_entity_network_id};
             event.local_entity = state->identity.local;
             event.client_network_id = state->identity.client_entity_network_id;
             event.wire_network_id = state->identity.wire_network_id;
@@ -464,27 +464,27 @@ SyncFrame ReplicationClient::last_applied_buffered_frame() const noexcept {
     return buffered_runtime_->last_applied_frame();
 }
 
-void ReplicationClient::set_packet_sender(std::function<void(const ecs::BitBuffer&)> sender) {
+void ReplicationClient::set_packet_sender(std::function<void(const ashiato::BitBuffer&)> sender) {
     session_transport_->packet_sender = std::move(sender);
 }
 
-void ReplicationClient::receive_packet(ecs::BitBuffer packet) {
+void ReplicationClient::receive_packet(ashiato::BitBuffer packet) {
     session_transport_->inbound_packets.push_back(std::move(packet));
 }
 
-bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds, ecs::RunJobsOptions prediction_options) {
+bool ReplicationClient::tick(ashiato::Registry& registry, double dt_seconds, ashiato::RunJobsOptions prediction_options) {
     if (dt_seconds < 0.0 || !std::isfinite(dt_seconds)) {
         return false;
     }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     const auto previous_local_frame = static_cast<SyncFrame>(
         std::floor(clock_.local_time_seconds() / fixed_dt_seconds_));
 #endif
 
     clock_.advance_local_time(dt_seconds);
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     ReplicationClientClock::FrameRange local_time_frames;
     const auto current_local_frame = static_cast<SyncFrame>(
         std::floor(clock_.local_time_seconds() / fixed_dt_seconds_));
@@ -500,7 +500,7 @@ bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds, ecs::Ru
     process_inbound_packets(registry);
 
     const ReplicationClientClock::AdvanceResult current_frame_numbers = clock_.advance_client_frame_numbers(dt_seconds);
-    apply_buffered_frames_to_ecs(registry, current_frame_numbers.buffered);
+    apply_buffered_frames_to_ashiato(registry, current_frame_numbers.buffered);
     if (!run_predicted_frames(registry, current_frame_numbers.predicted, prediction_options)) {
         return false;
     }
@@ -513,23 +513,23 @@ bool ReplicationClient::tick(ecs::Registry& registry, double dt_seconds, ecs::Ru
     }
 
     clock_.update_display_target(dt_seconds);
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     trace_local_time_frames(registry, local_time_frames);
 #endif
     send_pending_packets();
     return true;
 }
 
-void ReplicationClient::apply_buffered_frames_to_ecs(
-    ecs::Registry& registry,
+void ReplicationClient::apply_buffered_frames_to_ashiato(
+    ashiato::Registry& registry,
     const ReplicationClientClock::FrameRange& frames) {
     (void)buffered_runtime_->apply_frames(*this, registry, frames);
 }
 
 bool ReplicationClient::run_predicted_frames(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const ReplicationClientClock::FrameRange& frames,
-    ecs::RunJobsOptions options) {
+    ashiato::RunJobsOptions options) {
     for (SyncFrame frame = frames.first; !frames.empty() && frame <= frames.last; ++frame) {
         const SyncSettings& settings = registry.get<SyncSettings>();
         (void)record_input_frame(registry, settings, frame);
@@ -542,9 +542,9 @@ bool ReplicationClient::run_predicted_frames(
     return true;
 }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 void ReplicationClient::trace_local_time_frames(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const ReplicationClientClock::FrameRange& frames) {
     if (!frames.empty()) {
         const SyncSettings& settings = registry.get<SyncSettings>();
@@ -564,17 +564,17 @@ void ReplicationClient::trace_local_time_frames(
 }
 #endif
 
-bool ReplicationClient::apply_frame(ecs::Registry& registry, SyncFrame buffered_frame) {
+bool ReplicationClient::apply_frame(ashiato::Registry& registry, SyncFrame buffered_frame) {
     return buffered_runtime_->apply_frame(*this, registry, buffered_frame);
 }
 
-#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+#ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
 void ReplicationClient::record_interpolation_frame(std::uint64_t checks, std::uint64_t starvations) noexcept {
     interpolation_diagnostics_.record_frame(checks, starvations);
 }
 #endif
 
-const FractionalTickSampleBuffer& ReplicationClient::fractional_tick_frame(const ecs::Registry& registry) {
+const FractionalTickSampleBuffer& ReplicationClient::fractional_tick_frame(const ashiato::Registry& registry) {
     const double display_accumulator_seconds = clock_.consume_display_accumulator_seconds();
     const float display_dt = display_accumulator_seconds > 0.0 && std::isfinite(display_accumulator_seconds)
         ? static_cast<float>(display_accumulator_seconds)
@@ -592,22 +592,22 @@ const FractionalTickSampleBuffer& ReplicationClient::fractional_tick_frame(const
     return fractional_tick_frame_;
 }
 
-bool ReplicationClient::ensure_local_entity(ecs::Registry& registry, EntityState& state) {
+bool ReplicationClient::ensure_local_entity(ashiato::Registry& registry, EntityState& state) {
     if (!state.identity.local || !registry.alive(state.identity.local)) {
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
         unregister_local_entity_index(state);
 #endif
         state.identity.local = registry.create();
     }
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     register_local_entity_index(state);
 #endif
     return state.identity.local && registry.alive(state.identity.local);
 }
 
 std::uint64_t ReplicationClient::registry_tag_mask(
-    const ecs::Registry& registry,
-    ecs::Entity entity,
+    const ashiato::Registry& registry,
+    ashiato::Entity entity,
     const SyncArchetype& archetype) const {
     std::uint64_t mask = 0;
     if (!entity || !registry.alive(entity)) {
@@ -627,7 +627,7 @@ void ReplicationClient::trace_applied_tag_delta(
     SyncFrame frame,
     std::uint64_t previous_tag_mask,
     std::uint64_t next_tag_mask) {
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     if (tracer_ == nullptr || !tracer_->enabled() || previous_tag_mask == next_tag_mask) {
         return;
     }
@@ -637,7 +637,7 @@ void ReplicationClient::trace_applied_tag_delta(
             continue;
         }
         SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::TagApplied, client_id_, frame);
-        event.server_entity = ecs::Entity{state.identity.client_entity_network_id};
+        event.server_entity = ashiato::Entity{state.identity.client_entity_network_id};
         event.local_entity = state.identity.local;
         event.client_network_id = state.identity.client_entity_network_id;
         event.wire_network_id = state.identity.wire_network_id;
@@ -657,14 +657,14 @@ void ReplicationClient::trace_applied_tag_delta(
 }
 
 bool ReplicationClient::apply_registry_tags(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncArchetype& archetype,
     EntityState& state,
     SyncFrame frame,
     std::uint64_t tag_mask,
     bool verify_tag_apply) {
     std::uint64_t previous_tag_mask = 0;
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     if (tracer_ != nullptr && tracer_->enabled()) {
         previous_tag_mask = registry_tag_mask(registry, state.identity.local, archetype);
     }
@@ -695,13 +695,13 @@ bool ReplicationClient::apply_registry_tags(
 }
 
 bool ReplicationClient::remove_missing_registry_components(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncArchetype& archetype,
     const EntityState& state,
     SyncFrame frame,
     std::uint64_t previous_present_mask,
     std::uint64_t next_present_mask) {
-#ifndef KAGE_SYNC_ENABLE_TRACING
+#ifndef ASHIATO_SYNC_ENABLE_TRACING
     (void)frame;
 #endif
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
@@ -710,10 +710,10 @@ bool ReplicationClient::remove_missing_registry_components(
             continue;
         }
         registry.remove(state.identity.local, archetype.components[component_index].component);
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
         if (tracer_ != nullptr && tracer_->enabled()) {
             SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ComponentRemoved, client_id_, frame);
-            event.server_entity = ecs::Entity{state.identity.client_entity_network_id};
+            event.server_entity = ashiato::Entity{state.identity.client_entity_network_id};
             event.local_entity = state.identity.local;
             event.client_network_id = state.identity.client_entity_network_id;
             event.wire_network_id = state.identity.wire_network_id;
@@ -730,7 +730,7 @@ bool ReplicationClient::remove_missing_registry_components(
 }
 
 bool ReplicationClient::apply_registry_frame(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncArchetype& archetype,
     EntityState& state,
     const RegistryFrameApplyInfo& input) {
@@ -913,20 +913,20 @@ bool ReplicationClient::write_buffered_frame(
 }
 
 bool ReplicationClient::apply_buffered_sample(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
     const EntityFrameView& sample) {
     if (!sample.entity_present) {
         if (state.identity.local) {
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
             unregister_local_entity_index(state);
 #endif
             if (registry.alive(state.identity.local)) {
                 registry.destroy(state.identity.local);
             }
         }
-        state.identity.local = ecs::Entity{};
+        state.identity.local = ashiato::Entity{};
         state.replication.applied_present_mask = 0;
         state.visual.snap_errors.clear();
         return true;
@@ -947,7 +947,7 @@ bool ReplicationClient::apply_buffered_sample(
 }
 
 bool ReplicationClient::apply_frame_data(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
     SyncFrame frame,
@@ -966,7 +966,7 @@ bool ReplicationClient::apply_frame_data(
 }
 
 bool ReplicationClient::quantize_predicted_entity(
-    const ecs::Registry& registry,
+    const ashiato::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
     SyncFrame frame) {
@@ -1033,18 +1033,18 @@ bool ReplicationClient::compare_predicted_frame(
     constexpr std::size_t invalid_component_index = static_cast<std::size_t>(-1);
     auto rollback_conflict = [&](bool condition,
                                  std::size_t component_index,
-                                 ecs::Entity component,
+                                 ashiato::Entity component,
                                  const std::uint8_t* component_bytes) {
         if (!condition) {
             return false;
         }
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
         if (tracer_ != nullptr && tracer_->enabled()) {
             SyncTraceEvent event = make_client_trace_event(
                 SyncTraceEventType::PredictionRollbackConflict,
                 client_id_,
                 frame);
-            event.server_entity = ecs::Entity{state.identity.client_entity_network_id};
+            event.server_entity = ashiato::Entity{state.identity.client_entity_network_id};
             event.local_entity = state.identity.local;
             event.client_network_id = state.identity.client_entity_network_id;
             event.wire_network_id = state.identity.wire_network_id;
@@ -1094,12 +1094,12 @@ bool ReplicationClient::compare_predicted_frame(
             unchecked_frame_component_data(archetype, predicted.baseline, component_index);
         const std::uint8_t* authoritative_bytes =
             unchecked_frame_component_data(archetype, authoritative, component_index);
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
         RollbackReasonTraceContext rollback_reason_context;
         rollback_reason_context.tracer = tracer_;
         rollback_reason_context.client = client_id_;
         rollback_reason_context.frame = frame;
-        rollback_reason_context.server_entity = ecs::Entity{state.identity.client_entity_network_id};
+        rollback_reason_context.server_entity = ashiato::Entity{state.identity.client_entity_network_id};
         rollback_reason_context.local_entity = state.identity.local;
         rollback_reason_context.client_network_id = state.identity.client_entity_network_id;
         rollback_reason_context.wire_network_id = state.identity.wire_network_id;
@@ -1123,7 +1123,7 @@ bool ReplicationClient::compare_predicted_frame(
 }
 
 bool ReplicationClient::apply_snap_sample(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
     const QuantizedFrameData& decoded,
@@ -1218,19 +1218,19 @@ bool ReplicationClient::apply_snap_sample(
 }
 
 bool ReplicationClient::apply_latest_snap(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     EntityState& state) {
     if (!state.replication.entity_present) {
         if (state.identity.local) {
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
             unregister_local_entity_index(state);
 #endif
             if (registry.alive(state.identity.local)) {
                 registry.destroy(state.identity.local);
             }
         }
-        state.identity.local = ecs::Entity{};
+        state.identity.local = ashiato::Entity{};
         state.replication.applied_present_mask = 0;
         state.visual.snap_errors.clear();
         sync_entity_memberships(state);
@@ -1241,7 +1241,7 @@ bool ReplicationClient::apply_latest_snap(
 }
 
 bool ReplicationClient::switch_entity_mode(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
     ReplicationClientMode mode) {
@@ -1333,7 +1333,7 @@ bool ReplicationClient::transition_to_buffered(const SyncSettings& settings, Ent
 }
 
 bool ReplicationClient::transition_to_predict(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     EntityState& state) {
     if (!validate_predicted_archetype(settings, state.identity.archetype)) {
@@ -1374,7 +1374,7 @@ bool ReplicationClient::transition_to_predict(
     return true;
 }
 
-bool ReplicationClient::transition_to_snap(ecs::Registry& registry, const SyncSettings& settings, EntityState& state) {
+bool ReplicationClient::transition_to_snap(ashiato::Registry& registry, const SyncSettings& settings, EntityState& state) {
     const ReplicationClientMode previous = state.mode.current;
     mark_mode_user_selected(state, ReplicationClientMode::Snap);
     if (!apply_latest_snap(registry, settings, state)) {
@@ -1396,7 +1396,7 @@ bool ReplicationClient::has_predicted_entities() const noexcept {
     return !entity_store_->predicted_entity_indices().empty();
 }
 
-const ecs::JobGraph& ReplicationClient::resim_job_graph(ecs::Registry& registry) {
+const ashiato::JobGraph& ReplicationClient::resim_job_graph(ashiato::Registry& registry) {
     if (!resim_job_graph_valid_) {
         resim_job_graph_ = registry.compile_job_graph(simulation_jobs_);
         resim_job_graph_valid_ = true;
@@ -1439,7 +1439,7 @@ void ReplicationClient::blend_snap_errors(const SyncSettings& settings, float dt
 }
 
 bool ReplicationClient::sample_fractional_tick_frame(
-    const ecs::Registry& registry,
+    const ashiato::Registry& registry,
     double target_frame,
     FractionalTickSampleBuffer& out) const {
     const client_detail::ClientDisplaySampler sampler(
@@ -1466,4 +1466,4 @@ void ReplicationClient::remember_baseline(EntityState& state) {
     baseline.baseline = state.replication.baseline;
 }
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

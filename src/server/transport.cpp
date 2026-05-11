@@ -1,4 +1,4 @@
-#include "kage/sync/server.hpp"
+#include "ashiato/sync/server.hpp"
 
 #include "server/packet.hpp"
 #include "server/state.hpp"
@@ -7,20 +7,20 @@
 #include <cmath>
 #include <exception>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 void ReplicationServer::send_packet(
     ServerClientReplicator& client,
     SyncFrame frame,
     std::uint16_t entity_count,
-    const ecs::BitBuffer& records,
+    const ashiato::BitBuffer& records,
     const std::vector<PacketAckRecord>& ack_records) {
     if (!options_.transport || entity_count == 0) {
         return;
     }
 
     const std::uint32_t packet_id = client.ack_tracker.allocate_packet_id(*this, client);
-    ecs::BitBuffer packet =
+    ashiato::BitBuffer packet =
         server_detail::make_server_packet(
             options_.mtu_bytes,
             server_detail::configured_packet_id_bits(options_),
@@ -35,7 +35,7 @@ void ReplicationServer::send_packet(
         client.bandwidth->spend(charged_bytes);
     }
     client.ack_tracker.enforce_pending_packet_ack_limit(*this, client);
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     trace_outgoing_update_packet(client, frame, packet_id, client.input_ack_frame, ack_records);
 #endif
     try {
@@ -50,7 +50,7 @@ void ReplicationServer::send_connect_response(ClientState& client) {
     if (!options_.transport) {
         return;
     }
-    ecs::BitBuffer packet;
+    ashiato::BitBuffer packet;
     packet.reserve_bytes(options_.mtu_bytes);
     packet.push_bits(protocol::server_connect_response_message, 8U);
     packet.push_bool(true);
@@ -77,7 +77,7 @@ void ReplicationServer::send_pong(
         static_cast<std::uint32_t>(std::floor(subframe * static_cast<double>(protocol::frame_subframe_scale))),
         std::uint32_t{0},
         protocol::frame_subframe_scale - 1U));
-    ecs::BitBuffer packet;
+    ashiato::BitBuffer packet;
     packet.reserve_bytes(options_.mtu_bytes);
     packet.push_bits(protocol::server_pong_message, 8U);
     packet.push_bits(sequence, 32U);
@@ -93,4 +93,4 @@ void ReplicationServer::send_pong(
     }
 }
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

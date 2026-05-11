@@ -4,7 +4,7 @@
 
 namespace {
 
-void skip_bits(ecs::BitBuffer& buffer, std::size_t bits) {
+void skip_bits(ashiato::BitBuffer& buffer, std::size_t bits) {
     while (bits != 0U) {
         const std::size_t chunk = std::min<std::size_t>(bits, 63U);
         (void)buffer.read_bits(chunk);
@@ -12,7 +12,7 @@ void skip_bits(ecs::BitBuffer& buffer, std::size_t bits) {
     }
 }
 
-std::uint16_t skip_replay_records(ecs::BitBuffer& payload) {
+std::uint16_t skip_replay_records(ashiato::BitBuffer& payload) {
     const auto record_count = static_cast<std::uint16_t>(payload.read_bits(16U));
     for (std::uint16_t index = 0; index < record_count; ++index) {
         const bool destroy = payload.read_bool();
@@ -36,28 +36,28 @@ std::uint16_t skip_replay_records(ecs::BitBuffer& payload) {
 }  // namespace
 
 TEST_CASE("replication replay writer records full and dirty replicated state") {
-    ecs::Registry registry;
-    kage_sync_tests::configure_test_server_registry(registry);
-    const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(registry);
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_server_registry(registry);
+    const ashiato::sync::SyncArchetypeId archetype = ashiato_sync_tests::define_position_archetype(registry);
 
-    const ecs::Entity entity = registry.create();
-    registry.add<kage_sync_tests::Position>(entity, kage_sync_tests::Position{1.0f, 2.0f});
-    REQUIRE(kage_sync_tests::start_sync(registry, entity, archetype));
+    const ashiato::Entity entity = registry.create();
+    registry.add<ashiato_sync_tests::Position>(entity, ashiato_sync_tests::Position{1.0f, 2.0f});
+    REQUIRE(ashiato_sync_tests::start_sync(registry, entity, archetype));
 
-    std::vector<kage::sync::ReplicationReplayFrame> frames;
-    kage::sync::ReplicationReplayWriter writer({60, [&](const kage::sync::ReplicationReplayFrame& frame) {
+    std::vector<ashiato::sync::ReplicationReplayFrame> frames;
+    ashiato::sync::ReplicationReplayWriter writer({60, [&](const ashiato::sync::ReplicationReplayFrame& frame) {
         frames.push_back(frame);
     }});
 
-    kage::sync::ReplicationServer server(registry);
+    ashiato::sync::ReplicationServer server(registry);
     writer.attach(server);
 
     REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
     REQUIRE(frames.size() == 1U);
-    REQUIRE(frames[0].kind == kage::sync::ReplicationReplayFrameKind::Full);
+    REQUIRE(frames[0].kind == ashiato::sync::ReplicationReplayFrameKind::Full);
     REQUIRE(frames[0].frame == 1U);
 
-    ecs::BitBuffer full_payload = frames[0].payload;
+    ashiato::BitBuffer full_payload = frames[0].payload;
     REQUIRE(static_cast<std::uint16_t>(full_payload.read_bits(16U)) == 1U);
     REQUIRE_FALSE(full_payload.read_bool());
     REQUIRE(static_cast<std::uint32_t>(full_payload.read_bits(32U)) == 1U);
@@ -66,33 +66,33 @@ TEST_CASE("replication replay writer records full and dirty replicated state") {
     REQUIRE(static_cast<std::uint64_t>(full_payload.read_bits(64U)) == 1U);
     REQUIRE(static_cast<std::uint16_t>(full_payload.read_bits(16U)) == 1U);
     REQUIRE(static_cast<std::uint16_t>(full_payload.read_bits(16U)) == 0U);
-    REQUIRE(static_cast<std::uint16_t>(full_payload.read_bits(16U)) == sizeof(kage_sync_tests::Position) * 8U);
+    REQUIRE(static_cast<std::uint16_t>(full_payload.read_bits(16U)) == sizeof(ashiato_sync_tests::Position) * 8U);
 
-    registry.write<kage_sync_tests::Position>(entity).x = 3.0f;
+    registry.write<ashiato_sync_tests::Position>(entity).x = 3.0f;
     REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
     REQUIRE(frames.size() == 2U);
-    REQUIRE(frames[1].kind == kage::sync::ReplicationReplayFrameKind::Delta);
-    ecs::BitBuffer delta_payload = frames[1].payload;
+    REQUIRE(frames[1].kind == ashiato::sync::ReplicationReplayFrameKind::Delta);
+    ashiato::BitBuffer delta_payload = frames[1].payload;
     REQUIRE(static_cast<std::uint16_t>(delta_payload.read_bits(16U)) == 1U);
     REQUIRE_FALSE(delta_payload.read_bool());
     REQUIRE(static_cast<std::uint32_t>(delta_payload.read_bits(32U)) == 1U);
 }
 
 TEST_CASE("replication replay writer records destroyed replicated slots") {
-    ecs::Registry registry;
-    kage_sync_tests::configure_test_server_registry(registry);
-    const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(registry);
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_server_registry(registry);
+    const ashiato::sync::SyncArchetypeId archetype = ashiato_sync_tests::define_position_archetype(registry);
 
-    const ecs::Entity entity = registry.create();
-    registry.add<kage_sync_tests::Position>(entity, kage_sync_tests::Position{1.0f, 2.0f});
-    REQUIRE(kage_sync_tests::start_sync(registry, entity, archetype));
+    const ashiato::Entity entity = registry.create();
+    registry.add<ashiato_sync_tests::Position>(entity, ashiato_sync_tests::Position{1.0f, 2.0f});
+    REQUIRE(ashiato_sync_tests::start_sync(registry, entity, archetype));
 
-    std::vector<kage::sync::ReplicationReplayFrame> frames;
-    kage::sync::ReplicationReplayWriter writer({60, [&](const kage::sync::ReplicationReplayFrame& frame) {
+    std::vector<ashiato::sync::ReplicationReplayFrame> frames;
+    ashiato::sync::ReplicationReplayWriter writer({60, [&](const ashiato::sync::ReplicationReplayFrame& frame) {
         frames.push_back(frame);
     }});
 
-    kage::sync::ReplicationServer server(registry);
+    ashiato::sync::ReplicationServer server(registry);
     writer.attach(server);
     REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
     frames.clear();
@@ -101,47 +101,47 @@ TEST_CASE("replication replay writer records destroyed replicated slots") {
     REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
 
     REQUIRE(frames.size() == 1U);
-    REQUIRE(frames[0].kind == kage::sync::ReplicationReplayFrameKind::Delta);
-    ecs::BitBuffer payload = frames[0].payload;
+    REQUIRE(frames[0].kind == ashiato::sync::ReplicationReplayFrameKind::Delta);
+    ashiato::BitBuffer payload = frames[0].payload;
     REQUIRE(static_cast<std::uint16_t>(payload.read_bits(16U)) == 1U);
     REQUIRE(payload.read_bool());
     REQUIRE(static_cast<std::uint32_t>(payload.read_bits(32U)) == 1U);
 }
 
 TEST_CASE("replication replay writer records queued cues in the replay payload") {
-    ecs::Registry registry;
-    kage_sync_tests::configure_test_server_registry(registry);
-    const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(registry);
-    const kage::sync::SyncCueTypeId cue_type = kage::sync::register_sync_cue<kage_sync_tests::TestCue>(registry);
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_server_registry(registry);
+    const ashiato::sync::SyncArchetypeId archetype = ashiato_sync_tests::define_position_archetype(registry);
+    const ashiato::sync::SyncCueTypeId cue_type = ashiato::sync::register_sync_cue<ashiato_sync_tests::TestCue>(registry);
 
-    const ecs::Entity entity = registry.create();
-    registry.add<kage_sync_tests::Position>(entity, kage_sync_tests::Position{1.0f, 2.0f});
-    REQUIRE(kage_sync_tests::start_sync(registry, entity, archetype));
+    const ashiato::Entity entity = registry.create();
+    registry.add<ashiato_sync_tests::Position>(entity, ashiato_sync_tests::Position{1.0f, 2.0f});
+    REQUIRE(ashiato_sync_tests::start_sync(registry, entity, archetype));
 
-    std::vector<kage::sync::ReplicationReplayFrame> frames;
-    kage::sync::ReplicationReplayWriter writer({60, [&](const kage::sync::ReplicationReplayFrame& frame) {
+    std::vector<ashiato::sync::ReplicationReplayFrame> frames;
+    ashiato::sync::ReplicationReplayWriter writer({60, [&](const ashiato::sync::ReplicationReplayFrame& frame) {
         frames.push_back(frame);
     }});
 
-    kage::sync::ReplicationServer server(registry);
+    ashiato::sync::ReplicationServer server(registry);
     writer.attach(server);
 
-    REQUIRE(kage_sync_tests::emit_test_cue(
+    REQUIRE(ashiato_sync_tests::emit_test_cue(
         registry,
         entity,
-        kage::sync::SyncFrame{1},
-        kage_sync_tests::TestCue{42},
+        ashiato::sync::SyncFrame{1},
+        ashiato_sync_tests::TestCue{42},
         0.5f));
     REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
     REQUIRE(frames.size() == 1U);
 
-    ecs::BitBuffer payload = frames[0].payload;
+    ashiato::BitBuffer payload = frames[0].payload;
     REQUIRE(skip_replay_records(payload) == 1U);
     REQUIRE(payload.read_bool());
     REQUIRE(static_cast<std::uint16_t>(payload.read_bits(16U)) == 1U);
     REQUIRE(static_cast<std::uint32_t>(payload.read_bits(32U)) == 1U);
-    REQUIRE(static_cast<kage::sync::SyncFrame>(payload.read_bits(32U)) == 1U);
-    REQUIRE(static_cast<kage::sync::SyncCueTypeId>(payload.read_bits(16U)) == cue_type);
+    REQUIRE(static_cast<ashiato::sync::SyncFrame>(payload.read_bits(32U)) == 1U);
+    REQUIRE(static_cast<ashiato::sync::SyncCueTypeId>(payload.read_bits(16U)) == cue_type);
     float relevance_seconds = 0.0f;
     payload.read_bytes(reinterpret_cast<char*>(&relevance_seconds), sizeof(relevance_seconds));
     REQUIRE(relevance_seconds == 0.5f);

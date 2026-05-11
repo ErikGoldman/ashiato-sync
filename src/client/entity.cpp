@@ -1,4 +1,4 @@
-#include "kage/sync/client.hpp"
+#include "ashiato/sync/client.hpp"
 
 #include "client/runtime/buffered_runtime.hpp"
 #include "client/runtime/cue_runtime.hpp"
@@ -10,7 +10,7 @@
 #include <cstdint>
 #include <limits>
 
-namespace kage::sync {
+namespace ashiato::sync {
 namespace {
 
 constexpr std::uint32_t invalid_entity_index = std::numeric_limits<std::uint32_t>::max();
@@ -38,14 +38,14 @@ const ReplicationClient::EntityState* ReplicationClient::find_entity_state_by_wi
     return entity_store_->find_by_wire_id(wire_network_id);
 }
 
-ReplicationClient::EntityState* ReplicationClient::find_entity_state_for_local(ecs::Entity local) noexcept {
+ReplicationClient::EntityState* ReplicationClient::find_entity_state_for_local(ashiato::Entity local) noexcept {
     if (!local) {
         return nullptr;
     }
     return entity_store_->find_by_local_entity(local);
 }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 void ReplicationClient::register_local_entity_index(const EntityState& state) {
     entity_store_->register_local_entity_index(state);
 }
@@ -56,7 +56,7 @@ void ReplicationClient::unregister_local_entity_index(const EntityState& state) 
 #endif
 
 ReplicationClient::EntityState* ReplicationClient::ensure_entity_state(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     ClientEntityNetworkId client_entity_network_id,
     std::uint32_t wire_network_id) {
     (void)registry;
@@ -67,7 +67,7 @@ ReplicationClient::EntityState* ReplicationClient::ensure_entity_state(
 }
 
 void ReplicationClient::erase_entity_state(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     std::uint32_t entity_index,
     bool destroy_local) {
     if (!entity_store_->contains_entity_index(entity_index)) {
@@ -81,7 +81,7 @@ void ReplicationClient::erase_entity_state(
     entity_store_->unmap_entity_state(entity_index);
 
     if (state.identity.local) {
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
         unregister_local_entity_index(state);
 #endif
         if (destroy_local && registry.alive(state.identity.local)) {
@@ -139,9 +139,9 @@ const QuantizedFrameData* ReplicationClient::find_baseline(
     return nullptr;
 }
 
-ecs::Entity ReplicationClient::local_entity(ClientEntityNetworkId client_entity_network_id) const {
+ashiato::Entity ReplicationClient::local_entity(ClientEntityNetworkId client_entity_network_id) const {
     const EntityState* state = find_entity_state(client_entity_network_id);
-    return state != nullptr ? state->identity.local : ecs::Entity{};
+    return state != nullptr ? state->identity.local : ashiato::Entity{};
 }
 
 bool ReplicationClient::is_alive_client_entity_network_id(ClientEntityNetworkId client_entity_network_id) const noexcept {
@@ -168,18 +168,18 @@ EntityReferenceStatus ReplicationClient::resolve_entity_reference(EntityReferenc
             reference.entity = state->identity.local;
             return EntityReferenceStatus::Alive;
         }
-        reference.entity = ecs::Entity{};
+        reference.entity = ashiato::Entity{};
         return EntityReferenceStatus::Pending;
     }
 
     const client_detail::WireNetworkIdState* wire_state = entity_store_->wire_state(wire_network_id);
     if (wire_state == nullptr) {
-        reference.entity = ecs::Entity{};
+        reference.entity = ashiato::Entity{};
         return EntityReferenceStatus::Pending;
     }
 
     if (wire_state->version == 0U) {
-        reference.entity = ecs::Entity{};
+        reference.entity = ashiato::Entity{};
         return EntityReferenceStatus::Pending;
     }
 
@@ -188,7 +188,7 @@ EntityReferenceStatus ReplicationClient::resolve_entity_reference(EntityReferenc
         return EntityReferenceStatus::Destroyed;
     }
 
-    reference.entity = ecs::Entity{};
+    reference.entity = ashiato::Entity{};
     return EntityReferenceStatus::Pending;
 }
 
@@ -208,4 +208,4 @@ void ReplicationClient::advance_wire_network_id_version(std::uint32_t wire_netwo
     entity_store_->advance_wire_version(wire_network_id);
 }
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

@@ -33,10 +33,10 @@ int main(int argc, char** argv) {
 #endif
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
-        std::cerr << "usage: kage_sync_fps_example --server [--port N] [--replay-port N] [--bots N] [--replay-dir DIR] [--trace-dir DIR] [--link-bandwidth-kbps N] [--link-queue-kb N] [--bandwidth-mode dynamic|static] [--bandwidth-min-kbps N] [--bandwidth-initial-kbps N] [--bandwidth-max-kbps N]\n"
-                  << "       kage_sync_fps_example --listen [--clients N] [--port N] [--replay-port N] [--bots N] [--replay-dir DIR] [--trace-dir DIR] [--link-bandwidth-kbps N] [--link-queue-kb N] [--bandwidth-mode dynamic|static] [--bandwidth-min-kbps N] [--bandwidth-initial-kbps N] [--bandwidth-max-kbps N]\n"
-                  << "       kage_sync_fps_example --client [--host A.B.C.D] [--port N] [--replay-port N] [--latency-ms N] [--jitter-ms N] [--loss-percent N] [--link-bandwidth-kbps N] [--link-queue-kb N] [--trace-dir DIR]\n"
-                  << "       kage_sync_fps_example --clients N [--host A.B.C.D] [--port N] [--replay-port N] [--bots N] [--replay-dir DIR] [--latency-ms N] [--jitter-ms N] [--loss-percent N] [--link-bandwidth-kbps N] [--link-queue-kb N] [--trace-dir DIR]\n"
+        std::cerr << "usage: ashiato_sync_fps_example --server [--port N] [--replay-port N] [--bots N] [--replay-dir DIR] [--trace-dir DIR] [--link-bandwidth-kbps N] [--link-queue-kb N] [--bandwidth-mode dynamic|static] [--bandwidth-min-kbps N] [--bandwidth-initial-kbps N] [--bandwidth-max-kbps N]\n"
+                  << "       ashiato_sync_fps_example --listen [--clients N] [--port N] [--replay-port N] [--bots N] [--replay-dir DIR] [--trace-dir DIR] [--link-bandwidth-kbps N] [--link-queue-kb N] [--bandwidth-mode dynamic|static] [--bandwidth-min-kbps N] [--bandwidth-initial-kbps N] [--bandwidth-max-kbps N]\n"
+                  << "       ashiato_sync_fps_example --client [--host A.B.C.D] [--port N] [--replay-port N] [--latency-ms N] [--jitter-ms N] [--loss-percent N] [--link-bandwidth-kbps N] [--link-queue-kb N] [--trace-dir DIR]\n"
+                  << "       ashiato_sync_fps_example --clients N [--host A.B.C.D] [--port N] [--replay-port N] [--bots N] [--replay-dir DIR] [--latency-ms N] [--jitter-ms N] [--loss-percent N] [--link-bandwidth-kbps N] [--link-queue-kb N] [--trace-dir DIR]\n"
                   << "       trace options: [--trace-frame-data on|off] [--trace-packet-logs on|off]\n";
         return 1;
     }

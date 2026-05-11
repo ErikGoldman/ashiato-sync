@@ -6,17 +6,17 @@
 
 int main(int argc, char** argv) {
     try {
-        const kage::sync::stress::StressConfig config = kage::sync::stress::parse_args(argc, argv);
-        const kage::sync::stress::StressReport report = kage::sync::stress::run_stress(config);
+        const ashiato::sync::stress::StressConfig config = ashiato::sync::stress::parse_args(argc, argv);
+        const ashiato::sync::stress::StressReport report = ashiato::sync::stress::run_stress(config);
         if (config.json) {
-            kage::sync::stress::write_report_json(std::cout, report);
+            ashiato::sync::stress::write_report_json(std::cout, report);
         } else {
-            kage::sync::stress::write_report_text(std::cout, report);
+            ashiato::sync::stress::write_report_text(std::cout, report);
         }
         return 0;
     } catch (const std::runtime_error& error) {
         if (std::string(error.what()) == "help") {
-            kage::sync::stress::write_usage(std::cout);
+            ashiato::sync::stress::write_usage(std::cout);
             return 0;
         }
         std::cerr << "error: " << error.what() << '\n';
@@ -24,7 +24,7 @@ int main(int argc, char** argv) {
         std::cerr << "error: " << error.what() << '\n';
     }
 
-    kage::sync::stress::write_usage(std::cerr);
+    ashiato::sync::stress::write_usage(std::cerr);
     return 1;
 }
 

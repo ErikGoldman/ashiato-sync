@@ -1,6 +1,6 @@
 #include "server/packet.hpp"
 
-namespace kage::sync::server_detail {
+namespace ashiato::sync::server_detail {
 
 std::size_t configured_packet_id_bits(const ReplicationServerOptions& options) noexcept {
     return protocol::packet_id_bits(options.protocol);
@@ -28,15 +28,15 @@ std::uint32_t ServerPacketIdAllocator::allocate(std::uint32_t& next_packet_id) c
     return packet_id;
 }
 
-ecs::BitBuffer make_server_packet(
+ashiato::BitBuffer make_server_packet(
     std::size_t mtu_bytes,
     std::size_t packet_id_bits,
     SyncFrame frame,
     std::uint32_t packet_id,
     SyncFrame input_ack_frame,
     std::uint16_t entity_count,
-    const ecs::BitBuffer& records) {
-    ecs::BitBuffer packet;
+    const ashiato::BitBuffer& records) {
+    ashiato::BitBuffer packet;
     packet.reserve_bytes(mtu_bytes);
     packet.push_bits(protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
@@ -47,4 +47,4 @@ ecs::BitBuffer make_server_packet(
     return packet;
 }
 
-}  // namespace kage::sync::server_detail
+}  // namespace ashiato::sync::server_detail

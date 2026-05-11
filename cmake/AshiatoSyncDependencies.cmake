@@ -1,42 +1,42 @@
 include(FetchContent)
 
-function(kage_sync_add_ecs_dependency)
-    set(kage_sync_build_testing ${BUILD_TESTING})
+function(ashiato_sync_add_ashiato_dependency)
+    set(ashiato_sync_build_testing ${BUILD_TESTING})
 
-    set(KAGE_SYNC_KAGESOKO_GIT_REPOSITORY
-        "https://github.com/ErikGoldman/kagesoto.git"
-        CACHE STRING "kagesoko ECS Git repository"
+    set(ASHIATO_SYNC_ASHIATO_GIT_REPOSITORY
+        "git@github.com:ErikGoldman/ashiato.git"
+        CACHE STRING "Ashiato ECS Git repository"
     )
-    set(KAGE_SYNC_KAGESOKO_GIT_TAG
+    set(ASHIATO_SYNC_ASHIATO_GIT_TAG
         "eef993892879a6fe6cb9a3ee5129d931f150871a"
-        CACHE STRING "Pinned kagesoko ECS Git commit/tag"
+        CACHE STRING "Pinned Ashiato ECS Git commit/tag"
     )
-    set(KAGE_SYNC_KAGESOKO_SOURCE_DIR
+    set(ASHIATO_SYNC_ASHIATO_SOURCE_DIR
         ""
-        CACHE PATH "Optional local kagesoko checkout override"
+        CACHE PATH "Optional local Ashiato checkout override"
     )
 
-    set(ECS_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
-    set(ECS_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
-    set(ECS_BUILD_PROFILING OFF CACHE BOOL "" FORCE)
+    set(ASHIATO_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
+    set(ASHIATO_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+    set(ASHIATO_BUILD_PROFILING OFF CACHE BOOL "" FORCE)
     set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 
-    if(KAGE_SYNC_KAGESOKO_SOURCE_DIR)
-        add_subdirectory("${KAGE_SYNC_KAGESOKO_SOURCE_DIR}" "${PROJECT_BINARY_DIR}/ecs")
+    if(ASHIATO_SYNC_ASHIATO_SOURCE_DIR)
+        add_subdirectory("${ASHIATO_SYNC_ASHIATO_SOURCE_DIR}" "${PROJECT_BINARY_DIR}/ashiato")
     else()
         FetchContent_Declare(
-            kagesoko
-            GIT_REPOSITORY "${KAGE_SYNC_KAGESOKO_GIT_REPOSITORY}"
-            GIT_TAG "${KAGE_SYNC_KAGESOKO_GIT_TAG}"
+            Ashiato
+            GIT_REPOSITORY "${ASHIATO_SYNC_ASHIATO_GIT_REPOSITORY}"
+            GIT_TAG "${ASHIATO_SYNC_ASHIATO_GIT_TAG}"
             GIT_PROGRESS TRUE
         )
-        FetchContent_MakeAvailable(kagesoko)
+        FetchContent_MakeAvailable(Ashiato)
     endif()
 
-    set(BUILD_TESTING ${kage_sync_build_testing} CACHE BOOL "" FORCE)
+    set(BUILD_TESTING ${ashiato_sync_build_testing} CACHE BOOL "" FORCE)
 endfunction()
 
-function(kage_sync_fetch_catch2)
+function(ashiato_sync_fetch_catch2)
     FetchContent_Declare(
         Catch2
         GIT_REPOSITORY https://github.com/catchorg/Catch2.git
@@ -49,7 +49,7 @@ function(kage_sync_fetch_catch2)
     set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH}" PARENT_SCOPE)
 endfunction()
 
-function(kage_sync_fetch_raylib)
+function(ashiato_sync_fetch_raylib)
     set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(RAYLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
@@ -62,7 +62,7 @@ function(kage_sync_fetch_raylib)
     FetchContent_MakeAvailable(raylib)
 endfunction()
 
-function(kage_sync_fetch_glfw)
+function(ashiato_sync_fetch_glfw)
     set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
     set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -86,7 +86,7 @@ function(kage_sync_fetch_glfw)
     endif()
 endfunction()
 
-function(kage_sync_fetch_imgui)
+function(ashiato_sync_fetch_imgui)
     FetchContent_Declare(
         imgui
         GIT_REPOSITORY https://github.com/ocornut/imgui.git
@@ -97,7 +97,7 @@ function(kage_sync_fetch_imgui)
     set(imgui_SOURCE_DIR "${imgui_SOURCE_DIR}" PARENT_SCOPE)
 endfunction()
 
-function(kage_sync_fetch_google_benchmark)
+function(ashiato_sync_fetch_google_benchmark)
     set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
     set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
     set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
@@ -111,7 +111,7 @@ function(kage_sync_fetch_google_benchmark)
     FetchContent_MakeAvailable(google_benchmark)
 endfunction()
 
-function(kage_sync_fetch_spdlog)
+function(ashiato_sync_fetch_spdlog)
     set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
     set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
@@ -126,13 +126,13 @@ function(kage_sync_fetch_spdlog)
     FetchContent_MakeAvailable(spdlog)
 endfunction()
 
-function(kage_sync_apply_gprof_to_targets)
-    if(NOT KAGE_SYNC_ENABLE_GPROF)
+function(ashiato_sync_apply_gprof_to_targets)
+    if(NOT ASHIATO_SYNC_ENABLE_GPROF)
         return()
     endif()
 
     if(MSVC)
-        message(WARNING "KAGE_SYNC_ENABLE_GPROF is ignored for MSVC")
+        message(WARNING "ASHIATO_SYNC_ENABLE_GPROF is ignored for MSVC")
         return()
     endif()
 

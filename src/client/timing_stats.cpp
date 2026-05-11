@@ -1,11 +1,11 @@
 #include "client/timing_stats.hpp"
 
-#include "kage/sync/protocol.hpp"
+#include "ashiato/sync/protocol.hpp"
 
 #include <algorithm>
 #include <limits>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 namespace {
 
 constexpr std::uint32_t entity_update_packet_loss_window = 64;
@@ -101,4 +101,4 @@ void ClientTimingStatsCalculator::record_entity_update_packet(
         : static_cast<float>(stats.server_update_packets_missing) / static_cast<float>(total);
 }
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

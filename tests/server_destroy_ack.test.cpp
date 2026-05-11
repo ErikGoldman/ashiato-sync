@@ -1,6 +1,6 @@
 #include "test_protocol.hpp"
 
-#include "kage/sync/simulated_link.hpp"
+#include "ashiato/sync/simulated_link.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -14,30 +14,30 @@
 #include <utility>
 #include <vector>
 
-using namespace kage_sync_tests;
+using namespace ashiato_sync_tests;
 
 TEST_CASE("replication server sends pending destroys before bandwidth-limited updates") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "NetworkedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
-    const ecs::Entity destroyed = registry.create();
-    const ecs::Entity live = registry.create();
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity destroyed = registry.create();
+    const ashiato::Entity live = registry.create();
     REQUIRE(registry.add<NetworkedPosition>(destroyed, NetworkedPosition{1.0f, 1.0f}) != nullptr);
     REQUIRE(registry.add<NetworkedPosition>(live, NetworkedPosition{2.0f, 2.0f}) != nullptr);
 
-    std::vector<ecs::BitBuffer> payloads;
-    kage::sync::ReplicationServerOptions options;
+    std::vector<ashiato::BitBuffer> payloads;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 21;
     options.mtu_bytes = 21;
-    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, destroyed, archetype));
     REQUIRE(start_sync(registry, live, archetype));
@@ -63,20 +63,20 @@ TEST_CASE("replication server sends pending destroys before bandwidth-limited up
 }
 
 TEST_CASE("replication server resends pending destroys until ACKed") {
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
-    const ecs::Entity entity = registry.create();
-    REQUIRE(registry.add<kage_sync_tests::Position>(entity, kage_sync_tests::Position{1.0f, 2.0f}) != nullptr);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+    const ashiato::Entity entity = registry.create();
+    REQUIRE(registry.add<ashiato_sync_tests::Position>(entity, ashiato_sync_tests::Position{1.0f, 2.0f}) != nullptr);
 
-    std::vector<ecs::BitBuffer> payloads;
-    kage::sync::ReplicationServerOptions options;
+    std::vector<ashiato::BitBuffer> payloads;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 30;
     options.mtu_bytes = 30;
-    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, entity, archetype));
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -105,30 +105,30 @@ TEST_CASE("replication server resends pending destroys until ACKed") {
 }
 
 TEST_CASE("replication server does not reuse client-local network ids before destroy ACK") {
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_position_archetype(registry);
 
-    std::vector<ecs::BitBuffer> payloads;
-    kage::sync::ReplicationServerOptions options;
-    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+    std::vector<ashiato::BitBuffer> payloads;
+    ashiato::sync::ReplicationServerOptions options;
+    options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
 
     auto spawn = [&](float x) {
-        const ecs::Entity entity = registry.create();
-        REQUIRE(registry.add<kage_sync_tests::Position>(entity, kage_sync_tests::Position{x, x}) != nullptr);
+        const ashiato::Entity entity = registry.create();
+        REQUIRE(registry.add<ashiato_sync_tests::Position>(entity, ashiato_sync_tests::Position{x, x}) != nullptr);
         REQUIRE(start_sync(registry, entity, archetype));
         return entity;
     };
 
-    const ecs::Entity first = spawn(1.0f);
+    const ashiato::Entity first = spawn(1.0f);
     server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 1);
     const ServerUpdatePacket first_update =
-        read_server_update(payloads.back(), 2U, sizeof(kage_sync_tests::Position) * 8U);
+        read_server_update(payloads.back(), 2U, sizeof(ashiato_sync_tests::Position) * 8U);
     REQUIRE(first_update.entities.size() == 1);
     const std::uint32_t first_network_id = first_update.entities[0].network_id;
     REQUIRE(first_network_id != 0);
@@ -138,7 +138,7 @@ TEST_CASE("replication server does not reuse client-local network ids before des
     server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 1);
     const ServerUpdatePacket destroy_update =
-        read_server_update(payloads.back(), 2U, sizeof(kage_sync_tests::Position) * 8U);
+        read_server_update(payloads.back(), 2U, sizeof(ashiato_sync_tests::Position) * 8U);
     REQUIRE(destroy_update.entities.size() == 1);
     REQUIRE(destroy_update.entities[0].destroy);
 
@@ -147,7 +147,7 @@ TEST_CASE("replication server does not reuse client-local network ids before des
     server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 1);
     const ServerUpdatePacket second_update =
-        read_server_update(payloads.back(), 2U, sizeof(kage_sync_tests::Position) * 8U);
+        read_server_update(payloads.back(), 2U, sizeof(ashiato_sync_tests::Position) * 8U);
     REQUIRE(second_update.entities.size() == 2);
     const auto upsert = std::find_if(
         second_update.entities.begin(),
@@ -160,31 +160,31 @@ TEST_CASE("replication server does not reuse client-local network ids before des
 }
 
 TEST_CASE("replication server reuses client-local network ids after each client's destroy ACK") {
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_position_archetype(registry);
 
-    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> payloads;
-    kage::sync::ReplicationServerOptions options;
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> payloads;
+    ashiato::sync::ReplicationServerOptions options;
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         payloads.push_back({client, payload});
     };
 
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
 
     auto spawn = [&](float x) {
-        const ecs::Entity entity = registry.create();
-        REQUIRE(registry.add<kage_sync_tests::Position>(entity, kage_sync_tests::Position{x, x}) != nullptr);
+        const ashiato::Entity entity = registry.create();
+        REQUIRE(registry.add<ashiato_sync_tests::Position>(entity, ashiato_sync_tests::Position{x, x}) != nullptr);
         REQUIRE(start_sync(registry, entity, archetype));
         return entity;
     };
-    auto update_for = [&](kage::sync::ClientId client) {
+    auto update_for = [&](ashiato::sync::ClientId client) {
         for (const auto& sent : payloads) {
             if (sent.first != client) {
                 continue;
             }
-            ServerUpdatePacket update = read_server_update(sent.second, 2U, sizeof(kage_sync_tests::Position) * 8U);
+            ServerUpdatePacket update = read_server_update(sent.second, 2U, sizeof(ashiato_sync_tests::Position) * 8U);
             const auto found = std::find_if(update.entities.begin(), update.entities.end(), [](const EntityRecord& record) {
                 return !record.destroy;
             });
@@ -194,12 +194,12 @@ TEST_CASE("replication server reuses client-local network ids after each client'
         }
         return ServerUpdatePacket{};
     };
-    auto destroy_for = [&](kage::sync::ClientId client, std::uint32_t network_id) {
+    auto destroy_for = [&](ashiato::sync::ClientId client, std::uint32_t network_id) {
         for (const auto& sent : payloads) {
             if (sent.first != client) {
                 continue;
             }
-            ServerUpdatePacket update = read_server_update(sent.second, 2U, sizeof(kage_sync_tests::Position) * 8U);
+            ServerUpdatePacket update = read_server_update(sent.second, 2U, sizeof(ashiato_sync_tests::Position) * 8U);
             const auto found = std::find_if(update.entities.begin(), update.entities.end(), [&](const EntityRecord& record) {
                 return record.destroy && record.network_id == network_id;
             });
@@ -209,13 +209,13 @@ TEST_CASE("replication server reuses client-local network ids after each client'
         }
         return ServerUpdatePacket{};
     };
-    auto packet_id = [](ecs::BitBuffer packet) {
+    auto packet_id = [](ashiato::BitBuffer packet) {
         packet.read_bits(8U);
         packet.read_bits(32U);
-        return static_cast<std::uint32_t>(packet.read_bits(kage::sync::protocol::server_packet_id_bits));
+        return static_cast<std::uint32_t>(packet.read_bits(ashiato::sync::protocol::server_packet_id_bits));
     };
 
-    const ecs::Entity first = spawn(1.0f);
+    const ashiato::Entity first = spawn(1.0f);
     server.tick(registry, server.options().fixed_dt_seconds);
     ServerUpdatePacket first_update = update_for(1);
     REQUIRE(first_update.entities.size() == 1);
@@ -272,25 +272,25 @@ TEST_CASE("replication server reuses client-local network ids after each client'
 }
 
 TEST_CASE("replication server reuses network ids immediately when no clients have pending destroys") {
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_position_archetype(registry);
 
-    std::vector<ecs::BitBuffer> payloads;
-    kage::sync::ReplicationServerOptions options;
-    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+    std::vector<ashiato::BitBuffer> payloads;
+    ashiato::sync::ReplicationServerOptions options;
+    options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(registry, options);
-    const ecs::Entity first = registry.create();
-    REQUIRE(registry.add<kage_sync_tests::Position>(first, kage_sync_tests::Position{1.0f, 1.0f}) != nullptr);
+    ashiato::sync::ReplicationServer server(registry, options);
+    const ashiato::Entity first = registry.create();
+    REQUIRE(registry.add<ashiato_sync_tests::Position>(first, ashiato_sync_tests::Position{1.0f, 1.0f}) != nullptr);
     REQUIRE(start_sync(registry, first, archetype));
     server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(registry.destroy(first));
     server.tick(registry, server.options().fixed_dt_seconds);
 
-    const ecs::Entity second = registry.create();
-    REQUIRE(registry.add<kage_sync_tests::Position>(second, kage_sync_tests::Position{2.0f, 2.0f}) != nullptr);
+    const ashiato::Entity second = registry.create();
+    REQUIRE(registry.add<ashiato_sync_tests::Position>(second, ashiato_sync_tests::Position{2.0f, 2.0f}) != nullptr);
     REQUIRE(start_sync(registry, second, archetype));
     REQUIRE(server.add_client(1));
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -302,36 +302,36 @@ TEST_CASE("replication server reuses network ids immediately when no clients hav
 }
 
 TEST_CASE("replication server accepts delayed entity ACKs for retained quantized frames") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "NetworkedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
-    const ecs::Entity entity = registry.create();
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity entity = registry.create();
     REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
 
-    std::vector<ecs::BitBuffer> payloads;
-    kage::sync::ReplicationServerOptions options;
+    std::vector<ashiato::BitBuffer> payloads;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, entity, archetype));
 
     server.tick(registry, server.options().fixed_dt_seconds);
-    const kage::sync::SyncFrame first_frame = read_server_update(payloads.back()).frame;
+    const ashiato::sync::SyncFrame first_frame = read_server_update(payloads.back()).frame;
     registry.write<NetworkedPosition>(entity) = NetworkedPosition{2.0f, 3.0f};
     server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(read_first_networked_payload(payloads.back()).delta == false);
     REQUIRE(server.acknowledge_entity(1, entity, first_frame));
     REQUIRE_FALSE(server.acknowledge_entity(1, entity, first_frame));
 
-    const kage::sync::SyncFrame second_frame = read_server_update(payloads.back()).frame;
+    const ashiato::sync::SyncFrame second_frame = read_server_update(payloads.back()).frame;
     REQUIRE(server.acknowledge_entity(1, entity, second_frame));
     REQUIRE_FALSE(server.acknowledge_entity(1, entity, second_frame));
 
@@ -341,24 +341,24 @@ TEST_CASE("replication server accepts delayed entity ACKs for retained quantized
 }
 
 TEST_CASE("replication server shares ACKed quantized frames across clients and frees them") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "NetworkedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
-    const ecs::Entity entity = registry.create();
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity entity = registry.create();
     REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
 
-    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> payloads;
-    kage::sync::ReplicationServerOptions options;
+    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> payloads;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         payloads.push_back({client, payload});
     };
 
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(registry, entity, archetype));
@@ -366,12 +366,12 @@ TEST_CASE("replication server shares ACKed quantized frames across clients and f
     server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 2);
     REQUIRE(server.retained_quantized_frame_count() == 1);
-    REQUIRE(server.retained_quantized_frame_bytes() == sizeof(kage_sync_tests::QuantizedNetworkedPosition));
+    REQUIRE(server.retained_quantized_frame_bytes() == sizeof(ashiato_sync_tests::QuantizedNetworkedPosition));
 
     REQUIRE(server.acknowledge_entity(1, entity, read_server_update(payloads[0].second).frame));
     REQUIRE(server.acknowledge_entity(2, entity, read_server_update(payloads[1].second).frame));
     REQUIRE(server.retained_quantized_frame_count() == 1);
-    REQUIRE(server.retained_quantized_frame_bytes() == sizeof(kage_sync_tests::QuantizedNetworkedPosition));
+    REQUIRE(server.retained_quantized_frame_bytes() == sizeof(ashiato_sync_tests::QuantizedNetworkedPosition));
 
     REQUIRE(server.remove_client(registry, 1));
     REQUIRE(server.retained_quantized_frame_count() == 1);
@@ -381,23 +381,23 @@ TEST_CASE("replication server shares ACKed quantized frames across clients and f
 }
 
 TEST_CASE("replication server trims unacked pending quantized frames per entity") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "NetworkedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
-    const ecs::Entity entity = registry.create();
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity entity = registry.create();
     REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{0.0f, 0.0f}) != nullptr);
 
-    std::vector<ecs::BitBuffer> payloads;
-    kage::sync::ReplicationServerOptions options;
+    std::vector<ashiato::BitBuffer> payloads;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& payload) {
         payloads.push_back(payload);
     };
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, entity, archetype));
 
@@ -409,28 +409,28 @@ TEST_CASE("replication server trims unacked pending quantized frames per entity"
 
     REQUIRE(payloads.size() == 70U);
     REQUIRE(server.retained_quantized_frame_count() <= 64U);
-    REQUIRE(server.retained_quantized_frame_bytes() <= 64U * sizeof(kage_sync_tests::QuantizedNetworkedPosition));
+    REQUIRE(server.retained_quantized_frame_bytes() <= 64U * sizeof(ashiato_sync_tests::QuantizedNetworkedPosition));
 }
 
 TEST_CASE("replication server keeps swapped clients addressable after removal") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "NetworkedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
-    const ecs::Entity entity = registry.create();
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity entity = registry.create();
     REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
 
-    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> payloads;
-    kage::sync::ReplicationServerOptions options;
+    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> payloads;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         payloads.push_back({client, payload});
     };
 
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(registry, entity, archetype));
@@ -452,24 +452,24 @@ TEST_CASE("replication server keeps swapped clients addressable after removal") 
 }
 
 TEST_CASE("replication server records bandwidth savings for ACKed delta updates") {
-    ecs::Registry registry;
-    const ecs::Entity probe_component =
-        kage::sync::register_sync_component<BandwidthProbe>(registry, "BandwidthProbe");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity probe_component =
+        ashiato::sync::register_sync_component<BandwidthProbe>(registry, "BandwidthProbe");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "BandwidthActor",
-        {{probe_component, kage::sync::ReplicationAudience::All}});
-    const ecs::Entity entity = registry.create();
+        {{probe_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity entity = registry.create();
     REQUIRE(registry.add<BandwidthProbe>(entity, BandwidthProbe{100}) != nullptr);
 
-    std::vector<ecs::BitBuffer> payloads;
-    kage::sync::ReplicationServerOptions options;
+    std::vector<ashiato::BitBuffer> payloads;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, entity, archetype));
 
@@ -480,8 +480,8 @@ TEST_CASE("replication server records bandwidth savings for ACKed delta updates"
     registry.write<BandwidthProbe>(entity) = BandwidthProbe{105};
     server.tick(registry, server.options().fixed_dt_seconds);
 
-    const std::size_t expected_delta_bits = kage::sync::protocol::server_update_header_bits +
-        1U + kage::sync::protocol::network_entity_id_encoded_bits(1U) + 1U +
-        (1U + kage::sync::protocol::baseline_frame_delta_bits) + 1U + 9U;
-    REQUIRE(payloads.back().byte_size() == kage::sync::protocol::bytes_for_bits(expected_delta_bits));
+    const std::size_t expected_delta_bits = ashiato::sync::protocol::server_update_header_bits +
+        1U + ashiato::sync::protocol::network_entity_id_encoded_bits(1U) + 1U +
+        (1U + ashiato::sync::protocol::baseline_frame_delta_bits) + 1U + 9U;
+    REQUIRE(payloads.back().byte_size() == ashiato::sync::protocol::bytes_for_bits(expected_delta_bits));
 }

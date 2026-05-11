@@ -3,17 +3,17 @@
 #include "client/store/frame_payload_ring.hpp"
 #include "client/state.hpp"
 
-#include "ecs/bit_buffer.hpp"
-#include "kage/sync/components.hpp"
+#include "ashiato/bit_buffer.hpp"
+#include "ashiato/sync/components.hpp"
 
 #include <cstdint>
 #include <vector>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 
 struct ClientInputRecord {
     SyncFrame frame = 0;
-    ecs::Entity component;
+    ashiato::Entity component;
     const std::uint8_t* bytes = nullptr;
 };
 
@@ -28,9 +28,9 @@ struct ClientInputPacketTrace {
 class ClientInputBuffer {
 public:
     bool set_latest(
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
-        ecs::Entity component,
+        ashiato::Entity component,
         const void* input);
 
     bool record_frame(
@@ -45,16 +45,16 @@ public:
         SyncFrame frame,
         std::vector<ClientInputRecord>& recorded);
 
-    bool apply_frame(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame) const;
+    bool apply_frame(ashiato::Registry& registry, const SyncSettings& settings, SyncFrame frame) const;
     void acknowledge_frame(SyncFrame frame);
     void retire_transmit_frames_through(SyncFrame frame) noexcept;
-    void apply_latest_to_owned_entities(ecs::Registry& registry, const SyncSettings& settings) const;
+    void apply_latest_to_owned_entities(ashiato::Registry& registry, const SyncSettings& settings) const;
 
     bool drain_packet(
         std::size_t mtu_bytes,
         std::size_t packet_id_bits,
         std::vector<std::uint32_t>& pending_acks,
-        std::vector<ecs::BitBuffer>& packets,
+        std::vector<ashiato::BitBuffer>& packets,
         ClientInputPacketTrace* trace);
 
     SyncFrame last_recorded_frame() const noexcept {
@@ -80,7 +80,7 @@ private:
     std::vector<std::uint8_t> latest_;
     std::vector<std::uint8_t> acked_baseline_;
     SyncComponentOps ops_;
-    ecs::Entity component_;
+    ashiato::Entity component_;
     SyncFrame last_recorded_frame_ = 0;
     SyncFrame acked_frame_ = 0;
     SyncFrame retired_transmit_frame_ = 0;
@@ -90,4 +90,4 @@ private:
     bool history_discontinuous_ = false;
 };
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

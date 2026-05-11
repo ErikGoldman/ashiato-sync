@@ -1,14 +1,14 @@
 #pragma once
 
-#include "kage/sync/server.hpp"
+#include "ashiato/sync/server.hpp"
 #include "server/bandwidth_controller.hpp"
 #include "server/input_buffer.hpp"
 #include "server/server_client_replicator.hpp"
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 struct ReplicationServer::ReplicatedSlot {
-    ecs::Entity entity;
+    ashiato::Entity entity;
     SyncArchetypeId archetype;
     std::vector<std::uint32_t> quantized_frames;
     std::vector<std::uint64_t> component_dirty_generations;
@@ -41,7 +41,7 @@ struct ReplicationServer::ClientState {
 
 struct ReplicationServer::PendingInboundPacket {
     ClientId client = invalid_client_id;
-    ecs::BitBuffer packet;
+    ashiato::BitBuffer packet;
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

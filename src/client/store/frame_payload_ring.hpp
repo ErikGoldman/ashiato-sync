@@ -1,6 +1,6 @@
 #pragma once
 
-#include "kage/sync/types.hpp"
+#include "ashiato/sync/types.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -8,7 +8,7 @@
 #include <cstring>
 #include <vector>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 
 template <typename Metadata>
 class FramePayloadRing {
@@ -104,4 +104,4 @@ private:
     std::size_t payload_stride_ = 0;
 };
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

@@ -5,7 +5,7 @@
 
 #include <algorithm>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 
 inline bool valid_frame_archetype(const SyncArchetype& archetype) noexcept {
     return archetype.tags.size() <= 64U &&
@@ -37,7 +37,7 @@ bool for_each_present_component(const SyncArchetype& archetype, const FrameData&
 
 inline std::vector<EntityComponentError>::iterator find_snap_error(
     EntityState& state,
-    ecs::Entity component) {
+    ashiato::Entity component) {
     return std::find_if(
         state.visual.snap_errors.begin(),
         state.visual.snap_errors.end(),
@@ -48,7 +48,7 @@ inline std::vector<EntityComponentError>::iterator find_snap_error(
 
 inline std::vector<EntityComponentError>::const_iterator find_snap_error(
     const EntityState& state,
-    ecs::Entity component) {
+    ashiato::Entity component) {
     return std::find_if(
         state.visual.snap_errors.begin(),
         state.visual.snap_errors.end(),
@@ -57,4 +57,4 @@ inline std::vector<EntityComponentError>::const_iterator find_snap_error(
         });
 }
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

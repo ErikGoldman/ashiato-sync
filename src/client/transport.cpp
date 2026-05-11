@@ -1,4 +1,4 @@
-#include "kage/sync/client.hpp"
+#include "ashiato/sync/client.hpp"
 
 #include "client/store/ack_queue.hpp"
 #include "client/runtime/cue_runtime.hpp"
@@ -12,7 +12,7 @@
 #include "client/runtime/update_runtime.hpp"
 #include "detail/logging.hpp"
 
-#include "kage/sync/protocol.hpp"
+#include "ashiato/sync/protocol.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -21,7 +21,7 @@
 #include <utility>
 #include <vector>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 namespace {
 
@@ -38,8 +38,8 @@ using client_detail::PendingPing;
 
 }  // namespace
 
-std::vector<ecs::BitBuffer> ReplicationClient::drain_packets() {
-    std::vector<ecs::BitBuffer> packets;
+std::vector<ashiato::BitBuffer> ReplicationClient::drain_packets() {
+    std::vector<ashiato::BitBuffer> packets;
     drain_connect_packets(packets);
     drain_ping_packets(packets);
     drain_input_packets_into(packets);
@@ -47,14 +47,14 @@ std::vector<ecs::BitBuffer> ReplicationClient::drain_packets() {
     return packets;
 }
 
-std::vector<ecs::BitBuffer> ReplicationClient::drain_ack_packets() {
-    std::vector<ecs::BitBuffer> packets;
+std::vector<ashiato::BitBuffer> ReplicationClient::drain_ack_packets() {
+    std::vector<ashiato::BitBuffer> packets;
     drain_ack_packets_into(packets);
     return packets;
 }
 
-void ReplicationClient::process_inbound_packets(ecs::Registry& registry) {
-    for (ecs::BitBuffer& packet : session_transport_->inbound_packets) {
+void ReplicationClient::process_inbound_packets(ashiato::Registry& registry) {
+    for (ashiato::BitBuffer& packet : session_transport_->inbound_packets) {
         (void)receive(registry, std::move(packet));
     }
     session_transport_->inbound_packets.clear();
@@ -64,9 +64,9 @@ void ReplicationClient::send_pending_packets() {
     if (!session_transport_->packet_sender) {
         return;
     }
-    for (const ecs::BitBuffer& packet : drain_packets()) {
+    for (const ashiato::BitBuffer& packet : drain_packets()) {
         std::uint8_t message = 0;
-        ecs::BitBuffer inspect = packet;
+        ashiato::BitBuffer inspect = packet;
         message = static_cast<std::uint8_t>(inspect.read_bits(8U));
         try {
             session_transport_->packet_sender(packet);
@@ -77,8 +77,8 @@ void ReplicationClient::send_pending_packets() {
     }
 }
 
-void ReplicationClient::drain_ack_packets_into(std::vector<ecs::BitBuffer>& packets) {
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+void ReplicationClient::drain_ack_packets_into(std::vector<ashiato::BitBuffer>& packets) {
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     std::vector<client_detail::ClientAckPacketTrace> traces;
     ack_queue_->drain_ack_packets(options_.network.mtu_bytes, configured_packet_id_bits(options_), packets, &traces);
     for (const client_detail::ClientAckPacketTrace& trace : traces) {
@@ -89,11 +89,11 @@ void ReplicationClient::drain_ack_packets_into(std::vector<ecs::BitBuffer>& pack
 #endif
 }
 
-void ReplicationClient::drain_input_packets_into(std::vector<ecs::BitBuffer>& packets) {
+void ReplicationClient::drain_input_packets_into(std::vector<ashiato::BitBuffer>& packets) {
     if (session_transport_->connection_state != ReplicationClientConnectionState::Ready || !clock_.bootstrapped()) {
         return;
     }
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     client_detail::ClientInputPacketTrace trace;
     const bool sent = input_->drain_packet(
         options_.network.mtu_bytes,
@@ -122,7 +122,7 @@ void ReplicationClient::queue_ack(std::uint32_t packet_id) {
     ack_queue_->push(packet_id);
 }
 
-bool ReplicationClient::receive_connect_response(ecs::Registry& registry, ecs::BitBuffer& packet) {
+bool ReplicationClient::receive_connect_response(ashiato::Registry& registry, ashiato::BitBuffer& packet) {
     detail::BitReader reader(packet);
     bool accepted = false;
     if (!reader.read_bits(1U, accepted)) {
@@ -139,7 +139,7 @@ bool ReplicationClient::receive_connect_response(ecs::Registry& registry, ecs::B
         session_transport_->connection_state = ReplicationClientConnectionState::Rejected;
         ++observability_stats_.client_connects_rejected;
         log_info("client_connect_rejected", "reason=" + detail::log_token(session_transport_->connect_error));
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
         if (tracer_ != nullptr && tracer_->enabled()) {
             SyncTraceEvent event = make_client_trace_event(
                 SyncTraceEventType::ClientDisconnected,
@@ -168,7 +168,7 @@ bool ReplicationClient::receive_connect_response(ecs::Registry& registry, ecs::B
     set_client_id(registry, client_id_);
     ++observability_stats_.client_connects_accepted;
     log_info("client_connect_accepted", "client=" + std::to_string(client_id_));
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     if (tracer_ != nullptr && tracer_->enabled()) {
         SyncTraceEvent event = make_client_trace_event(
             SyncTraceEventType::ClientConnected,
@@ -180,8 +180,8 @@ bool ReplicationClient::receive_connect_response(ecs::Registry& registry, ecs::B
     return true;
 }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
-#define KAGE_SYNC_TRACE_RECEIVE_CLOCK_SKEW(stage, server_frame, last_input_frame, prefill_frame) \
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+#define ASHIATO_SYNC_TRACE_RECEIVE_CLOCK_SKEW(stage, server_frame, last_input_frame, prefill_frame) \
     trace_clock_skew( \
         (stage), \
         static_cast<SyncFrame>(std::max(0.0, context.estimated_server_frame)), \
@@ -191,12 +191,12 @@ bool ReplicationClient::receive_connect_response(ecs::Registry& registry, ecs::B
         (last_input_frame), \
         (prefill_frame))
 #else
-#define KAGE_SYNC_TRACE_RECEIVE_CLOCK_SKEW(stage, server_frame, last_input_frame, prefill_frame) ((void)0)
+#define ASHIATO_SYNC_TRACE_RECEIVE_CLOCK_SKEW(stage, server_frame, last_input_frame, prefill_frame) ((void)0)
 #endif
 
 bool ReplicationClient::receive_entity_update(
-    ecs::Registry& registry,
-    ecs::BitBuffer& packet,
+    ashiato::Registry& registry,
+    ashiato::BitBuffer& packet,
     const ReceiveContext& context) {
     detail::BitReader reader(packet);
     SyncFrame frame = 0;
@@ -215,7 +215,7 @@ bool ReplicationClient::receive_entity_update(
     input_->acknowledge_frame(input_ack_frame);
     const bool applied = update_runtime_->apply_update(*this, registry, reader, packet_id, frame, record_count);
 
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     trace_incoming_update_packet(
         static_cast<SyncFrame>(std::max(0.0, context.estimated_server_frame)),
         frame,
@@ -245,7 +245,7 @@ bool ReplicationClient::receive_entity_update(
 }
 
 bool ReplicationClient::update_prediction_input_prefill_from_entity_update(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     SyncFrame server_frame,
     const ReceiveContext& context) {
     const SyncFrame decision_last_recorded_input_frame = input_->last_recorded_frame();
@@ -256,7 +256,7 @@ bool ReplicationClient::update_prediction_input_prefill_from_entity_update(
         context.continuous_predicted_frame,
         has_buffered_entities(),
         decision_last_recorded_input_frame);
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     const bool clock_requested_prefill = prefill_input_frame != 0U;
 #endif
     if (prefill_input_frame != 0U) {
@@ -272,7 +272,7 @@ bool ReplicationClient::update_prediction_input_prefill_from_entity_update(
             clock_.stats().target_prediction_lead_frames,
             clock_.stats().current_prediction_lead_frames);
     }
-    KAGE_SYNC_TRACE_RECEIVE_CLOCK_SKEW(
+    ASHIATO_SYNC_TRACE_RECEIVE_CLOCK_SKEW(
         clock_requested_prefill ? "clock_requested_prefill" :
         (prefill_input_frame != 0U ? "active_snap_topup" : "no_prefill"),
         server_frame,
@@ -280,7 +280,7 @@ bool ReplicationClient::update_prediction_input_prefill_from_entity_update(
         prefill_input_frame);
     if (prefill_input_frame > input_->last_recorded_frame()) {
         (void)apply_prediction_input_prefill(registry, server_frame, prefill_input_frame, 0);
-        KAGE_SYNC_TRACE_RECEIVE_CLOCK_SKEW(
+        ASHIATO_SYNC_TRACE_RECEIVE_CLOCK_SKEW(
             "prefill_applied",
             server_frame,
             decision_last_recorded_input_frame,
@@ -291,7 +291,7 @@ bool ReplicationClient::update_prediction_input_prefill_from_entity_update(
 }
 
 bool ReplicationClient::apply_prediction_input_prefill(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     SyncFrame server_frame,
     SyncFrame prefill_input_frame,
     SyncFrame prediction_snap_lead_frames) {
@@ -313,8 +313,8 @@ bool ReplicationClient::apply_prediction_input_prefill(
 }
 
 bool ReplicationClient::receive_pong(
-    ecs::Registry& registry,
-    ecs::BitBuffer& packet,
+    ashiato::Registry& registry,
+    ashiato::BitBuffer& packet,
     const ReceiveContext& context) {
     detail::BitReader reader(packet);
     std::uint32_t sequence = 0;
@@ -374,7 +374,7 @@ bool ReplicationClient::receive_pong(
         after.target_prediction_lead_frames - before.current_prediction_lead_frames >=
             options_.clock.auto_timing_fast_recovery_min_frame_gap) {
         const SyncFrame prefill_input_frame = last_server_update_frame_ + after.target_prediction_lead_frames;
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
         trace_clock_skew(
             "pong_requested_prefill",
             static_cast<SyncFrame>(std::max(0.0, context.estimated_server_frame)),
@@ -389,7 +389,7 @@ bool ReplicationClient::receive_pong(
                 last_server_update_frame_,
                 prefill_input_frame,
                 after.target_prediction_lead_frames)) {
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
             trace_clock_skew(
                 "pong_prefill_applied",
                 static_cast<SyncFrame>(std::max(0.0, context.estimated_server_frame)),
@@ -404,14 +404,14 @@ bool ReplicationClient::receive_pong(
     return true;
 }
 
-void ReplicationClient::drain_connect_packets(std::vector<ecs::BitBuffer>& packets) {
+void ReplicationClient::drain_connect_packets(std::vector<ashiato::BitBuffer>& packets) {
     if (session_transport_->connection_state == ReplicationClientConnectionState::Connecting) {
         if (session_transport_->sent_initial_connect_request &&
             session_transport_->connect_resend_accumulator_seconds < options_.session.connect_resend_interval_seconds) {
             return;
         }
 
-        ecs::BitBuffer packet;
+        ashiato::BitBuffer packet;
         packet.reserve_bytes(options_.network.mtu_bytes);
         packet.push_bits(protocol::client_connect_request_message, 8U);
         protocol::write_string(packet, options_.session.connect_token);
@@ -428,7 +428,7 @@ void ReplicationClient::drain_connect_packets(std::vector<ecs::BitBuffer>& packe
             return;
         }
 
-        ecs::BitBuffer packet;
+        ashiato::BitBuffer packet;
         packet.reserve_bytes(options_.network.mtu_bytes);
         packet.push_bits(protocol::client_connect_ack_message, 8U);
         packet.push_unsigned_bits(client_id_, 64U);
@@ -437,7 +437,7 @@ void ReplicationClient::drain_connect_packets(std::vector<ecs::BitBuffer>& packe
     }
 }
 
-void ReplicationClient::drain_ping_packets(std::vector<ecs::BitBuffer>& packets) {
+void ReplicationClient::drain_ping_packets(std::vector<ashiato::BitBuffer>& packets) {
     if (session_transport_->connection_state != ReplicationClientConnectionState::Accepted &&
         session_transport_->connection_state != ReplicationClientConnectionState::Ready) {
         return;
@@ -452,7 +452,7 @@ void ReplicationClient::drain_ping_packets(std::vector<ecs::BitBuffer>& packets)
     const std::uint32_t sequence = session_transport_->next_ping_sequence++;
     session_transport_->pending_pings[sequence] = PendingPing{clock_.local_time_seconds()};
 
-    ecs::BitBuffer packet;
+    ashiato::BitBuffer packet;
     packet.reserve_bytes(options_.network.mtu_bytes);
     packet.push_bits(protocol::client_ping_message, 8U);
     packet.push_bits(sequence, 32U);
@@ -461,6 +461,6 @@ void ReplicationClient::drain_ping_packets(std::vector<ecs::BitBuffer>& packets)
     session_transport_->ping_accumulator_seconds = 0.0;
 }
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync
 
-#undef KAGE_SYNC_TRACE_RECEIVE_CLOCK_SKEW
+#undef ASHIATO_SYNC_TRACE_RECEIVE_CLOCK_SKEW

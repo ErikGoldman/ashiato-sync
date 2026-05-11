@@ -1,4 +1,4 @@
-#include "kage/sync/sync.hpp"
+#include "ashiato/sync/sync.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace kage::sync::prediction_stress {
+namespace ashiato::sync::prediction_stress {
 
 struct PredPosition {
     float x = 0.0f;
@@ -88,9 +88,9 @@ private:
     std::chrono::steady_clock::time_point begin_;
 };
 
-}  // namespace kage::sync::prediction_stress
+}  // namespace ashiato::sync::prediction_stress
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 template <>
 struct SyncComponentTraits<prediction_stress::PredPosition> {
@@ -105,11 +105,11 @@ struct SyncComponentTraits<prediction_stress::PredPosition> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -153,11 +153,11 @@ struct SyncComponentTraits<prediction_stress::PredVelocity> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -181,11 +181,11 @@ struct SyncComponentTraits<prediction_stress::PredAcceleration> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -209,11 +209,11 @@ struct SyncComponentTraits<prediction_stress::PredEnergy> {
         return prediction_stress::PredEnergy{value};
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_bits(current, 32U);
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         out = static_cast<std::int32_t>(in.read_bits(32U));
         return true;
     }
@@ -235,11 +235,11 @@ struct SyncComponentTraits<prediction_stress::PredFlags> {
         return prediction_stress::PredFlags{value};
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_unsigned_bits(current, 32U);
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         out = static_cast<std::uint32_t>(in.read_unsigned_bits(32U));
         return true;
     }
@@ -249,17 +249,17 @@ struct SyncComponentTraits<prediction_stress::PredFlags> {
     }
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync
 
-namespace kage::sync::prediction_stress {
+namespace ashiato::sync::prediction_stress {
 namespace {
 
-Schema define_schema(ecs::Registry& registry) {
-    const ecs::Entity position = register_sync_component<PredPosition>(registry, "PredPosition");
-    const ecs::Entity velocity = register_sync_component<PredVelocity>(registry, "PredVelocity");
-    const ecs::Entity acceleration = register_sync_component<PredAcceleration>(registry, "PredAcceleration");
-    const ecs::Entity energy = register_sync_component<PredEnergy>(registry, "PredEnergy");
-    const ecs::Entity flags = register_sync_component<PredFlags>(registry, "PredFlags");
+Schema define_schema(ashiato::Registry& registry) {
+    const ashiato::Entity position = register_sync_component<PredPosition>(registry, "PredPosition");
+    const ashiato::Entity velocity = register_sync_component<PredVelocity>(registry, "PredVelocity");
+    const ashiato::Entity acceleration = register_sync_component<PredAcceleration>(registry, "PredAcceleration");
+    const ashiato::Entity energy = register_sync_component<PredEnergy>(registry, "PredEnergy");
+    const ashiato::Entity flags = register_sync_component<PredFlags>(registry, "PredFlags");
     (void)set_fractional_tick_sampled(registry, position);
     return Schema{
         define_archetype(
@@ -277,7 +277,7 @@ Schema define_schema(ecs::Registry& registry) {
 template <typename JobBuilder>
 void register_prediction_job(JobBuilder&& job) {
     job.each([](
-        ecs::Entity,
+        ashiato::Entity,
         PredPosition& position,
         PredVelocity& velocity,
         const PredAcceleration& acceleration,
@@ -290,19 +290,19 @@ void register_prediction_job(JobBuilder&& job) {
     });
 }
 
-void register_prediction_jobs(ecs::Registry& registry) {
+void register_prediction_jobs(ashiato::Registry& registry) {
     register_prediction_job(registry.job<PredPosition, PredVelocity, const PredAcceleration, PredEnergy>(0));
 }
 
-void register_prediction_jobs(ecs::Registry& registry, ReplicationClient& client) {
+void register_prediction_jobs(ashiato::Registry& registry, ReplicationClient& client) {
     register_prediction_job(client.simulation_job<PredPosition, PredVelocity, const PredAcceleration, PredEnergy>(registry, 0));
 }
 
-std::vector<ecs::Entity> create_entities(ecs::Registry& registry, const Schema& schema, std::uint32_t count) {
-    std::vector<ecs::Entity> entities;
+std::vector<ashiato::Entity> create_entities(ashiato::Registry& registry, const Schema& schema, std::uint32_t count) {
+    std::vector<ashiato::Entity> entities;
     entities.reserve(count);
     for (std::uint32_t index = 0; index < count; ++index) {
-        const ecs::Entity entity = registry.create();
+        const ashiato::Entity entity = registry.create();
         const float lane = static_cast<float>(static_cast<int>(index % 64U) - 32);
         const float phase = static_cast<float>(index) * 0.017f;
         registry.add<PredPosition>(entity, PredPosition{lane * 0.1f, phase});
@@ -317,8 +317,8 @@ std::vector<ecs::Entity> create_entities(ecs::Registry& registry, const Schema& 
 }
 
 void maybe_mispredict(
-    ecs::Registry& registry,
-    const std::vector<ecs::Entity>& entities,
+    ashiato::Registry& registry,
+    const std::vector<ashiato::Entity>& entities,
     double percent,
     std::mt19937& rng,
     std::uint64_t& events) {
@@ -333,7 +333,7 @@ void maybe_mispredict(
             continue;
         }
 
-        const ecs::Entity entity = entities[index];
+        const ashiato::Entity entity = entities[index];
         PredAcceleration& acceleration = registry.write<PredAcceleration>(entity);
         acceleration.x = impulse(rng);
         acceleration.y = impulse(rng);
@@ -440,36 +440,35 @@ Report run(const Config& config) {
     Report report;
     report.config = config;
 
-    ecs::Registry server_registry;
-    configure_server(server_registry);
+    ashiato::Registry server_registry;
     const Schema server_schema = define_schema(server_registry);
     register_prediction_jobs(server_registry);
-    const std::vector<ecs::Entity> server_entities = create_entities(server_registry, server_schema, config.entities);
+    const std::vector<ashiato::Entity> server_entities = create_entities(server_registry, server_schema, config.entities);
 
-    ecs::Registry client_registry;
-    configure_client(client_registry, 1);
+    ashiato::Registry client_registry;
     (void)define_schema(client_registry);
 
-    std::vector<std::vector<ecs::BitBuffer>> downstream(static_cast<std::size_t>(config.latency_frames) + 1U);
+    std::vector<std::vector<ashiato::BitBuffer>> downstream(static_cast<std::size_t>(config.latency_frames) + 1U);
     std::uint32_t current_tick = 0;
     ReplicationServerOptions server_options;
     server_options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(config.entities) * 512U;
     server_options.mtu_bytes = 1200;
     server_options.fixed_dt_seconds = 1.0 / 60.0;
-    server_options.transport = [&](ClientId, const ecs::BitBuffer& packet) {
+    server_options.transport = [&](ClientId, const ashiato::BitBuffer& packet) {
         const std::uint32_t due_tick = current_tick + config.latency_frames;
         downstream[due_tick % downstream.size()].push_back(packet);
         ++report.server_packets;
         report.server_bytes += packet.byte_size();
     };
 
-    ReplicationServer server(server_options);
+    ReplicationServer server(server_registry, server_options);
     server.add_client(1);
 
     ReplicationClientOptions client_options;
     client_options.entities.default_mode = ReplicationClientMode::Predict;
     client_options.prediction.rollback_policy = config.rollback_policy;
     client_options.clock.fixed_dt_seconds = 1.0 / 60.0;
+    client_options.session.local_client = 1;
     ReplicationClient client(client_registry, client_options);
     register_prediction_jobs(client_registry, client);
 
@@ -479,8 +478,8 @@ Report run(const Config& config) {
     for (current_tick = 0; current_tick < total_ticks; ++current_tick) {
         {
             ScopedTimer timer(report.timing.client_receive_seconds);
-            std::vector<ecs::BitBuffer>& due = downstream[current_tick % downstream.size()];
-            for (const ecs::BitBuffer& packet : due) {
+            std::vector<ashiato::BitBuffer>& due = downstream[current_tick % downstream.size()];
+            for (const ashiato::BitBuffer& packet : due) {
                 if (client.receive(client_registry, packet)) {
                     ++report.delivered_server_packets;
                 }
@@ -495,7 +494,7 @@ Report run(const Config& config) {
 
         {
             ScopedTimer timer(report.timing.ack_processing_seconds);
-            for (const ecs::BitBuffer& packet : client.drain_packets()) {
+            for (const ashiato::BitBuffer& packet : client.drain_packets()) {
                 ++report.client_packets;
                 report.client_bytes += packet.byte_size();
                 server.process_packet(server_registry, 1, packet);
@@ -526,7 +525,7 @@ Report run(const Config& config) {
     report.timing.wall_seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - wall_begin).count();
 
-    client_registry.view<const PredPosition>().each([&](ecs::Entity, const PredPosition&) {
+    client_registry.view<const PredPosition>().each([&](ashiato::Entity, const PredPosition&) {
         ++report.predicted_entities;
     });
     return report;
@@ -582,7 +581,7 @@ void write_report_json(std::ostream& out, const Report& report) {
 }
 
 void write_usage(std::ostream& out) {
-    out << "usage: kage_sync_prediction_stress [options]\n"
+    out << "usage: ashiato_sync_prediction_stress [options]\n"
         << "  --entities N\n"
         << "  --ticks N | --duration-frames N\n"
         << "  --latency-frames N       default: 10\n"
@@ -592,23 +591,23 @@ void write_usage(std::ostream& out) {
         << "  --report text|json\n";
 }
 
-}  // namespace kage::sync::prediction_stress
+}  // namespace ashiato::sync::prediction_stress
 
 int main(int argc, char** argv) {
     try {
-        const kage::sync::prediction_stress::Config config =
-            kage::sync::prediction_stress::parse_args(argc, argv);
-        const kage::sync::prediction_stress::Report report =
-            kage::sync::prediction_stress::run(config);
+        const ashiato::sync::prediction_stress::Config config =
+            ashiato::sync::prediction_stress::parse_args(argc, argv);
+        const ashiato::sync::prediction_stress::Report report =
+            ashiato::sync::prediction_stress::run(config);
         if (config.json) {
-            kage::sync::prediction_stress::write_report_json(std::cout, report);
+            ashiato::sync::prediction_stress::write_report_json(std::cout, report);
         } else {
-            kage::sync::prediction_stress::write_report_text(std::cout, report);
+            ashiato::sync::prediction_stress::write_report_text(std::cout, report);
         }
         return 0;
     } catch (const std::runtime_error& error) {
         if (std::string(error.what()) == "help") {
-            kage::sync::prediction_stress::write_usage(std::cout);
+            ashiato::sync::prediction_stress::write_usage(std::cout);
             return 0;
         }
         std::cerr << "error: " << error.what() << '\n';
@@ -616,6 +615,6 @@ int main(int argc, char** argv) {
         std::cerr << "error: " << error.what() << '\n';
     }
 
-    kage::sync::prediction_stress::write_usage(std::cerr);
+    ashiato::sync::prediction_stress::write_usage(std::cerr);
     return 1;
 }

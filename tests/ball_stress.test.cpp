@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace stress = kage::sync::stress;
+namespace stress = ashiato::sync::stress;
 
 namespace {
 
@@ -30,26 +30,26 @@ stress::StressConfig test_config() {
 }
 
 stress::ServerBall make_ball(
-    ecs::Registry& registry,
-    kage::sync::SyncArchetypeId archetype,
+    ashiato::Registry& registry,
+    ashiato::sync::SyncArchetypeId archetype,
     stress::BallPosition position,
     stress::BallHealth health,
     float vx,
     float vy,
     float vz) {
-    const ecs::Entity entity = registry.create();
+    const ashiato::Entity entity = registry.create();
     registry.add<stress::BallPosition>(entity, position);
     registry.add<stress::BallVisual>(entity, stress::BallVisual{});
     registry.add<stress::BallHealth>(entity, health);
-    registry.add<kage::sync::Replicated>(entity, kage::sync::Replicated{archetype});
+    registry.add<ashiato::sync::Replicated>(entity, ashiato::sync::Replicated{archetype});
     return stress::ServerBall{entity, vx, vy, vz};
 }
 
 }  // namespace
 
 TEST_CASE("ball stress bounce adds poison in configured range") {
-    ecs::Registry registry;
-    kage_sync_tests::configure_test_server_registry(registry);
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_server_registry(registry);
     const stress::SyncSchema schema = stress::define_schema(registry);
     stress::StressConfig config = test_config();
     std::mt19937 rng(7);
@@ -78,8 +78,8 @@ TEST_CASE("ball stress bounce adds poison in configured range") {
 }
 
 TEST_CASE("ball stress spawn randomly assigns synced tags") {
-    ecs::Registry registry;
-    kage_sync_tests::configure_test_server_registry(registry);
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_server_registry(registry);
     const stress::SyncSchema schema = stress::define_schema(registry);
     stress::StressConfig config = test_config();
     config.max_balls = 32;
@@ -102,10 +102,10 @@ TEST_CASE("ball stress spawn randomly assigns synced tags") {
 }
 
 TEST_CASE("ball stress schema syncs multiple tags to clients") {
-    ecs::Registry server_registry;
-    kage_sync_tests::configure_test_server_registry(server_registry);
+    ashiato::Registry server_registry;
+    ashiato_sync_tests::configure_test_server_registry(server_registry);
     const stress::SyncSchema server_schema = stress::define_schema(server_registry);
-    const ecs::Entity server_entity = server_registry.create();
+    const ashiato::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<stress::BallPosition>(
                 server_entity, stress::BallPosition{1.0f, 2.0f, 3.0f}) != nullptr);
     REQUIRE(server_registry.add<stress::BallVisual>(server_entity, stress::BallVisual{}) != nullptr);
@@ -113,37 +113,37 @@ TEST_CASE("ball stress schema syncs multiple tags to clients") {
     REQUIRE(server_registry.add_tag(server_entity, server_schema.spawn_tagged));
     REQUIRE(server_registry.add_tag(server_entity, server_schema.bounced));
     REQUIRE(
-        server_registry.add<kage::sync::Replicated>(
-            server_entity, kage::sync::Replicated{server_schema.ball})
+        server_registry.add<ashiato::sync::Replicated>(
+            server_entity, ashiato::sync::Replicated{server_schema.ball})
         != nullptr);
 
-    std::vector<ecs::BitBuffer> packets;
-    kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
 
-    ecs::Registry client_registry;
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato::Registry client_registry;
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
     const stress::SyncSchema client_schema = stress::define_schema(client_registry);
     REQUIRE(client_schema.ball == server_schema.ball);
 
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
     REQUIRE(client.receive(client_registry, packets[0]));
 
-    const ecs::Entity local = client.local_entity(kage_sync_tests::first_allocated_client_entity_network_id(1));
+    const ashiato::Entity local = client.local_entity(ashiato_sync_tests::first_allocated_client_entity_network_id(1));
     REQUIRE(local);
     REQUIRE(client_registry.has(local, client_schema.spawn_tagged));
     REQUIRE(client_registry.has(local, client_schema.bounced));
 }
 
 TEST_CASE("ball stress poison ticks health and removes component") {
-    ecs::Registry registry;
-    kage_sync_tests::configure_test_server_registry(registry);
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_server_registry(registry);
     const stress::SyncSchema schema = stress::define_schema(registry);
     stress::StressConfig config = test_config();
     std::mt19937 rng(9);
@@ -171,8 +171,8 @@ TEST_CASE("ball stress poison ticks health and removes component") {
 }
 
 TEST_CASE("ball stress despawns balls at zero health") {
-    ecs::Registry registry;
-    kage_sync_tests::configure_test_server_registry(registry);
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_server_registry(registry);
     const stress::SyncSchema schema = stress::define_schema(registry);
     stress::StressConfig config = test_config();
     std::mt19937 rng(11);
@@ -188,7 +188,7 @@ TEST_CASE("ball stress despawns balls at zero health") {
         0.0f,
         0.0f,
         0.0f));
-    const ecs::Entity entity = balls[0].entity;
+    const ashiato::Entity entity = balls[0].entity;
     registry.add<stress::BallPoison>(entity, stress::BallPoison{1, 0.0f});
 
     stress::update_server_world(registry, balls, schema, config, 0.25, spawn_accumulator, rng, report);
@@ -199,8 +199,8 @@ TEST_CASE("ball stress despawns balls at zero health") {
 }
 
 TEST_CASE("ball stress spawn cap is respected") {
-    ecs::Registry registry;
-    kage_sync_tests::configure_test_server_registry(registry);
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_server_registry(registry);
     const stress::SyncSchema schema = stress::define_schema(registry);
     stress::StressConfig config = test_config();
     config.max_balls = 3;
@@ -222,8 +222,8 @@ TEST_CASE("ball stress simulated transport applies latency and loss") {
     link.settings.latency_ms = 100.0;
     link.settings.loss_percent = 0.0;
 
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::client_ack_message, 8U);
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
     packet.push_bits(0, 16U);
 
     stress::enqueue_packet(link, stats, 1, packet, 1.0);
@@ -232,12 +232,12 @@ TEST_CASE("ball stress simulated transport applies latency and loss") {
     REQUIRE(stats.dropped_packets == 0);
 
     bool delivered = false;
-    stress::deliver_ready(link, stats, 1.05, [&](kage::sync::ClientId, const ecs::BitBuffer&) {
+    stress::deliver_ready(link, stats, 1.05, [&](ashiato::sync::ClientId, const ashiato::BitBuffer&) {
         delivered = true;
     });
     REQUIRE_FALSE(delivered);
 
-    stress::deliver_ready(link, stats, 1.10, [&](kage::sync::ClientId, const ecs::BitBuffer&) {
+    stress::deliver_ready(link, stats, 1.10, [&](ashiato::sync::ClientId, const ashiato::BitBuffer&) {
         delivered = true;
     });
     REQUIRE(delivered);
@@ -259,8 +259,8 @@ TEST_CASE("ball stress simulated transport applies bounded uniform jitter") {
     link.settings.loss_percent = 0.0;
     link.random_engine().seed(123);
 
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::client_ack_message, 8U);
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
     packet.push_bits(0, 16U);
 
     stress::enqueue_packet(link, stats, 1, packet, 1.0);
@@ -286,11 +286,11 @@ TEST_CASE("ball stress simulated transport delivers by scheduled time under jitt
     link.settings.jitter_ms = 50.0;
     link.random_engine().seed(2);
 
-    ecs::BitBuffer first;
-    first.push_bits(kage::sync::protocol::client_ack_message, 8U);
+    ashiato::BitBuffer first;
+    first.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
     first.push_bits(1, 16U);
-    ecs::BitBuffer second;
-    second.push_bits(kage::sync::protocol::client_ack_message, 8U);
+    ashiato::BitBuffer second;
+    second.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
     second.push_bits(2, 16U);
 
     stress::enqueue_packet(link, stats, 1, first, 1.0);
@@ -301,27 +301,27 @@ TEST_CASE("ball stress simulated transport delivers by scheduled time under jitt
 }
 
 TEST_CASE("ball stress packet classifier counts update record kinds") {
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::server_update_message, 8U);
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
     packet.push_bits(7, 32U);
-    packet.push_bits(99, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(99, ashiato::sync::protocol::server_packet_id_bits);
     packet.push_bits(0, 32U);
     packet.push_bits(3, 16U);
 
     packet.push_bool(false);
-    kage::sync::protocol::write_network_entity_id(packet, 100);
+    ashiato::sync::protocol::write_network_entity_id(packet, 100);
     packet.push_bool(true);
     packet.push_bits(1, 32U);
     packet.push_bool(false);
     packet.push_bits(1, 16U);
-    packet.push_bits(0, kage::sync::protocol::bits_for_range(stress::WireFormatStats::slot_count));
+    packet.push_bits(0, ashiato::sync::protocol::bits_for_range(stress::WireFormatStats::slot_count));
     packet.push_unsigned_bits(3U, 2U);
     packet.push_bool(false);
 
     packet.push_bool(false);
-    kage::sync::protocol::write_network_entity_id(packet, 101);
+    ashiato::sync::protocol::write_network_entity_id(packet, 101);
     packet.push_bool(false);
-    kage::sync::protocol::write_baseline_frame(packet, 7, 6);
+    ashiato::sync::protocol::write_baseline_frame(packet, 7, 6);
     packet.push_bool(true);
     packet.push_bool(false);
     packet.push_bool(false);
@@ -331,7 +331,7 @@ TEST_CASE("ball stress packet classifier counts update record kinds") {
     packet.push_bool(false);
 
     packet.push_bool(true);
-    kage::sync::protocol::write_network_entity_id(packet, 102);
+    ashiato::sync::protocol::write_network_entity_id(packet, 102);
 
     const stress::PacketBreakdown breakdown = stress::classify_packet(packet);
 
@@ -346,7 +346,7 @@ TEST_CASE("ball stress packet classifier counts update record kinds") {
     REQUIRE(diagnostic_breakdown.type == stress::PacketType::ServerUpdate);
     REQUIRE(wire.packet_bits == 206);
     REQUIRE(wire.padding_bits == 2);
-    REQUIRE(wire.server_update_header_bits == kage::sync::protocol::server_update_header_bits);
+    REQUIRE(wire.server_update_header_bits == ashiato::sync::protocol::server_update_header_bits);
     REQUIRE(wire.server_update_entities == 3);
     REQUIRE(wire.max_server_update_entities_per_packet == 3);
     REQUIRE(wire.full_upsert_bits == 69);
@@ -355,7 +355,7 @@ TEST_CASE("ball stress packet classifier counts update record kinds") {
     REQUIRE(wire.full_upsert_presence_mask_records == 0);
     REQUIRE(wire.delta_upsert_bits == 28);
     REQUIRE(wire.delta_upsert_payload_bits == 2);
-    REQUIRE(wire.delta_baseline_bits == 1 + kage::sync::protocol::baseline_frame_delta_bits);
+    REQUIRE(wire.delta_baseline_bits == 1 + ashiato::sync::protocol::baseline_frame_delta_bits);
     REQUIRE(wire.delta_baseline_relative == 1);
     REQUIRE(wire.delta_baseline_absolute == 0);
     REQUIRE(wire.delta_change_mask_bits == stress::WireFormatStats::slot_count);
@@ -366,33 +366,33 @@ TEST_CASE("ball stress packet classifier counts update record kinds") {
 }
 
 TEST_CASE("ball stress packet classifier records ACK wire diagnostics") {
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::client_ack_message, 8U);
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
     packet.push_bits(2, 16U);
-    packet.push_bits(7, kage::sync::protocol::server_packet_id_bits);
-    packet.push_bits(8, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(7, ashiato::sync::protocol::server_packet_id_bits);
+    packet.push_bits(8, ashiato::sync::protocol::server_packet_id_bits);
 
     stress::WireFormatStats wire;
     const stress::PacketBreakdown breakdown = stress::classify_packet(packet, &wire);
 
     REQUIRE(breakdown.type == stress::PacketType::ClientAck);
-    REQUIRE(wire.packet_bits == kage::sync::protocol::client_ack_header_bits +
-            2U * kage::sync::protocol::client_ack_record_bits);
+    REQUIRE(wire.packet_bits == ashiato::sync::protocol::client_ack_header_bits +
+            2U * ashiato::sync::protocol::client_ack_record_bits);
     REQUIRE(wire.padding_bits == 0);
-    REQUIRE(wire.ack_header_bits == kage::sync::protocol::client_ack_header_bits);
+    REQUIRE(wire.ack_header_bits == ashiato::sync::protocol::client_ack_header_bits);
     REQUIRE(wire.ack_records == 2);
-    REQUIRE(wire.ack_record_bits == 2U * kage::sync::protocol::client_ack_record_bits);
+    REQUIRE(wire.ack_record_bits == 2U * ashiato::sync::protocol::client_ack_record_bits);
 }
 
 TEST_CASE("ball stress packet classifier honors custom network id tier width") {
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::server_update_message, 8U);
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
     packet.push_bits(1, 32U);
-    packet.push_bits(1, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(1, ashiato::sync::protocol::server_packet_id_bits);
     packet.push_bits(0, 32U);
     packet.push_bits(1, 16U);
     packet.push_bool(true);
-    kage::sync::protocol::write_network_entity_id(packet, 255U, 8U);
+    ashiato::sync::protocol::write_network_entity_id(packet, 255U, 8U);
 
     stress::WireFormatStats wire;
     const stress::PacketBreakdown breakdown = stress::classify_packet(packet, &wire, 8U);
@@ -506,23 +506,23 @@ TEST_CASE("ball stress wire diagnostics are opt-in report fields") {
 
 TEST_CASE("ball stress runs with buffered interpolation clients") {
     stress::StressConfig config = test_config();
-    config.client_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    config.client_mode = ashiato::sync::ReplicationClientMode::BufferedInterpolation;
     config.buffered_frame_lag = 2;
 
     const stress::StressReport report = stress::run_stress(config);
 
-    REQUIRE(report.config.client_mode == kage::sync::ReplicationClientMode::BufferedInterpolation);
+    REQUIRE(report.config.client_mode == ashiato::sync::ReplicationClientMode::BufferedInterpolation);
     REQUIRE(report.memory.client_pending_acks == 0);
     REQUIRE(report.server_to_clients.server_update_packets >= 1);
     REQUIRE(report.client_timing.sample_count >= 1);
-    REQUIRE(report.client_timing.max_current_buffered_frame_lag < kage::sync::ReplicationClient::buffered_frame_capacity);
+    REQUIRE(report.client_timing.max_current_buffered_frame_lag < ashiato::sync::ReplicationClient::buffered_frame_capacity);
     REQUIRE(report.client_timing.average_buffered_time_dilation >= config.buffered_time_dilation_min);
     REQUIRE(report.client_timing.average_buffered_time_dilation <= config.buffered_time_dilation_max);
 }
 
 TEST_CASE("ball stress buffered clients report accumulator timing under jitter") {
     stress::StressConfig config = test_config();
-    config.client_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    config.client_mode = ashiato::sync::ReplicationClientMode::BufferedInterpolation;
     config.duration_seconds = 2.0;
     config.tick_rate = 30.0;
     config.spawn_interval_ms = 2.0;
@@ -538,7 +538,7 @@ TEST_CASE("ball stress buffered clients report accumulator timing under jitter")
 
     REQUIRE(report.client_timing.sample_count > 0);
     REQUIRE(report.client_timing.max_desired_buffered_frame_lag > 0);
-    REQUIRE(report.client_timing.max_current_buffered_frame_lag < kage::sync::ReplicationClient::buffered_frame_capacity);
+    REQUIRE(report.client_timing.max_current_buffered_frame_lag < ashiato::sync::ReplicationClient::buffered_frame_capacity);
     REQUIRE(report.client_timing.average_buffered_time_dilation >= config.buffered_time_dilation_min);
     REQUIRE(report.client_timing.average_buffered_time_dilation <= config.buffered_time_dilation_max);
     REQUIRE(report.client_timing.average_measured_buffered_frame_lag >= 0.0);

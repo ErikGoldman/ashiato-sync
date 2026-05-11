@@ -1,6 +1,6 @@
 #pragma once
 
-#include "kage/sync/sync.hpp"
+#include "ashiato/sync/sync.hpp"
 
 #include <raylib.h>
 
@@ -14,15 +14,15 @@ struct SurfaceHitCue {
 };
 
 struct PlayerHitCue {
-    kage::sync::EntityReference shooter;
+    ashiato::sync::EntityReference shooter;
 };
 
 struct HitConfirmCue {
-    kage::sync::EntityReference victim;
+    ashiato::sync::EntityReference victim;
 };
 
 struct PlayerDeathCue {
-    kage::sync::EntityReference shooter;
+    ashiato::sync::EntityReference shooter;
 };
 
 }  // namespace fps

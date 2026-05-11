@@ -1,12 +1,12 @@
 #pragma once
 
-#include "kage/sync/types.hpp"
-#include "kage/sync/protocol.hpp"
+#include "ashiato/sync/types.hpp"
+#include "ashiato/sync/protocol.hpp"
 
 #include <cstddef>
 #include <cstdint>
 
-namespace kage::sync::server_detail {
+namespace ashiato::sync::server_detail {
 
 std::size_t configured_packet_id_bits(const ReplicationServerOptions& options) noexcept;
 std::size_t server_update_header_bits(const ReplicationServerOptions& options) noexcept;
@@ -25,13 +25,13 @@ private:
     std::uint32_t max_packet_id_ = 1;
 };
 
-ecs::BitBuffer make_server_packet(
+ashiato::BitBuffer make_server_packet(
     std::size_t mtu_bytes,
     std::size_t packet_id_bits,
     SyncFrame frame,
     std::uint32_t packet_id,
     SyncFrame input_ack_frame,
     std::uint16_t entity_count,
-    const ecs::BitBuffer& records);
+    const ashiato::BitBuffer& records);
 
-}  // namespace kage::sync::server_detail
+}  // namespace ashiato::sync::server_detail

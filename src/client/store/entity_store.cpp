@@ -1,4 +1,4 @@
-#include "kage/sync/client.hpp"
+#include "ashiato/sync/client.hpp"
 
 #include "client/store/cue_store.hpp"
 #include "client/store/entity_store.hpp"
@@ -11,7 +11,7 @@
 #include <limits>
 #include <stdexcept>
 
-namespace kage::sync {
+namespace ashiato::sync {
 namespace {
 
 constexpr std::size_t invalid_membership_index = std::numeric_limits<std::size_t>::max();
@@ -125,7 +125,7 @@ EntityState* ClientEntityStore::ensure_entity_state(
         free_entity_indices_.pop_back();
     } else {
         if (entities_.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
-            throw std::length_error("kage sync client entity state space exhausted");
+            throw std::length_error("Ashiato Sync client entity state space exhausted");
         }
         entity_index = static_cast<std::uint32_t>(entities_.size());
         entities_.emplace_back();
@@ -196,8 +196,8 @@ void ClientEntityStore::sync_mode_memberships(std::uint32_t entity_index) {
             !state.visual.snap_errors.empty());
 }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
-EntityState* ClientEntityStore::find_by_local_entity(ecs::Entity local) noexcept {
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+EntityState* ClientEntityStore::find_by_local_entity(ashiato::Entity local) noexcept {
     const auto found = local_entity_indices_.find(local.value);
     if (found == local_entity_indices_.end() || found->second >= entities_.size()) {
         return nullptr;
@@ -226,7 +226,7 @@ void ClientEntityStore::unregister_local_entity_index(const EntityState& state) 
     }
 }
 #else
-EntityState* ClientEntityStore::find_by_local_entity(ecs::Entity local) noexcept {
+EntityState* ClientEntityStore::find_by_local_entity(ashiato::Entity local) noexcept {
     for (EntityState& state : entities_) {
         if (state.identity.local == local) {
             return &state;
@@ -425,4 +425,4 @@ void ClientEntityStore::compact_destroy_tombstone_ages() {
 
 }  // namespace client_detail
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

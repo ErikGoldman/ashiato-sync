@@ -1,14 +1,14 @@
 #pragma once
 
-#include "kage/sync/replay_writer.hpp"
-#include "kage/sync/server.hpp"
+#include "ashiato/sync/replay_writer.hpp"
+#include "ashiato/sync/server.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 struct ReplicationReplayStreamSessionAccess;
 
@@ -33,7 +33,7 @@ struct ReplicationReplayStreamSession {
 private:
     friend struct ReplicationReplayStreamSessionAccess;
 
-    std::unordered_map<std::uint32_t, ecs::Entity> entities_;
+    std::unordered_map<std::uint32_t, ashiato::Entity> entities_;
     std::vector<ReplicationReplayFrame> frames_;
     std::vector<std::uint8_t> scratch_;
 };
@@ -52,12 +52,12 @@ public:
 
     bool begin_session(
         SyncFrame focus_frame,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         ReplicationServer& server,
         ReplicationReplayStreamSession& session) const;
     bool begin_network_session(
         SyncFrame focus_frame,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         ReplicationServer& server,
         ReplicationReplayStreamSession& session,
         ReplicationReplayNetworkSessionOptions options) const;
@@ -66,12 +66,12 @@ public:
         ReplicationReplayNetworkSessionOptions options) const;
     bool tick_session(
         ReplicationReplayStreamSession& session,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         ReplicationServer& server) const;
 
     bool apply_frame(
         const ReplicationReplayFrame& frame,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         ReplicationReplayStreamSession& session) const;
 
 private:
@@ -85,15 +85,15 @@ private:
     std::size_t find_start_frame(SyncFrame focus_frame) const;
     bool apply_frame(
         const ReplicationReplayFrame& frame,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         ReplicationReplayStreamSession& session,
         bool include_cues) const;
     bool apply_cues(
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
-        ecs::BitBuffer& payload,
+        ashiato::BitBuffer& payload,
         EntityReferenceContext& references,
         ReplicationReplayStreamSession& session) const;
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

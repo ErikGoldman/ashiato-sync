@@ -1,4 +1,4 @@
-#include "kage/sync/server.hpp"
+#include "ashiato/sync/server.hpp"
 
 #include "server/detail.hpp"
 #include "server/dirty_slots.hpp"
@@ -8,7 +8,7 @@
 #include <limits>
 #include <stdexcept>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 server_detail::ServerClientReplicator::ServerClientReplicator()
     : update_scheduler(std::make_unique<UpdateScheduler>()) {}
@@ -117,7 +117,7 @@ void server_detail::ServerClientReplicator::EntityStates::expire_pending_cues(Sy
 }
 
 void server_detail::ServerClientReplicator::DestroyQueue::enqueue(
-    ecs::Entity entity,
+    ashiato::Entity entity,
     SyncFrame frame,
     std::uint32_t network_id,
     std::uint32_t network_version) {
@@ -152,7 +152,7 @@ server_detail::ServerClientReplicator::DestroyQueue::at(std::size_t index) const
 
 bool server_detail::ServerClientReplicator::DestroyQueue::acknowledge(
     ServerClientReplicator& client,
-    ecs::Entity entity,
+    ashiato::Entity entity,
     SyncFrame frame) {
     const auto found = std::find_if(
         pending.begin(),
@@ -171,7 +171,7 @@ bool server_detail::ServerClientReplicator::DestroyQueue::acknowledge(
 }
 
 bool server_detail::ServerClientReplicator::DestroyQueue::contains_ack_record(
-    ecs::Entity entity,
+    ashiato::Entity entity,
     SyncFrame frame) const {
     return std::any_of(
         pending.begin(),
@@ -217,7 +217,7 @@ std::uint32_t server_detail::ServerClientReplicator::NetworkIds::allocate_for(
         entry.pending_destroy = false;
     } else {
         if (entries.size() > max_client_local_wire_network_id) {
-            throw std::length_error("kage sync client-local network id space exhausted");
+            throw std::length_error("Ashiato Sync client-local network id space exhausted");
         }
         network_id = static_cast<std::uint32_t>(entries.size());
         entries.push_back(Entry{slot, 1U, true, false});
@@ -226,7 +226,7 @@ std::uint32_t server_detail::ServerClientReplicator::NetworkIds::allocate_for(
     state->network_id = network_id;
     state->network_version = entries[network_id].version;
     state->has_network_id = true;
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     server.trace_entity_started_syncing(client.id, slot, network_id, state->network_version);
 #endif
     return network_id;
@@ -347,7 +347,7 @@ void server_detail::ServerClientReplicator::free_network_id(std::uint32_t networ
 bool server_detail::ServerClientReplicator::enqueue_destroy(
     ReplicationServer& replication_server,
     std::uint32_t replicated_index,
-    ecs::Entity entity,
+    ashiato::Entity entity,
     SyncFrame frame) {
     std::uint32_t network_id = 0;
     std::uint32_t network_version = 0;
@@ -415,4 +415,4 @@ bool server_detail::ServerClientReplicator::acknowledge_entity(
     return true;
 }
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

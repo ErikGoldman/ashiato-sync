@@ -145,24 +145,24 @@ Vector3 third_person_muzzle_position(const FpsTransform& transform, const FpsVis
         scale(forward_from_angles(transform.yaw, transform.pitch), 0.8f));
 }
 
-void update_effects(ecs::Registry& registry, float dt) {
-    std::vector<ecs::Entity> remove_shot;
-    std::vector<ecs::Entity> remove_hit;
-    std::vector<ecs::Entity> remove_surface;
-    std::vector<ecs::Entity> remove_suppressions;
-    registry.view<FpsShotEffect>().each([dt, &remove_shot](ecs::Entity entity, FpsShotEffect& effect) {
+void update_effects(ashiato::Registry& registry, float dt) {
+    std::vector<ashiato::Entity> remove_shot;
+    std::vector<ashiato::Entity> remove_hit;
+    std::vector<ashiato::Entity> remove_surface;
+    std::vector<ashiato::Entity> remove_suppressions;
+    registry.view<FpsShotEffect>().each([dt, &remove_shot](ashiato::Entity entity, FpsShotEffect& effect) {
         effect.seconds -= dt;
         if (effect.seconds <= 0.0f) {
             remove_shot.push_back(entity);
         }
     });
-    registry.view<FpsHitEffect>().each([dt, &remove_hit](ecs::Entity entity, FpsHitEffect& effect) {
+    registry.view<FpsHitEffect>().each([dt, &remove_hit](ashiato::Entity entity, FpsHitEffect& effect) {
         effect.seconds -= dt;
         if (effect.seconds <= 0.0f) {
             remove_hit.push_back(entity);
         }
     });
-    registry.view<FpsSurfaceHitEffect>().each([dt, &remove_surface](ecs::Entity entity, FpsSurfaceHitEffect& effect) {
+    registry.view<FpsSurfaceHitEffect>().each([dt, &remove_surface](ashiato::Entity entity, FpsSurfaceHitEffect& effect) {
         for (WallParticle& particle : effect.particles) {
             particle.seconds -= dt;
             particle.position = add(particle.position, scale(particle.velocity, dt));
@@ -177,7 +177,7 @@ void update_effects(ecs::Registry& registry, float dt) {
             remove_surface.push_back(entity);
         }
     });
-    registry.view<FpsHitConfirmSuppression>().each([dt, &remove_suppressions](ecs::Entity entity, FpsHitConfirmSuppression& suppressions) {
+    registry.view<FpsHitConfirmSuppression>().each([dt, &remove_suppressions](ashiato::Entity entity, FpsHitConfirmSuppression& suppressions) {
         for (auto entry = suppressions.entries.begin(); entry != suppressions.entries.end();) {
             entry->seconds -= dt;
             if (entry->seconds <= 0.0f) {
@@ -190,16 +190,16 @@ void update_effects(ecs::Registry& registry, float dt) {
             remove_suppressions.push_back(entity);
         }
     });
-    for (ecs::Entity entity : remove_shot) {
+    for (ashiato::Entity entity : remove_shot) {
         registry.remove<FpsShotEffect>(entity);
     }
-    for (ecs::Entity entity : remove_hit) {
+    for (ashiato::Entity entity : remove_hit) {
         registry.remove<FpsHitEffect>(entity);
     }
-    for (ecs::Entity entity : remove_surface) {
+    for (ashiato::Entity entity : remove_surface) {
         registry.remove<FpsSurfaceHitEffect>(entity);
     }
-    for (ecs::Entity entity : remove_suppressions) {
+    for (ashiato::Entity entity : remove_suppressions) {
         registry.remove<FpsHitConfirmSuppression>(entity);
     }
 }
@@ -207,7 +207,7 @@ void update_effects(ecs::Registry& registry, float dt) {
 FpsInput read_player_input(
     FpsInput previous,
     MouseLookState& look,
-    kage::sync::SyncFrame display_target_frame) {
+    ashiato::sync::SyncFrame display_target_frame) {
     previous.move_x = 0.0f;
     previous.move_y = 0.0f;
     if (!IsWindowFocused()) {

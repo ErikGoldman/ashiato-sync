@@ -1,4 +1,4 @@
-add_library(kage_sync
+add_library(ashiato_sync
     client.cpp
     client/entity.cpp
     client/runtime/buffered_runtime.cpp
@@ -35,11 +35,11 @@ add_library(kage_sync
     tracing.cpp
 )
 
-add_library(kage::sync ALIAS kage_sync)
+add_library(ashiato::sync ALIAS ashiato_sync)
 
-target_compile_features(kage_sync PUBLIC cxx_std_17)
+target_compile_features(ashiato_sync PUBLIC cxx_std_17)
 
-target_include_directories(kage_sync
+target_include_directories(ashiato_sync
     PUBLIC
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
@@ -47,27 +47,27 @@ target_include_directories(kage_sync
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_libraries(kage_sync
+target_link_libraries(ashiato_sync
     PUBLIC
-        ecs::ecs
+        ashiato::ashiato
         spdlog::spdlog
 )
 
-target_compile_definitions(kage_sync
+target_compile_definitions(ashiato_sync
     PUBLIC
-        KAGE_SYNC_BASELINE_FRAME_DELTA_BITS=${KAGE_SYNC_BASELINE_FRAME_DELTA_BITS}
-        $<$<BOOL:${KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS}>:KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS=1>
-        $<$<BOOL:${KAGE_SYNC_ENABLE_TRACING}>:KAGE_SYNC_ENABLE_TRACING=1>
-        $<$<BOOL:${KAGE_SYNC_TRACE_COMPONENT_DATA}>:KAGE_SYNC_TRACE_COMPONENT_DATA=1>
-        $<$<BOOL:${KAGE_SYNC_TRACE_PACKET_LOGS}>:KAGE_SYNC_TRACE_PACKET_LOGS=1>
+        ASHIATO_SYNC_BASELINE_FRAME_DELTA_BITS=${ASHIATO_SYNC_BASELINE_FRAME_DELTA_BITS}
+        $<$<BOOL:${ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS}>:ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS=1>
+        $<$<BOOL:${ASHIATO_SYNC_ENABLE_TRACING}>:ASHIATO_SYNC_ENABLE_TRACING=1>
+        $<$<BOOL:${ASHIATO_SYNC_TRACE_COMPONENT_DATA}>:ASHIATO_SYNC_TRACE_COMPONENT_DATA=1>
+        $<$<BOOL:${ASHIATO_SYNC_TRACE_PACKET_LOGS}>:ASHIATO_SYNC_TRACE_PACKET_LOGS=1>
 )
 
 if(MSVC)
-    target_compile_options(kage_sync PRIVATE /W4)
+    target_compile_options(ashiato_sync PRIVATE /W4)
 else()
-    target_compile_options(kage_sync PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(ashiato_sync PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-if(KAGE_SYNC_ENABLE_COVERAGE)
-    kage_sync_enable_coverage(kage_sync)
+if(ASHIATO_SYNC_ENABLE_COVERAGE)
+    ashiato_sync_enable_coverage(ashiato_sync)
 endif()

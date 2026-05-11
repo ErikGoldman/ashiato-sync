@@ -1,7 +1,7 @@
 #pragma once
 
-#include "kage/sync/simulated_link.hpp"
-#include "kage/sync/sync.hpp"
+#include "ashiato/sync/simulated_link.hpp"
+#include "ashiato/sync/sync.hpp"
 
 #include <algorithm>
 #include <array>
@@ -19,7 +19,7 @@
 #include <string>
 #include <vector>
 
-namespace kage::sync::stress {
+namespace ashiato::sync::stress {
 
 struct BallPosition {
     float x = 0.0f;
@@ -27,9 +27,9 @@ struct BallPosition {
     float z = 0.0f;
 };
 
-}  // namespace kage::sync::stress
+}  // namespace ashiato::sync::stress
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 template <>
 struct SyncComponentTraits<stress::BallPosition> {
@@ -43,11 +43,11 @@ struct SyncComponentTraits<stress::BallPosition> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -61,9 +61,9 @@ struct SyncComponentTraits<stress::BallPosition> {
     }
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync
 
-namespace kage::sync::stress {
+namespace ashiato::sync::stress {
 
 struct BallVisual {
     float radius = 0.25f;
@@ -91,30 +91,30 @@ struct BallBounceCue {
 struct BallSpawnTagged {};
 struct BallBounced {};
 
-}  // namespace kage::sync::stress
+}  // namespace ashiato::sync::stress
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 template <>
 struct SyncCueTraits<stress::BallBounceCue> {
-    static void serialize(const stress::BallBounceCue& cue, ecs::BitBuffer& out) {
+    static void serialize(const stress::BallBounceCue& cue, ashiato::BitBuffer& out) {
         out.push_bits(cue.sequence, 32U);
         out.push_bits(cue.energy, 8U);
         out.push_bytes(reinterpret_cast<const char*>(cue.padding), sizeof(cue.padding));
     }
 
-    static bool deserialize(ecs::BitBuffer& in, stress::BallBounceCue& out) {
+    static bool deserialize(ashiato::BitBuffer& in, stress::BallBounceCue& out) {
         out.sequence = static_cast<std::uint32_t>(in.read_bits(32U));
         out.energy = static_cast<std::uint8_t>(in.read_bits(8U));
         in.read_bytes(reinterpret_cast<char*>(out.padding), sizeof(out.padding));
         return true;
     }
 
-    static bool play(ecs::Registry&, ecs::Entity, const stress::BallBounceCue&, float) {
+    static bool play(ashiato::Registry&, ashiato::Entity, const stress::BallBounceCue&, float) {
         return true;
     }
 
-    static bool rollback(ecs::Registry&, ecs::Entity, const stress::BallBounceCue&) {
+    static bool rollback(ashiato::Registry&, ashiato::Entity, const stress::BallBounceCue&) {
         return true;
     }
 
@@ -123,17 +123,17 @@ struct SyncCueTraits<stress::BallBounceCue> {
     }
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync
 
-namespace kage::sync::stress {
+namespace ashiato::sync::stress {
 
 struct SyncSchema {
     SyncArchetypeId ball;
-    ecs::Entity spawn_tagged;
-    ecs::Entity bounced;
+    ashiato::Entity spawn_tagged;
+    ashiato::Entity bounced;
 };
 
-inline void configure_stress_server_registry(ecs::Registry& registry) {
+inline void configure_stress_server_registry(ashiato::Registry& registry) {
     register_components(registry);
     SyncSettings& settings = registry.write<SyncSettings>();
     settings.role = SyncRole::Server;
@@ -141,7 +141,7 @@ inline void configure_stress_server_registry(ecs::Registry& registry) {
     registry.write<SyncAuthority>().authoritative = true;
 }
 
-inline void configure_stress_client_registry(ecs::Registry& registry, ClientId client) {
+inline void configure_stress_client_registry(ashiato::Registry& registry, ClientId client) {
     if (client == invalid_client_id || client > max_client_entity_network_id_client) {
         throw std::invalid_argument("client id cannot fit in client entity network ids");
     }
@@ -186,7 +186,7 @@ struct StressConfig {
 };
 
 struct ServerBall {
-    ecs::Entity entity;
+    ashiato::Entity entity;
     float vx = 0.0f;
     float vy = 0.0f;
     float vz = 0.0f;
@@ -333,7 +333,7 @@ struct StressReport {
     std::uint32_t live_balls = 0;
 };
 
-using SimulatedLink = ::kage::sync::SimulatedLink<ecs::BitBuffer, ClientId>;
+using SimulatedLink = ::ashiato::sync::SimulatedLink<ashiato::BitBuffer, ClientId>;
 
 class ScopedTimer {
 public:
@@ -397,7 +397,7 @@ inline std::size_t current_rss_bytes() {
 #endif
 }
 
-inline void add_packet_stats(DirectionStats& stats, const ecs::BitBuffer& packet, const PacketBreakdown& breakdown) {
+inline void add_packet_stats(DirectionStats& stats, const ashiato::BitBuffer& packet, const PacketBreakdown& breakdown) {
     const std::uint64_t bytes = packet.byte_size();
     ++stats.packets;
     stats.bytes += bytes;
@@ -489,7 +489,7 @@ inline void record_wire_slot(WireFormatStats& wire, std::size_t slot, bool has_i
 }
 
 inline PacketBreakdown classify_packet(
-    ecs::BitBuffer packet,
+    ashiato::BitBuffer packet,
     WireFormatStats* wire = nullptr,
     std::size_t network_entity_id_tier0_bits = protocol::default_network_entity_id_tier0_bits) {
     PacketBreakdown result;
@@ -782,7 +782,7 @@ inline void enqueue_packet(
     SimulatedLink& link,
     DirectionStats& stats,
     ClientId client,
-    const ecs::BitBuffer& packet,
+    const ashiato::BitBuffer& packet,
     double now_seconds,
     bool wire_diagnostics = false) {
     const PacketBreakdown breakdown = classify_packet(packet, wire_diagnostics ? &stats.wire : nullptr);
@@ -797,21 +797,21 @@ inline void enqueue_packet(
 
 template <typename Fn>
 void deliver_ready(SimulatedLink& link, DirectionStats& stats, double now_seconds, Fn&& fn) {
-    link.deliver_ready(now_seconds, [&](ClientId client, const ecs::BitBuffer& packet) {
+    link.deliver_ready(now_seconds, [&](ClientId client, const ashiato::BitBuffer& packet) {
         ++stats.delivered_packets;
         stats.delivered_bytes += packet.byte_size();
         fn(client, packet);
     });
 }
 
-inline SyncSchema define_schema(ecs::Registry& registry, bool interpolate_position = false) {
-    const ecs::Entity position = register_sync_component<BallPosition>(registry, "BallPosition");
-    const ecs::Entity visual = register_sync_component<BallVisual>(registry, "BallVisual");
-    const ecs::Entity health = register_sync_component<BallHealth>(registry, "BallHealth");
-    const ecs::Entity poison = register_sync_component<BallPoison>(registry, "BallPoison");
+inline SyncSchema define_schema(ashiato::Registry& registry, bool interpolate_position = false) {
+    const ashiato::Entity position = register_sync_component<BallPosition>(registry, "BallPosition");
+    const ashiato::Entity visual = register_sync_component<BallVisual>(registry, "BallVisual");
+    const ashiato::Entity health = register_sync_component<BallHealth>(registry, "BallHealth");
+    const ashiato::Entity poison = register_sync_component<BallPoison>(registry, "BallPoison");
     register_sync_cue<BallBounceCue>(registry);
-    const ecs::Entity spawn_tagged = registry.register_component<BallSpawnTagged>("BallSpawnTagged");
-    const ecs::Entity bounced = registry.register_component<BallBounced>("BallBounced");
+    const ashiato::Entity spawn_tagged = registry.register_component<BallSpawnTagged>("BallSpawnTagged");
+    const ashiato::Entity bounced = registry.register_component<BallBounced>("BallBounced");
     return SyncSchema{
         define_archetype(
             registry,
@@ -886,7 +886,7 @@ inline void validate_config(const StressConfig& config) {
     }
 }
 
-inline ReplicationPrioritizerFn make_sphere_prioritizer(ecs::Registry& registry) {
+inline ReplicationPrioritizerFn make_sphere_prioritizer(ashiato::Registry& registry) {
     static constexpr float inner_filter_radius_sq = 0.75f * 0.75f;
     static constexpr float priority_radius_sq = 12.0f * 12.0f;
     static constexpr float priority_scale = 1000.0f;
@@ -917,7 +917,7 @@ inline ReplicationPrioritizerFn make_sphere_prioritizer(ecs::Registry& registry)
 }
 
 inline void spawn_ball(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     std::vector<ServerBall>& balls,
     SyncSchema schema,
     const StressConfig& config,
@@ -931,7 +931,7 @@ inline void spawn_ball(
     std::uniform_int_distribution<int> color(64, 255);
     std::uniform_int_distribution<std::int32_t> health(config.health_min, config.health_max);
 
-    const ecs::Entity entity = registry.create();
+    const ashiato::Entity entity = registry.create();
     registry.add<BallPosition>(entity, BallPosition{position_x(rng), position_y(rng), position_z(rng)});
     registry.add<BallVisual>(
         entity,
@@ -968,8 +968,8 @@ inline void spawn_ball(
 }
 
 inline void add_poison(
-    ecs::Registry& registry,
-    ecs::Entity entity,
+    ashiato::Registry& registry,
+    ashiato::Entity entity,
     const StressConfig& config,
     std::mt19937& rng,
     StressReport& report) {
@@ -994,7 +994,7 @@ inline void add_poison(
 }
 
 inline void update_server_world(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     std::vector<ServerBall>& balls,
     SyncSchema schema,
     const StressConfig& config,
@@ -1091,9 +1091,9 @@ inline void update_server_world(
         balls.end());
 }
 
-inline std::size_t count_client_entities(ecs::Registry& registry) {
+inline std::size_t count_client_entities(ashiato::Registry& registry) {
     std::size_t count = 0;
-    registry.view<const BallPosition>().each([&](ecs::Entity, const BallPosition&) {
+    registry.view<const BallPosition>().each([&](ashiato::Entity, const BallPosition&) {
         ++count;
     });
     return count;
@@ -1126,11 +1126,11 @@ inline StressReport run_stress(const StressConfig& input_config) {
     report.memory.rss_start_bytes = current_rss_bytes();
     report.memory.rss_peak_bytes = report.memory.rss_start_bytes;
 
-    ecs::Registry server_registry;
+    ashiato::Registry server_registry;
     configure_stress_server_registry(server_registry);
     const SyncSchema server_schema = define_schema(server_registry);
 
-    std::vector<ecs::Registry> client_registries(config.clients);
+    std::vector<ashiato::Registry> client_registries(config.clients);
     for (std::uint32_t client_index = 0; client_index < config.clients; ++client_index) {
         configure_stress_client_registry(client_registries[client_index], static_cast<ClientId>(client_index + 1U));
         define_schema(
@@ -1156,7 +1156,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
     server_options.serialized_worker_threads = config.server_worker_threads;
     server_options.fixed_dt_seconds = 1.0 / config.tick_rate;
     server_options.prioritizer = make_sphere_prioritizer(server_registry);
-    server_options.transport = [&](ClientId client, const ecs::BitBuffer& packet) {
+    server_options.transport = [&](ClientId client, const ashiato::BitBuffer& packet) {
         enqueue_packet(
             server_to_clients,
             report.server_to_clients,
@@ -1205,7 +1205,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
 
         {
             ScopedTimer timer(report.timing.client_receive_seconds);
-            deliver_ready(server_to_clients, report.server_to_clients, now, [&](ClientId client_id, const ecs::BitBuffer& packet) {
+            deliver_ready(server_to_clients, report.server_to_clients, now, [&](ClientId client_id, const ashiato::BitBuffer& packet) {
                 const std::size_t index = static_cast<std::size_t>(client_id - 1U);
                 if (index < clients.size()) {
                     clients[index].receive(client_registries[index], packet);
@@ -1226,7 +1226,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
         {
             ScopedTimer timer(report.timing.ack_processing_seconds);
             for (std::size_t index = 0; index < clients.size(); ++index) {
-                for (const ecs::BitBuffer& ack : clients[index].drain_packets()) {
+                for (const ashiato::BitBuffer& ack : clients[index].drain_packets()) {
                     enqueue_packet(
                         clients_to_server,
                         report.clients_to_server,
@@ -1236,7 +1236,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
                         config.wire_diagnostics);
                 }
             }
-            deliver_ready(clients_to_server, report.clients_to_server, now, [&](ClientId client_id, const ecs::BitBuffer& packet) {
+            deliver_ready(clients_to_server, report.clients_to_server, now, [&](ClientId client_id, const ashiato::BitBuffer& packet) {
                 server.process_packet(server_registry, client_id, packet);
             });
         }
@@ -1257,7 +1257,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
     }
 
     const double end_time = static_cast<double>(total_ticks) * dt + 60.0;
-    deliver_ready(server_to_clients, report.server_to_clients, end_time, [&](ClientId client_id, const ecs::BitBuffer& packet) {
+    deliver_ready(server_to_clients, report.server_to_clients, end_time, [&](ClientId client_id, const ashiato::BitBuffer& packet) {
         const std::size_t index = static_cast<std::size_t>(client_id - 1U);
         if (index < clients.size()) {
             clients[index].receive(client_registries[index], packet);
@@ -1267,7 +1267,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
         }
     });
     for (std::size_t index = 0; index < clients.size(); ++index) {
-        for (const ecs::BitBuffer& ack : clients[index].drain_packets()) {
+        for (const ashiato::BitBuffer& ack : clients[index].drain_packets()) {
             enqueue_packet(
                 clients_to_server,
                 report.clients_to_server,
@@ -1277,7 +1277,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
                 config.wire_diagnostics);
         }
     }
-    deliver_ready(clients_to_server, report.clients_to_server, end_time + 60.0, [&](ClientId client_id, const ecs::BitBuffer& packet) {
+    deliver_ready(clients_to_server, report.clients_to_server, end_time + 60.0, [&](ClientId client_id, const ashiato::BitBuffer& packet) {
         server.process_packet(server_registry, client_id, packet);
     });
 
@@ -1400,7 +1400,7 @@ inline void write_wire_text(
 }
 
 inline void write_report_text(std::ostream& out, const StressReport& report) {
-    out << "kage-sync ball stress\n";
+    out << "ashiato-sync ball stress\n";
     out << "ticks=" << report.ticks << " clients=" << report.config.clients
         << " live_balls=" << report.live_balls << " spawned=" << report.spawned
         << " despawned=" << report.despawned << '\n';
@@ -1729,7 +1729,7 @@ inline StressConfig parse_args(int argc, char** argv) {
 }
 
 inline void write_usage(std::ostream& out) {
-    out << "Usage: kage_sync_ball_stress [options]\n"
+    out << "Usage: ashiato_sync_ball_stress [options]\n"
         << "  --duration-seconds N\n"
         << "  --clients N\n"
         << "  --max-balls N\n"
@@ -1754,4 +1754,4 @@ inline void write_usage(std::ostream& out) {
         << "  --report text|json\n";
 }
 
-}  // namespace kage::sync::stress
+}  // namespace ashiato::sync::stress

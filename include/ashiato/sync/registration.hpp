@@ -1,9 +1,9 @@
 #pragma once
 
-#include "kage/sync/component_traits.hpp"
-#include "kage/sync/components.hpp"
-#include "kage/sync/detail/component_trait_adapters.hpp"
-#include "kage/sync/detail/type_name.hpp"
+#include "ashiato/sync/component_traits.hpp"
+#include "ashiato/sync/components.hpp"
+#include "ashiato/sync/detail/component_trait_adapters.hpp"
+#include "ashiato/sync/detail/type_name.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -17,7 +17,7 @@
 #include <typeinfo>
 #include <utility>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 namespace detail {
 
@@ -36,8 +36,8 @@ struct SyncComponentSerializationTraitsAdapter {
     static void serialize(
         const Quantized* previous,
         const Quantized& current,
-        ecs::BitBuffer& out,
-        ecs::ComponentSerializationContext& context) {
+        ashiato::BitBuffer& out,
+        ashiato::ComponentSerializationContext& context) {
         serialize_quantized<Traits, Quantized>(
             previous,
             current,
@@ -46,10 +46,10 @@ struct SyncComponentSerializationTraitsAdapter {
     }
 
     static bool deserialize(
-        ecs::BitBuffer& in,
+        ashiato::BitBuffer& in,
         const Quantized* previous,
         Quantized& out,
-        ecs::ComponentSerializationContext& context) {
+        ashiato::ComponentSerializationContext& context) {
         return deserialize_quantized<Traits, Quantized>(
             in,
             previous,
@@ -61,7 +61,7 @@ struct SyncComponentSerializationTraitsAdapter {
 }  // namespace detail
 
 template <typename T>
-ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = {}) {
+ashiato::Entity register_sync_component(ashiato::Registry& registry, std::string name = {}) {
     using Traits = SyncComponentTraits<T>;
     using Quantized = typename Traits::Quantized;
     using SerializationTraits = detail::SyncComponentSerializationTraitsAdapter<T, Traits>;
@@ -72,10 +72,10 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
     register_components(registry);
 
     std::string component_name = name;
-    const ecs::Entity component = registry.register_component<T>(std::move(name));
+    const ashiato::Entity component = registry.register_component<T>(std::move(name));
 
-    ecs::ComponentSerializationOps serialization_ops =
-        ecs::make_component_serialization_ops<T, SerializationTraits>(component_name);
+    ashiato::ComponentSerializationOps serialization_ops =
+        ashiato::make_component_serialization_ops<T, SerializationTraits>(component_name);
     serialization_ops.component = component;
 
     SyncComponentOps ops;
@@ -99,7 +99,7 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
     if constexpr (detail::has_should_roll_back<Traits, Quantized>::value) {
         ops.should_roll_back = &detail::should_roll_back_quantized<Traits, Quantized>;
     }
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
     if constexpr (detail::has_trace_component<Traits, Quantized>::value) {
         ops.trace = &detail::trace_component_quantized<Traits, Quantized>;
     }
@@ -110,7 +110,7 @@ ecs::Entity register_sync_component(ecs::Registry& registry, std::string name = 
 }
 
 template <typename T>
-SyncCueTypeId register_sync_cue(ecs::Registry& registry, std::string name = {}) {
+SyncCueTypeId register_sync_cue(ashiato::Registry& registry, std::string name = {}) {
     register_components(registry);
 
     SyncSettings& settings = registry.write<SyncSettings>();
@@ -126,10 +126,10 @@ SyncCueTypeId register_sync_cue(ecs::Registry& registry, std::string name = {}) 
     const SyncCueTypeId id = static_cast<SyncCueTypeId>(settings.cue_ops.size());
     SyncCueOps ops;
     ops.name = name.empty() ? detail::default_type_name<T>() : std::move(name);
-    ops.serialize = [](const void* value, ecs::BitBuffer& out, EntityReferenceContext* references) {
+    ops.serialize = [](const void* value, ashiato::BitBuffer& out, EntityReferenceContext* references) {
         detail::serialize_cue_payload<T>(*static_cast<const T*>(value), out, references);
     };
-    ops.deserialize_value = [](const ecs::BitBuffer& payload, EntityReferenceContext* references) -> std::shared_ptr<void> {
+    ops.deserialize_value = [](const ashiato::BitBuffer& payload, EntityReferenceContext* references) -> std::shared_ptr<void> {
         T value{};
         if (!detail::read_cue_payload(payload, value, references)) {
             return {};
@@ -142,7 +142,7 @@ SyncCueTypeId register_sync_cue(ecs::Registry& registry, std::string name = {}) 
     ops.references_entities =
         detail::has_context_cue_serialize<T>::value ||
         detail::has_context_cue_deserialize<T>::value;
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
     if constexpr (detail::has_trace_cue<SyncCueTraits<T>, T>::value) {
         ops.trace = &detail::trace_cue_payload<T>;
     }
@@ -156,7 +156,7 @@ template <typename T>
 bool CueDispatcher::emit(
     const SyncSettings& settings,
     const FrameInfo& frame,
-    ecs::Entity entity,
+    ashiato::Entity entity,
     const T& cue,
     float relevance_seconds,
     bool only_replicate_to_owner) {
@@ -167,7 +167,7 @@ template <typename T>
 bool CueDispatcher::emit(
     const SyncSettings& settings,
     SyncFrame frame,
-    ecs::Entity entity,
+    ashiato::Entity entity,
     const T& cue,
     float relevance_seconds,
     bool only_replicate_to_owner) {
@@ -198,4 +198,4 @@ bool CueDispatcher::emit(
     return enqueue(std::move(queued));
 }
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

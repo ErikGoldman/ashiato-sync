@@ -4,9 +4,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 TEST_CASE("client timing stats records received reordered and duplicate entity update packets") {
-    kage::sync::client_detail::ClientTimingStatsCalculator timing(
-        kage::sync::protocol::default_max_pending_packet_acks_per_client);
-    kage::sync::ReplicationClientTimingStats stats;
+    ashiato::sync::client_detail::ClientTimingStatsCalculator timing(
+        ashiato::sync::protocol::default_max_pending_packet_acks_per_client);
+    ashiato::sync::ReplicationClientTimingStats stats;
 
     timing.record_entity_update_packet(10, stats);
     timing.record_entity_update_packet(10, stats);
@@ -19,9 +19,9 @@ TEST_CASE("client timing stats records received reordered and duplicate entity u
 }
 
 TEST_CASE("client timing stats counts entity update gaps after they leave the receive window") {
-    kage::sync::client_detail::ClientTimingStatsCalculator timing(
-        kage::sync::protocol::default_max_pending_packet_acks_per_client);
-    kage::sync::ReplicationClientTimingStats stats;
+    ashiato::sync::client_detail::ClientTimingStatsCalculator timing(
+        ashiato::sync::protocol::default_max_pending_packet_acks_per_client);
+    ashiato::sync::ReplicationClientTimingStats stats;
 
     timing.record_entity_update_packet(1, stats);
     timing.record_entity_update_packet(3, stats);
@@ -35,11 +35,11 @@ TEST_CASE("client timing stats counts entity update gaps after they leave the re
 }
 
 TEST_CASE("client timing stats handles wrapped entity update packet ids") {
-    constexpr std::size_t max_pending_packet_acks = kage::sync::protocol::default_max_pending_packet_acks_per_client;
-    kage::sync::client_detail::ClientTimingStatsCalculator timing(max_pending_packet_acks);
-    kage::sync::ReplicationClientTimingStats stats;
+    constexpr std::size_t max_pending_packet_acks = ashiato::sync::protocol::default_max_pending_packet_acks_per_client;
+    ashiato::sync::client_detail::ClientTimingStatsCalculator timing(max_pending_packet_acks);
+    ashiato::sync::ReplicationClientTimingStats stats;
     const std::uint32_t max_packet_id =
-        kage::sync::protocol::packet_id_mask(kage::sync::protocol::packet_id_bits_for_max_pending(max_pending_packet_acks));
+        ashiato::sync::protocol::packet_id_mask(ashiato::sync::protocol::packet_id_bits_for_max_pending(max_pending_packet_acks));
 
     timing.record_entity_update_packet(max_packet_id - 1U, stats);
     timing.record_entity_update_packet(max_packet_id, stats);

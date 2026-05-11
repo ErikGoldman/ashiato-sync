@@ -1,6 +1,6 @@
-kage_sync_fetch_catch2()
+ashiato_sync_fetch_catch2()
 
-add_executable(kage_sync_tests
+add_executable(ashiato_sync_tests
     ball_stress.test.cpp
     bit_buffer.test.cpp
     client_ack_queue.test.cpp
@@ -42,24 +42,24 @@ add_executable(kage_sync_tests
     tracing_reader.test.cpp
 )
 
-target_link_libraries(kage_sync_tests
+target_link_libraries(ashiato_sync_tests
     PRIVATE
-        kage::sync
+        ashiato::sync
         Catch2::Catch2WithMain
 )
 
-target_include_directories(kage_sync_tests
+target_include_directories(ashiato_sync_tests
     PRIVATE
         ${PROJECT_SOURCE_DIR}/src
 )
 
 if(WIN32)
-    target_link_libraries(kage_sync_tests PRIVATE ws2_32)
+    target_link_libraries(ashiato_sync_tests PRIVATE ws2_32)
 endif()
 
-if(KAGE_SYNC_ENABLE_COVERAGE)
-    kage_sync_enable_coverage(kage_sync_tests)
+if(ASHIATO_SYNC_ENABLE_COVERAGE)
+    ashiato_sync_enable_coverage(ashiato_sync_tests)
 endif()
 
 include(Catch)
-catch_discover_tests(kage_sync_tests)
+catch_discover_tests(ashiato_sync_tests)

@@ -7,7 +7,7 @@ namespace spdlog {
 class logger;
 }
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 enum class LogLevel {
     Trace,
@@ -31,4 +31,4 @@ struct LoggingOptions {
     std::shared_ptr<spdlog::logger> logger;
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

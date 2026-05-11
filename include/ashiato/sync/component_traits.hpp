@@ -1,19 +1,19 @@
 #pragma once
 
-#include "kage/sync/types.hpp"
+#include "ashiato/sync/types.hpp"
 
 #include <string>
 #include <type_traits>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 void trace_rollback_reason(const char* reason);
 void trace_rollback_reason(const std::string& reason);
 #define TRACE_ROLLBACK_IF(condition, reason)            \
     do {                                                \
         if (condition) {                                \
-            ::kage::sync::trace_rollback_reason(reason); \
+            ::ashiato::sync::trace_rollback_reason(reason); \
             return true;                                \
         }                                               \
     } while (false)
@@ -41,14 +41,14 @@ struct SyncComponentTraits {
         return value;
     }
 
-    static void serialize(const Quantized* /*previous*/, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized* /*previous*/, const Quantized& current, ashiato::BitBuffer& out) {
         static_assert(
             std::is_trivially_copyable<Quantized>::value,
             "default SyncComponentTraits serialization requires a trivially copyable quantized state");
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized* /*previous*/, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized* /*previous*/, Quantized& out) {
         static_assert(
             std::is_trivially_copyable<Quantized>::value,
             "default SyncComponentTraits deserialization requires a trivially copyable quantized state");
@@ -60,4 +60,4 @@ struct SyncComponentTraits {
 template <typename T>
 struct SyncCueTraits;
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

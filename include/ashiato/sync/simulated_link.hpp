@@ -7,7 +7,7 @@
 #include <random>
 #include <utility>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 struct SimulatedLinkSettings {
     double latency_ms = 0.0;
@@ -119,4 +119,4 @@ private:
     std::mt19937 rng_{0};
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

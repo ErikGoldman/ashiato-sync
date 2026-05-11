@@ -1,18 +1,18 @@
 #pragma once
 
-#include "ecs/bit_buffer.hpp"
-#include "kage/sync/detail/bit_reader.hpp"
+#include "ashiato/bit_buffer.hpp"
+#include "ashiato/sync/detail/bit_reader.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <string>
 
-#ifndef KAGE_SYNC_BASELINE_FRAME_DELTA_BITS
-#define KAGE_SYNC_BASELINE_FRAME_DELTA_BITS 5
+#ifndef ASHIATO_SYNC_BASELINE_FRAME_DELTA_BITS
+#define ASHIATO_SYNC_BASELINE_FRAME_DELTA_BITS 5
 #endif
 
-namespace kage::sync::protocol {
+namespace ashiato::sync::protocol {
 
 inline constexpr std::uint8_t server_update_message = 1;
 inline constexpr std::uint8_t client_ack_message = 2;
@@ -35,10 +35,10 @@ inline constexpr std::size_t frame_subframe_bits = 16U;
 inline constexpr std::uint32_t frame_subframe_scale = std::uint32_t{1} << frame_subframe_bits;
 inline constexpr std::size_t client_ping_bits = 8U + 32U;
 inline constexpr std::size_t server_pong_bits = 8U + 32U + 32U + frame_subframe_bits + 32U + frame_subframe_bits;
-inline constexpr std::size_t baseline_frame_delta_bits = KAGE_SYNC_BASELINE_FRAME_DELTA_BITS;
+inline constexpr std::size_t baseline_frame_delta_bits = ASHIATO_SYNC_BASELINE_FRAME_DELTA_BITS;
 
-static_assert(baseline_frame_delta_bits > 0U, "KAGE_SYNC_BASELINE_FRAME_DELTA_BITS must be at least 1");
-static_assert(baseline_frame_delta_bits < 32U, "KAGE_SYNC_BASELINE_FRAME_DELTA_BITS must be less than 32");
+static_assert(baseline_frame_delta_bits > 0U, "ASHIATO_SYNC_BASELINE_FRAME_DELTA_BITS must be at least 1");
+static_assert(baseline_frame_delta_bits < 32U, "ASHIATO_SYNC_BASELINE_FRAME_DELTA_BITS must be less than 32");
 
 inline constexpr std::uint32_t max_baseline_frame_delta =
     (std::uint32_t{1} << baseline_frame_delta_bits) - 1U;
@@ -121,7 +121,7 @@ inline constexpr std::size_t network_entity_id_encoded_bits(
 }
 
 inline void write_network_entity_id(
-    ecs::BitBuffer& out,
+    ashiato::BitBuffer& out,
     std::uint32_t network_id,
     std::size_t tier0_bits = default_network_entity_id_tier0_bits) {
     const std::uint32_t tier0_max = network_entity_id_tier0_max(tier0_bits);
@@ -175,14 +175,14 @@ inline bool read_network_entity_id(
 }
 
 inline bool read_network_entity_id(
-    ecs::BitBuffer& in,
+    ashiato::BitBuffer& in,
     std::uint32_t& network_id,
     std::size_t tier0_bits = default_network_entity_id_tier0_bits) {
     detail::BitReader reader(in);
     return read_network_entity_id(reader, network_id, tier0_bits);
 }
 
-inline void write_string(ecs::BitBuffer& out, const std::string& value) {
+inline void write_string(ashiato::BitBuffer& out, const std::string& value) {
     const std::size_t length = value.size() > std::numeric_limits<std::uint16_t>::max()
         ? std::numeric_limits<std::uint16_t>::max()
         : value.size();
@@ -190,7 +190,7 @@ inline void write_string(ecs::BitBuffer& out, const std::string& value) {
     out.push_bytes(value.data(), length);
 }
 
-inline bool read_string(ecs::BitBuffer& in, std::string& value) {
+inline bool read_string(ashiato::BitBuffer& in, std::string& value) {
     detail::BitReader reader(in);
     std::uint16_t length = 0;
     if (!reader.read_bits(16U, length)) {
@@ -204,7 +204,7 @@ inline bool read_string(ecs::BitBuffer& in, std::string& value) {
     return true;
 }
 
-inline void write_baseline_frame(ecs::BitBuffer& out, std::uint32_t current_frame, std::uint32_t baseline_frame) {
+inline void write_baseline_frame(ashiato::BitBuffer& out, std::uint32_t current_frame, std::uint32_t baseline_frame) {
     const bool can_use_delta = current_frame >= baseline_frame &&
         current_frame - baseline_frame <= max_baseline_frame_delta;
     out.push_bool(can_use_delta);
@@ -235,9 +235,9 @@ inline bool read_baseline_frame(detail::BitReader& in, std::uint32_t current_fra
     return true;
 }
 
-inline bool read_baseline_frame(ecs::BitBuffer& in, std::uint32_t current_frame, std::uint32_t& baseline_frame) {
+inline bool read_baseline_frame(ashiato::BitBuffer& in, std::uint32_t current_frame, std::uint32_t& baseline_frame) {
     detail::BitReader reader(in);
     return read_baseline_frame(reader, current_frame, baseline_frame);
 }
 
-}  // namespace kage::sync::protocol
+}  // namespace ashiato::sync::protocol

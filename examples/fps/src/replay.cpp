@@ -28,34 +28,34 @@ constexpr std::uint32_t replay_frame_magic = 0x52535046U;
 constexpr std::uint32_t replay_frame_version = 3U;
 constexpr std::uint8_t replay_done_message = 200U;
 constexpr std::uint8_t replay_target_message = 201U;
-constexpr kage::sync::SyncFrame replay_sample_stride_frames = 4U;
-constexpr kage::sync::SyncFrame replay_buffered_frame_lag = replay_sample_stride_frames * 2U;
-constexpr kage::sync::SyncFrame replay_frames_for_seconds(float seconds) {
-    return static_cast<kage::sync::SyncFrame>(seconds / fixed_dt + 0.5f);
+constexpr ashiato::sync::SyncFrame replay_sample_stride_frames = 4U;
+constexpr ashiato::sync::SyncFrame replay_buffered_frame_lag = replay_sample_stride_frames * 2U;
+constexpr ashiato::sync::SyncFrame replay_frames_for_seconds(float seconds) {
+    return static_cast<ashiato::sync::SyncFrame>(seconds / fixed_dt + 0.5f);
 }
 
 constexpr float replay_transfer_budget_seconds = 0.5f;
-constexpr kage::sync::SyncFrame replay_preroll_frames = replay_frames_for_seconds(3.0f);
-constexpr kage::sync::SyncFrame replay_total_frames =
+constexpr ashiato::sync::SyncFrame replay_preroll_frames = replay_frames_for_seconds(3.0f);
+constexpr ashiato::sync::SyncFrame replay_total_frames =
     replay_frames_for_seconds(respawn_seconds - replay_transfer_budget_seconds);
-constexpr kage::sync::SyncFrame replay_tail_frames =
+constexpr ashiato::sync::SyncFrame replay_tail_frames =
     replay_total_frames > replay_preroll_frames ? replay_total_frames - replay_preroll_frames : 0U;
 constexpr double replay_done_resend_seconds = 1.0;
 constexpr double replay_session_timeout_seconds = 8.0;
 constexpr float replay_client_timeout_seconds = 8.0f;
 constexpr float replay_done_client_drain_seconds = 0.35f;
 
-std::string replay_token(kage::sync::ClientId client) {
+std::string replay_token(ashiato::sync::ClientId client) {
     return "fps-replay:" + std::to_string(static_cast<unsigned long long>(client));
 }
 
-bool parse_replay_token(const std::string& token, kage::sync::ClientId& out) {
+bool parse_replay_token(const std::string& token, ashiato::sync::ClientId& out) {
     const std::string prefix = "fps-replay:";
     if (token.compare(0U, prefix.size(), prefix) != 0) {
         return false;
     }
     try {
-        out = static_cast<kage::sync::ClientId>(std::stoull(token.substr(prefix.size())));
+        out = static_cast<ashiato::sync::ClientId>(std::stoull(token.substr(prefix.size())));
         return true;
     } catch (...) {
         return false;
@@ -63,19 +63,19 @@ bool parse_replay_token(const std::string& token, kage::sync::ClientId& out) {
 }
 
 void send_replay_done(SocketHandle socket, const sockaddr_in& target) {
-    ecs::BitBuffer packet;
+    ashiato::BitBuffer packet;
     packet.push_bits(replay_done_message, 8U);
     send_packet(socket, target, packet);
 }
 
 void send_replay_target(SocketHandle socket, const sockaddr_in& target, std::uint64_t player_id) {
-    ecs::BitBuffer packet;
+    ashiato::BitBuffer packet;
     packet.push_bits(replay_target_message, 8U);
     packet.push_unsigned_bits(player_id, 64U);
     send_packet(socket, target, packet);
 }
 
-bool read_replay_target(ecs::BitBuffer packet, std::uint64_t& player_id) {
+bool read_replay_target(ashiato::BitBuffer packet, std::uint64_t& player_id) {
     if (packet.remaining_bits() < 8U + 64U ||
         static_cast<std::uint8_t>(packet.read_bits(8U)) != replay_target_message) {
         return false;
@@ -90,12 +90,12 @@ struct FpsReplayServer::Session {
     const FpsReplayRecorder* source_recorder = nullptr;
     SocketHandle socket = invalid_socket_handle;
     sockaddr_in address{};
-    kage::sync::ClientId client = kage::sync::invalid_client_id;
+    ashiato::sync::ClientId client = ashiato::sync::invalid_client_id;
     std::uint64_t killer_player_id = 0;
-    kage::sync::ReplicationServer* live_server = nullptr;
-    ecs::Registry registry;
-    std::unique_ptr<kage::sync::ReplicationServer> server;
-    kage::sync::ReplicationReplayStreamSession replay_session;
+    ashiato::sync::ReplicationServer* live_server = nullptr;
+    ashiato::Registry registry;
+    std::unique_ptr<ashiato::sync::ReplicationServer> server;
+    ashiato::sync::ReplicationReplayStreamSession replay_session;
     bool ready = false;
     bool done = false;
     double lifetime_seconds = 0.0;
@@ -104,60 +104,59 @@ struct FpsReplayServer::Session {
     Session(
         const FpsReplayRecorder& recorder,
         SocketHandle socket,
-        kage::sync::ClientId peer,
+        ashiato::sync::ClientId peer,
         const sockaddr_in& peer_address,
-        kage::sync::ClientId victim_client,
-        kage::sync::ReplicationServer* source_server,
-        kage::sync::SyncFrame death_frame,
+        ashiato::sync::ClientId victim_client,
+        ashiato::sync::ReplicationServer* source_server,
+        ashiato::sync::SyncFrame death_frame,
         std::uint64_t recorded_killer_player_id,
-        const ecs::BitBuffer& connect_packet)
+        const ashiato::BitBuffer& connect_packet)
         : source_recorder(&recorder),
           socket(socket),
           address(peer_address),
           client(victim_client),
           live_server(source_server),
           killer_player_id(recorded_killer_player_id) {
-        kage::sync::configure_server(registry);
         (void)define_schema(registry);
 
-        kage::sync::ReplicationServerOptions options;
+        ashiato::sync::ReplicationServerOptions options;
         options.bandwidth_limit_bytes_per_tick = 64 * 1024;
         options.mtu_bytes = 1200;
         options.fixed_dt_seconds = fixed_dt;
-        options.connect_handler = [victim_client](const std::string& token, kage::sync::ClientId& accepted, std::string&) {
-            kage::sync::ClientId parsed = kage::sync::invalid_client_id;
+        options.connect_handler = [victim_client](const std::string& token, ashiato::sync::ClientId& accepted, std::string&) {
+            ashiato::sync::ClientId parsed = ashiato::sync::invalid_client_id;
             if (!parse_replay_token(token, parsed) || parsed != victim_client) {
                 return false;
             }
             accepted = victim_client;
             return true;
         };
-        options.transport = [socket, peer_address](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+        options.transport = [socket, peer_address](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
             send_packet(socket, peer_address, packet);
         };
-        server = std::make_unique<kage::sync::ReplicationServer>(options);
+        server = std::make_unique<ashiato::sync::ReplicationServer>(registry, options);
         if (!recorder.streamer().begin_session(death_frame, registry, *server, replay_session)) {
             throw std::runtime_error("no full FPS replay frame is available before death");
         }
         (void)server->process_packet(registry, peer, connect_packet);
     }
 
-    void receive(kage::sync::ClientId peer, ecs::BitBuffer packet) {
-        ecs::BitBuffer copy = packet;
+    void receive(ashiato::sync::ClientId peer, ashiato::BitBuffer packet) {
+        ashiato::BitBuffer copy = packet;
         std::uint8_t message = 0U;
         if (copy.remaining_bits() >= 8U) {
             message = static_cast<std::uint8_t>(copy.read_bits(8U));
         }
-        const bool ack = message == kage::sync::protocol::client_connect_ack_message;
+        const bool ack = message == ashiato::sync::protocol::client_connect_ack_message;
         const bool processed = server->process_packet(registry, peer, std::move(packet));
         if (processed && ack) {
             if (live_server != nullptr) {
                 (void)source_recorder->streamer().attach_network_session_bandwidth(
                     *server,
-                    kage::sync::ReplicationReplayNetworkSessionOptions{
+                    ashiato::sync::ReplicationReplayNetworkSessionOptions{
                         live_server,
                         client,
-                        kage::sync::ReplicationBandwidthParticipantOptions{1U, 1}});
+                        ashiato::sync::ReplicationBandwidthParticipantOptions{1U, 1}});
             }
             ready = true;
             send_replay_target(socket, address, killer_player_id);
@@ -189,20 +188,20 @@ struct FpsReplayServer::Session {
         }
         done = true;
         if (server != nullptr) {
-            (void)server->remove_client(client);
+            (void)server->remove_client(registry, client);
         }
     }
 
 };
 
 FpsReplayRecorder::FpsReplayRecorder(const std::string& directory)
-    : streamer_(kage::sync::ReplicationReplayStreamerOptions{
+    : streamer_(ashiato::sync::ReplicationReplayStreamerOptions{
           static_cast<std::size_t>(replay_total_frames + 120U),
           replay_preroll_frames,
           replay_tail_frames}),
-      writer_(kage::sync::ReplicationReplayWriterOptions{
+      writer_(ashiato::sync::ReplicationReplayWriterOptions{
           60,
-          [this](kage::sync::ReplicationReplayFrame frame) {
+          [this](ashiato::sync::ReplicationReplayFrame frame) {
               write_frame(frame);
               streamer_.push_frame(std::move(frame));
           },
@@ -215,7 +214,7 @@ FpsReplayRecorder::FpsReplayRecorder(const std::string& directory)
     }
 }
 
-void FpsReplayRecorder::attach(kage::sync::ReplicationServer& server) {
+void FpsReplayRecorder::attach(ashiato::sync::ReplicationServer& server) {
     writer_.attach(server);
 }
 
@@ -223,7 +222,7 @@ void FpsReplayRecorder::detach() {
     writer_.detach();
 }
 
-void FpsReplayRecorder::write_frame(const kage::sync::ReplicationReplayFrame& frame) {
+void FpsReplayRecorder::write_frame(const ashiato::sync::ReplicationReplayFrame& frame) {
     const std::uint64_t frame_offset = static_cast<std::uint64_t>(frames_.tellp());
     write_u32(frames_, replay_frame_magic);
     write_u32(frames_, replay_frame_version);
@@ -251,7 +250,7 @@ void FpsReplayRecorder::write_frame(const kage::sync::ReplicationReplayFrame& fr
 FpsReplayServer::FpsReplayServer(const FpsReplayRecorder& recorder, std::uint16_t port)
     : recorder_(&recorder),
       socket_(make_udp_socket(port)) {
-    std::cout << "kage_sync_fps_example replay listening on UDP " << port << '\n';
+    std::cout << "ashiato_sync_fps_example replay listening on UDP " << port << '\n';
 }
 
 FpsReplayServer::~FpsReplayServer() {
@@ -260,16 +259,16 @@ FpsReplayServer::~FpsReplayServer() {
 }
 
 void FpsReplayServer::record_death(
-    kage::sync::ClientId client,
-    kage::sync::SyncFrame frame,
+    ashiato::sync::ClientId client,
+    ashiato::sync::SyncFrame frame,
     std::uint64_t killer_player_id) {
-    if (client == kage::sync::invalid_client_id) {
+    if (client == ashiato::sync::invalid_client_id) {
         return;
     }
     deaths_[client] = DeathInfo{frame, killer_player_id};
 }
 
-void FpsReplayServer::attach(kage::sync::ReplicationServer& server) {
+void FpsReplayServer::attach(ashiato::sync::ReplicationServer& server) {
     detach();
     live_server_ = &server;
     death_subscription_ = server.subscribe_registry_dirty_frame_listener(*this);
@@ -280,17 +279,17 @@ void FpsReplayServer::detach() {
     live_server_ = nullptr;
 }
 
-void FpsReplayServer::on_server_registry_dirty_frame(const kage::sync::ServerRegistryDirtyFrame& frame) {
-    const kage::sync::SyncSettings& settings = frame.registry.get<kage::sync::SyncSettings>();
+void FpsReplayServer::on_server_registry_dirty_frame(const ashiato::sync::ServerRegistryDirtyFrame& frame) {
+    const ashiato::sync::SyncSettings& settings = frame.registry.get<ashiato::sync::SyncSettings>();
     const auto found_death_type = settings.cue_type_ids.find(std::type_index(typeid(PlayerDeathCue)));
     if (found_death_type == settings.cue_type_ids.end()) {
         return;
     }
-    for (const kage::sync::QueuedSyncCue& cue : frame.cues) {
+    for (const ashiato::sync::QueuedSyncCue& cue : frame.cues) {
         if (cue.type != found_death_type->second || cue.value == nullptr) {
             continue;
         }
-        const kage::sync::NetworkOwner* victim_owner = frame.registry.try_get<kage::sync::NetworkOwner>(cue.entity);
+        const ashiato::sync::NetworkOwner* victim_owner = frame.registry.try_get<ashiato::sync::NetworkOwner>(cue.entity);
         if (victim_owner == nullptr) {
             continue;
         }
@@ -307,19 +306,19 @@ void FpsReplayServer::on_server_registry_dirty_frame(const kage::sync::ServerReg
 }
 
 bool FpsReplayServer::begin_session(
-    kage::sync::ClientId peer,
+    ashiato::sync::ClientId peer,
     const sockaddr_in& address,
-    const ecs::BitBuffer& packet) {
-    ecs::BitBuffer copy = packet;
+    const ashiato::BitBuffer& packet) {
+    ashiato::BitBuffer copy = packet;
     if (copy.remaining_bits() < 8U ||
-        static_cast<std::uint8_t>(copy.read_bits(8U)) != kage::sync::protocol::client_connect_request_message) {
+        static_cast<std::uint8_t>(copy.read_bits(8U)) != ashiato::sync::protocol::client_connect_request_message) {
         return false;
     }
     std::string token;
-    if (!kage::sync::protocol::read_string(copy, token)) {
+    if (!ashiato::sync::protocol::read_string(copy, token)) {
         return false;
     }
-    kage::sync::ClientId client = kage::sync::invalid_client_id;
+    ashiato::sync::ClientId client = ashiato::sync::invalid_client_id;
     if (!parse_replay_token(token, client)) {
         return false;
     }
@@ -345,10 +344,10 @@ bool FpsReplayServer::begin_session(
 }
 
 void FpsReplayServer::tick(double dt_seconds) {
-    ecs::BitBuffer packet;
+    ashiato::BitBuffer packet;
     sockaddr_in sender{};
     while (receive_packet(socket_, packet, &sender)) {
-        const kage::sync::ClientId peer = peer_id(sender);
+        const ashiato::sync::ClientId peer = peer_id(sender);
         auto found = std::find_if(sessions_.begin(), sessions_.end(), [peer](const std::unique_ptr<Session>& session) {
             return peer_id(session->address) == peer;
         });
@@ -380,22 +379,22 @@ FpsDeathCamClient::~FpsDeathCamClient() {
     stop();
 }
 
-void FpsDeathCamClient::start(const std::string& host, std::uint16_t replay_port, kage::sync::ClientId client_id) {
+void FpsDeathCamClient::start(const std::string& host, std::uint16_t replay_port, ashiato::sync::ClientId client_id) {
     stop();
     socket_ = make_udp_socket(0);
     server_address_ = make_address(host, replay_port);
-    registry_ = std::make_unique<ecs::Registry>();
-    kage::sync::configure_client(*registry_, client_id);
+    registry_ = std::make_unique<ashiato::Registry>();
     (void)define_schema(*registry_);
 
-    kage::sync::ReplicationClientOptions options;
+    ashiato::sync::ReplicationClientOptions options;
+    options.session.local_client = client_id;
     options.session.connect_token = replay_token(client_id);
-    options.entities.default_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::BufferedInterpolation;
     options.clock.fixed_dt_seconds = fixed_dt;
     options.buffered.buffered_frame_lag = replay_buffered_frame_lag;
     options.buffered.auto_buffered_frame_lag = false;
-    client_ = std::make_unique<kage::sync::ReplicationClient>(*registry_, options);
-    client_->set_packet_sender([this](const ecs::BitBuffer& packet) {
+    client_ = std::make_unique<ashiato::sync::ReplicationClient>(*registry_, options);
+    client_->set_packet_sender([this](const ashiato::BitBuffer& packet) {
         send_packet(socket_, server_address_, packet);
     });
     active_seconds_ = 0.0f;
@@ -410,7 +409,7 @@ void FpsDeathCamClient::tick(float dt_seconds) {
         return;
     }
     active_seconds_ += dt_seconds;
-    ecs::BitBuffer packet;
+    ashiato::BitBuffer packet;
     while (receive_packet(socket_, packet)) {
         if (is_replay_done_packet(packet)) {
             replay_done_received_ = true;
@@ -450,7 +449,7 @@ void FpsDeathCamClient::stop() {
     replay_done_drain_seconds_ = 0.0f;
 }
 
-bool is_replay_done_packet(ecs::BitBuffer packet) {
+bool is_replay_done_packet(ashiato::BitBuffer packet) {
     return packet.remaining_bits() >= 8U &&
         static_cast<std::uint8_t>(packet.read_bits(8U)) == replay_done_message;
 }

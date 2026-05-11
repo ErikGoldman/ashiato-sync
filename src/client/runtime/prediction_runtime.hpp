@@ -3,13 +3,13 @@
 #include "client/state.hpp"
 #include "client/store/frame_ring_store.hpp"
 
-#include "ecs/ecs.hpp"
+#include "ashiato/ashiato.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 class ReplicationClient;
 
@@ -69,23 +69,23 @@ public:
     void schedule_catchup(SyncFrame server_frame, SyncFrame target_input_frame) noexcept;
     bool seed_first_authoritative_frame(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         SyncFrame frame);
     bool seed_existing_authoritative_frame(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         SyncFrame frame);
     void refresh_pending_rollback_frame(ReplicationClient& client) noexcept;
     void queue_rollback(ReplicationClient& client, EntityState& state, SyncFrame frame);
-    bool run_frame(ReplicationClient& client, ecs::Registry& registry, SyncFrame frame, ecs::RunJobsOptions options);
+    bool run_frame(ReplicationClient& client, ashiato::Registry& registry, SyncFrame frame, ashiato::RunJobsOptions options);
     bool run_catchup(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         std::uint32_t predicted_steps_this_tick,
-        ecs::RunJobsOptions options);
-    bool apply_pending_rollback(ReplicationClient& client, ecs::Registry& registry, ecs::RunJobsOptions options);
+        ashiato::RunJobsOptions options);
+    bool apply_pending_rollback(ReplicationClient& client, ashiato::Registry& registry, ashiato::RunJobsOptions options);
 
 private:
     enum class ResimScope {
@@ -95,40 +95,40 @@ private:
 
     bool resimulate_all(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         SyncFrame begin_frame,
         SyncFrame current_frame,
-        ecs::RunJobsOptions options);
+        ashiato::RunJobsOptions options);
     bool resimulate_affected(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         SyncFrame begin_frame,
         SyncFrame current_frame,
-        ecs::RunJobsOptions options);
+        ashiato::RunJobsOptions options);
     bool resimulate(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         SyncFrame begin_frame,
         SyncFrame current_frame,
-        ecs::RunJobsOptions options,
+        ashiato::RunJobsOptions options,
         ResimScope scope);
     bool prepare_resimulation(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         SyncFrame begin_frame,
         ResimScope scope,
         bool& has_entities_to_resimulate);
     bool run_resimulation_frame(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         SyncFrame frame,
-        ecs::RunJobsOptions options,
+        ashiato::RunJobsOptions options,
         ResimScope scope);
     bool quantize_resimulated(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         SyncFrame frame,
         ResimScope scope);
@@ -140,13 +140,13 @@ private:
         std::vector<OriginalPredictionCapture>& out) const;
     bool blend_resim_errors(
         ReplicationClient& client,
-        const ecs::Registry& registry,
+        const ashiato::Registry& registry,
         const SyncSettings& settings,
         SyncFrame current_frame,
         const std::vector<OriginalPredictionCapture>& original);
 
     std::vector<std::uint32_t> rollback_entity_indices_scratch_;
-    std::vector<ecs::Entity> rollback_affected_entities_scratch_;
+    std::vector<ashiato::Entity> rollback_affected_entities_scratch_;
     std::vector<OriginalPredictionCapture> rollback_original_current_scratch_;
     ClientFrameRingStore predicted_frames_;
     SyncFrame last_predicted_frame_ = 0;
@@ -159,4 +159,4 @@ private:
 };
 
 }  // namespace client_detail
-}  // namespace kage::sync
+}  // namespace ashiato::sync

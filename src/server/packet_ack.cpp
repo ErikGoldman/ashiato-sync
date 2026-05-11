@@ -1,6 +1,6 @@
-#include "kage/sync/server.hpp"
+#include "ashiato/sync/server.hpp"
 
-#include "kage/sync/bandwidth_budget.hpp"
+#include "ashiato/sync/bandwidth_budget.hpp"
 #include "server/packet.hpp"
 #include "server/packet_ack_tracker.hpp"
 #include "server/state.hpp"
@@ -8,12 +8,12 @@
 #include <algorithm>
 #include <vector>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 bool server_detail::ServerClientReplicator::AckTracker::client_acknowledged_destroy(
     ReplicationServer& server,
     ServerClientReplicator& client,
-    ecs::Entity entity,
+    ashiato::Entity entity,
     SyncFrame frame) {
     (void)server;
     return client.destroys.acknowledge(client, entity, frame);
@@ -168,4 +168,4 @@ void server_detail::ServerClientReplicator::AckTracker::track_packet_ack(
     }
 }
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

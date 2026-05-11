@@ -1,11 +1,11 @@
 #pragma once
 
-#include "kage/sync/types.hpp"
+#include "ashiato/sync/types.hpp"
 
 #include <cstddef>
 #include <cstdint>
 
-namespace kage::sync::detail {
+namespace ashiato::sync::detail {
 
 struct FrameDataView {
     std::uint64_t tag_mask = 0;
@@ -61,10 +61,10 @@ std::uint8_t* unchecked_mutable_frame_component_data(
     std::size_t component_index) noexcept;
 bool tag_bit_set(std::uint64_t tag_mask, std::size_t tag_index) noexcept;
 bool apply_archetype_tags(
-    ecs::Registry& registry,
-    ecs::Entity entity,
+    ashiato::Registry& registry,
+    ashiato::Entity entity,
     const SyncArchetype& archetype,
     std::uint64_t tag_mask);
-void remove_archetype_tags(ecs::Registry& registry, ecs::Entity entity, const SyncArchetype& archetype);
+void remove_archetype_tags(ashiato::Registry& registry, ashiato::Entity entity, const SyncArchetype& archetype);
 
-}  // namespace kage::sync::detail
+}  // namespace ashiato::sync::detail

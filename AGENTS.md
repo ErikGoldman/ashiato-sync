@@ -1,6 +1,6 @@
-# Kage Sync Guide
+# Ashiato Sync Guide
 
-Kage Sync is a separate project from the kagesoko ECS system. CMake fetches a pinned kagesoko revision from GitHub by default; pass `KAGE_SYNC_KAGESOKO_SOURCE_DIR` to use a local checkout when needed. Implement sync code, tests, and benchmarks here unless a measured ECS limitation requires a kagesoko change, in which case suggest changes to kagesoko's internals or API that might help.
+Ashiato Sync is a separate project from the Ashiato ECS system. CMake fetches a pinned Ashiato revision from GitHub by default; pass `ASHIATO_SYNC_ASHIATO_SOURCE_DIR` to use a local checkout when needed. Implement sync code, tests, and benchmarks here unless a measured ECS limitation requires an Ashiato change, in which case suggest changes to Ashiato's internals or API that might help.
 
 The project is a library for fixed-tick, predictive networking for online games. There is a server and multiple clients, entities are marked as replicated with replication settings, and the server periodically sends updates down to the clients. On the client, entities can be in snap mode (immediately move or interpolate to the new state), buffered interpolate (store multiple frames and interpolate between them), or predict (extrapolate from the last received frame and, upon receipt of a server frame, potentially roll back and resimulate).
 
@@ -12,7 +12,7 @@ This is a high-performance project. Always consider the performance effect of an
 
 ## Benchmarks
 
-- Put scheduler/server benchmarks in this project behind `KAGE_SYNC_BUILD_BENCHMARKS`.
+- Put scheduler/server benchmarks in this project behind `ASHIATO_SYNC_BUILD_BENCHMARKS`.
 - Build benchmark numbers with `RelWithDebInfo`.
 - Run benchmark configurations serially. Never overlap long benchmark jobs when collecting numbers.
 - Prefer focused benchmark filters for confirmation runs.

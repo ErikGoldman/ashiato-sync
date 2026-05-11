@@ -4,11 +4,11 @@
 #include "client/store/entity_store.hpp"
 #include "client/tracing.hpp"
 
-#include "kage/sync/client.hpp"
+#include "ashiato/sync/client.hpp"
 
 #include <vector>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 
 ClientBufferedRuntime::ClientBufferedRuntime(std::size_t frame_capacity)
     : buffered_frames_(frame_capacity) {}
@@ -27,7 +27,7 @@ void ClientBufferedRuntime::clear_entity(std::uint32_t entity_index) noexcept {
 
 bool ClientBufferedRuntime::apply_frames(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const ReplicationClientClock::FrameRange& frames) {
     bool all_valid = true;
     for (SyncFrame frame = frames.first; !frames.empty() && frame <= frames.last; ++frame) {
@@ -41,7 +41,7 @@ bool ClientBufferedRuntime::apply_frames(
 
 bool ClientBufferedRuntime::apply_frame(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     SyncFrame buffered_frame) {
     last_applied_buffered_frame_ = buffered_frame;
     has_applied_buffered_frame_ = true;
@@ -51,7 +51,7 @@ bool ClientBufferedRuntime::apply_frame(
     const SyncSettings& settings = registry.get<SyncSettings>();
     bool all_valid = true;
     std::vector<std::uint32_t> applied_destroys;
-#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+#ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     std::uint64_t interpolation_checks = 0;
     std::uint64_t interpolation_starvations = 0;
 #endif
@@ -61,14 +61,14 @@ bool ClientBufferedRuntime::apply_frame(
         }
         EntityState& state = client.entity_store_->state_unchecked(entity_index);
         if (buffered_frames_.empty(entity_index)) {
-#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+#ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
             ++interpolation_checks;
             ++interpolation_starvations;
 #endif
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
             if (client.tracer_ != nullptr && client.tracer_->enabled()) {
                 SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::BufferedStarved, client.client_id_, buffered_frame);
-                event.server_entity = ecs::Entity{state.identity.client_entity_network_id};
+                event.server_entity = ashiato::Entity{state.identity.client_entity_network_id};
                 event.local_entity = state.identity.local;
                 event.client_network_id = state.identity.client_entity_network_id;
                 event.wire_network_id = state.identity.wire_network_id;
@@ -92,14 +92,14 @@ bool ClientBufferedRuntime::apply_frame(
             if (!state.identity.local && (reused_future_entity || destroyed_past_entity)) {
                 continue;
             }
-#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+#ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
             ++interpolation_checks;
             ++interpolation_starvations;
 #endif
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
             if (client.tracer_ != nullptr && client.tracer_->enabled()) {
                 SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::BufferedStarved, client.client_id_, buffered_frame);
-                event.server_entity = ecs::Entity{state.identity.client_entity_network_id};
+                event.server_entity = ashiato::Entity{state.identity.client_entity_network_id};
                 event.local_entity = state.identity.local;
                 event.client_network_id = state.identity.client_entity_network_id;
                 event.wire_network_id = state.identity.wire_network_id;
@@ -111,7 +111,7 @@ bool ClientBufferedRuntime::apply_frame(
             all_valid = false;
             continue;
         }
-#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+#ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
         ++interpolation_checks;
 #endif
         if (!client.apply_buffered_sample(registry, settings, state, sample)) {
@@ -129,10 +129,10 @@ bool ClientBufferedRuntime::apply_frame(
     }
     client.cue_runtime_->discard_applied_buffered(client, buffered_frame);
 
-#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+#ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     client.record_interpolation_frame(interpolation_checks, interpolation_starvations);
 #endif
     return all_valid;
 }
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

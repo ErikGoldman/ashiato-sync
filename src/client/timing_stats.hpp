@@ -1,11 +1,11 @@
 #pragma once
 
-#include "kage/sync/client_clock.hpp"
+#include "ashiato/sync/client_clock.hpp"
 
 #include <cstddef>
 #include <cstdint>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 
 class ClientTimingStatsCalculator {
 public:
@@ -21,4 +21,4 @@ private:
     bool has_entity_update_packet_window_ = false;
 };
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

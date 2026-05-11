@@ -1,4 +1,4 @@
-#include "kage/sync/client_clock.hpp"
+#include "ashiato/sync/client_clock.hpp"
 
 #include "detail/options_validation.hpp"
 
@@ -6,7 +6,7 @@
 #include <cmath>
 #include <limits>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 namespace {
 
@@ -508,4 +508,4 @@ SyncFrame ReplicationClientClock::clamp_prediction_target(SyncFrame frames) cons
     return std::min(max_frames, std::max(min_frames, frames));
 }
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

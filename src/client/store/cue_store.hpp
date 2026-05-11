@@ -2,14 +2,14 @@
 
 #include "client/state.hpp"
 
-#include "kage/sync/components.hpp"
+#include "ashiato/sync/components.hpp"
 
 #include <cstdint>
 #include <limits>
 #include <string>
 #include <vector>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 
 class ClientFrameRingStore;
 
@@ -46,9 +46,9 @@ public:
     std::vector<EntityPlayedCue> played;
     std::vector<BufferedEntityCue> buffered;
     std::uint32_t resim_generation = 1;
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     std::vector<std::string> current_packet_cue_summaries;
 #endif
 };
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

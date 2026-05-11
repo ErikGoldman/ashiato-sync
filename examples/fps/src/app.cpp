@@ -36,7 +36,7 @@ void append_trace_args(const AppConfig& config, std::vector<std::string>& args) 
         args.push_back("--trace-frame-data");
         args.push_back("off");
     }
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     if (config.trace_packet_logs) {
         args.push_back("--trace-packet-logs");
         args.push_back("on");
@@ -351,11 +351,11 @@ AppConfig parse_args(int argc, char** argv) {
             config.bandwidth_max_kbps = std::max(1.0, std::stod(require_value()));
             config.dynamic_bandwidth = true;
         } else if (arg == "--trace-dir") {
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
             config.trace_dir = require_value();
 #else
             (void)require_value();
-            throw std::runtime_error("--trace-dir requires a build with KAGE_SYNC_ENABLE_TRACING=ON");
+            throw std::runtime_error("--trace-dir requires a build with ASHIATO_SYNC_ENABLE_TRACING=ON");
 #endif
         } else if (arg == "--replay-dir") {
             config.replay_dir = require_value();
@@ -369,7 +369,7 @@ AppConfig parse_args(int argc, char** argv) {
                 throw std::runtime_error("--trace-frame-data must be on or off");
             }
         } else if (arg == "--trace-packet-logs") {
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
             const std::string value = require_value();
             if (value == "on" || value == "true" || value == "1") {
                 config.trace_packet_logs = true;
@@ -380,7 +380,7 @@ AppConfig parse_args(int argc, char** argv) {
             }
 #else
             (void)require_value();
-            throw std::runtime_error("--trace-packet-logs requires a build with KAGE_SYNC_TRACE_PACKET_LOGS=ON");
+            throw std::runtime_error("--trace-packet-logs requires a build with ASHIATO_SYNC_TRACE_PACKET_LOGS=ON");
 #endif
         } else {
             throw std::runtime_error("unknown argument: " + arg);

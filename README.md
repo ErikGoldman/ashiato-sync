@@ -1,11 +1,11 @@
-# Kage Sync
+# Ashiato Sync
 
-[![CI](https://github.com/ErikGoldman/kage-sync/workflows/CI/badge.svg)](https://github.com/ErikGoldman/kage-sync/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Ferikgoldman.github.io%2Fkage-sync%2Fcoverage.json)](https://github.com/ErikGoldman/kage-sync/actions/workflows/ci.yml)
-[![Benchmarks](https://img.shields.io/badge/benchmarks-results-blue)](https://erikgoldman.github.io/kage-sync/benchmarks/)
+[![CI](https://github.com/ErikGoldman/ashiato-sync/workflows/CI/badge.svg)](https://github.com/ErikGoldman/ashiato-sync/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Ferikgoldman.github.io%2Fashiato-sync%2Fcoverage.json)](https://github.com/ErikGoldman/ashiato-sync/actions/workflows/ci.yml)
+[![Benchmarks](https://img.shields.io/badge/benchmarks-results-blue)](https://erikgoldman.github.io/ashiato-sync/benchmarks/)
 
-Kage Sync is a C++17 library for fixed-tick, predictive networking on top of the
-kagesoko ECS. The project is separate from the ECS implementation; sync code,
+Ashiato Sync is a C++17 library for fixed-tick, predictive networking on top of the
+Ashiato ECS. The project is separate from the ECS implementation; sync code,
 tests, and benchmarks live here.
 
 The current implementation provides the v0 replication foundation:
@@ -28,7 +28,7 @@ The current implementation provides the v0 replication foundation:
 
 - CMake 3.16 or newer
 - A C++17 compiler
-- Git, for CMake to fetch the pinned kagesoko ECS revision
+- Git, for CMake to fetch the pinned Ashiato ECS revision
 
 Tests fetch Catch2 with CMake `FetchContent`. Benchmarks fetch Google Benchmark
 when enabled.
@@ -40,10 +40,10 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ```
 
-The library target is `kage_sync`, with the alias target `kage::sync`.
-CMake fetches kagesoko from GitHub at the pinned `KAGE_SYNC_KAGESOKO_GIT_TAG`.
+The library target is `ashiato_sync`, with the alias target `ashiato::sync`.
+CMake fetches Ashiato from GitHub at the pinned `ASHIATO_SYNC_ASHIATO_GIT_TAG`.
 For local ECS development, pass
-`-DKAGE_SYNC_KAGESOKO_SOURCE_DIR=/path/to/kagesoko` to use a checkout instead.
+`-DASHIATO_SYNC_ASHIATO_SOURCE_DIR=/path/to/Ashiato` to use a checkout instead.
 
 ## Examples
 
@@ -53,12 +53,12 @@ The optional examples target fetches raylib and is disabled by default:
 cmake -S . -B build-examples \
   -DCMAKE_BUILD_TYPE=Debug \
   -DBUILD_TESTING=OFF \
-  -DKAGE_SYNC_BUILD_EXAMPLES=ON
-cmake --build build-examples --target kage_sync_balls_example
-./build-examples/kage_sync_balls_example
+  -DASHIATO_SYNC_BUILD_EXAMPLES=ON
+cmake --build build-examples --target ashiato_sync_balls_example
+./build-examples/ashiato_sync_balls_example
 ```
 
-`kage_sync_balls_example` runs a UDP localhost server and client in one process
+`ashiato_sync_balls_example` runs a UDP localhost server and client in one process
 and renders replicated moving balls with raylib. Use `--client-mode snap`,
 `--client-mode buffered-interpolation`, or `--client-mode predict` to choose the
 client application mode.
@@ -78,19 +78,19 @@ The FPS example uses the same examples option and runs as separate UDP server
 and client processes:
 
 ```sh
-cmake --build build-examples --target kage_sync_fps_example
-./build-examples/kage_sync_fps_example --server --port 37043 --bots 4
-./build-examples/kage_sync_fps_example --client --host 127.0.0.1 --port 37043
+cmake --build build-examples --target ashiato_sync_fps_example
+./build-examples/ashiato_sync_fps_example --server --port 37043 --bots 4
+./build-examples/ashiato_sync_fps_example --client --host 127.0.0.1 --port 37043
 ```
 
 For a quick local multi-client run, launch one headless server plus several
 client windows from one command:
 
 ```sh
-./build-examples/kage_sync_fps_example --clients 2 --port 37043 --bots 4
+./build-examples/ashiato_sync_fps_example --clients 2 --port 37043 --bots 4
 ```
 
-`kage_sync_fps_example` renders replicated capsule characters inside a box
+`ashiato_sync_fps_example` renders replicated capsule characters inside a box
 arena. The local character is predicted, other characters are buffered and
 interpolated, and shooting uses replicated cues for muzzle flashes and hit
 feedback. Controls are WASD, mouse look, Space to jump, left click to shoot,
@@ -111,25 +111,25 @@ Build the Dear ImGui trace viewer with tracing enabled:
 ```sh
 cmake -S . -B build-viewer \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DKAGE_SYNC_BUILD_TRACE_VIEWER=ON \
-  -DKAGE_SYNC_ENABLE_TRACING=ON \
-  -DKAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION=ON
-cmake --build build-viewer --target kage_sync_trace_viewer
+  -DASHIATO_SYNC_BUILD_TRACE_VIEWER=ON \
+  -DASHIATO_SYNC_ENABLE_TRACING=ON \
+  -DASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION=ON
+cmake --build build-viewer --target ashiato_sync_trace_viewer
 ```
 
-For live automation, build with `KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION=ON`
+For live automation, build with `ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION=ON`
 and start the viewer with a local control socket:
 
 ```sh
-./build-viewer/kage_sync_trace_viewer \
-  --trace-dir /tmp/kage-balls-trace \
-  --control-socket /tmp/kage_sync_trace_viewer.sock
+./build-viewer/ashiato_sync_trace_viewer \
+  --trace-dir /tmp/ashiato-balls-trace \
+  --control-socket /tmp/ashiato_sync_trace_viewer.sock
 ```
 
 The socket accepts newline-delimited commands and returns `OK` or `ERR`:
 
 ```sh
-printf 'click 120 240\nscreenshot /tmp/kage_sync_trace_viewer.png\nclose\n' | nc -U /tmp/kage_sync_trace_viewer.sock
+printf 'click 120 240\nscreenshot /tmp/ashiato_sync_trace_viewer.png\nclose\n' | nc -U /tmp/ashiato_sync_trace_viewer.sock
 ```
 
 Supported commands are `load path`, `move x y`, `click x y [left|right|middle]`,
@@ -141,7 +141,7 @@ directories are created before writing.
 ## Basic Usage
 
 ```cpp
-#include "kage/sync/sync.hpp"
+#include "ashiato/sync/sync.hpp"
 
 struct Position {
     float x = 0.0f;
@@ -149,37 +149,35 @@ struct Position {
 };
 
 int main() {
-    ecs::Registry registry;
+    ashiato::Registry registry;
 
-    kage::sync::configure_server(registry);
-
-    const ecs::Entity position_component =
+    const ashiato::Entity position_component =
         registry.register_component<Position>("Position");
 
-    const kage::sync::SyncArchetypeId actor =
-        kage::sync::define_archetype(
+    const ashiato::sync::SyncArchetypeId actor =
+        ashiato::sync::define_archetype(
             registry,
             "Actor",
-            {{position_component, kage::sync::ReplicationAudience::All}});
+            {{position_component, ashiato::sync::ReplicationAudience::All}});
 
-    ecs::Entity entity = registry.create();
+    ashiato::Entity entity = registry.create();
 
-    kage::sync::ReplicationServerOptions server_options;
+    ashiato::sync::ReplicationServerOptions server_options;
     server_options.bandwidth.enabled = true;
     server_options.bandwidth.min_bytes_per_second = 8 * 1024;
     server_options.bandwidth.initial_bytes_per_second = 32 * 1024;
     server_options.bandwidth.max_bytes_per_second = 512 * 1024;
     server_options.bandwidth.max_burst_bytes = server_options.mtu_bytes * 4;
-    server_options.logging.level = kage::sync::LogLevel::Warning;
-    server_options.logging.format = kage::sync::LogFormat::Json;
+    server_options.logging.level = ashiato::sync::LogLevel::Warning;
+    server_options.logging.format = ashiato::sync::LogFormat::Json;
     server_options.transport =
-        [](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
+        [](ashiato::sync::ClientId client, const ashiato::BitBuffer& packet) {
             // Enqueue `packet` for `client` on your UDP/socket transport here.
         };
-    kage::sync::ReplicationServer server(server_options);
+    ashiato::sync::ReplicationServer server(registry, server_options);
 
     server.add_client(1);
-    registry.add<kage::sync::Replicated>(entity, {actor});
+    registry.add<ashiato::sync::Replicated>(entity, {actor});
 
     server.tick(registry, server.options().fixed_dt_seconds);
 }
@@ -195,11 +193,13 @@ fixed-step catch-up work; `0` keeps the default unlimited behavior.
 
 ## API Notes
 
-- Call `kage::sync::register_components`, `configure_server`, or
-  `configure_client` before using sync components directly.
+- Constructing `ReplicationServer` or `ReplicationClient` registers the sync
+  components and configures the registry role. Call
+  `ashiato::sync::register_components` only when you need direct component access
+  before constructing a replication endpoint.
 - Define archetypes with registered ECS component ids. Unregistered component ids
   throw `std::invalid_argument`.
-- Add `kage::sync::Replicated` directly to an ECS entity to start server
+- Add `ashiato::sync::Replicated` directly to an ECS entity to start server
   replication, and remove that component to stop replication. The server
   monitors `Replicated` component additions, replacements, removals, and entity
   destruction at the start of each tick. Call `ReplicationServer::refresh_replicated`
@@ -222,7 +222,7 @@ fixed-step catch-up work; `0` keeps the default unlimited behavior.
   `client_entity_network_id`, `local_entity`, `archetype`, `frame`, and typed
   `try_get<T>` accessors for the received component data.
 - Components can serialize entity references by storing
-  `kage::sync::EntityReference` and defining context-aware
+  `ashiato::sync::EntityReference` and defining context-aware
   `SyncComponentTraits<T>::serialize(..., EntityReferenceContext&)` and
   `deserialize(..., EntityReferenceContext&)` overloads. Use
   `write_entity_reference` on the server and `read_entity_reference` on the
@@ -284,15 +284,15 @@ Build benchmark binaries only when needed:
 ```sh
 cmake -S . -B build-bench \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DKAGE_SYNC_BUILD_BENCHMARKS=ON \
+  -DASHIATO_SYNC_BUILD_BENCHMARKS=ON \
   -DBUILD_TESTING=OFF
-cmake --build build-bench --target kage_sync_benchmark
+cmake --build build-bench --target ashiato_sync_benchmark
 ```
 
 Run focused benchmark filters serially when collecting numbers:
 
 ```sh
-./build-bench/kage_sync_benchmark --benchmark_filter=BM_ServerTick
+./build-bench/ashiato_sync_benchmark --benchmark_filter=BM_ServerTick
 ```
 
 Current benchmark coverage includes full-budget server ticks, budget-limited
@@ -302,7 +302,7 @@ and buffered interpolation.
 
 ### Ball Stress Harness
 
-`kage_sync_ball_stress` is a deterministic headless stress scenario with
+`ashiato_sync_ball_stress` is a deterministic headless stress scenario with
 server-side 3D balls, poison-on-bounce, health drain, despawns, simulated
 clients, in-memory latency/jitter/loss, timing counters, memory counters, and
 bandwidth breakdowns.
@@ -310,10 +310,10 @@ bandwidth breakdowns.
 ```sh
 cmake -S . -B build-bench \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DKAGE_SYNC_BUILD_BENCHMARKS=ON \
+  -DASHIATO_SYNC_BUILD_BENCHMARKS=ON \
   -DBUILD_TESTING=OFF
-cmake --build build-bench --target kage_sync_ball_stress
-./build-bench/kage_sync_ball_stress \
+cmake --build build-bench --target ashiato_sync_ball_stress
+./build-bench/ashiato_sync_ball_stress \
   --duration-seconds 10 \
   --clients 4 \
   --max-balls 4096 \
@@ -343,14 +343,14 @@ settings.
 
 ### Prediction Stress Harness
 
-`kage_sync_prediction_stress` is a deterministic headless prediction scenario
+`ashiato_sync_prediction_stress` is a deterministic headless prediction scenario
 with multiple replicated components, predicted client ECS jobs, configurable
 server-to-client frame latency, and configurable authoritative mispredictions.
 The default latency is 10 frames.
 
 ```sh
-cmake --build build-bench --target kage_sync_prediction_stress
-./build-bench/kage_sync_prediction_stress \
+cmake --build build-bench --target ashiato_sync_prediction_stress
+./build-bench/ashiato_sync_prediction_stress \
   --entities 2048 \
   --ticks 1800 \
   --latency-frames 10 \
@@ -363,23 +363,23 @@ Use `--rollback-policy only-affected` to measure targeted resimulation. The
 report includes server/client packet counts and bytes, client receive and tick
 timings, server simulation and replication timings, delivered update packets,
 and the number of injected misprediction events. The
-`run_kage_sync_prediction_stress` target uses
-`KAGE_SYNC_PREDICTION_STRESS_RUN_ARGS`.
+`run_ashiato_sync_prediction_stress` target uses
+`ASHIATO_SYNC_PREDICTION_STRESS_RUN_ARGS`.
 
-You can also configure the `run_kage_sync_ball_stress` target to run the same
+You can also configure the `run_ashiato_sync_ball_stress` target to run the same
 scenario normally, through gprof, or through Valgrind memory tools:
 
 ```sh
 cmake -S . -B build-bench \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DKAGE_SYNC_BUILD_BENCHMARKS=ON \
+  -DASHIATO_SYNC_BUILD_BENCHMARKS=ON \
   -DBUILD_TESTING=OFF \
-  -DKAGE_SYNC_BALL_STRESS_RUN_MODE=none \
-  -DKAGE_SYNC_BALL_STRESS_RUN_ARGS="--duration-seconds 10 --clients 4 --max-balls 4096 --report text"
-cmake --build build-bench --target run_kage_sync_ball_stress
+  -DASHIATO_SYNC_BALL_STRESS_RUN_MODE=none \
+  -DASHIATO_SYNC_BALL_STRESS_RUN_ARGS="--duration-seconds 10 --clients 4 --max-balls 4096 --report text"
+cmake --build build-bench --target run_ashiato_sync_ball_stress
 ```
 
-Set `KAGE_SYNC_BALL_STRESS_RUN_MODE` to `none`, `gprof`, `memcheck`, or
+Set `ASHIATO_SYNC_BALL_STRESS_RUN_MODE` to `none`, `gprof`, `memcheck`, or
 `massif`. `memcheck` runs `valgrind --leak-check=full --track-origins=yes`, and
 `massif` runs `valgrind --tool=massif`.
 
@@ -388,13 +388,13 @@ For gprof, enable instrumentation and select the gprof run mode:
 ```sh
 cmake -S . -B build-bench-gprof \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DKAGE_SYNC_BUILD_BENCHMARKS=ON \
-  -DKAGE_SYNC_ENABLE_GPROF=ON \
+  -DASHIATO_SYNC_BUILD_BENCHMARKS=ON \
+  -DASHIATO_SYNC_ENABLE_GPROF=ON \
   -DBUILD_TESTING=OFF \
-  -DKAGE_SYNC_BALL_STRESS_RUN_MODE=gprof \
-  -DKAGE_SYNC_BALL_STRESS_RUN_ARGS="--duration-seconds 30 --report text" \
-  -DKAGE_SYNC_BALL_STRESS_GPROF_OUT=/tmp/kage_sync_ball_stress_gprof.txt
-cmake --build build-bench-gprof --target run_kage_sync_ball_stress
+  -DASHIATO_SYNC_BALL_STRESS_RUN_MODE=gprof \
+  -DASHIATO_SYNC_BALL_STRESS_RUN_ARGS="--duration-seconds 30 --report text" \
+  -DASHIATO_SYNC_BALL_STRESS_GPROF_OUT=/tmp/ashiato_sync_ball_stress_gprof.txt
+cmake --build build-bench-gprof --target run_ashiato_sync_ball_stress
 ```
 
 For memory checking:
@@ -402,11 +402,11 @@ For memory checking:
 ```sh
 cmake -S . -B build-bench-memcheck \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DKAGE_SYNC_BUILD_BENCHMARKS=ON \
+  -DASHIATO_SYNC_BUILD_BENCHMARKS=ON \
   -DBUILD_TESTING=OFF \
-  -DKAGE_SYNC_BALL_STRESS_RUN_MODE=memcheck \
-  -DKAGE_SYNC_BALL_STRESS_RUN_ARGS="--duration-seconds 5 --report text"
-cmake --build build-bench-memcheck --target run_kage_sync_ball_stress
+  -DASHIATO_SYNC_BALL_STRESS_RUN_MODE=memcheck \
+  -DASHIATO_SYNC_BALL_STRESS_RUN_ARGS="--duration-seconds 5 --report text"
+cmake --build build-bench-memcheck --target run_ashiato_sync_ball_stress
 ```
 
 For sanitizer smoke checks:
@@ -414,12 +414,12 @@ For sanitizer smoke checks:
 ```sh
 cmake -S . -B build-asan \
   -DCMAKE_BUILD_TYPE=Debug \
-  -DKAGE_SYNC_BUILD_BENCHMARKS=ON \
+  -DASHIATO_SYNC_BUILD_BENCHMARKS=ON \
   -DBUILD_TESTING=OFF \
   -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
   -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
-cmake --build build-asan --target kage_sync_ball_stress
-./build-asan/kage_sync_ball_stress --duration-seconds 5
+cmake --build build-asan --target ashiato_sync_ball_stress
+./build-asan/ashiato_sync_ball_stress --duration-seconds 5
 ```
 
 When reporting benchmark results, include the exact command, build type, and
@@ -430,7 +430,7 @@ hot spots before making broad scheduler changes.
 ## Repository Layout
 
 ```text
-include/kage/sync/sync.hpp   Public API
+include/ashiato/sync/sync.hpp   Public API
 src/sync.cpp                 Implementation
 tests/sync.test.cpp          Catch2 tests
 benchmarks/server_benchmark.cpp

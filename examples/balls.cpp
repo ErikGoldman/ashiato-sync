@@ -1,4 +1,4 @@
-#include "kage/sync/sync.hpp"
+#include "ashiato/sync/sync.hpp"
 
 #include "network_simulator.hpp"
 
@@ -45,7 +45,7 @@ inline constexpr SocketHandle invalid_socket_handle = -1;
 
 namespace {
 
-constexpr kage::sync::ClientId client_id = 1;
+constexpr ashiato::sync::ClientId client_id = 1;
 constexpr std::uint16_t server_port = 37042;
 constexpr std::uint8_t example_client_hello_message = 250;
 constexpr int min_ball_count = 0;
@@ -70,7 +70,7 @@ struct BallVelocity {
 
 }  // namespace
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 template <>
 struct SyncComponentTraits<BallPosition> {
@@ -85,11 +85,11 @@ struct SyncComponentTraits<BallPosition> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -140,7 +140,7 @@ struct SyncComponentTraits<BallPosition> {
         return false;
     }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
         out.append("x=");
         out.append_number(value.x);
@@ -164,11 +164,11 @@ struct SyncComponentTraits<BallVelocity> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -180,7 +180,7 @@ struct SyncComponentTraits<BallVelocity> {
         return false;
     }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
         out.append("x=");
         out.append_number(value.x);
@@ -192,7 +192,7 @@ struct SyncComponentTraits<BallVelocity> {
 #endif
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync
 
 namespace {
 
@@ -215,33 +215,33 @@ struct BallCueFlash {
 };
 
 struct BallContact {
-    kage::sync::EntityReference target{};
+    ashiato::sync::EntityReference target{};
 };
 
 }  // namespace
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 template <>
 struct SyncCueTraits<BallBounceCue> {
-    static void serialize(const BallBounceCue& cue, ecs::BitBuffer& out) {
+    static void serialize(const BallBounceCue& cue, ashiato::BitBuffer& out) {
         out.push_bits(cue.sequence, 32U);
         out.push_bytes(reinterpret_cast<const char*>(&cue.strength), sizeof(cue.strength));
     }
 
-    static bool deserialize(ecs::BitBuffer& in, BallBounceCue& out) {
+    static bool deserialize(ashiato::BitBuffer& in, BallBounceCue& out) {
         out.sequence = static_cast<std::uint32_t>(in.read_bits(32U));
         in.read_bytes(reinterpret_cast<char*>(&out.strength), sizeof(out.strength));
         return true;
     }
 
-    static bool play(ecs::Registry& registry, ecs::Entity owner, const BallBounceCue& cue, float late_seconds) {
+    static bool play(ashiato::Registry& registry, ashiato::Entity owner, const BallBounceCue& cue, float late_seconds) {
         const float duration = std::max(0.05f, 0.22f - late_seconds);
         registry.add<BallCueFlash>(owner, BallCueFlash{duration, cue.strength});
         return true;
     }
 
-    static bool rollback(ecs::Registry& registry, ecs::Entity owner, const BallBounceCue&) {
+    static bool rollback(ashiato::Registry& registry, ashiato::Entity owner, const BallBounceCue&) {
         registry.remove<BallCueFlash>(owner);
         return true;
     }
@@ -250,7 +250,7 @@ struct SyncCueTraits<BallBounceCue> {
         return lhs.sequence == rhs.sequence;
     }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     static void trace(const BallBounceCue& cue, SyncTraceStringBuilder& out) {
         out.append("sequence=");
         out.append_number(cue.sequence);
@@ -272,11 +272,11 @@ struct SyncComponentTraits<BallVisual> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -290,7 +290,7 @@ struct SyncComponentTraits<BallVisual> {
         return false;
     }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
         out.append("radius=");
         out.append_number(value.radius);
@@ -321,13 +321,13 @@ struct SyncComponentTraits<BallContact> {
     static void serialize(
         const Quantized*,
         const Quantized& current,
-        ecs::BitBuffer& out,
+        ashiato::BitBuffer& out,
         EntityReferenceContext& references) {
         (void)write_entity_reference(out, current.target, references);
     }
 
     static bool deserialize(
-        ecs::BitBuffer& in,
+        ashiato::BitBuffer& in,
         const Quantized*,
         Quantized& out,
         EntityReferenceContext& references) {
@@ -341,7 +341,7 @@ struct SyncComponentTraits<BallContact> {
     }
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync
 
 namespace {
 
@@ -349,7 +349,7 @@ struct BallSpawnTagged {};
 struct BallBounced {};
 
 struct ServerBall {
-    ecs::Entity entity;
+    ashiato::Entity entity;
     Vector3 velocity{};
     float radius = 0.25f;
     float age = 0.0f;
@@ -357,13 +357,13 @@ struct ServerBall {
 };
 
 struct SyncSchema {
-    kage::sync::SyncArchetypeId ball;
-    ecs::Entity spawn_tagged;
-    ecs::Entity bounced;
+    ashiato::sync::SyncArchetypeId ball;
+    ashiato::Entity spawn_tagged;
+    ashiato::Entity bounced;
 };
 
-using LinkSettings = kage::sync::examples::NetworkSimulatorSettings;
-using LinkSimulator = kage::sync::examples::NetworkSimulator<sockaddr_in>;
+using LinkSettings = ashiato::sync::examples::NetworkSimulatorSettings;
+using LinkSimulator = ashiato::sync::examples::NetworkSimulator<sockaddr_in>;
 
 struct SampleHistory {
     static constexpr std::size_t capacity = 180;
@@ -405,14 +405,14 @@ struct RuntimeStats {
     int rendered_entities = 0;
     int server_entities = 0;
     int client_entities = 0;
-    kage::sync::SyncFrame frame = 0;
-    kage::sync::SyncFrame estimated_server_frame = 0;
-    kage::sync::SyncFrame client_frame = 0;
+    ashiato::sync::SyncFrame frame = 0;
+    ashiato::sync::SyncFrame estimated_server_frame = 0;
+    ashiato::sync::SyncFrame client_frame = 0;
 };
 
 struct RenderedBall {
-    kage::sync::ClientEntityNetworkId network_id = kage::sync::invalid_client_entity_network_id;
-    ecs::Entity local_entity;
+    ashiato::sync::ClientEntityNetworkId network_id = ashiato::sync::invalid_client_entity_network_id;
+    ashiato::Entity local_entity;
     Vector3 position{};
     BallVisual visual{};
     BallContact contact{};
@@ -466,7 +466,7 @@ sockaddr_in loopback_address(std::uint16_t port) {
     return address;
 }
 
-void send_packet(SocketHandle socket, const sockaddr_in& target, const ecs::BitBuffer& packet) {
+void send_packet(SocketHandle socket, const sockaddr_in& target, const ashiato::BitBuffer& packet) {
     const auto* data = reinterpret_cast<const char*>(packet.data());
     sendto(socket, data, static_cast<int>(packet.byte_size()), 0, reinterpret_cast<const sockaddr*>(&target), sizeof(target));
 }
@@ -475,7 +475,7 @@ void queue_packet(
     LinkSimulator& link,
     SocketHandle socket,
     const sockaddr_in& target,
-    const ecs::BitBuffer& packet,
+    const ashiato::BitBuffer& packet,
     RuntimeStats& stats,
     bool downstream) {
     const double now = GetTime();
@@ -490,19 +490,19 @@ void queue_packet(
         stats.up_bytes_window += static_cast<float>(packet.byte_size());
     }
 
-    link.deliver_ready(now, [&](const sockaddr_in& packet_target, const ecs::BitBuffer& queued_packet) {
+    link.deliver_ready(now, [&](const sockaddr_in& packet_target, const ashiato::BitBuffer& queued_packet) {
         send_packet(socket, packet_target, queued_packet);
     });
 }
 
 void flush_link(LinkSimulator& link, SocketHandle socket) {
     const double now = GetTime();
-    link.deliver_ready(now, [&](const sockaddr_in& target, const ecs::BitBuffer& packet) {
+    link.deliver_ready(now, [&](const sockaddr_in& target, const ashiato::BitBuffer& packet) {
         send_packet(socket, target, packet);
     });
 }
 
-bool receive_packet(SocketHandle socket, ecs::BitBuffer& packet, sockaddr_in* sender = nullptr) {
+bool receive_packet(SocketHandle socket, ashiato::BitBuffer& packet, sockaddr_in* sender = nullptr) {
     std::array<char, 2048> bytes{};
     sockaddr_in source{};
 #ifdef _WIN32
@@ -528,43 +528,43 @@ bool receive_packet(SocketHandle socket, ecs::BitBuffer& packet, sockaddr_in* se
     return true;
 }
 
-SyncSchema define_schema(ecs::Registry& registry, bool interpolate_position = false) {
-    const ecs::Entity position = kage::sync::register_sync_component<BallPosition>(registry, "BallPosition");
-    const ecs::Entity velocity = kage::sync::register_sync_component<BallVelocity>(registry, "BallVelocity");
-    const ecs::Entity visual = kage::sync::register_sync_component<BallVisual>(registry, "BallVisual");
-    const ecs::Entity contact = kage::sync::register_sync_component<BallContact>(registry, "BallContact");
-    const ecs::Entity spawn_tagged = registry.register_component<BallSpawnTagged>("BallSpawnTagged");
-    const ecs::Entity bounced = registry.register_component<BallBounced>("BallBounced");
+SyncSchema define_schema(ashiato::Registry& registry, bool interpolate_position = false) {
+    const ashiato::Entity position = ashiato::sync::register_sync_component<BallPosition>(registry, "BallPosition");
+    const ashiato::Entity velocity = ashiato::sync::register_sync_component<BallVelocity>(registry, "BallVelocity");
+    const ashiato::Entity visual = ashiato::sync::register_sync_component<BallVisual>(registry, "BallVisual");
+    const ashiato::Entity contact = ashiato::sync::register_sync_component<BallContact>(registry, "BallContact");
+    const ashiato::Entity spawn_tagged = registry.register_component<BallSpawnTagged>("BallSpawnTagged");
+    const ashiato::Entity bounced = registry.register_component<BallBounced>("BallBounced");
     registry.register_component<BallCueFlash>("BallCueFlash");
-    kage::sync::register_sync_cue<BallBounceCue>(registry);
+    ashiato::sync::register_sync_cue<BallBounceCue>(registry);
     if (interpolate_position) {
-        kage::sync::set_fractional_tick_sampled(registry, position);
+        ashiato::sync::set_fractional_tick_sampled(registry, position);
     }
     return SyncSchema{
-        kage::sync::define_archetype(
+        ashiato::sync::define_archetype(
             registry,
-            kage::sync::SyncArchetypeDesc{
+            ashiato::sync::SyncArchetypeDesc{
                 "Ball",
                 {
-                    {spawn_tagged, kage::sync::ReplicationAudience::All},
-                    {bounced, kage::sync::ReplicationAudience::All},
+                    {spawn_tagged, ashiato::sync::ReplicationAudience::All},
+                    {bounced, ashiato::sync::ReplicationAudience::All},
                 },
                 {
                     {position,
-                     kage::sync::ReplicationAudience::All,
-                     interpolate_position ? kage::sync::ComponentInterpolation::Interpolate
-                                          : kage::sync::ComponentInterpolation::Step},
-                    {velocity, kage::sync::ReplicationAudience::All},
-                    {visual, kage::sync::ReplicationAudience::All},
-                    {contact, kage::sync::ReplicationAudience::All},
+                     ashiato::sync::ReplicationAudience::All,
+                     interpolate_position ? ashiato::sync::ComponentInterpolation::Interpolate
+                                          : ashiato::sync::ComponentInterpolation::Step},
+                    {velocity, ashiato::sync::ReplicationAudience::All},
+                    {visual, ashiato::sync::ReplicationAudience::All},
+                    {contact, ashiato::sync::ReplicationAudience::All},
                 }}),
         spawn_tagged,
         bounced};
 }
 
-void register_client_prediction_jobs(ecs::Registry& registry, kage::sync::ReplicationClient& client) {
+void register_client_prediction_jobs(ashiato::Registry& registry, ashiato::sync::ReplicationClient& client) {
     client.simulation_job<BallPosition, BallVelocity>(registry, 0).each(
-        [](ecs::Entity, BallPosition& position, BallVelocity& velocity) {
+        [](ashiato::Entity, BallPosition& position, BallVelocity& velocity) {
             constexpr float fixed_dt = 1.0f / 30.0f;
             position.x += velocity.x * fixed_dt;
             position.y += velocity.y * fixed_dt;
@@ -582,8 +582,8 @@ void register_client_prediction_jobs(ecs::Registry& registry, kage::sync::Replic
         });
 }
 
-void spawn_ball(ecs::Registry& registry, std::vector<ServerBall>& balls, SyncSchema schema, int index) {
-    const ecs::Entity entity = registry.create();
+void spawn_ball(ashiato::Registry& registry, std::vector<ServerBall>& balls, SyncSchema schema, int index) {
+    const ashiato::Entity entity = registry.create();
     const float lane = static_cast<float>((index % 9) - 4);
     const float phase = static_cast<float>(index) * 0.73f;
     registry.add<BallPosition>(entity, BallPosition{lane * 0.75f, std::sin(phase) * 1.5f, std::cos(phase) * 1.5f});
@@ -602,7 +602,7 @@ void spawn_ball(ecs::Registry& registry, std::vector<ServerBall>& balls, SyncSch
     if (((index * 1103515245U + 12345U) & 3U) == 0U) {
         registry.add_tag(entity, schema.spawn_tagged);
     }
-    registry.add<kage::sync::Replicated>(entity, kage::sync::Replicated{schema.ball});
+    registry.add<ashiato::sync::Replicated>(entity, ashiato::sync::Replicated{schema.ball});
     balls.push_back(ServerBall{
         entity,
         velocity,
@@ -611,7 +611,7 @@ void spawn_ball(ecs::Registry& registry, std::vector<ServerBall>& balls, SyncSch
         3.5f + static_cast<float>(index % 6) * 0.45f});
 }
 
-void update_ball_contacts(ecs::Registry& registry, std::vector<ServerBall>& balls) {
+void update_ball_contacts(ashiato::Registry& registry, std::vector<ServerBall>& balls) {
     constexpr float grid_min_x = -4.5f;
     constexpr float grid_min_y = -3.0f;
     constexpr float grid_min_z = -3.0f;
@@ -687,9 +687,9 @@ void update_ball_contacts(ecs::Registry& registry, std::vector<ServerBall>& ball
                         }
 
                         registry.write<BallContact>(balls[index].entity) =
-                            BallContact{kage::sync::EntityReference{balls[other_index].entity}};
+                            BallContact{ashiato::sync::EntityReference{balls[other_index].entity}};
                         registry.write<BallContact>(balls[other_index].entity) =
-                            BallContact{kage::sync::EntityReference{balls[index].entity}};
+                            BallContact{ashiato::sync::EntityReference{balls[index].entity}};
                         assigned[index] = 1U;
                         assigned[other_index] = 1U;
                         break;
@@ -701,10 +701,10 @@ void update_ball_contacts(ecs::Registry& registry, std::vector<ServerBall>& ball
 }
 
 void update_server_world(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     std::vector<ServerBall>& balls,
     SyncSchema schema,
-    kage::sync::SyncFrame frame,
+    ashiato::sync::SyncFrame frame,
     float dt,
     int& spawn_index,
     int target_ball_count) {
@@ -748,8 +748,8 @@ void update_server_world(
                 registry.add_tag(ball.entity, schema.bounced);
             }
             static std::uint32_t bounce_sequence = 1;
-            (void)registry.write<kage::sync::CueDispatcher>().emit(
-                registry.get<kage::sync::SyncSettings>(),
+            (void)registry.write<ashiato::sync::CueDispatcher>().emit(
+                registry.get<ashiato::sync::SyncSettings>(),
                 frame,
                 ball.entity,
                 BallBounceCue{bounce_sequence++, 1.0f},
@@ -774,7 +774,7 @@ void update_server_world(
 }
 
 void send_hello(SocketHandle client_socket, const sockaddr_in& server_address) {
-    ecs::BitBuffer hello;
+    ashiato::BitBuffer hello;
     hello.push_bits(example_client_hello_message, 8U);
     hello.push_unsigned_bits(client_id, 64U);
     send_packet(client_socket, server_address, hello);
@@ -802,19 +802,19 @@ void update_hotkeys(LinkSettings& settings) {
 }
 
 void update_client_mode_hotkeys(
-    kage::sync::ReplicationClient& client,
-    ecs::Registry& client_registry,
-    std::vector<kage::sync::ClientEntityNetworkId>& known_entities,
-    kage::sync::ReplicationClientMode& client_mode) {
-    auto set_mode = [&](kage::sync::ReplicationClientMode mode) {
+    ashiato::sync::ReplicationClient& client,
+    ashiato::Registry& client_registry,
+    std::vector<ashiato::sync::ClientEntityNetworkId>& known_entities,
+    ashiato::sync::ReplicationClientMode& client_mode) {
+    auto set_mode = [&](ashiato::sync::ReplicationClientMode mode) {
         client_mode = mode;
         (void)client.set_default_entity_mode(mode);
-        for (const kage::sync::ClientEntityNetworkId network_id : known_entities) {
+        for (const ashiato::sync::ClientEntityNetworkId network_id : known_entities) {
             try {
                 client.set_entity_mode(client_registry, network_id, mode);
-            } catch (const kage::sync::ClientError& error) {
-                if (error.status() != kage::sync::ClientStatus::EntityNotFound &&
-                    error.status() != kage::sync::ClientStatus::EntityUnavailable) {
+            } catch (const ashiato::sync::ClientError& error) {
+                if (error.status() != ashiato::sync::ClientStatus::EntityNotFound &&
+                    error.status() != ashiato::sync::ClientStatus::EntityUnavailable) {
                     throw;
                 }
             }
@@ -823,36 +823,36 @@ void update_client_mode_hotkeys(
             std::remove_if(
                 known_entities.begin(),
                 known_entities.end(),
-                [&](kage::sync::ClientEntityNetworkId network_id) {
+                [&](ashiato::sync::ClientEntityNetworkId network_id) {
                     return !client.has_entity(network_id);
                 }),
             known_entities.end());
     };
 
     if (IsKeyPressed(KEY_M)) {
-        if (client_mode == kage::sync::ReplicationClientMode::Snap) {
-            set_mode(kage::sync::ReplicationClientMode::BufferedInterpolation);
-        } else if (client_mode == kage::sync::ReplicationClientMode::BufferedInterpolation) {
-            set_mode(kage::sync::ReplicationClientMode::Predict);
+        if (client_mode == ashiato::sync::ReplicationClientMode::Snap) {
+            set_mode(ashiato::sync::ReplicationClientMode::BufferedInterpolation);
+        } else if (client_mode == ashiato::sync::ReplicationClientMode::BufferedInterpolation) {
+            set_mode(ashiato::sync::ReplicationClientMode::Predict);
         } else {
-            set_mode(kage::sync::ReplicationClientMode::Snap);
+            set_mode(ashiato::sync::ReplicationClientMode::Snap);
         }
     }
     if (IsKeyPressed(KEY_ONE)) {
-        set_mode(kage::sync::ReplicationClientMode::Snap);
+        set_mode(ashiato::sync::ReplicationClientMode::Snap);
     }
     if (IsKeyPressed(KEY_TWO)) {
-        set_mode(kage::sync::ReplicationClientMode::BufferedInterpolation);
+        set_mode(ashiato::sync::ReplicationClientMode::BufferedInterpolation);
     }
     if (IsKeyPressed(KEY_THREE)) {
-        set_mode(kage::sync::ReplicationClientMode::Predict);
+        set_mode(ashiato::sync::ReplicationClientMode::Predict);
     }
 }
 
 void remember_client_entity(
-    std::vector<kage::sync::ClientEntityNetworkId>& known_entities,
-    kage::sync::ClientEntityNetworkId network_id) {
-    if (network_id == kage::sync::invalid_client_entity_network_id) {
+    std::vector<ashiato::sync::ClientEntityNetworkId>& known_entities,
+    ashiato::sync::ClientEntityNetworkId network_id) {
+    if (network_id == ashiato::sync::invalid_client_entity_network_id) {
         return;
     }
     if (std::find(known_entities.begin(), known_entities.end(), network_id) == known_entities.end()) {
@@ -883,13 +883,13 @@ void update_entity_count_hotkeys(int& target_ball_count) {
     }
 }
 
-kage::sync::ReplicationPrioritizerFn make_sphere_prioritizer(ecs::Registry& registry) {
+ashiato::sync::ReplicationPrioritizerFn make_sphere_prioritizer(ashiato::Registry& registry) {
     static constexpr float inner_filter_radius_sq = 0.75f * 0.75f;
     static constexpr float priority_radius_sq = 12.0f * 12.0f;
     static constexpr float priority_scale = 1000.0f;
 
-    return [&registry](kage::sync::ClientId, kage::sync::ReplicationPriorityObject object) {
-        kage::sync::ReplicationPriorityDecision decision;
+    return [&registry](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject object) {
+        ashiato::sync::ReplicationPriorityDecision decision;
         decision.component_mask = std::numeric_limits<std::uint64_t>::max();
 
         const BallPosition* position = registry.try_get<BallPosition>(object.entity);
@@ -959,13 +959,13 @@ void draw_contact_link(Vector3 from, Vector3 to) {
     DrawCylinderEx(from, to, ball_contact_line_radius, ball_contact_line_radius, 8, Color{255, 245, 90, 230});
 }
 
-const char* client_mode_name(kage::sync::ReplicationClientMode mode) {
+const char* client_mode_name(ashiato::sync::ReplicationClientMode mode) {
     switch (mode) {
-    case kage::sync::ReplicationClientMode::Snap:
+    case ashiato::sync::ReplicationClientMode::Snap:
         return "snap";
-    case kage::sync::ReplicationClientMode::BufferedInterpolation:
+    case ashiato::sync::ReplicationClientMode::BufferedInterpolation:
         return "buffered";
-    case kage::sync::ReplicationClientMode::Predict:
+    case ashiato::sync::ReplicationClientMode::Predict:
         return "predict";
     }
     return "snap";
@@ -974,17 +974,17 @@ const char* client_mode_name(kage::sync::ReplicationClientMode mode) {
 void draw_stats_overlay(
     const RuntimeStats& stats,
     const LinkSettings& link,
-    kage::sync::ReplicationClientMode client_mode,
+    ashiato::sync::ReplicationClientMode client_mode,
     int target_ball_count,
-    kage::sync::SyncFrame buffered_frame_lag,
-    const kage::sync::ReplicationServer::ClientBandwidthStats& bandwidth,
-    const kage::sync::ReplicationClientTimingStats& timing
-#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+    ashiato::sync::SyncFrame buffered_frame_lag,
+    const ashiato::sync::ReplicationServer::ClientBandwidthStats& bandwidth,
+    const ashiato::sync::ReplicationClientTimingStats& timing
+#ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     ,
-    const kage::sync::ReplicationClientInterpolationDiagnostics& interpolation_diagnostics
+    const ashiato::sync::ReplicationClientInterpolationDiagnostics& interpolation_diagnostics
 #endif
 ) {
-#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+#ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     const Rectangle panel{16.0f, 16.0f, 560.0f, 306.0f};
 #else
     const Rectangle panel{16.0f, 16.0f, 560.0f, 280.0f};
@@ -1088,7 +1088,7 @@ void draw_stats_overlay(
         16,
         Color{215, 220, 230, 255});
 
-#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+#ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     DrawText(
         TextFormat(
             "recent interpolation starvation %.2f%%  %llu / %llu",
@@ -1104,7 +1104,7 @@ void draw_stats_overlay(
 #endif
 
     const float scale = std::max(stats.down_kbps.max_value(), stats.up_kbps.max_value());
-#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+#ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     const Rectangle graph{28.0f, 266.0f, 404.0f, 34.0f};
 #else
     const Rectangle graph{28.0f, 246.0f, 404.0f, 34.0f};
@@ -1121,8 +1121,8 @@ void draw_stats_overlay(
 int main(int argc, char** argv) {
     constexpr double server_fixed_dt_seconds = 1.0 / 30.0;
     constexpr float server_fixed_dt = static_cast<float>(server_fixed_dt_seconds);
-    kage::sync::ReplicationClientMode client_mode = kage::sync::ReplicationClientMode::Snap;
-    kage::sync::SyncFrame buffered_frame_lag = 2;
+    ashiato::sync::ReplicationClientMode client_mode = ashiato::sync::ReplicationClientMode::Snap;
+    ashiato::sync::SyncFrame buffered_frame_lag = 2;
     bool auto_buffered_frame_lag = true;
     float buffered_time_dilation_min = 0.95f;
     float buffered_time_dilation_max = 1.05f;
@@ -1136,7 +1136,7 @@ int main(int argc, char** argv) {
     int target_ball_count = 96;
     std::string trace_dir;
     bool trace_frame_data = true;
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     bool trace_packet_logs = false;
 #endif
     for (int index = 1; index < argc; ++index) {
@@ -1150,11 +1150,11 @@ int main(int argc, char** argv) {
         if (arg == "--client-mode") {
             const std::string value = require_value();
             if (value == "snap") {
-                client_mode = kage::sync::ReplicationClientMode::Snap;
+                client_mode = ashiato::sync::ReplicationClientMode::Snap;
             } else if (value == "buffered-interpolation") {
-                client_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+                client_mode = ashiato::sync::ReplicationClientMode::BufferedInterpolation;
             } else if (value == "predict") {
-                client_mode = kage::sync::ReplicationClientMode::Predict;
+                client_mode = ashiato::sync::ReplicationClientMode::Predict;
             } else {
                 throw std::runtime_error("--client-mode must be snap, buffered-interpolation, or predict");
             }
@@ -1197,11 +1197,11 @@ int main(int argc, char** argv) {
         } else if (arg == "--entities") {
             target_ball_count = std::clamp(std::stoi(require_value()), min_ball_count, max_ball_count);
         } else if (arg == "--trace-dir") {
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
             trace_dir = require_value();
 #else
             (void)require_value();
-            throw std::runtime_error("--trace-dir requires a build with KAGE_SYNC_ENABLE_TRACING=ON");
+            throw std::runtime_error("--trace-dir requires a build with ASHIATO_SYNC_ENABLE_TRACING=ON");
 #endif
         } else if (arg == "--trace-frame-data") {
             const std::string value = require_value();
@@ -1213,7 +1213,7 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("--trace-frame-data must be on or off");
             }
         } else if (arg == "--trace-packet-logs") {
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
             const std::string value = require_value();
             if (value == "on" || value == "true" || value == "1") {
                 trace_packet_logs = true;
@@ -1224,7 +1224,7 @@ int main(int argc, char** argv) {
             }
 #else
             (void)require_value();
-            throw std::runtime_error("--trace-packet-logs requires a build with KAGE_SYNC_TRACE_PACKET_LOGS=ON");
+            throw std::runtime_error("--trace-packet-logs requires a build with ASHIATO_SYNC_TRACE_PACKET_LOGS=ON");
 #endif
         } else if (arg == "--auto-buffered-frame-lag") {
             const std::string value = require_value();
@@ -1251,12 +1251,10 @@ int main(int argc, char** argv) {
     WSAStartup(MAKEWORD(2, 2), &data);
 #endif
 
-    ecs::Registry server_registry;
-    kage::sync::configure_server(server_registry);
+    ashiato::Registry server_registry;
     const SyncSchema server_schema = define_schema(server_registry);
 
-    ecs::Registry client_registry;
-    kage::sync::configure_client(client_registry, client_id);
+    ashiato::Registry client_registry;
     const SyncSchema client_schema = define_schema(client_registry, true);
 
     SocketHandle server_socket = make_udp_socket(server_port);
@@ -1270,7 +1268,7 @@ int main(int argc, char** argv) {
     upstream_link.settings = link_settings;
     RuntimeStats stats;
 
-    kage::sync::ReplicationServerOptions server_options;
+    ashiato::sync::ReplicationServerOptions server_options;
     bandwidth_initial_bytes_per_second =
         std::clamp(bandwidth_initial_bytes_per_second, bandwidth_min_bytes_per_second, bandwidth_max_bytes_per_second);
     server_options.bandwidth_limit_bytes_per_tick = static_bandwidth_limit_bytes_per_tick;
@@ -1285,27 +1283,28 @@ int main(int argc, char** argv) {
         static_cast<std::size_t>(
             std::ceil(static_cast<double>(server_options.bandwidth.max_bytes_per_second) * server_fixed_dt_seconds)));
     server_options.prioritizer = make_sphere_prioritizer(server_registry);
-    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
         if (client_connected) {
             ++stats.server_packets;
             queue_packet(downstream_link, server_socket, client_address, packet, stats, true);
         }
     };
-#ifdef KAGE_SYNC_ENABLE_TRACING
-    kage::sync::TraceOptions trace_options;
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    ashiato::sync::TraceOptions trace_options;
     trace_options.enabled = !trace_dir.empty();
     trace_options.directory = trace_dir;
     trace_options.frame_data = trace_frame_data;
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     trace_options.packet_logs = trace_packet_logs;
 #endif
     server_options.trace = trace_options;
 #endif
-    kage::sync::ReplicationServer server(server_options);
-    std::vector<kage::sync::ClientEntityNetworkId> known_client_entities;
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
+    std::vector<ashiato::sync::ClientEntityNetworkId> known_client_entities;
     known_client_entities.reserve(max_ball_count);
-    kage::sync::ReplicationClientOptions client_options;
+    ashiato::sync::ReplicationClientOptions client_options;
     client_options.network.mtu_bytes = 1200;
+    client_options.session.local_client = client_id;
     client_options.entities.default_mode = client_mode;
     client_options.buffered.buffered_frame_lag = buffered_frame_lag;
     client_options.buffered.auto_buffered_frame_lag = auto_buffered_frame_lag;
@@ -1314,19 +1313,19 @@ int main(int argc, char** argv) {
     client_options.buffered.auto_buffered_time_dilation_min = buffered_time_dilation_min;
     client_options.buffered.auto_buffered_time_dilation_max = buffered_time_dilation_max;
     client_options.buffered.auto_buffered_time_dilation_gain = buffered_time_dilation_gain;
-    client_options.entities.mode_selector = [&](const kage::sync::ReplicatedEntityUpdateView& update) {
+    client_options.entities.mode_selector = [&](const ashiato::sync::ReplicatedEntityUpdateView& update) {
         remember_client_entity(known_client_entities, update.client_entity_network_id);
         return client_mode;
     };
     client_options.clock.fixed_dt_seconds = 1.0 / 30.0;
-    client_options.prediction.rollback_policy = kage::sync::ReplicationRollbackPolicy::OnlyAffected;
-#ifdef KAGE_SYNC_ENABLE_TRACING
+    client_options.prediction.rollback_policy = ashiato::sync::ReplicationRollbackPolicy::OnlyAffected;
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     client_options.trace = trace_options;
 #endif
-    kage::sync::ReplicationClient client(client_registry, client_options);
+    ashiato::sync::ReplicationClient client(client_registry, client_options);
     register_client_prediction_jobs(client_registry, client);
 
-    InitWindow(1280, 720, "kage-sync localhost balls");
+    InitWindow(1280, 720, "ashiato-sync localhost balls");
     Camera3D camera{};
     camera.position = Vector3{0.0f, 5.5f, 9.0f};
     camera.target = Vector3{0.0f, 0.0f, 0.0f};
@@ -1339,9 +1338,9 @@ int main(int argc, char** argv) {
     rendered_balls.reserve(max_ball_count);
     int spawn_index = 0;
     float server_accumulator = 0.0f;
-    kage::sync::SyncFrame server_frame = 0;
+    ashiato::sync::SyncFrame server_frame = 0;
     send_hello(client_socket, server_address);
-    client.set_packet_sender([&](const ecs::BitBuffer& packet) {
+    client.set_packet_sender([&](const ashiato::BitBuffer& packet) {
         ++stats.client_packets;
         queue_packet(upstream_link, client_socket, server_address, packet, stats, false);
     });
@@ -1358,13 +1357,13 @@ int main(int argc, char** argv) {
         flush_link(upstream_link, client_socket);
         update_bandwidth_samples(stats, dt);
 
-        ecs::BitBuffer received;
+        ashiato::BitBuffer received;
         sockaddr_in sender{};
         while (receive_packet(server_socket, received, &sender)) {
-            ecs::BitBuffer read = received;
+            ashiato::BitBuffer read = received;
             const auto message = static_cast<std::uint8_t>(read.read_bits(8U));
             if (message == example_client_hello_message) {
-                const auto id = static_cast<kage::sync::ClientId>(read.read_unsigned_bits(64U));
+                const auto id = static_cast<ashiato::sync::ClientId>(read.read_unsigned_bits(64U));
                 if (id == client_id) {
                     client_address = sender;
                     client_connected = true;
@@ -1398,31 +1397,31 @@ int main(int argc, char** argv) {
         stats.server_entities = static_cast<int>(balls.size());
 
         while (receive_packet(client_socket, received)) {
-            ecs::BitBuffer read = received;
+            ashiato::BitBuffer read = received;
             if (read.remaining_bits() >= 40U &&
-                static_cast<std::uint8_t>(read.read_bits(8U)) == kage::sync::protocol::server_update_message) {
-                stats.frame = static_cast<kage::sync::SyncFrame>(read.read_bits(32U));
+                static_cast<std::uint8_t>(read.read_bits(8U)) == ashiato::sync::protocol::server_update_message) {
+                stats.frame = static_cast<ashiato::sync::SyncFrame>(read.read_bits(32U));
             }
             client.receive_packet(received);
             buffered_frame_lag = client.current_buffered_frame_lag();
         }
         client.tick(client_registry, dt);
-        std::vector<ecs::Entity> expired_flashes;
-        client_registry.view<BallCueFlash>().each([&](ecs::Entity entity, BallCueFlash& flash) {
+        std::vector<ashiato::Entity> expired_flashes;
+        client_registry.view<BallCueFlash>().each([&](ashiato::Entity entity, BallCueFlash& flash) {
             flash.seconds -= dt;
             if (flash.seconds <= 0.0f) {
                 expired_flashes.push_back(entity);
             }
         });
-        for (ecs::Entity entity : expired_flashes) {
+        for (ashiato::Entity entity : expired_flashes) {
             client_registry.remove<BallCueFlash>(entity);
         }
-        stats.estimated_server_frame = static_cast<kage::sync::SyncFrame>(client.estimated_server_frame());
+        stats.estimated_server_frame = static_cast<ashiato::sync::SyncFrame>(client.estimated_server_frame());
         stats.client_frame = client.buffered_frame();
 
         int visible_entities = 0;
         client_registry.view<const BallPosition, const BallVisual>().each(
-            [&](ecs::Entity, const BallPosition&, const BallVisual&) {
+            [&](ashiato::Entity, const BallPosition&, const BallVisual&) {
                 ++visible_entities;
             });
         stats.client_entities = visible_entities;
@@ -1433,7 +1432,7 @@ int main(int argc, char** argv) {
         DrawGrid(12, 1.0f);
         const float pulse_time = static_cast<float>(GetTime());
         rendered_balls.clear();
-        for (const kage::sync::FractionalTickSample& entity : client.fractional_tick_frame(client_registry).entities) {
+        for (const ashiato::sync::FractionalTickSample& entity : client.fractional_tick_frame(client_registry).entities) {
             BallPosition position;
             if (!entity.try_get_sampled_value(client_registry, position)) {
                 continue;
@@ -1455,7 +1454,7 @@ int main(int argc, char** argv) {
             remember_client_entity(known_client_entities, entity.client_entity_network_id);
         }
 
-        auto find_rendered_position = [&](kage::sync::ClientEntityNetworkId network_id, Vector3& out) {
+        auto find_rendered_position = [&](ashiato::sync::ClientEntityNetworkId network_id, Vector3& out) {
             for (const RenderedBall& ball : rendered_balls) {
                 if (ball.network_id == network_id) {
                     out = ball.position;
@@ -1463,7 +1462,7 @@ int main(int argc, char** argv) {
                 }
             }
 
-            const ecs::Entity local = client.local_entity(network_id);
+            const ashiato::Entity local = client.local_entity(network_id);
             if (!local || !client_registry.alive(local)) {
                 return false;
             }
@@ -1476,8 +1475,8 @@ int main(int argc, char** argv) {
         };
 
         for (const RenderedBall& ball : rendered_balls) {
-            const kage::sync::ClientEntityNetworkId target = ball.contact.target.client_entity_network_id;
-            if (target == kage::sync::invalid_client_entity_network_id) {
+            const ashiato::sync::ClientEntityNetworkId target = ball.contact.target.client_entity_network_id;
+            if (target == ashiato::sync::invalid_client_entity_network_id) {
                 continue;
             }
             Vector3 target_position{};
@@ -1526,12 +1525,12 @@ int main(int argc, char** argv) {
             buffered_frame_lag,
             server.bandwidth_stats(client_id),
             client.timing_stats()
-#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+#ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
                 ,
             client.interpolation_diagnostics()
 #endif
         );
-#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+#ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
         DrawFPS(28, 306);
 #else
         DrawFPS(28, 282);
@@ -1540,7 +1539,7 @@ int main(int argc, char** argv) {
     }
 
     CloseWindow();
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     client.close_trace();
     server.close_trace();
 #endif

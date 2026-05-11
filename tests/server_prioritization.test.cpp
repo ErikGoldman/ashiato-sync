@@ -1,6 +1,6 @@
 #include "test_protocol.hpp"
 
-#include "kage/sync/simulated_link.hpp"
+#include "ashiato/sync/simulated_link.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -14,31 +14,31 @@
 #include <utility>
 #include <vector>
 
-using namespace kage_sync_tests;
+using namespace ashiato_sync_tests;
 
 TEST_CASE("replication prioritizer refreshes cached decisions by replicated slot bucket") {
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
-    const ecs::Entity entity = registry.create();
-    REQUIRE(registry.add<kage_sync_tests::Position>(entity, kage_sync_tests::Position{1.0f, 1.0f}) != nullptr);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+    const ashiato::Entity entity = registry.create();
+    REQUIRE(registry.add<ashiato_sync_tests::Position>(entity, ashiato_sync_tests::Position{1.0f, 1.0f}) != nullptr);
     REQUIRE(start_sync(registry, entity, archetype));
 
     std::size_t prioritizer_calls = 0;
-    std::vector<ecs::BitBuffer> payloads;
-    kage::sync::ReplicationServerOptions options;
+    std::vector<ashiato::BitBuffer> payloads;
+    ashiato::sync::ReplicationServerOptions options;
     options.prioritizer_interval_frames = 3;
-    options.prioritizer = [&](kage::sync::ClientId, kage::sync::ReplicationPriorityObject object) {
+    options.prioritizer = [&](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject object) {
         ++prioritizer_calls;
         REQUIRE(object.entity == entity);
-        kage::sync::ReplicationPriorityDecision decision;
+        ashiato::sync::ReplicationPriorityDecision decision;
         decision.priority = prioritizer_calls == 1 ? 10.0f : 100.0f;
         return decision;
     };
-    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
 
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -59,20 +59,20 @@ TEST_CASE("replication prioritizer refreshes cached decisions by replicated slot
 
     server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(prioritizer_calls == 3);
-    REQUIRE(read_server_update(payloads.back(), 2U, sizeof(kage_sync_tests::Position) * 8U).entities.size() == 1);
+    REQUIRE(read_server_update(payloads.back(), 2U, sizeof(ashiato_sync_tests::Position) * 8U).entities.size() == 1);
 }
 
 TEST_CASE("replication prioritizer priority affects serialized send order") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "NetworkedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
-    const ecs::Entity low = registry.create();
-    const ecs::Entity middle = registry.create();
-    const ecs::Entity high = registry.create();
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity low = registry.create();
+    const ashiato::Entity middle = registry.create();
+    const ashiato::Entity high = registry.create();
     REQUIRE(registry.add<NetworkedPosition>(low, NetworkedPosition{1.0f, 1.0f}) != nullptr);
     REQUIRE(registry.add<NetworkedPosition>(middle, NetworkedPosition{2.0f, 2.0f}) != nullptr);
     REQUIRE(registry.add<NetworkedPosition>(high, NetworkedPosition{3.0f, 3.0f}) != nullptr);
@@ -80,13 +80,13 @@ TEST_CASE("replication prioritizer priority affects serialized send order") {
     REQUIRE(start_sync(registry, middle, archetype));
     REQUIRE(start_sync(registry, high, archetype));
 
-    std::vector<ecs::BitBuffer> payloads;
-    kage::sync::ReplicationServerOptions options;
+    std::vector<ashiato::BitBuffer> payloads;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
     options.mtu_bytes = 21;
     options.prioritizer_interval_frames = 1;
-    options.prioritizer = [&](kage::sync::ClientId, kage::sync::ReplicationPriorityObject object) {
-        kage::sync::ReplicationPriorityDecision decision;
+    options.prioritizer = [&](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject object) {
+        ashiato::sync::ReplicationPriorityDecision decision;
         if (object.entity == high) {
             decision.priority = 100.0f;
         } else if (object.entity == middle) {
@@ -94,11 +94,11 @@ TEST_CASE("replication prioritizer priority affects serialized send order") {
         }
         return decision;
     };
-    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     server.tick(registry, server.options().fixed_dt_seconds);
 
@@ -110,39 +110,39 @@ TEST_CASE("replication prioritizer priority affects serialized send order") {
 }
 
 TEST_CASE("entity references boost visible low priority targets on the next tick") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
-    const ecs::Entity reference_component =
-        kage::sync::register_sync_component<TargetReference>(registry, "TargetReference");
-    const kage::sync::SyncArchetypeId position_archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const ashiato::Entity reference_component =
+        ashiato::sync::register_sync_component<TargetReference>(registry, "TargetReference");
+    const ashiato::sync::SyncArchetypeId position_archetype = ashiato::sync::define_archetype(
         registry,
         "ReferencedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
-    const kage::sync::SyncArchetypeId reference_archetype = kage::sync::define_archetype(
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::sync::SyncArchetypeId reference_archetype = ashiato::sync::define_archetype(
         registry,
         "ReferenceActor",
-        {{reference_component, kage::sync::ReplicationAudience::All}});
+        {{reference_component, ashiato::sync::ReplicationAudience::All}});
 
-    const ecs::Entity source = registry.create();
-    const ecs::Entity target = registry.create();
-    const ecs::Entity medium = registry.create();
+    const ashiato::Entity source = registry.create();
+    const ashiato::Entity target = registry.create();
+    const ashiato::Entity medium = registry.create();
     REQUIRE(registry.add<TargetReference>(
                 source,
-                TargetReference{kage::sync::EntityReference{target}}) != nullptr);
+                TargetReference{ashiato::sync::EntityReference{target}}) != nullptr);
     REQUIRE(registry.add<NetworkedPosition>(target, NetworkedPosition{2.0f, 2.0f}) != nullptr);
     REQUIRE(registry.add<NetworkedPosition>(medium, NetworkedPosition{3.0f, 3.0f}) != nullptr);
     REQUIRE(start_sync(registry, source, reference_archetype));
     REQUIRE(start_sync(registry, target, position_archetype));
     REQUIRE(start_sync(registry, medium, position_archetype));
 
-    std::vector<ecs::BitBuffer> payloads;
-    kage::sync::ReplicationServerOptions options;
+    std::vector<ashiato::BitBuffer> payloads;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 21;
     options.mtu_bytes = 21;
     options.prioritizer_interval_frames = 1;
-    options.prioritizer = [&](kage::sync::ClientId, kage::sync::ReplicationPriorityObject object) {
-        kage::sync::ReplicationPriorityDecision decision;
+    options.prioritizer = [&](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject object) {
+        ashiato::sync::ReplicationPriorityDecision decision;
         if (object.entity == source) {
             decision.priority = 100.0f;
         } else if (object.entity == medium) {
@@ -150,11 +150,11 @@ TEST_CASE("entity references boost visible low priority targets on the next tick
         }
         return decision;
     };
-    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     server.tick(registry, server.options().fixed_dt_seconds);
 
@@ -162,13 +162,13 @@ TEST_CASE("entity references boost visible low priority targets on the next tick
     ServerUpdatePacket update = read_server_update(
         payloads.back(),
         2U,
-        1U + kage::sync::protocol::network_entity_id_encoded_bits(2U));
+        1U + ashiato::sync::protocol::network_entity_id_encoded_bits(2U));
     REQUIRE(update.entities.size() == 1);
     REQUIRE(update.entities[0].archetype == reference_archetype);
     REQUIRE(update.entities[0].components.size() == 1);
     REQUIRE(update.entities[0].components[0].payload.read_bool());
     std::uint32_t referenced_network_id = 0;
-    REQUIRE(kage::sync::protocol::read_network_entity_id(
+    REQUIRE(ashiato::sync::protocol::read_network_entity_id(
         update.entities[0].components[0].payload,
         referenced_network_id));
     REQUIRE(referenced_network_id != 0U);
@@ -184,37 +184,37 @@ TEST_CASE("entity references boost visible low priority targets on the next tick
 }
 
 TEST_CASE("replication prioritizer component masks apply to delta updates") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
-    const ecs::Entity health_component = kage::sync::register_sync_component<Health>(registry, "Health");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const ashiato::Entity health_component = ashiato::sync::register_sync_component<Health>(registry, "Health");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "MaskedActor",
         {
-            {position_component, kage::sync::ReplicationAudience::All},
-            {health_component, kage::sync::ReplicationAudience::All},
+            {position_component, ashiato::sync::ReplicationAudience::All},
+            {health_component, ashiato::sync::ReplicationAudience::All},
         });
-    const ecs::Entity entity = registry.create();
+    const ashiato::Entity entity = registry.create();
     REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
     REQUIRE(registry.add<Health>(entity, Health{25}) != nullptr);
     REQUIRE(start_sync(registry, entity, archetype));
 
     std::uint64_t component_mask = std::numeric_limits<std::uint64_t>::max();
-    std::vector<ecs::BitBuffer> payloads;
-    kage::sync::ReplicationServerOptions options;
+    std::vector<ashiato::BitBuffer> payloads;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
     options.prioritizer_interval_frames = 1;
-    options.prioritizer = [&](kage::sync::ClientId, kage::sync::ReplicationPriorityObject) {
-        kage::sync::ReplicationPriorityDecision decision;
+    options.prioritizer = [&](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject) {
+        ashiato::sync::ReplicationPriorityDecision decision;
         decision.component_mask = component_mask;
         return decision;
     };
-    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 1);
@@ -243,31 +243,31 @@ TEST_CASE("replication prioritizer component masks apply to delta updates") {
 }
 
 TEST_CASE("replication prioritizer can emit an entity record with an all-zero component mask") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "ZeroMaskActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
-    const ecs::Entity entity = registry.create();
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity entity = registry.create();
     REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
     REQUIRE(start_sync(registry, entity, archetype));
 
-    std::vector<ecs::BitBuffer> payloads;
-    kage::sync::ReplicationServerOptions options;
+    std::vector<ashiato::BitBuffer> payloads;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
     options.prioritizer_interval_frames = 1;
-    options.prioritizer = [&](kage::sync::ClientId, kage::sync::ReplicationPriorityObject) {
-        kage::sync::ReplicationPriorityDecision decision;
+    options.prioritizer = [&](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject) {
+        ashiato::sync::ReplicationPriorityDecision decision;
         decision.component_mask = 0;
         return decision;
     };
-    options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& payload) {
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     server.tick(registry, server.options().fixed_dt_seconds);
 
@@ -279,37 +279,37 @@ TEST_CASE("replication prioritizer can emit an entity record with an all-zero co
 }
 
 TEST_CASE("replication prioritizer applies independent decisions per client") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "PerClientActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
-    const ecs::Entity first = registry.create();
-    const ecs::Entity second = registry.create();
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity first = registry.create();
+    const ashiato::Entity second = registry.create();
     REQUIRE(registry.add<NetworkedPosition>(first, NetworkedPosition{1.0f, 1.0f}) != nullptr);
     REQUIRE(registry.add<NetworkedPosition>(second, NetworkedPosition{2.0f, 2.0f}) != nullptr);
     REQUIRE(start_sync(registry, first, archetype));
     REQUIRE(start_sync(registry, second, archetype));
 
-    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> payloads;
-    kage::sync::ReplicationServerOptions options;
+    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> payloads;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
     options.prioritizer_interval_frames = 1;
-    options.prioritizer = [&](kage::sync::ClientId client, kage::sync::ReplicationPriorityObject object) {
-        kage::sync::ReplicationPriorityDecision decision;
+    options.prioritizer = [&](ashiato::sync::ClientId client, ashiato::sync::ReplicationPriorityObject object) {
+        ashiato::sync::ReplicationPriorityDecision decision;
         decision.priority =
             client == 1
             ? (object.entity == first ? 100.0f : 10.0f)
             : (object.entity == second ? 100.0f : 10.0f);
         return decision;
     };
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         payloads.push_back({client, payload});
     };
 
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -331,38 +331,38 @@ TEST_CASE("replication prioritizer applies independent decisions per client") {
 }
 
 TEST_CASE("replication prioritizer decisions are honored by the parallel serialized path") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "ParallelPrioritizedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
-    const ecs::Entity first = registry.create();
-    const ecs::Entity second = registry.create();
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity first = registry.create();
+    const ashiato::Entity second = registry.create();
     REQUIRE(registry.add<NetworkedPosition>(first, NetworkedPosition{1.0f, 1.0f}) != nullptr);
     REQUIRE(registry.add<NetworkedPosition>(second, NetworkedPosition{2.0f, 2.0f}) != nullptr);
     REQUIRE(start_sync(registry, first, archetype));
     REQUIRE(start_sync(registry, second, archetype));
 
-    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> payloads;
-    kage::sync::ReplicationServerOptions options;
+    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> payloads;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
     options.serialized_worker_threads = 2;
     options.prioritizer_interval_frames = 1;
-    options.prioritizer = [&](kage::sync::ClientId client, kage::sync::ReplicationPriorityObject object) {
-        kage::sync::ReplicationPriorityDecision decision;
+    options.prioritizer = [&](ashiato::sync::ClientId client, ashiato::sync::ReplicationPriorityObject object) {
+        ashiato::sync::ReplicationPriorityDecision decision;
         decision.priority =
             client == 1
             ? (object.entity == first ? 100.0f : 10.0f)
             : (object.entity == second ? 100.0f : 10.0f);
         return decision;
     };
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         payloads.push_back({client, payload});
     };
 
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     server.tick(registry, server.options().fixed_dt_seconds);

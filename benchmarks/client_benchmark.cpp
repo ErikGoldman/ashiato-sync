@@ -8,25 +8,21 @@
 
 namespace {
 
-using namespace kage::sync::benchmarks;
+using namespace ashiato::sync::benchmarks;
 
 void BM_ClientReceiveSnap(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ashiato::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
+        ashiato::Registry registry;
         define_client_delta_schema(registry, false);
-        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
-        kage::sync::ReplicationClientNetworkOptions{1200},
-        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::Snap},
-        kage::sync::ReplicationClientBufferedOptions{2,
-            64}});
+        ashiato::sync::ReplicationClient client(registry, make_client_options(ashiato::sync::ReplicationClientMode::Snap));
         state.ResumeTiming();
 
-        for (const ecs::BitBuffer& packet : packets) {
+        for (const ashiato::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
     }
@@ -37,20 +33,16 @@ void BM_ClientReceiveSnap(benchmark::State& state) {
 void BM_ClientReceiveBufferedInterpolation(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ashiato::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
+        ashiato::Registry registry;
         define_client_delta_schema(registry, true);
-        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
-        kage::sync::ReplicationClientNetworkOptions{1200},
-        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::BufferedInterpolation},
-        kage::sync::ReplicationClientBufferedOptions{2,
-            64}});
+        ashiato::sync::ReplicationClient client(registry, make_client_options(ashiato::sync::ReplicationClientMode::BufferedInterpolation));
         state.ResumeTiming();
 
-        for (const ecs::BitBuffer& packet : packets) {
+        for (const ashiato::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
     }
@@ -61,19 +53,19 @@ void BM_ClientReceiveBufferedInterpolation(benchmark::State& state) {
 void BM_ClientReceivePredict(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ashiato::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
+        ashiato::Registry registry;
         define_client_delta_schema(registry, false);
-        kage::sync::ReplicationClientOptions options;
+        ashiato::sync::ReplicationClientOptions options;
         options.network.mtu_bytes = 1200;
-        options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
-        kage::sync::ReplicationClient client(registry, options);
+        options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+        ashiato::sync::ReplicationClient client(registry, options);
         state.ResumeTiming();
 
-        for (const ecs::BitBuffer& packet : packets) {
+        for (const ashiato::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
     }
@@ -84,25 +76,25 @@ void BM_ClientReceivePredict(benchmark::State& state) {
 void BM_ClientReceiveMixedEntityModes(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ashiato::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
+        ashiato::Registry registry;
         define_client_delta_schema(registry, true);
-        kage::sync::ReplicationClientOptions options;
+        ashiato::sync::ReplicationClientOptions options;
         options.network.mtu_bytes = 1200;
-        options.entities.default_mode = kage::sync::ReplicationClientMode::Snap;
+        options.entities.default_mode = ashiato::sync::ReplicationClientMode::Snap;
         options.buffered.buffered_frame_lag = 2;
-        options.entities.mode_selector = [](const kage::sync::ReplicatedEntityUpdateView& update) {
-            return (kage::sync::client_entity_network_id_wire_id(update.client_entity_network_id) & 1U) == 0U
-                ? kage::sync::ReplicationClientMode::BufferedInterpolation
-                : kage::sync::ReplicationClientMode::Snap;
+        options.entities.mode_selector = [](const ashiato::sync::ReplicatedEntityUpdateView& update) {
+            return (ashiato::sync::client_entity_network_id_wire_id(update.client_entity_network_id) & 1U) == 0U
+                ? ashiato::sync::ReplicationClientMode::BufferedInterpolation
+                : ashiato::sync::ReplicationClientMode::Snap;
         };
-        kage::sync::ReplicationClient client(registry, std::move(options));
+        ashiato::sync::ReplicationClient client(registry, std::move(options));
         state.ResumeTiming();
 
-        for (const ecs::BitBuffer& packet : packets) {
+        for (const ashiato::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
     }
@@ -113,24 +105,20 @@ void BM_ClientReceiveMixedEntityModes(benchmark::State& state) {
 void BM_ClientApplyBufferedInterpolation(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ashiato::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
+        ashiato::Registry registry;
         define_client_delta_schema(registry, true);
-        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
-        kage::sync::ReplicationClientNetworkOptions{1200},
-        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::BufferedInterpolation},
-        kage::sync::ReplicationClientBufferedOptions{2,
-            64}});
-        for (const ecs::BitBuffer& packet : packets) {
+        ashiato::sync::ReplicationClient client(registry, make_client_options(ashiato::sync::ReplicationClientMode::BufferedInterpolation));
+        for (const ashiato::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
         state.ResumeTiming();
 
         for (int frame = 2; frame < frame_count + 2; ++frame) {
-            benchmark::DoNotOptimize(client.apply_frame(registry, static_cast<kage::sync::SyncFrame>(frame)));
+            benchmark::DoNotOptimize(client.apply_frame(registry, static_cast<ashiato::sync::SyncFrame>(frame)));
         }
     }
 
@@ -140,16 +128,16 @@ void BM_ClientApplyBufferedInterpolation(benchmark::State& state) {
 void BM_ClientPredictTickQuantize(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, 1);
+    const std::vector<ashiato::BitBuffer> packets = make_client_receive_packets(entity_count, 1);
 
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
+        ashiato::Registry registry;
         define_client_delta_schema(registry, false);
-        kage::sync::ReplicationClientOptions options;
-        options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
-        kage::sync::ReplicationClient client(registry, options);
-        for (const ecs::BitBuffer& packet : packets) {
+        ashiato::sync::ReplicationClientOptions options;
+        options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+        ashiato::sync::ReplicationClient client(registry, options);
+        for (const ashiato::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
         state.ResumeTiming();
@@ -166,26 +154,22 @@ void BM_ClientPredictTickQuantize(benchmark::State& state) {
 void BM_ClientSampleFractionalTick(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ashiato::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
+        ashiato::Registry registry;
         define_client_delta_schema(registry, true);
-        kage::sync::set_fractional_tick_sampled<DeltaPosition>(registry);
-        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
-        kage::sync::ReplicationClientNetworkOptions{1200},
-        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::BufferedInterpolation},
-        kage::sync::ReplicationClientBufferedOptions{2,
-            64}});
-        for (const ecs::BitBuffer& packet : packets) {
+        ashiato::sync::set_fractional_tick_sampled<DeltaPosition>(registry);
+        ashiato::sync::ReplicationClient client(registry, make_client_options(ashiato::sync::ReplicationClientMode::BufferedInterpolation));
+        for (const ashiato::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
-        kage::sync::FractionalTickSampleBuffer display;
+        ashiato::sync::FractionalTickSampleBuffer display;
         state.ResumeTiming();
 
         for (int frame = 1; frame < frame_count; ++frame) {
-            benchmark::DoNotOptimize(client.sample_fractional_tick_target_frame(
+            benchmark::DoNotOptimize(client.sample_fractional_tick_frame(
                 registry,
                 static_cast<double>(frame) + 0.5,
                 display));
@@ -199,27 +183,23 @@ void BM_ClientSampleFractionalTick(benchmark::State& state) {
 void BM_ClientSampleFractionalTickLargePayload(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<ecs::BitBuffer> packets =
+    const std::vector<ashiato::BitBuffer> packets =
         make_large_payload_client_receive_packets(entity_count, frame_count);
 
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
+        ashiato::Registry registry;
         define_client_large_payload_schema(registry);
-        kage::sync::set_fractional_tick_sampled<LargePayload>(registry);
-        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
-        kage::sync::ReplicationClientNetworkOptions{1200},
-        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::BufferedInterpolation},
-        kage::sync::ReplicationClientBufferedOptions{2,
-            64}});
-        for (const ecs::BitBuffer& packet : packets) {
+        ashiato::sync::set_fractional_tick_sampled<LargePayload>(registry);
+        ashiato::sync::ReplicationClient client(registry, make_client_options(ashiato::sync::ReplicationClientMode::BufferedInterpolation));
+        for (const ashiato::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
-        kage::sync::FractionalTickSampleBuffer display;
+        ashiato::sync::FractionalTickSampleBuffer display;
         state.ResumeTiming();
 
         for (int frame = 1; frame < frame_count; ++frame) {
-            benchmark::DoNotOptimize(client.sample_fractional_tick_target_frame(
+            benchmark::DoNotOptimize(client.sample_fractional_tick_frame(
                 registry,
                 static_cast<double>(frame) + 0.5,
                 display));
@@ -233,24 +213,20 @@ void BM_ClientSampleFractionalTickLargePayload(benchmark::State& state) {
 void BM_ClientDrainAckPackets(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ashiato::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     std::int64_t drained = 0;
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
+        ashiato::Registry registry;
         define_client_delta_schema(registry, false);
-        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
-        kage::sync::ReplicationClientNetworkOptions{1200},
-        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::Snap},
-        kage::sync::ReplicationClientBufferedOptions{2,
-            64}});
-        for (const ecs::BitBuffer& packet : packets) {
+        ashiato::sync::ReplicationClient client(registry, make_client_options(ashiato::sync::ReplicationClientMode::Snap));
+        for (const ashiato::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
         state.ResumeTiming();
 
-        const std::vector<ecs::BitBuffer> acks = client.drain_ack_packets();
+        const std::vector<ashiato::BitBuffer> acks = client.drain_ack_packets();
         drained += static_cast<std::int64_t>(acks.size());
         benchmark::DoNotOptimize(drained);
     }
@@ -261,25 +237,21 @@ void BM_ClientDrainAckPackets(benchmark::State& state) {
 void BM_ClientDrainDuplicateHeavyAckPackets(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ashiato::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     std::int64_t drained = 0;
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
+        ashiato::Registry registry;
         define_client_delta_schema(registry, false);
-        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
-        kage::sync::ReplicationClientNetworkOptions{1200},
-        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::Snap},
-        kage::sync::ReplicationClientBufferedOptions{2,
-            64}});
-        for (const ecs::BitBuffer& packet : packets) {
+        ashiato::sync::ReplicationClient client(registry, make_client_options(ashiato::sync::ReplicationClientMode::Snap));
+        for (const ashiato::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
         state.ResumeTiming();
 
-        const std::vector<ecs::BitBuffer> acks = client.drain_ack_packets();
-        for (const ecs::BitBuffer& ack : acks) {
+        const std::vector<ashiato::BitBuffer> acks = client.drain_ack_packets();
+        for (const ashiato::BitBuffer& ack : acks) {
             drained += static_cast<std::int64_t>(ack.byte_size());
         }
         benchmark::DoNotOptimize(drained);
@@ -295,19 +267,15 @@ void BM_ClientReceiveDestroySnap(benchmark::State& state) {
 
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
+        ashiato::Registry registry;
         define_client_delta_schema(registry, false);
-        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
-        kage::sync::ReplicationClientNetworkOptions{1200},
-        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::Snap},
-        kage::sync::ReplicationClientBufferedOptions{2,
-            64}});
-        for (const ecs::BitBuffer& packet : packets.initial) {
+        ashiato::sync::ReplicationClient client(registry, make_client_options(ashiato::sync::ReplicationClientMode::Snap));
+        for (const ashiato::BitBuffer& packet : packets.initial) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
         state.ResumeTiming();
 
-        for (const ecs::BitBuffer& packet : packets.destroys) {
+        for (const ashiato::BitBuffer& packet : packets.destroys) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
     }
@@ -321,19 +289,15 @@ void BM_ClientReceiveDestroyBuffered(benchmark::State& state) {
 
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
+        ashiato::Registry registry;
         define_client_delta_schema(registry, true);
-        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
-        kage::sync::ReplicationClientNetworkOptions{1200},
-        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::BufferedInterpolation},
-        kage::sync::ReplicationClientBufferedOptions{2,
-            64}});
-        for (const ecs::BitBuffer& packet : packets.initial) {
+        ashiato::sync::ReplicationClient client(registry, make_client_options(ashiato::sync::ReplicationClientMode::BufferedInterpolation));
+        for (const ashiato::BitBuffer& packet : packets.initial) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
         state.ResumeTiming();
 
-        for (const ecs::BitBuffer& packet : packets.destroys) {
+        for (const ashiato::BitBuffer& packet : packets.destroys) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
     }
@@ -347,22 +311,18 @@ void BM_ClientReceiveSpawnDestroyChurn(benchmark::State& state) {
 
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
+        ashiato::Registry registry;
         define_client_delta_schema(registry, false);
-        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
-        kage::sync::ReplicationClientNetworkOptions{1200},
-        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::Snap},
-        kage::sync::ReplicationClientBufferedOptions{2,
-            64}});
-        for (const ecs::BitBuffer& packet : packets.initial) {
+        ashiato::sync::ReplicationClient client(registry, make_client_options(ashiato::sync::ReplicationClientMode::Snap));
+        for (const ashiato::BitBuffer& packet : packets.initial) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
         state.ResumeTiming();
 
-        for (const ecs::BitBuffer& packet : packets.destroys) {
+        for (const ashiato::BitBuffer& packet : packets.destroys) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
-        for (const ecs::BitBuffer& packet : packets.respawns) {
+        for (const ashiato::BitBuffer& packet : packets.respawns) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
     }
@@ -373,19 +333,19 @@ void BM_ClientReceiveSpawnDestroyChurn(benchmark::State& state) {
 void BM_ClientTickBufferedAutoInterpolation(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
-    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
+    const std::vector<ashiato::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
+        ashiato::Registry registry;
         define_client_delta_schema(registry, true);
-        kage::sync::ReplicationClientOptions options;
+        ashiato::sync::ReplicationClientOptions options;
         options.network.mtu_bytes = 1200;
-        options.entities.default_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+        options.entities.default_mode = ashiato::sync::ReplicationClientMode::BufferedInterpolation;
         options.buffered.buffered_frame_lag = 2;
         options.buffered.auto_buffered_frame_lag = true;
         options.clock.fixed_dt_seconds = 1.0 / 60.0;
-        kage::sync::ReplicationClient client(registry, options);
+        ashiato::sync::ReplicationClient client(registry, options);
         state.ResumeTiming();
 
         for (std::size_t packet_index = 0; packet_index < packets.size(); ++packet_index) {
@@ -401,16 +361,16 @@ void BM_ClientTickCappedLargeDelta(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int backlog_frames = static_cast<int>(state.range(1));
     const int cap_frames = static_cast<int>(state.range(2));
-    const std::vector<ecs::BitBuffer> packets = make_client_receive_packets(entity_count, 1);
+    const std::vector<ashiato::BitBuffer> packets = make_client_receive_packets(entity_count, 1);
 
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
+        ashiato::Registry registry;
         define_client_delta_schema(registry, true);
-        kage::sync::ReplicationClientOptions options;
-        options.entities.default_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+        ashiato::sync::ReplicationClientOptions options;
+        options.entities.default_mode = ashiato::sync::ReplicationClientMode::BufferedInterpolation;
         options.clock.max_fixed_steps_per_tick = static_cast<std::uint32_t>(cap_frames);
-        kage::sync::ReplicationClient client(options);
+        ashiato::sync::ReplicationClient client(registry, options);
         benchmark::DoNotOptimize(client.receive(registry, packets.front()));
         state.ResumeTiming();
 
@@ -427,20 +387,21 @@ void BM_ClientInputRecordAndDrain(benchmark::State& state) {
 
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
-        kage::sync::register_sync_component<DeltaPosition>(registry, "DeltaPosition");
-        kage::sync::configure_client(registry, 1);
-        kage::sync::set_client_input_component<DeltaPosition>(registry);
-        const ecs::Entity owned = registry.create();
-        kage::sync::set_owner(registry, owned, 1);
-        kage::sync::ReplicationClient client(registry);
+        ashiato::Registry registry;
+        ashiato::sync::register_sync_component<DeltaPosition>(registry, "DeltaPosition");
+        ashiato::sync::ReplicationClientOptions input_options;
+        input_options.session.local_client = 1;
+        ashiato::sync::set_client_input_component<DeltaPosition>(registry);
+        const ashiato::Entity owned = registry.create();
+        ashiato::sync::set_owner(registry, owned, 1);
+        ashiato::sync::ReplicationClient client(registry, input_options);
         state.ResumeTiming();
 
         for (int frame = 0; frame < frame_count; ++frame) {
             benchmark::DoNotOptimize(client.set_input(registry, DeltaPosition{frame, frame + 1}));
             benchmark::DoNotOptimize(client.tick(registry, client.fixed_dt_seconds()));
         }
-        std::vector<ecs::BitBuffer> packets = client.drain_packets();
+        std::vector<ashiato::BitBuffer> packets = client.drain_packets();
         benchmark::DoNotOptimize(packets.size());
     }
 

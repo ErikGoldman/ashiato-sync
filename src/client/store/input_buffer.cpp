@@ -1,17 +1,17 @@
 #include "client/store/input_buffer.hpp"
 
-#include "kage/sync/protocol.hpp"
+#include "ashiato/sync/protocol.hpp"
 
 #include <algorithm>
 #include <cstring>
 #include <limits>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 
 bool ClientInputBuffer::set_latest(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
-    ecs::Entity component,
+    ashiato::Entity component,
     const void* input) {
     if (input == nullptr || !settings.input_component || settings.input_component != component) {
         return false;
@@ -116,7 +116,7 @@ bool ClientInputBuffer::fill_frames_through(
     return true;
 }
 
-bool ClientInputBuffer::apply_frame(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame) const {
+bool ClientInputBuffer::apply_frame(ashiato::Registry& registry, const SyncSettings& settings, SyncFrame frame) const {
     if (!ready_for(settings) || frames_.empty()) {
         return true;
     }
@@ -128,7 +128,7 @@ bool ClientInputBuffer::apply_frame(ecs::Registry& registry, const SyncSettings&
     if (settings.local_client == invalid_client_id || ops_.serialization.push_to_registry == nullptr) {
         return true;
     }
-    registry.view<const NetworkOwner>().each([&](ecs::Entity entity, const NetworkOwner& owner) {
+    registry.view<const NetworkOwner>().each([&](ashiato::Entity entity, const NetworkOwner& owner) {
         if (owner.client == settings.local_client) {
             (void)ops_.serialization.push_to_registry(registry, entity, frame_bytes(slot));
         }
@@ -162,11 +162,11 @@ void ClientInputBuffer::retire_transmit_frames_through(SyncFrame frame) noexcept
     retired_transmit_frame_ = std::max(retired_transmit_frame_, frame);
 }
 
-void ClientInputBuffer::apply_latest_to_owned_entities(ecs::Registry& registry, const SyncSettings& settings) const {
+void ClientInputBuffer::apply_latest_to_owned_entities(ashiato::Registry& registry, const SyncSettings& settings) const {
     if (settings.local_client == invalid_client_id || latest_.empty() || ops_.serialization.push_to_registry == nullptr) {
         return;
     }
-    registry.view<const NetworkOwner>().each([&](ecs::Entity entity, const NetworkOwner& owner) {
+    registry.view<const NetworkOwner>().each([&](ashiato::Entity entity, const NetworkOwner& owner) {
         if (owner.client == settings.local_client) {
             (void)ops_.serialization.push_to_registry(registry, entity, latest_.data());
         }
@@ -177,7 +177,7 @@ bool ClientInputBuffer::drain_packet(
     std::size_t mtu_bytes,
     std::size_t packet_id_bits,
     std::vector<std::uint32_t>& pending_acks,
-    std::vector<ecs::BitBuffer>& packets,
+    std::vector<ashiato::BitBuffer>& packets,
     ClientInputPacketTrace* trace) {
     if (trace != nullptr) {
         *trace = {};
@@ -214,7 +214,7 @@ bool ClientInputBuffer::drain_packet(
     const bool first_input_full = first_input != nullptr &&
         (history_discontinuous_ || first_input_frame != acked_frame_ + 1U || !baseline_valid);
 
-    ecs::BitBuffer packet;
+    ashiato::BitBuffer packet;
     packet.reserve_bytes(mtu_bytes);
     packet.push_bits(protocol::client_input_message, 8U);
     const std::size_t ack_count_offset = packet.bit_size();
@@ -222,7 +222,7 @@ bool ClientInputBuffer::drain_packet(
 
     std::size_t reserved_first_input_bits = 0;
     if (first_input != nullptr) {
-        ecs::BitBuffer first_input_payload;
+        ashiato::BitBuffer first_input_payload;
         const std::uint8_t* previous = first_input_full || acked_baseline_.empty()
             ? nullptr
             : acked_baseline_.data();
@@ -333,4 +333,4 @@ const std::uint8_t* ClientInputBuffer::frame_bytes(std::size_t slot) const noexc
     return frames_.payload(slot);
 }
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

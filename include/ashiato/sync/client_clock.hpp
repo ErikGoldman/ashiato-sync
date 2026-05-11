@@ -1,11 +1,11 @@
 #pragma once
 
-#include "kage/sync/types.hpp"
+#include "ashiato/sync/types.hpp"
 
 #include <cstddef>
 #include <cstdint>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 struct ReplicationClientTimingStats {
     std::uint64_t sample_count = 0;
@@ -207,4 +207,4 @@ private:
     bool has_time_sync_sample_ = false;
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

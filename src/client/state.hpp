@@ -1,19 +1,19 @@
 #pragma once
 
-#include "kage/sync/client.hpp"
+#include "ashiato/sync/client.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <vector>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 
 struct EntityCue {
     SyncFrame frame = 0;
     SyncCueTypeId type = 0;
     float relevance_seconds = 0.0f;
-    ecs::BitBuffer payload;
+    ashiato::BitBuffer payload;
 };
 
 struct EntityPlayedCue {
@@ -21,7 +21,7 @@ struct EntityPlayedCue {
     SyncFrame frame = 0;
     SyncFrame expire_frame = 0;
     SyncCueTypeId type = 0;
-    ecs::BitBuffer payload;
+    ashiato::BitBuffer payload;
     bool confirmed = false;
     std::uint32_t seen_resim_generation = 0;
 };
@@ -33,7 +33,7 @@ struct EntityFrameBaseline {
 };
 
 struct EntityComponentError {
-    ecs::Entity component;
+    ashiato::Entity component;
     SyncComponentOps::QuantizedBytes bytes;
 };
 
@@ -46,7 +46,7 @@ struct EntityBufferedFrame {
 
 struct EntityState {
     struct Identity {
-        ecs::Entity local;
+        ashiato::Entity local;
         ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
         std::uint32_t wire_network_id = 0;
         SyncArchetypeId archetype;
@@ -105,4 +105,4 @@ struct PendingPing {
     double local_send_time_seconds = 0.0;
 };
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

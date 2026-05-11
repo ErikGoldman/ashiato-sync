@@ -2,7 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 
 #include <algorithm>
 #include <array>
@@ -13,22 +13,22 @@
 #include <utility>
 #include <vector>
 
-using namespace kage_sync_tests;
+using namespace ashiato_sync_tests;
 
 TEST_CASE("binary sync trace writer writes role-specific files") {
-    const std::string server_path = "/tmp/kage_sync_trace_server_test.bin";
-    const std::string client_path = "/tmp/kage_sync_trace_client_test.bin";
+    const std::string server_path = "/tmp/ashiato_sync_trace_server_test.bin";
+    const std::string client_path = "/tmp/ashiato_sync_trace_client_test.bin";
     {
-        kage::sync::BinarySyncTraceWriter writer({server_path, client_path, 1});
-        kage::sync::SyncTraceEvent server_event;
-        server_event.role = kage::sync::SyncTraceRole::Server;
-        server_event.type = kage::sync::SyncTraceEventType::ClientConnected;
+        ashiato::sync::BinarySyncTraceWriter writer({server_path, client_path, 1});
+        ashiato::sync::SyncTraceEvent server_event;
+        server_event.role = ashiato::sync::SyncTraceRole::Server;
+        server_event.type = ashiato::sync::SyncTraceEventType::ClientConnected;
         server_event.client = 1;
         writer.tracer().trace(server_event);
 
-        kage::sync::SyncTraceEvent client_event;
-        client_event.role = kage::sync::SyncTraceRole::Client;
-        client_event.type = kage::sync::SyncTraceEventType::ClientConnected;
+        ashiato::sync::SyncTraceEvent client_event;
+        client_event.role = ashiato::sync::SyncTraceRole::Client;
+        client_event.type = ashiato::sync::SyncTraceEventType::ClientConnected;
         client_event.client = 1;
         writer.tracer().trace(client_event);
         writer.close();
@@ -45,49 +45,49 @@ TEST_CASE("binary sync trace writer writes role-specific files") {
 }
 
 TEST_CASE("replication server owns configured trace writer lifecycle") {
-    const std::string directory = "/tmp/kage_sync_owned_trace_writer_test";
+    const std::string directory = "/tmp/ashiato_sync_owned_trace_writer_test";
     std::filesystem::remove_all(directory);
 
-    ecs::Registry registry;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::Registry registry;
+    ashiato::sync::ReplicationServerOptions options;
     options.trace.enabled = true;
     options.trace.directory = directory;
     options.trace.flush_threshold_bytes = 1;
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     server.flush_trace();
     server.close_trace();
 
-    kage::sync::KTraceReader reader;
-    kage::sync::SyncTraceHistory history = reader.read_directory(directory);
+    ashiato::sync::KTraceReader reader;
+    ashiato::sync::SyncTraceHistory history = reader.read_directory(directory);
     REQUIRE(history.sources.size() == 1);
-    REQUIRE(history.sources[0].role == kage::sync::SyncTraceRole::Server);
-    std::vector<kage::sync::SyncTraceEvent> events;
-    for (const kage::sync::KTraceRecord& record : history.sources[0].records) {
+    REQUIRE(history.sources[0].role == ashiato::sync::SyncTraceRole::Server);
+    std::vector<ashiato::sync::SyncTraceEvent> events;
+    for (const ashiato::sync::KTraceRecord& record : history.sources[0].records) {
         events.push_back(record.event);
     }
-    REQUIRE(has_event(events, kage::sync::SyncTraceEventType::ClientConnected));
+    REQUIRE(has_event(events, ashiato::sync::SyncTraceEventType::ClientConnected));
 }
 
 TEST_CASE("ktrace directory writer preserves every event and reader builds history") {
-    const std::string directory = "/tmp/kage_sync_ktrace_directory_test";
+    const std::string directory = "/tmp/ashiato_sync_ktrace_directory_test";
     std::filesystem::remove_all(directory);
 
-    const kage::sync::ClientId client_id = 7;
+    const ashiato::sync::ClientId client_id = 7;
     const std::uint32_t wire_id = 3;
     const std::uint32_t version = 2;
-    const kage::sync::ClientEntityNetworkId network_id =
-        kage::sync::make_client_entity_network_id(client_id, wire_id, version);
-    const ecs::Entity server_entity{99};
-    const ecs::Entity local_entity{123};
-    const ecs::Entity component{42};
+    const ashiato::sync::ClientEntityNetworkId network_id =
+        ashiato::sync::make_client_entity_network_id(client_id, wire_id, version);
+    const ashiato::Entity server_entity{99};
+    const ashiato::Entity local_entity{123};
+    const ashiato::Entity component{42};
 
     {
-        kage::sync::KTraceDirectoryWriter writer({directory, 64, 32, true});
+        ashiato::sync::KTraceDirectoryWriter writer({directory, 64, 32, true});
 
-        kage::sync::SyncTraceEvent server_mapping;
-        server_mapping.type = kage::sync::SyncTraceEventType::EntityStartedSyncing;
-        server_mapping.role = kage::sync::SyncTraceRole::Server;
+        ashiato::sync::SyncTraceEvent server_mapping;
+        server_mapping.type = ashiato::sync::SyncTraceEventType::EntityStartedSyncing;
+        server_mapping.role = ashiato::sync::SyncTraceRole::Server;
         server_mapping.client = client_id;
         server_mapping.frame = 1;
         server_mapping.server_entity = server_entity;
@@ -97,47 +97,47 @@ TEST_CASE("ktrace directory writer preserves every event and reader builds histo
         writer.tracer().trace(server_mapping);
 
         for (int i = 0; i < 40; ++i) {
-            kage::sync::SyncTraceEvent event;
+            ashiato::sync::SyncTraceEvent event;
             event.type = i == 5
-                ? kage::sync::SyncTraceEventType::PredictionRollbackConflict
-                : kage::sync::SyncTraceEventType::FrameComponent;
-            event.role = kage::sync::SyncTraceRole::Client;
+                ? ashiato::sync::SyncTraceEventType::PredictionRollbackConflict
+                : ashiato::sync::SyncTraceEventType::FrameComponent;
+            event.role = ashiato::sync::SyncTraceRole::Client;
             event.client = client_id;
-            event.frame = static_cast<kage::sync::SyncFrame>(i + 1);
-            event.server_entity = ecs::Entity{network_id};
+            event.frame = static_cast<ashiato::sync::SyncFrame>(i + 1);
+            event.server_entity = ashiato::Entity{network_id};
             event.local_entity = local_entity;
             event.client_network_id = network_id;
             event.wire_network_id = wire_id;
             event.network_version = version;
             event.component = component;
             event.component_name = "FriendlyPosition";
-            event.mode = kage::sync::ReplicationClientMode::Predict;
+            event.mode = ashiato::sync::ReplicationClientMode::Predict;
             event.data = "payload";
             writer.tracer().trace(event);
         }
 
-        kage::sync::SyncTraceEvent resimulated;
-        resimulated.type = kage::sync::SyncTraceEventType::ResimulatedFrameComponent;
-        resimulated.role = kage::sync::SyncTraceRole::Client;
+        ashiato::sync::SyncTraceEvent resimulated;
+        resimulated.type = ashiato::sync::SyncTraceEventType::ResimulatedFrameComponent;
+        resimulated.role = ashiato::sync::SyncTraceRole::Client;
         resimulated.client = client_id;
         resimulated.frame = 7;
-        resimulated.server_entity = ecs::Entity{network_id};
+        resimulated.server_entity = ashiato::Entity{network_id};
         resimulated.local_entity = local_entity;
         resimulated.client_network_id = network_id;
         resimulated.wire_network_id = wire_id;
         resimulated.network_version = version;
         resimulated.component = component;
         resimulated.component_name = "FriendlyPosition";
-        resimulated.mode = kage::sync::ReplicationClientMode::Predict;
+        resimulated.mode = ashiato::sync::ReplicationClientMode::Predict;
         resimulated.data = "resim";
         writer.tracer().trace(resimulated);
 
-        kage::sync::SyncTraceEvent destroy;
-        destroy.type = kage::sync::SyncTraceEventType::EntityDestroyed;
-        destroy.role = kage::sync::SyncTraceRole::Client;
+        ashiato::sync::SyncTraceEvent destroy;
+        destroy.type = ashiato::sync::SyncTraceEventType::EntityDestroyed;
+        destroy.role = ashiato::sync::SyncTraceRole::Client;
         destroy.client = client_id;
         destroy.frame = 41;
-        destroy.server_entity = ecs::Entity{network_id};
+        destroy.server_entity = ashiato::Entity{network_id};
         destroy.local_entity = local_entity;
         destroy.client_network_id = network_id;
         destroy.wire_network_id = wire_id;
@@ -149,15 +149,15 @@ TEST_CASE("ktrace directory writer preserves every event and reader builds histo
     REQUIRE(std::filesystem::exists(std::filesystem::path(directory) / "server.ktrace"));
     REQUIRE(std::filesystem::exists(std::filesystem::path(directory) / "7.ktrace"));
 
-    const kage::sync::KTraceReader reader;
-    const kage::sync::SyncTraceHistory history = reader.read_directory(directory);
+    const ashiato::sync::KTraceReader reader;
+    const ashiato::sync::SyncTraceHistory history = reader.read_directory(directory);
     REQUIRE(history.sources.size() == 2);
 
     auto client_source = std::find_if(
         history.sources.begin(),
         history.sources.end(),
-        [](const kage::sync::KTraceSourceHistory& source) {
-            return source.role == kage::sync::SyncTraceRole::Client;
+        [](const ashiato::sync::KTraceSourceHistory& source) {
+            return source.role == ashiato::sync::SyncTraceRole::Client;
     });
     REQUIRE(client_source != history.sources.end());
     REQUIRE(client_source->client == client_id);
@@ -166,8 +166,8 @@ TEST_CASE("ktrace directory writer preserves every event and reader builds histo
     REQUIRE(std::count_if(
         client_source->records.begin(),
         client_source->records.end(),
-        [](const kage::sync::KTraceRecord& record) {
-            return record.event.type == kage::sync::SyncTraceEventType::ComponentName;
+        [](const ashiato::sync::KTraceRecord& record) {
+            return record.event.type == ashiato::sync::SyncTraceEventType::ComponentName;
         }) == 1);
     REQUIRE(client_source->entities.size() == 1);
     REQUIRE(client_source->entities[0].server_entity == server_entity);
@@ -175,7 +175,7 @@ TEST_CASE("ktrace directory writer preserves every event and reader builds histo
     const auto component_row = std::find_if(
         client_source->entities[0].components.begin(),
         client_source->entities[0].components.end(),
-        [component](const kage::sync::KTraceComponentRow& row) {
+        [component](const ashiato::sync::KTraceComponentRow& row) {
             return row.component == component;
         });
     REQUIRE(component_row != client_source->entities[0].components.end());
@@ -184,67 +184,67 @@ TEST_CASE("ktrace directory writer preserves every event and reader builds histo
     const auto conflict_cell = std::find_if(
         component_row->runs[0].frames.begin(),
         component_row->runs[0].frames.end(),
-        [](const kage::sync::KTraceFrameCell& cell) {
+        [](const ashiato::sync::KTraceFrameCell& cell) {
             return cell.frame == 6;
     });
     REQUIRE(conflict_cell != component_row->runs[0].frames.end());
-    REQUIRE((conflict_cell->state_mask & static_cast<std::uint16_t>(kage::sync::KTraceCellState::Mispredicted)) != 0U);
+    REQUIRE((conflict_cell->state_mask & static_cast<std::uint16_t>(ashiato::sync::KTraceCellState::Mispredicted)) != 0U);
 
     const auto resimulated_cell = std::find_if(
         component_row->runs[1].frames.begin(),
         component_row->runs[1].frames.end(),
-        [](const kage::sync::KTraceFrameCell& cell) {
+        [](const ashiato::sync::KTraceFrameCell& cell) {
             return cell.frame == 7;
         });
     REQUIRE(resimulated_cell != component_row->runs[1].frames.end());
-    REQUIRE((resimulated_cell->state_mask & static_cast<std::uint16_t>(kage::sync::KTraceCellState::Resimulated)) != 0U);
+    REQUIRE((resimulated_cell->state_mask & static_cast<std::uint16_t>(ashiato::sync::KTraceCellState::Resimulated)) != 0U);
 }
 
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
 
 TEST_CASE("ktrace directory writer marks files when packet logs are enabled") {
-    const std::string directory = "/tmp/kage_sync_ktrace_packet_logs_flag_test";
+    const std::string directory = "/tmp/ashiato_sync_ktrace_packet_logs_flag_test";
     std::filesystem::remove_all(directory);
 
     {
-        kage::sync::KTraceDirectoryWriter writer({directory, 64, 32, true});
+        ashiato::sync::KTraceDirectoryWriter writer({directory, 64, 32, true});
         writer.tracer().set_packet_logs_enabled(true);
-        kage::sync::SyncTraceEvent event;
-        event.type = kage::sync::SyncTraceEventType::PacketLog;
-        event.role = kage::sync::SyncTraceRole::Server;
+        ashiato::sync::SyncTraceEvent event;
+        event.type = ashiato::sync::SyncTraceEventType::PacketLog;
+        event.role = ashiato::sync::SyncTraceRole::Server;
         event.frame = 3;
         event.data = "direction=out,message=server_update";
         writer.tracer().trace(event);
         writer.close();
     }
 
-    const kage::sync::SyncTraceHistory history = kage::sync::KTraceReader{}.read_directory(directory);
+    const ashiato::sync::SyncTraceHistory history = ashiato::sync::KTraceReader{}.read_directory(directory);
     REQUIRE(history.sources.size() == 1);
-    REQUIRE((history.sources[0].flags & kage::sync::ktrace_flag_packet_logs) != 0U);
+    REQUIRE((history.sources[0].flags & ashiato::sync::ktrace_flag_packet_logs) != 0U);
     REQUIRE(history.sources[0].records.size() == 1);
-    REQUIRE(history.sources[0].records[0].event.type == kage::sync::SyncTraceEventType::PacketLog);
+    REQUIRE(history.sources[0].records[0].event.type == ashiato::sync::SyncTraceEventType::PacketLog);
     REQUIRE(history.sources[0].records[0].event.data.find("server_update") != std::string::npos);
 }
 #endif
 
 TEST_CASE("ktrace reader keeps complete records when final record is truncated") {
-    const std::string directory = "/tmp/kage_sync_ktrace_truncated_tail_test";
+    const std::string directory = "/tmp/ashiato_sync_ktrace_truncated_tail_test";
     std::filesystem::remove_all(directory);
 
-    const kage::sync::ClientId client_id = 3;
+    const ashiato::sync::ClientId client_id = 3;
     const std::uint32_t wire_id = 11;
     const std::uint32_t version = 1;
-    const kage::sync::ClientEntityNetworkId network_id =
-        kage::sync::make_client_entity_network_id(client_id, wire_id, version);
-    const ecs::Entity local_entity{7};
-    const ecs::Entity component{13};
+    const ashiato::sync::ClientEntityNetworkId network_id =
+        ashiato::sync::make_client_entity_network_id(client_id, wire_id, version);
+    const ashiato::Entity local_entity{7};
+    const ashiato::Entity component{13};
 
     {
-        kage::sync::KTraceDirectoryWriter writer({directory, 64, 32, true});
+        ashiato::sync::KTraceDirectoryWriter writer({directory, 64, 32, true});
 
-        kage::sync::SyncTraceEvent received;
-        received.type = kage::sync::SyncTraceEventType::ComponentReceived;
-        received.role = kage::sync::SyncTraceRole::Client;
+        ashiato::sync::SyncTraceEvent received;
+        received.type = ashiato::sync::SyncTraceEventType::ComponentReceived;
+        received.role = ashiato::sync::SyncTraceRole::Client;
         received.client = client_id;
         received.frame = 4;
         received.local_entity = local_entity;
@@ -265,8 +265,8 @@ TEST_CASE("ktrace reader keeps complete records when final record is truncated")
     REQUIRE(size > 8U);
     std::filesystem::resize_file(client_path, size - 8U);
 
-    const kage::sync::KTraceReader reader;
-    const kage::sync::SyncTraceHistory history = reader.read_directory(directory);
+    const ashiato::sync::KTraceReader reader;
+    const ashiato::sync::SyncTraceHistory history = reader.read_directory(directory);
     REQUIRE(history.sources.size() == 1);
     REQUIRE_FALSE(history.sources[0].records.empty());
     REQUIRE(history.sources[0].entities.size() == 1);
@@ -276,23 +276,23 @@ TEST_CASE("ktrace reader keeps complete records when final record is truncated")
 }
 
 TEST_CASE("ktrace stream reader exposes header metadata and streams records") {
-    const std::string directory = "/tmp/kage_sync_ktrace_stream_reader_test";
+    const std::string directory = "/tmp/ashiato_sync_ktrace_stream_reader_test";
     std::filesystem::remove_all(directory);
 
-    const kage::sync::ClientId client_id = 9;
+    const ashiato::sync::ClientId client_id = 9;
     const std::uint32_t wire_id = 17;
     const std::uint32_t version = 2;
-    const kage::sync::ClientEntityNetworkId network_id =
-        kage::sync::make_client_entity_network_id(client_id, wire_id, version);
-    const ecs::Entity local_entity{33};
-    const ecs::Entity component{44};
+    const ashiato::sync::ClientEntityNetworkId network_id =
+        ashiato::sync::make_client_entity_network_id(client_id, wire_id, version);
+    const ashiato::Entity local_entity{33};
+    const ashiato::Entity component{44};
 
     {
-        kage::sync::KTraceDirectoryWriter writer({directory, 64, 32, true});
+        ashiato::sync::KTraceDirectoryWriter writer({directory, 64, 32, true});
 
-        kage::sync::SyncTraceEvent received;
-        received.type = kage::sync::SyncTraceEventType::ComponentReceived;
-        received.role = kage::sync::SyncTraceRole::Client;
+        ashiato::sync::SyncTraceEvent received;
+        received.type = ashiato::sync::SyncTraceEventType::ComponentReceived;
+        received.role = ashiato::sync::SyncTraceRole::Client;
         received.client = client_id;
         received.frame = 7;
         received.local_entity = local_entity;
@@ -309,51 +309,51 @@ TEST_CASE("ktrace stream reader exposes header metadata and streams records") {
     }
 
     const std::filesystem::path client_path = std::filesystem::path(directory) / "9.ktrace";
-    kage::sync::KTraceStreamReader reader(client_path.string());
-    const kage::sync::KTraceFileHeader& header = reader.header();
+    ashiato::sync::KTraceStreamReader reader(client_path.string());
+    const ashiato::sync::KTraceFileHeader& header = reader.header();
     REQUIRE(header.path == client_path.string());
-    REQUIRE(header.version == kage::sync::ktrace_format_version);
-    REQUIRE(header.role == kage::sync::SyncTraceRole::Client);
+    REQUIRE(header.version == ashiato::sync::ktrace_format_version);
+    REQUIRE(header.role == ashiato::sync::SyncTraceRole::Client);
     REQUIRE(header.client == client_id);
     REQUIRE(header.data_offset > 0U);
     REQUIRE(header.file_size == std::filesystem::file_size(client_path));
     REQUIRE(reader.position() == header.data_offset);
 
-    kage::sync::KTraceRecord record;
+    ashiato::sync::KTraceRecord record;
     REQUIRE(reader.read_next(record));
-    REQUIRE(record.event.type == kage::sync::SyncTraceEventType::ComponentName);
+    REQUIRE(record.event.type == ashiato::sync::SyncTraceEventType::ComponentName);
     REQUIRE(record.event.component == component);
     REQUIRE(reader.position() > header.data_offset);
 
     REQUIRE(reader.read_next(record));
-    REQUIRE(record.event.type == kage::sync::SyncTraceEventType::ComponentReceived);
+    REQUIRE(record.event.type == ashiato::sync::SyncTraceEventType::ComponentReceived);
     REQUIRE(record.event.frame == 7);
 
     REQUIRE(reader.read_next(record));
-    REQUIRE(record.event.type == kage::sync::SyncTraceEventType::ComponentReceived);
+    REQUIRE(record.event.type == ashiato::sync::SyncTraceEventType::ComponentReceived);
     REQUIRE(record.event.frame == 8);
 
     REQUIRE_FALSE(reader.read_next(record));
 }
 
 TEST_CASE("ktrace stream reader stops after complete records when final record is truncated") {
-    const std::string directory = "/tmp/kage_sync_ktrace_stream_truncated_tail_test";
+    const std::string directory = "/tmp/ashiato_sync_ktrace_stream_truncated_tail_test";
     std::filesystem::remove_all(directory);
 
-    const kage::sync::ClientId client_id = 6;
+    const ashiato::sync::ClientId client_id = 6;
     const std::uint32_t wire_id = 12;
     const std::uint32_t version = 1;
-    const kage::sync::ClientEntityNetworkId network_id =
-        kage::sync::make_client_entity_network_id(client_id, wire_id, version);
-    const ecs::Entity local_entity{55};
-    const ecs::Entity component{66};
+    const ashiato::sync::ClientEntityNetworkId network_id =
+        ashiato::sync::make_client_entity_network_id(client_id, wire_id, version);
+    const ashiato::Entity local_entity{55};
+    const ashiato::Entity component{66};
 
     {
-        kage::sync::KTraceDirectoryWriter writer({directory, 64, 32, true});
+        ashiato::sync::KTraceDirectoryWriter writer({directory, 64, 32, true});
 
-        kage::sync::SyncTraceEvent received;
-        received.type = kage::sync::SyncTraceEventType::ComponentReceived;
-        received.role = kage::sync::SyncTraceRole::Client;
+        ashiato::sync::SyncTraceEvent received;
+        received.type = ashiato::sync::SyncTraceEventType::ComponentReceived;
+        received.role = ashiato::sync::SyncTraceRole::Client;
         received.client = client_id;
         received.frame = 3;
         received.local_entity = local_entity;
@@ -373,15 +373,15 @@ TEST_CASE("ktrace stream reader stops after complete records when final record i
     REQUIRE(size > 8U);
     std::filesystem::resize_file(client_path, size - 8U);
 
-    kage::sync::KTraceStreamReader reader(client_path.string());
-    std::vector<kage::sync::KTraceRecord> records;
-    kage::sync::KTraceRecord record;
+    ashiato::sync::KTraceStreamReader reader(client_path.string());
+    std::vector<ashiato::sync::KTraceRecord> records;
+    ashiato::sync::KTraceRecord record;
     while (reader.read_next(record)) {
         records.push_back(std::move(record));
     }
 
     REQUIRE(records.size() == 1);
-    REQUIRE(records[0].event.type == kage::sync::SyncTraceEventType::ComponentReceived);
+    REQUIRE(records[0].event.type == ashiato::sync::SyncTraceEventType::ComponentReceived);
     REQUIRE(records[0].event.frame == 3);
 }
 

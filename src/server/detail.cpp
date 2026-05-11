@@ -1,8 +1,8 @@
 #include "server/detail.hpp"
 
-namespace kage::sync::server_detail {
+namespace ashiato::sync::server_detail {
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 SyncTraceEvent make_server_trace_event(SyncTraceEventType type, ClientId client, SyncFrame frame) {
     SyncTraceEvent event;
     event.type = type;
@@ -33,4 +33,4 @@ float boosted_candidate_priority(
     return age;
 }
 
-}  // namespace kage::sync::server_detail
+}  // namespace ashiato::sync::server_detail

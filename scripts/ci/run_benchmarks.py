@@ -25,7 +25,7 @@ CPU_CHARACTERISTIC_FILTERS = [
 
 BANDWIDTH_SCENARIOS = {
     "ball_snap_baseline": {
-        "executable": "kage_sync_ball_stress",
+        "executable": "ashiato_sync_ball_stress",
         "category": "ball",
         "args": [
             "--duration-seconds",
@@ -44,7 +44,7 @@ BANDWIDTH_SCENARIOS = {
         ],
     },
     "ball_buffered_latency": {
-        "executable": "kage_sync_ball_stress",
+        "executable": "ashiato_sync_ball_stress",
         "category": "ball",
         "args": [
             "--duration-seconds",
@@ -71,7 +71,7 @@ BANDWIDTH_SCENARIOS = {
         ],
     },
     "prediction_rollback_mixed": {
-        "executable": "kage_sync_prediction_stress",
+        "executable": "ashiato_sync_prediction_stress",
         "category": "prediction",
         "args": [
             "--entities",
@@ -212,7 +212,7 @@ def main() -> int:
     run_bandwidth = args.subset in ("characteristic", "bandwidth", "all") or bool(args.bandwidth_scenarios)
 
     if run_cpu:
-        benchmark = executable_path(args.build_dir, "kage_sync_benchmark")
+        benchmark = executable_path(args.build_dir, "ashiato_sync_benchmark")
         cpu_json = args.output_dir / "cpu" / "google-benchmark.json"
         run_command(
             [

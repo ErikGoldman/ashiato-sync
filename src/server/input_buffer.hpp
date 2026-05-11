@@ -1,12 +1,12 @@
 #pragma once
 
-#include "kage/sync/server.hpp"
+#include "ashiato/sync/server.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
-namespace kage::sync::server_detail {
+namespace ashiato::sync::server_detail {
 
 struct ServerInputPacketTrace {
     SyncFrame baseline_frame = 0;
@@ -29,7 +29,7 @@ public:
         std::size_t capacity_frames);
 
     bool process_packet_payload(
-        ecs::BitBuffer& packet,
+        ashiato::BitBuffer& packet,
         const SyncComponentOps& ops,
         std::size_t capacity_frames,
         ServerInputPacketTrace* trace);
@@ -61,4 +61,4 @@ private:
     ReplicationServer::ClientInputStats stats_;
 };
 
-}  // namespace kage::sync::server_detail
+}  // namespace ashiato::sync::server_detail

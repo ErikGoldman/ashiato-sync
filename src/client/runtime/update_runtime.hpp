@@ -2,12 +2,12 @@
 
 #include "client/state.hpp"
 
-#include "ecs/ecs.hpp"
+#include "ashiato/ashiato.hpp"
 
 #include <cstdint>
 #include <vector>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 class ReplicationClient;
 
@@ -21,7 +21,7 @@ class ClientUpdateRuntime {
 public:
     bool apply_update(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         detail::BitReader& packet,
         std::uint32_t packet_id,
         SyncFrame frame,
@@ -62,7 +62,7 @@ private:
 
     bool apply_upsert(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         SyncFrame frame,
         std::uint32_t wire_network_id,
@@ -101,7 +101,7 @@ private:
         const std::vector<EntityCue>& out);
     EntityState* ensure_upsert_entity(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         const UpsertMetadata& metadata,
         const AuthoritativeUpsertRecord& record,
@@ -120,7 +120,7 @@ private:
         const EntityState& state);
     bool apply_upsert_record(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
         const UpsertMetadata& metadata,
@@ -134,36 +134,36 @@ private:
         bool mode_needs_selection) const;
     bool apply_destroy(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         SyncFrame frame,
         std::uint32_t wire_network_id);
     bool apply_destroy_for_mode(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         SyncFrame frame,
         EntityState& state,
         ClientEntityNetworkId client_entity_network_id);
     bool apply_snap_destroy(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         SyncFrame frame,
         EntityState& state,
         ClientEntityNetworkId client_entity_network_id);
     bool apply_upsert_for_mode(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
         const UpsertModeApplyContext& context);
     bool apply_snap_upsert(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
         const UpsertModeApplyContext& context);
     bool apply_buffered_upsert(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         SyncFrame frame,
         ClientEntityNetworkId client_entity_network_id,
@@ -171,12 +171,12 @@ private:
         QuantizedFrameData& decoded);
     bool apply_buffered_destroy(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         SyncFrame frame,
         ClientEntityNetworkId client_entity_network_id);
     bool apply_predicted_upsert(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         SyncFrame frame,
         ClientEntityNetworkId client_entity_network_id,
@@ -185,7 +185,7 @@ private:
         bool full);
     bool apply_predicted_destroy(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         SyncFrame frame,
         ClientEntityNetworkId client_entity_network_id);
 
@@ -194,4 +194,4 @@ private:
 };
 
 }  // namespace client_detail
-}  // namespace kage::sync
+}  // namespace ashiato::sync

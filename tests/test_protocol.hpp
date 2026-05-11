@@ -13,19 +13,19 @@
 #include <utility>
 #include <vector>
 
-namespace kage_sync_tests {
+namespace ashiato_sync_tests {
 
-inline bool start_sync(ecs::Registry& registry, ecs::Entity entity, kage::sync::SyncArchetypeId archetype) {
-    return registry.add<kage::sync::Replicated>(entity, kage::sync::Replicated{archetype}) != nullptr;
+inline bool start_sync(ashiato::Registry& registry, ashiato::Entity entity, ashiato::sync::SyncArchetypeId archetype) {
+    return registry.add<ashiato::sync::Replicated>(entity, ashiato::sync::Replicated{archetype}) != nullptr;
 }
 
-inline kage::sync::SyncArchetypeId define_predicted_archetype(ecs::Registry& registry) {
-    const ecs::Entity position =
-        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
-    return kage::sync::define_archetype(
+inline ashiato::sync::SyncArchetypeId define_predicted_archetype(ashiato::Registry& registry) {
+    const ashiato::Entity position =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    return ashiato::sync::define_archetype(
         registry,
         "PredictedActor",
-        {{position, kage::sync::ReplicationAudience::All}});
+        {{position, ashiato::sync::ReplicationAudience::All}});
 }
 
 struct AckRecord {
@@ -35,16 +35,16 @@ struct AckRecord {
 struct ClientUpdateRecord {
     bool destroy = false;
     bool full = false;
-    kage::sync::SyncFrame baseline_frame = 0;
+    ashiato::sync::SyncFrame baseline_frame = 0;
     std::uint32_t network_id = 0;
-    ecs::Entity entity;
+    ashiato::Entity entity;
 };
 
 using UpdateRecord = ClientUpdateRecord;
 
 struct ClientUpdatePacket {
-    kage::sync::SyncFrame frame = 0;
-    kage::sync::SyncFrame input_ack_frame = 0;
+    ashiato::sync::SyncFrame frame = 0;
+    ashiato::sync::SyncFrame input_ack_frame = 0;
     std::vector<ClientUpdateRecord> records;
 };
 
@@ -52,38 +52,38 @@ using UpdatePacket = ClientUpdatePacket;
 
 struct ClientInputPacket {
     std::uint16_t ack_count = 0;
-    kage::sync::SyncFrame baseline_frame = 0;
-    kage::sync::SyncFrame first_input_frame = 0;
+    ashiato::sync::SyncFrame baseline_frame = 0;
+    ashiato::sync::SyncFrame first_input_frame = 0;
     std::uint16_t input_count = 0;
     bool first_input_full = false;
 };
 
-inline std::vector<AckRecord> read_acks(ecs::BitBuffer packet) {
-    REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_ack_message);
+inline std::vector<AckRecord> read_acks(ashiato::BitBuffer packet) {
+    REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_ack_message);
     const auto count = static_cast<std::uint16_t>(packet.read_bits(16U));
     std::vector<AckRecord> records;
     records.reserve(count);
     for (std::uint16_t index = 0; index < count; ++index) {
         AckRecord record;
-        record.packet_id = static_cast<std::uint32_t>(packet.read_bits(kage::sync::protocol::server_packet_id_bits));
+        record.packet_id = static_cast<std::uint32_t>(packet.read_bits(ashiato::sync::protocol::server_packet_id_bits));
         records.push_back(record);
     }
     return records;
 }
 
-inline ClientInputPacket read_client_input_header(ecs::BitBuffer packet) {
-    REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message);
+inline ClientInputPacket read_client_input_header(ashiato::BitBuffer packet) {
+    REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message);
     ClientInputPacket input;
     input.ack_count = static_cast<std::uint16_t>(packet.read_bits(16U));
     for (std::uint16_t index = 0; index < input.ack_count; ++index) {
-        packet.read_bits(kage::sync::protocol::server_packet_id_bits);
+        packet.read_bits(ashiato::sync::protocol::server_packet_id_bits);
     }
-    input.baseline_frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
+    input.baseline_frame = static_cast<ashiato::sync::SyncFrame>(packet.read_bits(32U));
     input.input_count = static_cast<std::uint16_t>(packet.read_bits(16U));
     input.first_input_full = packet.read_bool();
     input.first_input_frame = input.input_count == 0U ? 0U : input.baseline_frame + 1U;
     if (input.first_input_full) {
-        const auto explicit_first_input_frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
+        const auto explicit_first_input_frame = static_cast<ashiato::sync::SyncFrame>(packet.read_bits(32U));
         if (input.input_count != 0U) {
             input.first_input_frame = explicit_first_input_frame;
         }
@@ -94,9 +94,9 @@ inline ClientInputPacket read_client_input_header(ecs::BitBuffer packet) {
 template <typename Client>
 bool receive_at_local_frame(
     Client& client,
-    ecs::Registry& registry,
-    ecs::BitBuffer packet,
-    kage::sync::SyncFrame local_frame) {
+    ashiato::Registry& registry,
+    ashiato::BitBuffer packet,
+    ashiato::sync::SyncFrame local_frame) {
     const double target_time = static_cast<double>(local_frame) * client.fixed_dt_seconds();
     while (client.local_time_seconds() < target_time) {
         REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
@@ -107,9 +107,9 @@ bool receive_at_local_frame(
 template <typename Client>
 void tick_client_fixed_frames(
     Client& client,
-    ecs::Registry& registry,
-    kage::sync::SyncFrame frame_count) {
-    for (kage::sync::SyncFrame frame = 0; frame < frame_count; ++frame) {
+    ashiato::Registry& registry,
+    ashiato::sync::SyncFrame frame_count) {
+    for (ashiato::sync::SyncFrame frame = 0; frame < frame_count; ++frame) {
         REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
     }
 }
@@ -117,18 +117,18 @@ void tick_client_fixed_frames(
 template <typename Client>
 bool apply_estimated_server_frame(
     Client& client,
-    ecs::Registry& registry,
-    kage::sync::SyncFrame estimated_server_frame) {
-    const kage::sync::SyncFrame lag = client.current_buffered_frame_lag();
+    ashiato::Registry& registry,
+    ashiato::sync::SyncFrame estimated_server_frame) {
+    const ashiato::sync::SyncFrame lag = client.current_buffered_frame_lag();
     return client.apply_frame(registry, estimated_server_frame > lag ? estimated_server_frame - lag : 0U);
 }
 
 template <typename Client>
 bool sample_estimated_server_frame(
     Client& client,
-    const ecs::Registry& registry,
+    const ashiato::Registry& registry,
     double estimated_server_frame,
-    kage::sync::FractionalTickSampleBuffer& out) {
+    ashiato::sync::FractionalTickSampleBuffer& out) {
     return client.sample_fractional_tick_frame(
         registry,
         std::max(0.0, estimated_server_frame - static_cast<double>(client.current_buffered_frame_lag())),
@@ -138,32 +138,32 @@ bool sample_estimated_server_frame(
 template <typename Client>
 bool record_ping_sample(
     Client& client,
-    ecs::Registry& registry,
-    kage::sync::SyncFrame local_frame) {
-    std::vector<ecs::BitBuffer> packets = client.drain_packets();
+    ashiato::Registry& registry,
+    ashiato::sync::SyncFrame local_frame) {
+    std::vector<ashiato::BitBuffer> packets = client.drain_packets();
     if (packets.empty()) {
         REQUIRE(client.tick(registry, client.options().session.ping_interval_seconds));
         packets = client.drain_packets();
     }
-    for (ecs::BitBuffer packet : packets) {
+    for (ashiato::BitBuffer packet : packets) {
         if (packet.remaining_bits() < 8U) {
             continue;
         }
         const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
-        if (message != kage::sync::protocol::client_ping_message) {
+        if (message != ashiato::sync::protocol::client_ping_message) {
             continue;
         }
         const auto sequence = static_cast<std::uint32_t>(packet.read_bits(32U));
-        const auto send_frame = static_cast<kage::sync::SyncFrame>(
+        const auto send_frame = static_cast<ashiato::sync::SyncFrame>(
             std::floor(client.local_time_seconds() / client.fixed_dt_seconds()));
-        ecs::BitBuffer pong;
-        pong.push_bits(kage::sync::protocol::server_pong_message, 8U);
+        ashiato::BitBuffer pong;
+        pong.push_bits(ashiato::sync::protocol::server_pong_message, 8U);
         pong.push_bits(sequence, 32U);
-        const auto server_frame = static_cast<kage::sync::SyncFrame>((send_frame + local_frame) / 2U);
+        const auto server_frame = static_cast<ashiato::sync::SyncFrame>((send_frame + local_frame) / 2U);
         pong.push_bits(server_frame, 32U);
-        pong.push_bits(0U, kage::sync::protocol::frame_subframe_bits);
+        pong.push_bits(0U, ashiato::sync::protocol::frame_subframe_bits);
         pong.push_bits(server_frame, 32U);
-        pong.push_bits(0U, kage::sync::protocol::frame_subframe_bits);
+        pong.push_bits(0U, ashiato::sync::protocol::frame_subframe_bits);
         return receive_at_local_frame(client, registry, std::move(pong), local_frame);
     }
     return false;
@@ -171,15 +171,15 @@ bool record_ping_sample(
 
 struct PingPacket {
     std::uint32_t sequence = 0;
-    kage::sync::SyncFrame send_frame = 0;
+    ashiato::sync::SyncFrame send_frame = 0;
 };
 
-inline bool read_ping_packet(ecs::BitBuffer packet, PingPacket& out) {
+inline bool read_ping_packet(ashiato::BitBuffer packet, PingPacket& out) {
     if (packet.remaining_bits() < 8U) {
         return false;
     }
     const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
-    if (message != kage::sync::protocol::client_ping_message || packet.remaining_bits() < 32U) {
+    if (message != ashiato::sync::protocol::client_ping_message || packet.remaining_bits() < 32U) {
         return false;
     }
     out.sequence = static_cast<std::uint32_t>(packet.read_bits(32U));
@@ -189,15 +189,15 @@ inline bool read_ping_packet(ecs::BitBuffer packet, PingPacket& out) {
 template <typename Client>
 bool drain_ping(
     Client& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     double dt_seconds,
     PingPacket& out) {
     if (dt_seconds > 0.0) {
         REQUIRE(client.tick(registry, dt_seconds));
     }
-    for (ecs::BitBuffer packet : client.drain_packets()) {
+    for (ashiato::BitBuffer packet : client.drain_packets()) {
         if (read_ping_packet(packet, out)) {
-            out.send_frame = static_cast<kage::sync::SyncFrame>(
+            out.send_frame = static_cast<ashiato::sync::SyncFrame>(
                 std::floor(client.local_time_seconds() / client.fixed_dt_seconds()));
             return true;
         }
@@ -208,38 +208,38 @@ bool drain_ping(
 template <typename Client>
 bool receive_pong(
     Client& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const PingPacket& ping,
-    kage::sync::SyncFrame local_frame) {
-    ecs::BitBuffer pong;
-    pong.push_bits(kage::sync::protocol::server_pong_message, 8U);
+    ashiato::sync::SyncFrame local_frame) {
+    ashiato::BitBuffer pong;
+    pong.push_bits(ashiato::sync::protocol::server_pong_message, 8U);
     pong.push_bits(ping.sequence, 32U);
-    const auto server_frame = static_cast<kage::sync::SyncFrame>((ping.send_frame + local_frame) / 2U);
+    const auto server_frame = static_cast<ashiato::sync::SyncFrame>((ping.send_frame + local_frame) / 2U);
     pong.push_bits(server_frame, 32U);
-    pong.push_bits(0U, kage::sync::protocol::frame_subframe_bits);
+    pong.push_bits(0U, ashiato::sync::protocol::frame_subframe_bits);
     pong.push_bits(server_frame, 32U);
-    pong.push_bits(0U, kage::sync::protocol::frame_subframe_bits);
+    pong.push_bits(0U, ashiato::sync::protocol::frame_subframe_bits);
     return receive_at_local_frame(client, registry, std::move(pong), local_frame);
 }
 
-inline ClientUpdatePacket read_update(ecs::BitBuffer packet, std::size_t sync_slot_count = 2U) {
-    REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::server_update_message);
+inline ClientUpdatePacket read_update(ashiato::BitBuffer packet, std::size_t sync_slot_count = 2U) {
+    REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::server_update_message);
     ClientUpdatePacket update;
-    update.frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
-    packet.read_bits(kage::sync::protocol::server_packet_id_bits);
-    update.input_ack_frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
+    update.frame = static_cast<ashiato::sync::SyncFrame>(packet.read_bits(32U));
+    packet.read_bits(ashiato::sync::protocol::server_packet_id_bits);
+    update.input_ack_frame = static_cast<ashiato::sync::SyncFrame>(packet.read_bits(32U));
     const auto count = static_cast<std::uint16_t>(packet.read_bits(16U));
     update.records.reserve(count);
     for (std::uint16_t index = 0; index < count; ++index) {
         ClientUpdateRecord record;
         record.destroy = packet.read_bool();
-        REQUIRE(kage::sync::protocol::read_network_entity_id(packet, record.network_id));
+        REQUIRE(ashiato::sync::protocol::read_network_entity_id(packet, record.network_id));
         if (!record.destroy) {
             record.full = packet.read_bool();
             if (record.full) {
                 packet.read_bits(32U);
                 const bool uses_presence_mask = packet.read_bool();
-                const std::size_t sync_slot_bits = kage::sync::protocol::bits_for_range(sync_slot_count);
+                const std::size_t sync_slot_bits = ashiato::sync::protocol::bits_for_range(sync_slot_count);
                 std::uint16_t component_count = 0;
                 std::uint64_t presence_mask = 0;
                 if (uses_presence_mask) {
@@ -270,7 +270,7 @@ inline ClientUpdatePacket read_update(ecs::BitBuffer packet, std::size_t sync_sl
                 const bool has_cues = packet.read_bool();
                 REQUIRE_FALSE(has_cues);
             } else {
-                REQUIRE(kage::sync::protocol::read_baseline_frame(packet, update.frame, record.baseline_frame));
+                REQUIRE(ashiato::sync::protocol::read_baseline_frame(packet, update.frame, record.baseline_frame));
                 const bool tag_changed = packet.read_bool();
                 REQUIRE_FALSE(tag_changed);
                 const bool position_changed = packet.read_bool();
@@ -288,9 +288,9 @@ inline ClientUpdatePacket read_update(ecs::BitBuffer packet, std::size_t sync_sl
     return update;
 }
 
-inline const ecs::BitBuffer& packet_for(
-    const std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>>& packets,
-    kage::sync::ClientId client) {
+inline const ashiato::BitBuffer& packet_for(
+    const std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>>& packets,
+    ashiato::sync::ClientId client) {
     const auto found = std::find_if(packets.begin(), packets.end(), [&](const auto& sent) {
         return sent.first == client;
     });
@@ -298,50 +298,50 @@ inline const ecs::BitBuffer& packet_for(
     return found->second;
 }
 
-inline std::uint32_t test_network_id(ecs::Entity entity) {
-    return ecs::Registry::entity_index(entity) + 1U;
+inline std::uint32_t test_network_id(ashiato::Entity entity) {
+    return ashiato::Registry::entity_index(entity) + 1U;
 }
 
-inline kage::sync::ClientEntityNetworkId test_client_entity_network_id(
-    kage::sync::ClientId client,
+inline ashiato::sync::ClientEntityNetworkId test_client_entity_network_id(
+    ashiato::sync::ClientId client,
     std::uint32_t wire_network_id,
     std::uint32_t version = 1U) {
-    return kage::sync::make_client_entity_network_id(client, wire_network_id, version);
+    return ashiato::sync::make_client_entity_network_id(client, wire_network_id, version);
 }
 
-inline kage::sync::ClientEntityNetworkId test_client_entity_network_id(
-    kage::sync::ClientId client,
-    ecs::Entity entity,
+inline ashiato::sync::ClientEntityNetworkId test_client_entity_network_id(
+    ashiato::sync::ClientId client,
+    ashiato::Entity entity,
     std::uint32_t version = 1U) {
     return test_client_entity_network_id(client, test_network_id(entity), version);
 }
 
-inline kage::sync::ClientEntityNetworkId first_allocated_client_entity_network_id(
-    kage::sync::ClientId client,
+inline ashiato::sync::ClientEntityNetworkId first_allocated_client_entity_network_id(
+    ashiato::sync::ClientId client,
     std::uint32_t version = 1U) {
     return test_client_entity_network_id(client, 1U, version);
 }
 
-inline ecs::BitBuffer make_position_packet(
-    kage::sync::SyncFrame frame,
-    const std::vector<std::pair<ecs::Entity, Position>>& records,
+inline ashiato::BitBuffer make_position_packet(
+    ashiato::sync::SyncFrame frame,
+    const std::vector<std::pair<ashiato::Entity, Position>>& records,
     std::size_t sync_slot_count = 2U,
     std::uint32_t packet_id = 0U,
-    kage::sync::SyncFrame input_ack_frame = 0U) {
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::server_update_message, 8U);
+    ashiato::sync::SyncFrame input_ack_frame = 0U) {
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
-    packet.push_bits(packet_id == 0U ? frame : packet_id, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(packet_id == 0U ? frame : packet_id, ashiato::sync::protocol::server_packet_id_bits);
     packet.push_bits(input_ack_frame, 32U);
     packet.push_bits(static_cast<std::uint16_t>(records.size()), 16U);
     for (const auto& record : records) {
         packet.push_bool(false);
-        kage::sync::protocol::write_network_entity_id(packet, test_network_id(record.first));
+        ashiato::sync::protocol::write_network_entity_id(packet, test_network_id(record.first));
         packet.push_bool(true);
         packet.push_bits(0, 32U);
         packet.push_bool(false);
         packet.push_bits(1, 16U);
-        packet.push_bits(1, kage::sync::protocol::bits_for_range(sync_slot_count));
+        packet.push_bits(1, ashiato::sync::protocol::bits_for_range(sync_slot_count));
 
         packet.push_bytes(reinterpret_cast<const char*>(&record.second), sizeof(Position));
         packet.push_bool(false);
@@ -349,89 +349,89 @@ inline ecs::BitBuffer make_position_packet(
     return packet;
 }
 
-inline ecs::BitBuffer make_predicted_position_packet(
-    kage::sync::SyncFrame frame,
-    ecs::Entity server_entity,
+inline ashiato::BitBuffer make_predicted_position_packet(
+    ashiato::sync::SyncFrame frame,
+    ashiato::Entity server_entity,
     PredictedPosition position,
     std::uint32_t packet_id = 0U) {
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::server_update_message, 8U);
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
-    packet.push_bits(packet_id == 0U ? frame : packet_id, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(packet_id == 0U ? frame : packet_id, ashiato::sync::protocol::server_packet_id_bits);
     packet.push_bits(0, 32U);
     packet.push_bits(1, 16U);
     packet.push_bool(false);
-    kage::sync::protocol::write_network_entity_id(packet, test_network_id(server_entity));
+    ashiato::sync::protocol::write_network_entity_id(packet, test_network_id(server_entity));
     packet.push_bool(true);
     packet.push_bits(0, 32U);
     packet.push_bool(false);
     packet.push_bits(1, 16U);
-    packet.push_bits(1, kage::sync::protocol::bits_for_range(2U));
+    packet.push_bits(1, ashiato::sync::protocol::bits_for_range(2U));
     packet.push_bits(static_cast<std::int32_t>(position.x * 10.0f), 16U);
     packet.push_bits(static_cast<std::int32_t>(position.y * 10.0f), 16U);
     packet.push_bool(false);
     return packet;
 }
 
-inline ecs::BitBuffer make_destroy_packet(kage::sync::SyncFrame frame, ecs::Entity server_entity) {
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::server_update_message, 8U);
+inline ashiato::BitBuffer make_destroy_packet(ashiato::sync::SyncFrame frame, ashiato::Entity server_entity) {
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
-    packet.push_bits(frame, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(frame, ashiato::sync::protocol::server_packet_id_bits);
     packet.push_bits(0, 32U);
     packet.push_bits(1, 16U);
     packet.push_bool(true);
-    kage::sync::protocol::write_network_entity_id(packet, test_network_id(server_entity));
+    ashiato::sync::protocol::write_network_entity_id(packet, test_network_id(server_entity));
     return packet;
 }
 
 struct ComponentRecord {
     std::uint16_t component_index = 0;
-    ecs::BitBuffer payload;
+    ashiato::BitBuffer payload;
 };
 
 struct EntityRecord {
-    ecs::Entity entity;
+    ashiato::Entity entity;
     std::uint32_t network_id = 0;
     bool destroy = false;
     bool full = false;
-    kage::sync::SyncFrame baseline_frame = 0;
-    kage::sync::SyncArchetypeId archetype;
+    ashiato::sync::SyncFrame baseline_frame = 0;
+    ashiato::sync::SyncArchetypeId archetype;
     std::vector<ComponentRecord> components;
 };
 
 struct ServerUpdatePacket {
     std::uint8_t message = 0;
-    kage::sync::SyncFrame frame = 0;
+    ashiato::sync::SyncFrame frame = 0;
     std::uint32_t packet_id = 0;
-    kage::sync::SyncFrame input_ack_frame = 0;
+    ashiato::sync::SyncFrame input_ack_frame = 0;
     std::vector<EntityRecord> entities;
 };
 
-inline ecs::BitBuffer make_connect_request(const std::string& token) {
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::client_connect_request_message, 8U);
-    kage::sync::protocol::write_string(packet, token);
+inline ashiato::BitBuffer make_connect_request(const std::string& token) {
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::client_connect_request_message, 8U);
+    ashiato::sync::protocol::write_string(packet, token);
     return packet;
 }
 
 inline ServerUpdatePacket read_server_update(
-    ecs::BitBuffer packet,
+    ashiato::BitBuffer packet,
     std::size_t sync_slot_count = 2U,
     std::size_t component_one_payload_bits = 17U,
     std::size_t network_entity_id_tier0_bits =
-        kage::sync::protocol::default_network_entity_id_tier0_bits) {
+        ashiato::sync::protocol::default_network_entity_id_tier0_bits) {
     ServerUpdatePacket update;
     update.message = static_cast<std::uint8_t>(packet.read_bits(8U));
-    update.frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
-    update.packet_id = static_cast<std::uint32_t>(packet.read_bits(kage::sync::protocol::server_packet_id_bits));
-    update.input_ack_frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
+    update.frame = static_cast<ashiato::sync::SyncFrame>(packet.read_bits(32U));
+    update.packet_id = static_cast<std::uint32_t>(packet.read_bits(ashiato::sync::protocol::server_packet_id_bits));
+    update.input_ack_frame = static_cast<ashiato::sync::SyncFrame>(packet.read_bits(32U));
     const auto entity_count = static_cast<std::uint16_t>(packet.read_bits(16U));
     update.entities.reserve(entity_count);
     for (std::uint16_t entity_index = 0; entity_index < entity_count; ++entity_index) {
         EntityRecord entity;
         entity.destroy = packet.read_bool();
-        REQUIRE(kage::sync::protocol::read_network_entity_id(
+        REQUIRE(ashiato::sync::protocol::read_network_entity_id(
             packet,
             entity.network_id,
             network_entity_id_tier0_bits));
@@ -442,9 +442,9 @@ inline ServerUpdatePacket read_server_update(
         entity.full = packet.read_bool();
         if (entity.full) {
             entity.archetype =
-                kage::sync::SyncArchetypeId{static_cast<std::uint32_t>(packet.read_bits(32U))};
+                ashiato::sync::SyncArchetypeId{static_cast<std::uint32_t>(packet.read_bits(32U))};
             const bool uses_presence_mask = packet.read_bool();
-            const std::size_t sync_slot_bits = kage::sync::protocol::bits_for_range(sync_slot_count);
+            const std::size_t sync_slot_bits = ashiato::sync::protocol::bits_for_range(sync_slot_count);
             std::uint16_t component_count = 0;
             std::uint64_t presence_mask = 0;
             if (uses_presence_mask) {
@@ -478,7 +478,7 @@ inline ServerUpdatePacket read_server_update(
             const bool has_cues = packet.read_bool();
             REQUIRE_FALSE(has_cues);
         } else {
-            REQUIRE(kage::sync::protocol::read_baseline_frame(packet, update.frame, entity.baseline_frame));
+            REQUIRE(ashiato::sync::protocol::read_baseline_frame(packet, update.frame, entity.baseline_frame));
             const bool tag_changed = packet.read_bool();
             REQUIRE_FALSE(tag_changed);
             std::vector<std::uint16_t> changed_components;
@@ -505,7 +505,7 @@ inline ServerUpdatePacket read_server_update(
     return update;
 }
 
-inline NetworkedPayload read_first_networked_payload(const ecs::BitBuffer& packet) {
+inline NetworkedPayload read_first_networked_payload(const ashiato::BitBuffer& packet) {
     const ServerUpdatePacket update = read_server_update(packet);
     REQUIRE(update.message == 1);
     REQUIRE(update.entities.size() == 1);
@@ -513,12 +513,12 @@ inline NetworkedPayload read_first_networked_payload(const ecs::BitBuffer& packe
     return read_networked_payload(update.entities[0].components[0].payload);
 }
 
-inline ecs::BitBuffer write_ack_packet(std::uint32_t packet_id) {
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::client_ack_message, 8U);
+inline ashiato::BitBuffer write_ack_packet(std::uint32_t packet_id) {
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
     packet.push_bits(1, 16U);
-    packet.push_bits(packet_id, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(packet_id, ashiato::sync::protocol::server_packet_id_bits);
     return packet;
 }
 
-}  // namespace kage_sync_tests
+}  // namespace ashiato_sync_tests

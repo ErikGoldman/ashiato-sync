@@ -1,4 +1,4 @@
-add_executable(kage_sync_fps_example
+add_executable(ashiato_sync_fps_example
     src/app.cpp
     src/game/constants.cpp
     src/game/jobs.cpp
@@ -15,19 +15,19 @@ add_executable(kage_sync_fps_example
     src/trace.cpp
 )
 
-target_include_directories(kage_sync_fps_example
+target_include_directories(ashiato_sync_fps_example
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_link_libraries(kage_sync_fps_example
+target_link_libraries(ashiato_sync_fps_example
     PRIVATE
-        kage::sync
+        ashiato::sync
         raylib
 )
 
-target_compile_features(kage_sync_fps_example PRIVATE cxx_std_17)
+target_compile_features(ashiato_sync_fps_example PRIVATE cxx_std_17)
 
 if(WIN32)
-    target_link_libraries(kage_sync_fps_example PRIVATE ws2_32)
+    target_link_libraries(ashiato_sync_fps_example PRIVATE ws2_32)
 endif()

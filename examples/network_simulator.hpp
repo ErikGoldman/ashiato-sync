@@ -1,6 +1,6 @@
 #pragma once
 
-#include "kage/sync/sync.hpp"
+#include "ashiato/sync/sync.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -9,7 +9,7 @@
 #include <random>
 #include <utility>
 
-namespace kage::sync::examples {
+namespace ashiato::sync::examples {
 
 struct NetworkSimulatorSettings {
     double latency_ms = 0.0;
@@ -25,7 +25,7 @@ class NetworkSimulator {
 public:
     struct QueuedPacket {
         Endpoint endpoint;
-        ecs::BitBuffer payload;
+        ashiato::BitBuffer payload;
         double deliver_at = 0.0;
         std::size_t charged_bytes = 0;
     };
@@ -38,7 +38,7 @@ public:
     explicit NetworkSimulator(NetworkSimulatorSettings initial_settings, std::uint32_t seed = 0)
         : settings(initial_settings), rng_(seed) {}
 
-    bool enqueue(const Endpoint& endpoint, const ecs::BitBuffer& payload, double now_seconds) {
+    bool enqueue(const Endpoint& endpoint, const ashiato::BitBuffer& payload, double now_seconds) {
         if (drops_packet()) {
             return false;
         }
@@ -52,7 +52,7 @@ public:
         return true;
     }
 
-    bool enqueue(const Endpoint& endpoint, ecs::BitBuffer&& payload, double now_seconds) {
+    bool enqueue(const Endpoint& endpoint, ashiato::BitBuffer&& payload, double now_seconds) {
         if (drops_packet()) {
             return false;
         }
@@ -168,4 +168,4 @@ private:
     std::size_t queued_bytes_ = 0;
 };
 
-}  // namespace kage::sync::examples
+}  // namespace ashiato::sync::examples

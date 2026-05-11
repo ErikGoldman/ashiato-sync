@@ -1,6 +1,6 @@
 #pragma once
 
-#include "kage/sync/sync.hpp"
+#include "ashiato/sync/sync.hpp"
 
 #include <benchmark/benchmark.h>
 
@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-namespace kage::sync::benchmarks {
+namespace ashiato::sync::benchmarks {
 
 struct DeltaPosition {
     std::int32_t x = 0;
@@ -35,24 +35,24 @@ struct TinyFlags {
 };
 
 struct DestroyPackets {
-    std::vector<ecs::BitBuffer> initial;
-    std::vector<ecs::BitBuffer> destroys;
+    std::vector<ashiato::BitBuffer> initial;
+    std::vector<ashiato::BitBuffer> destroys;
 };
 
 struct ChurnPackets {
-    std::vector<ecs::BitBuffer> initial;
-    std::vector<ecs::BitBuffer> destroys;
-    std::vector<ecs::BitBuffer> respawns;
+    std::vector<ashiato::BitBuffer> initial;
+    std::vector<ashiato::BitBuffer> destroys;
+    std::vector<ashiato::BitBuffer> respawns;
 };
 
 struct TaggedSchema {
     SyncArchetypeId archetype;
-    std::vector<ecs::Entity> tags;
+    std::vector<ashiato::Entity> tags;
 };
 
-}  // namespace kage::sync::benchmarks
+}  // namespace ashiato::sync::benchmarks
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 template <>
 struct SyncComponentTraits<benchmarks::DeltaPosition> {
@@ -66,7 +66,7 @@ struct SyncComponentTraits<benchmarks::DeltaPosition> {
         return value;
     }
 
-    static void serialize(const Quantized* previous, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out) {
         if (previous == nullptr) {
             out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
             return;
@@ -76,7 +76,7 @@ struct SyncComponentTraits<benchmarks::DeltaPosition> {
         out.push_bits(current.y - previous->y, 8U);
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized* previous, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized* previous, Quantized& out) {
         if (previous == nullptr) {
             in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
             return true;
@@ -113,7 +113,7 @@ struct SyncComponentTraits<benchmarks::LargePayload> {
         return value;
     }
 
-    static void serialize(const Quantized* previous, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out) {
         if (previous == nullptr) {
             out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
             return;
@@ -124,7 +124,7 @@ struct SyncComponentTraits<benchmarks::LargePayload> {
         }
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized* previous, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized* previous, Quantized& out) {
         if (previous == nullptr) {
             in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
             return true;
@@ -150,26 +150,26 @@ struct SyncComponentTraits<benchmarks::TinyFlags> {
         return value;
     }
 
-    static void serialize(const Quantized* previous, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out) {
         const std::uint8_t base = previous == nullptr ? 0U : previous->bits;
         out.push_bits(static_cast<std::int32_t>(current.bits ^ base), 4U);
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized* previous, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized* previous, Quantized& out) {
         const std::uint8_t base = previous == nullptr ? 0U : previous->bits;
         out.bits = static_cast<std::uint8_t>(base ^ static_cast<std::uint8_t>(in.read_bits(4U)));
         return true;
     }
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync
 
-namespace kage::sync::benchmarks {
+namespace ashiato::sync::benchmarks {
 
-inline SyncArchetypeId define_archetype(ecs::Registry& registry) {
-    const ecs::Entity position = register_sync_component<Position>(registry, "Position");
-    const ecs::Entity health = register_sync_component<Health>(registry, "Health");
-    return ::kage::sync::define_archetype(
+inline SyncArchetypeId define_archetype(ashiato::Registry& registry) {
+    const ashiato::Entity position = register_sync_component<Position>(registry, "Position");
+    const ashiato::Entity health = register_sync_component<Health>(registry, "Health");
+    return ::ashiato::sync::define_archetype(
         registry,
         "Actor",
         {
@@ -178,9 +178,9 @@ inline SyncArchetypeId define_archetype(ecs::Registry& registry) {
         });
 }
 
-inline SyncArchetypeId define_delta_archetype(ecs::Registry& registry, bool interpolate = false) {
-    const ecs::Entity position = register_sync_component<DeltaPosition>(registry, "DeltaPosition");
-    return ::kage::sync::define_archetype(
+inline SyncArchetypeId define_delta_archetype(ashiato::Registry& registry, bool interpolate = false) {
+    const ashiato::Entity position = register_sync_component<DeltaPosition>(registry, "DeltaPosition");
+    return ::ashiato::sync::define_archetype(
         registry,
         "DeltaActor",
         {{position,
@@ -188,29 +188,29 @@ inline SyncArchetypeId define_delta_archetype(ecs::Registry& registry, bool inte
           interpolate ? ComponentInterpolation::Interpolate : ComponentInterpolation::Step}});
 }
 
-inline SyncArchetypeId define_large_payload_archetype(ecs::Registry& registry) {
-    const ecs::Entity large = register_sync_component<LargePayload>(registry, "LargePayload");
-    return ::kage::sync::define_archetype(
+inline SyncArchetypeId define_large_payload_archetype(ashiato::Registry& registry) {
+    const ashiato::Entity large = register_sync_component<LargePayload>(registry, "LargePayload");
+    return ::ashiato::sync::define_archetype(
         registry,
         "LargePayloadActor",
         {{large, ReplicationAudience::All}});
 }
 
-inline TaggedSchema define_tagged_archetype(ecs::Registry& registry, int tag_count) {
-    const ecs::Entity position = register_sync_component<Position>(registry, "Position");
+inline TaggedSchema define_tagged_archetype(ashiato::Registry& registry, int tag_count) {
+    const ashiato::Entity position = register_sync_component<Position>(registry, "Position");
     std::vector<SyncTagReplication> tags;
     tags.reserve(static_cast<std::size_t>(tag_count));
-    std::vector<ecs::Entity> tag_entities;
+    std::vector<ashiato::Entity> tag_entities;
     tag_entities.reserve(static_cast<std::size_t>(tag_count));
     for (int index = 0; index < tag_count; ++index) {
-        const ecs::Entity tag = registry.register_tag("BenchTag" + std::to_string(index));
+        const ashiato::Entity tag = registry.register_tag("BenchTag" + std::to_string(index));
         tag_entities.push_back(tag);
         tags.push_back(SyncTagReplication{
             tag,
             (index % 4) == 0 ? ReplicationAudience::Owner : ReplicationAudience::All});
     }
     return TaggedSchema{
-        ::kage::sync::define_archetype(
+        ::ashiato::sync::define_archetype(
             registry,
             SyncArchetypeDesc{
                 "TaggedActor",
@@ -220,26 +220,26 @@ inline TaggedSchema define_tagged_archetype(ecs::Registry& registry, int tag_cou
         std::move(tag_entities)};
 }
 
-inline std::vector<SyncArchetypeId> define_diverse_archetypes(ecs::Registry& registry) {
-    const ecs::Entity position = register_sync_component<Position>(registry, "Position");
-    const ecs::Entity health = register_sync_component<Health>(registry, "Health");
-    const ecs::Entity delta = register_sync_component<DeltaPosition>(registry, "DeltaPosition");
-    const ecs::Entity large = register_sync_component<LargePayload>(registry, "LargePayload");
-    const ecs::Entity tiny = register_sync_component<TinyFlags>(registry, "TinyFlags");
+inline std::vector<SyncArchetypeId> define_diverse_archetypes(ashiato::Registry& registry) {
+    const ashiato::Entity position = register_sync_component<Position>(registry, "Position");
+    const ashiato::Entity health = register_sync_component<Health>(registry, "Health");
+    const ashiato::Entity delta = register_sync_component<DeltaPosition>(registry, "DeltaPosition");
+    const ashiato::Entity large = register_sync_component<LargePayload>(registry, "LargePayload");
+    const ashiato::Entity tiny = register_sync_component<TinyFlags>(registry, "TinyFlags");
 
     return {
-        ::kage::sync::define_archetype(
+        ::ashiato::sync::define_archetype(
             registry,
             "DiversePosition",
             {{position, ReplicationAudience::All}}),
-        ::kage::sync::define_archetype(
+        ::ashiato::sync::define_archetype(
             registry,
             "DiverseDeltaTiny",
             {
                 {delta, ReplicationAudience::All},
                 {tiny, ReplicationAudience::All},
             }),
-        ::kage::sync::define_archetype(
+        ::ashiato::sync::define_archetype(
             registry,
             "DiverseLargeOwner",
             {
@@ -249,8 +249,8 @@ inline std::vector<SyncArchetypeId> define_diverse_archetypes(ecs::Registry& reg
     };
 }
 
-inline std::vector<ecs::Entity> create_entities(ecs::Registry& registry, int count) {
-    std::vector<ecs::Entity> entities;
+inline std::vector<ashiato::Entity> create_entities(ashiato::Registry& registry, int count) {
+    std::vector<ashiato::Entity> entities;
     entities.reserve(static_cast<std::size_t>(count));
     for (int i = 0; i < count; ++i) {
         entities.push_back(registry.create());
@@ -258,26 +258,26 @@ inline std::vector<ecs::Entity> create_entities(ecs::Registry& registry, int cou
     return entities;
 }
 
-inline std::vector<ecs::Entity> create_position_entities(ecs::Registry& registry, int count) {
-    std::vector<ecs::Entity> entities;
+inline std::vector<ashiato::Entity> create_position_entities(ashiato::Registry& registry, int count) {
+    std::vector<ashiato::Entity> entities;
     entities.reserve(static_cast<std::size_t>(count));
     for (int i = 0; i < count; ++i) {
-        const ecs::Entity entity = registry.create();
+        const ashiato::Entity entity = registry.create();
         registry.add<Position>(entity, Position{static_cast<float>(i), static_cast<float>(i + 1)});
         entities.push_back(entity);
     }
     return entities;
 }
 
-inline std::vector<ecs::Entity> create_tagged_entities(
-    ecs::Registry& registry,
+inline std::vector<ashiato::Entity> create_tagged_entities(
+    ashiato::Registry& registry,
     int count,
     int client_count,
-    const std::vector<ecs::Entity>& tags) {
-    std::vector<ecs::Entity> entities;
+    const std::vector<ashiato::Entity>& tags) {
+    std::vector<ashiato::Entity> entities;
     entities.reserve(static_cast<std::size_t>(count));
     for (int i = 0; i < count; ++i) {
-        const ecs::Entity entity = registry.create();
+        const ashiato::Entity entity = registry.create();
         registry.add<Position>(entity, Position{static_cast<float>(i), static_cast<float>(i + 1)});
         registry.add<NetworkOwner>(
             entity,
@@ -292,22 +292,22 @@ inline std::vector<ecs::Entity> create_tagged_entities(
     return entities;
 }
 
-inline std::vector<ecs::Entity> create_delta_entities(ecs::Registry& registry, int count) {
-    std::vector<ecs::Entity> entities;
+inline std::vector<ashiato::Entity> create_delta_entities(ashiato::Registry& registry, int count) {
+    std::vector<ashiato::Entity> entities;
     entities.reserve(static_cast<std::size_t>(count));
     for (int i = 0; i < count; ++i) {
-        const ecs::Entity entity = registry.create();
+        const ashiato::Entity entity = registry.create();
         registry.add<DeltaPosition>(entity, DeltaPosition{i, i + 1});
         entities.push_back(entity);
     }
     return entities;
 }
 
-inline std::vector<ecs::Entity> create_large_payload_entities(ecs::Registry& registry, int count) {
-    std::vector<ecs::Entity> entities;
+inline std::vector<ashiato::Entity> create_large_payload_entities(ashiato::Registry& registry, int count) {
+    std::vector<ashiato::Entity> entities;
     entities.reserve(static_cast<std::size_t>(count));
     for (int i = 0; i < count; ++i) {
-        const ecs::Entity entity = registry.create();
+        const ashiato::Entity entity = registry.create();
         LargePayload payload;
         for (int value = 0; value < 8; ++value) {
             payload.values[value] = i + value;
@@ -318,11 +318,11 @@ inline std::vector<ecs::Entity> create_large_payload_entities(ecs::Registry& reg
     return entities;
 }
 
-inline std::vector<ecs::Entity> create_owned_entities(ecs::Registry& registry, int count, int client_count) {
-    std::vector<ecs::Entity> entities;
+inline std::vector<ashiato::Entity> create_owned_entities(ashiato::Registry& registry, int count, int client_count) {
+    std::vector<ashiato::Entity> entities;
     entities.reserve(static_cast<std::size_t>(count));
     for (int i = 0; i < count; ++i) {
-        const ecs::Entity entity = registry.create();
+        const ashiato::Entity entity = registry.create();
         registry.add<Position>(entity, Position{static_cast<float>(i), static_cast<float>(i + 1)});
         registry.add<Health>(entity, Health{100 + i});
         registry.add<NetworkOwner>(
@@ -333,15 +333,15 @@ inline std::vector<ecs::Entity> create_owned_entities(ecs::Registry& registry, i
     return entities;
 }
 
-inline std::vector<ecs::Entity> create_diverse_entities(
-    ecs::Registry& registry,
+inline std::vector<ashiato::Entity> create_diverse_entities(
+    ashiato::Registry& registry,
     int count,
     const std::vector<SyncArchetypeId>& archetypes,
     int client_count) {
-    std::vector<ecs::Entity> entities;
+    std::vector<ashiato::Entity> entities;
     entities.reserve(static_cast<std::size_t>(count));
     for (int i = 0; i < count; ++i) {
-        const ecs::Entity entity = registry.create();
+        const ashiato::Entity entity = registry.create();
         const int kind = i % static_cast<int>(archetypes.size());
         if (kind == 0) {
             registry.add<Position>(entity, Position{static_cast<float>(i), static_cast<float>(i + 1)});
@@ -370,18 +370,28 @@ inline void add_clients(ReplicationServer& server, int count) {
     }
 }
 
+inline ReplicationClientOptions make_client_options(ReplicationClientMode mode, SyncFrame buffered_frame_lag = 2) {
+    ReplicationClientOptions options;
+    options.network.mtu_bytes = 1200;
+    options.entities.default_mode = mode;
+    options.buffered.buffered_frame_lag = buffered_frame_lag;
+    options.buffered.auto_buffered_frame_lag = false;
+    options.session.local_client = 1;
+    return options;
+}
+
 inline void add_replication_configs(
-    ecs::Registry& registry,
-    const std::vector<ecs::Entity>& entities,
+    ashiato::Registry& registry,
+    const std::vector<ashiato::Entity>& entities,
     SyncArchetypeId archetype) {
-    for (const ecs::Entity entity : entities) {
+    for (const ashiato::Entity entity : entities) {
         registry.add<Replicated>(entity, Replicated{archetype});
     }
 }
 
 inline void add_diverse_replication_configs(
-    ecs::Registry& registry,
-    const std::vector<ecs::Entity>& entities,
+    ashiato::Registry& registry,
+    const std::vector<ashiato::Entity>& entities,
     const std::vector<SyncArchetypeId>& archetypes) {
     for (std::size_t i = 0; i < entities.size(); ++i) {
         registry.add<Replicated>(
@@ -392,14 +402,14 @@ inline void add_diverse_replication_configs(
 
 inline void ack_packets(
     ReplicationServer& server,
-    ecs::Registry& registry,
-    const std::vector<std::pair<ClientId, ecs::BitBuffer>>& packets) {
+    ashiato::Registry& registry,
+    const std::vector<std::pair<ClientId, ashiato::BitBuffer>>& packets) {
     for (const auto& sent : packets) {
-        ecs::BitBuffer packet = sent.second;
+        ashiato::BitBuffer packet = sent.second;
         benchmark::DoNotOptimize(packet.read_bits(8U));
         benchmark::DoNotOptimize(packet.read_bits(32U));
         const auto packet_id = static_cast<std::uint32_t>(packet.read_bits(protocol::server_packet_id_bits));
-        ecs::BitBuffer ack;
+        ashiato::BitBuffer ack;
         ack.push_bits(protocol::client_ack_message, 8U);
         ack.push_bits(1, 16U);
         ack.push_bits(packet_id, protocol::server_packet_id_bits);
@@ -407,7 +417,7 @@ inline void ack_packets(
     }
 }
 
-inline std::uint64_t consume_packets(const std::vector<std::pair<ClientId, ecs::BitBuffer>>& packets) {
+inline std::uint64_t consume_packets(const std::vector<std::pair<ClientId, ashiato::BitBuffer>>& packets) {
     std::uint64_t consumed = 0;
     for (const auto& packet : packets) {
         consumed += packet.first + packet.second.byte_size();
@@ -415,22 +425,22 @@ inline std::uint64_t consume_packets(const std::vector<std::pair<ClientId, ecs::
     return consumed;
 }
 
-inline std::vector<ecs::BitBuffer> make_client_receive_packets(int entity_count, int frame_count) {
-    ecs::Registry registry;
+inline std::vector<ashiato::BitBuffer> make_client_receive_packets(int entity_count, int frame_count) {
+    ashiato::Registry registry;
     const SyncArchetypeId archetype = define_delta_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
+    const std::vector<ashiato::Entity> entities = create_delta_entities(registry, entity_count);
 
-    std::vector<std::pair<ClientId, ecs::BitBuffer>> sent;
+    std::vector<std::pair<ClientId, ashiato::BitBuffer>> sent;
     sent.reserve(static_cast<std::size_t>(frame_count) * static_cast<std::size_t>(entity_count));
 
     ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition) * 8U;
     options.mtu_bytes = 1200;
-    options.transport = [&](ClientId client, const ecs::BitBuffer& packet) {
+    options.transport = [&](ClientId client, const ashiato::BitBuffer& packet) {
         sent.push_back({client, packet});
     };
 
-    ReplicationServer server(options);
+    ReplicationServer server(registry, options);
     server.add_client(1);
     add_replication_configs(registry, entities, archetype);
     for (int frame = 0; frame < frame_count; ++frame) {
@@ -442,7 +452,7 @@ inline std::vector<ecs::BitBuffer> make_client_receive_packets(int entity_count,
         ack_packets(server, registry, sent);
     }
 
-    std::vector<ecs::BitBuffer> packets;
+    std::vector<ashiato::BitBuffer> packets;
     packets.reserve(sent.size());
     for (const auto& packet : sent) {
         packets.push_back(packet.second);
@@ -450,22 +460,22 @@ inline std::vector<ecs::BitBuffer> make_client_receive_packets(int entity_count,
     return packets;
 }
 
-inline std::vector<ecs::BitBuffer> make_large_payload_client_receive_packets(int entity_count, int frame_count) {
-    ecs::Registry registry;
+inline std::vector<ashiato::BitBuffer> make_large_payload_client_receive_packets(int entity_count, int frame_count) {
+    ashiato::Registry registry;
     const SyncArchetypeId archetype = define_large_payload_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_large_payload_entities(registry, entity_count);
+    const std::vector<ashiato::Entity> entities = create_large_payload_entities(registry, entity_count);
 
-    std::vector<std::pair<ClientId, ecs::BitBuffer>> sent;
+    std::vector<std::pair<ClientId, ashiato::BitBuffer>> sent;
     sent.reserve(static_cast<std::size_t>(frame_count) * static_cast<std::size_t>(entity_count));
 
     ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(LargePayload) * 8U;
     options.mtu_bytes = 1200;
-    options.transport = [&](ClientId client, const ecs::BitBuffer& packet) {
+    options.transport = [&](ClientId client, const ashiato::BitBuffer& packet) {
         sent.push_back({client, packet});
     };
 
-    ReplicationServer server(options);
+    ReplicationServer server(registry, options);
     server.add_client(1);
     add_replication_configs(registry, entities, archetype);
     for (int frame = 0; frame < frame_count; ++frame) {
@@ -479,7 +489,7 @@ inline std::vector<ecs::BitBuffer> make_large_payload_client_receive_packets(int
         ack_packets(server, registry, sent);
     }
 
-    std::vector<ecs::BitBuffer> packets;
+    std::vector<ashiato::BitBuffer> packets;
     packets.reserve(sent.size());
     for (const auto& packet : sent) {
         packets.push_back(packet.second);
@@ -488,19 +498,19 @@ inline std::vector<ecs::BitBuffer> make_large_payload_client_receive_packets(int
 }
 
 inline DestroyPackets make_destroy_packets(int entity_count) {
-    ecs::Registry registry;
+    ashiato::Registry registry;
     const SyncArchetypeId archetype = define_delta_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
+    const std::vector<ashiato::Entity> entities = create_delta_entities(registry, entity_count);
 
-    std::vector<std::pair<ClientId, ecs::BitBuffer>> sent;
+    std::vector<std::pair<ClientId, ashiato::BitBuffer>> sent;
     ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition) * 16U;
     options.mtu_bytes = 1200;
-    options.transport = [&](ClientId client, const ecs::BitBuffer& packet) {
+    options.transport = [&](ClientId client, const ashiato::BitBuffer& packet) {
         sent.push_back({client, packet});
     };
 
-    ReplicationServer server(options);
+    ReplicationServer server(registry, options);
     server.add_client(1);
     add_replication_configs(registry, entities, archetype);
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -513,7 +523,7 @@ inline DestroyPackets make_destroy_packets(int entity_count) {
 
     ack_packets(server, registry, sent);
     sent.clear();
-    for (const ecs::Entity entity : entities) {
+    for (const ashiato::Entity entity : entities) {
         registry.destroy(entity);
     }
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -525,19 +535,19 @@ inline DestroyPackets make_destroy_packets(int entity_count) {
 }
 
 inline ChurnPackets make_churn_packets(int entity_count) {
-    ecs::Registry registry;
+    ashiato::Registry registry;
     const SyncArchetypeId archetype = define_delta_archetype(registry);
-    std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
+    std::vector<ashiato::Entity> entities = create_delta_entities(registry, entity_count);
 
-    std::vector<std::pair<ClientId, ecs::BitBuffer>> sent;
+    std::vector<std::pair<ClientId, ashiato::BitBuffer>> sent;
     ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition) * 16U;
     options.mtu_bytes = 1200;
-    options.transport = [&](ClientId client, const ecs::BitBuffer& packet) {
+    options.transport = [&](ClientId client, const ashiato::BitBuffer& packet) {
         sent.push_back({client, packet});
     };
 
-    ReplicationServer server(options);
+    ReplicationServer server(registry, options);
     server.add_client(1);
     add_replication_configs(registry, entities, archetype);
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -550,7 +560,7 @@ inline ChurnPackets make_churn_packets(int entity_count) {
 
     ack_packets(server, registry, sent);
     sent.clear();
-    for (const ecs::Entity entity : entities) {
+    for (const ashiato::Entity entity : entities) {
         registry.destroy(entity);
     }
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -571,13 +581,13 @@ inline ChurnPackets make_churn_packets(int entity_count) {
     return packets;
 }
 
-inline void define_client_delta_schema(ecs::Registry& registry, bool interpolate) {
-    configure_client(registry, 1);
+inline void define_client_delta_schema(ashiato::Registry& registry, bool interpolate) {
+    ReplicationClient client(registry, make_client_options(ReplicationClientMode::Snap));
     define_delta_archetype(registry, interpolate);
 }
 
-inline void define_client_large_payload_schema(ecs::Registry& registry) {
-    configure_client(registry, 1);
+inline void define_client_large_payload_schema(ashiato::Registry& registry) {
+    ReplicationClient client(registry, make_client_options(ReplicationClientMode::Snap));
     define_large_payload_archetype(registry);
 }
 
@@ -589,4 +599,4 @@ inline void DestroyArgs(benchmark::internal::Benchmark* benchmark) {
     benchmark->Arg(128)->Arg(1024)->Arg(4096);
 }
 
-}  // namespace kage::sync::benchmarks
+}  // namespace ashiato::sync::benchmarks

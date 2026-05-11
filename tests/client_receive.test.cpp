@@ -10,26 +10,26 @@
 #include <utility>
 #include <vector>
 
-using namespace kage_sync_tests;
+using namespace ashiato_sync_tests;
 
 namespace {
 
 constexpr std::size_t client_destroy_tombstone_capacity = 65536;
 
-ecs::BitBuffer make_destroy_packet_for_wire_ids(
-    kage::sync::SyncFrame frame,
+ashiato::BitBuffer make_destroy_packet_for_wire_ids(
+    ashiato::sync::SyncFrame frame,
     std::uint32_t packet_id,
     std::uint32_t first_wire_id,
     std::uint16_t count) {
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::server_update_message, 8U);
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
-    packet.push_bits(packet_id, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(packet_id, ashiato::sync::protocol::server_packet_id_bits);
     packet.push_bits(0, 32U);
     packet.push_bits(count, 16U);
     for (std::uint16_t offset = 0; offset < count; ++offset) {
         packet.push_bool(true);
-        kage::sync::protocol::write_network_entity_id(packet, first_wire_id + offset);
+        ashiato::sync::protocol::write_network_entity_id(packet, first_wire_id + offset);
     }
     return packet;
 }
@@ -37,38 +37,38 @@ ecs::BitBuffer make_destroy_packet_for_wire_ids(
 }  // namespace
 
 TEST_CASE("replication client applies full updates and queues ACKs") {
-    ecs::Registry server_registry;
-    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
-    const ecs::Entity server_entity = server_registry.create();
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato_sync_tests::define_position_archetype(server_registry);
+    const ashiato::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
 
-    std::vector<ecs::BitBuffer> packets;
-    kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
 
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
     REQUIRE(client.receive(client_registry, packets[0]));
 
-    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
+    const ashiato::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(local);
     REQUIRE(client_registry.alive(local));
     REQUIRE(client_registry.contains<Position>(local));
     REQUIRE(client_registry.get<Position>(local).x == 1.0f);
     REQUIRE(client_registry.get<Position>(local).y == 2.0f);
 
-    std::vector<ecs::BitBuffer> ack_packets = client.drain_ack_packets();
+    std::vector<ashiato::BitBuffer> ack_packets = client.drain_ack_packets();
     REQUIRE(ack_packets.size() == 1);
     std::vector<AckRecord> acks = read_acks(ack_packets[0]);
     REQUIRE(acks.size() == 1);
@@ -77,28 +77,28 @@ TEST_CASE("replication client applies full updates and queues ACKs") {
 }
 
 TEST_CASE("replication client exposes server timing estimates after updates") {
-    ecs::Registry server_registry;
-    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
-    const ecs::Entity server_entity = server_registry.create();
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato_sync_tests::define_position_archetype(server_registry);
+    const ashiato::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
 
-    std::vector<ecs::BitBuffer> packets;
-    kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
 
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
     REQUIRE(client.estimated_server_frame() == 0.0);
     REQUIRE(client.continuous_prediction_frames_ahead() == 0.0);
     REQUIRE(client.continuous_buffered_frames_behind() == 0.0);
@@ -110,39 +110,39 @@ TEST_CASE("replication client exposes server timing estimates after updates") {
 }
 
 TEST_CASE("replication client decodes ACKed delta updates") {
-    ecs::Registry server_registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId server_archetype = kage::sync::define_archetype(
+    ashiato::Registry server_registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato::sync::define_archetype(
         server_registry,
         "NetworkedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
-    const ecs::Entity server_entity = server_registry.create();
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<NetworkedPosition>(server_entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
 
-    std::vector<ecs::BitBuffer> packets;
-    kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
 
-    ecs::Registry client_registry;
-    const ecs::Entity client_position =
-        kage::sync::register_sync_component<NetworkedPosition>(client_registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId client_archetype = kage::sync::define_archetype(
+    ashiato::Registry client_registry;
+    const ashiato::Entity client_position =
+        ashiato::sync::register_sync_component<NetworkedPosition>(client_registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato::sync::define_archetype(
         client_registry,
         "NetworkedActor",
-        {{client_position, kage::sync::ReplicationAudience::All}});
+        {{client_position, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(client_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(client.receive(client_registry, packets.back()));
-    for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
+    for (const ashiato::BitBuffer& ack : client.drain_ack_packets()) {
         REQUIRE(server.process_packet(server_registry, 1, ack));
     }
 
@@ -150,46 +150,46 @@ TEST_CASE("replication client decodes ACKed delta updates") {
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(client.receive(client_registry, packets.back()));
 
-    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
+    const ashiato::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(local);
     REQUIRE(client_registry.get<NetworkedPosition>(local).x == 2.0f);
     REQUIRE(client_registry.get<NetworkedPosition>(local).y == 3.0f);
 }
 
 TEST_CASE("replication client decodes deltas against the encoded baseline frame") {
-    ecs::Registry server_registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId server_archetype = kage::sync::define_archetype(
+    ashiato::Registry server_registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato::sync::define_archetype(
         server_registry,
         "NetworkedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
-    const ecs::Entity server_entity = server_registry.create();
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<NetworkedPosition>(server_entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
 
-    std::vector<ecs::BitBuffer> packets;
-    kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
 
-    ecs::Registry client_registry;
-    const ecs::Entity client_position =
-        kage::sync::register_sync_component<NetworkedPosition>(client_registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId client_archetype = kage::sync::define_archetype(
+    ashiato::Registry client_registry;
+    const ashiato::Entity client_position =
+        ashiato::sync::register_sync_component<NetworkedPosition>(client_registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato::sync::define_archetype(
         client_registry,
         "NetworkedActor",
-        {{client_position, kage::sync::ReplicationAudience::All}});
+        {{client_position, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(client_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(client.receive(client_registry, packets.back()));
-    for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
+    for (const ashiato::BitBuffer& ack : client.drain_ack_packets()) {
         REQUIRE(server.process_packet(server_registry, 1, ack));
     }
 
@@ -202,89 +202,89 @@ TEST_CASE("replication client decodes deltas against the encoded baseline frame"
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(client.receive(client_registry, packets.back()));
 
-    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
+    const ashiato::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(local);
     REQUIRE(client_registry.get<NetworkedPosition>(local).x == 3.0f);
     REQUIRE(client_registry.get<NetworkedPosition>(local).y == 4.0f);
 }
 
 TEST_CASE("replication client reports missing prediction rollback traits for default predict mode") {
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClientOptions options;
-    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, options));
 
-    const ecs::Entity server_entity{42};
+    const ashiato::Entity server_entity{42};
     try {
         (void)client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}));
         FAIL("expected missing prediction rollback trait error");
-    } catch (const kage::sync::ClientError& error) {
-        REQUIRE(error.status() == kage::sync::ClientStatus::MissingPredictionRollbackTrait);
+    } catch (const ashiato::sync::ClientError& error) {
+        REQUIRE(error.status() == ashiato::sync::ClientStatus::MissingPredictionRollbackTrait);
     }
 }
 
 TEST_CASE("replication client reports missing prediction rollback traits for selector predict mode") {
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClientOptions options;
-    options.entities.default_mode = kage::sync::ReplicationClientMode::Snap;
-    options.entities.mode_selector = [](const kage::sync::ReplicatedEntityUpdateView&) {
-        return kage::sync::ReplicationClientMode::Predict;
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Snap;
+    options.entities.mode_selector = [](const ashiato::sync::ReplicatedEntityUpdateView&) {
+        return ashiato::sync::ReplicationClientMode::Predict;
     };
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, options));
 
-    const ecs::Entity server_entity{42};
+    const ashiato::Entity server_entity{42};
     try {
         (void)client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}));
         FAIL("expected missing prediction rollback trait error");
-    } catch (const kage::sync::ClientError& error) {
-        REQUIRE(error.status() == kage::sync::ClientStatus::MissingPredictionRollbackTrait);
+    } catch (const ashiato::sync::ClientError& error) {
+        REQUIRE(error.status() == ashiato::sync::ClientStatus::MissingPredictionRollbackTrait);
     }
 }
 
 TEST_CASE("replication client decodes mixed-baseline deltas in one packet") {
-    ecs::Registry server_registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId server_archetype = kage::sync::define_archetype(
+    ashiato::Registry server_registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato::sync::define_archetype(
         server_registry,
         "NetworkedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
-    const ecs::Entity first = server_registry.create();
-    const ecs::Entity second = server_registry.create();
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity first = server_registry.create();
+    const ashiato::Entity second = server_registry.create();
     REQUIRE(server_registry.add<NetworkedPosition>(first, NetworkedPosition{1.0f, 1.0f}) != nullptr);
     REQUIRE(server_registry.add<NetworkedPosition>(second, NetworkedPosition{10.0f, 10.0f}) != nullptr);
 
-    std::vector<ecs::BitBuffer> packets;
-    kage::sync::ReplicationServerOptions server_options;
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
     server_options.bandwidth_limit_bytes_per_tick = 1024;
     server_options.mtu_bytes = 1200;
-    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, first, server_archetype));
     REQUIRE(start_sync(server_registry, second, server_archetype));
 
-    ecs::Registry client_registry;
-    const ecs::Entity client_position =
-        kage::sync::register_sync_component<NetworkedPosition>(client_registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId client_archetype = kage::sync::define_archetype(
+    ashiato::Registry client_registry;
+    const ashiato::Entity client_position =
+        ashiato::sync::register_sync_component<NetworkedPosition>(client_registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato::sync::define_archetype(
         client_registry,
         "NetworkedActor",
-        {{client_position, kage::sync::ReplicationAudience::All}});
+        {{client_position, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(client_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
     const UpdatePacket full_update = read_update(packets.back());
@@ -296,7 +296,7 @@ TEST_CASE("replication client decodes mixed-baseline deltas in one packet") {
     REQUIRE(first_wire_network_id != 0);
     REQUIRE(second_wire_network_id != 0);
     REQUIRE(client.receive(client_registry, packets.back()));
-    for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
+    for (const ashiato::BitBuffer& ack : client.drain_ack_packets()) {
         REQUIRE(server.process_packet(server_registry, 1, ack));
     }
 
@@ -335,8 +335,8 @@ TEST_CASE("replication client decodes mixed-baseline deltas in one packet") {
     REQUIRE(saw_second_from_full);
 
     REQUIRE(client.receive(client_registry, packets.back()));
-    const ecs::Entity first_local = client.local_entity(test_client_entity_network_id(1, first_wire_network_id));
-    const ecs::Entity second_local = client.local_entity(test_client_entity_network_id(1, second_wire_network_id));
+    const ashiato::Entity first_local = client.local_entity(test_client_entity_network_id(1, first_wire_network_id));
+    const ashiato::Entity second_local = client.local_entity(test_client_entity_network_id(1, second_wire_network_id));
     REQUIRE(client_registry.get<NetworkedPosition>(first_local).x == 3.0f);
     REQUIRE(client_registry.get<NetworkedPosition>(first_local).y == 3.0f);
     REQUIRE(client_registry.get<NetworkedPosition>(second_local).x == 12.0f);
@@ -344,65 +344,65 @@ TEST_CASE("replication client decodes mixed-baseline deltas in one packet") {
 }
 
 TEST_CASE("replication client rejects invalid deltas without ACKing") {
-    ecs::Registry registry;
-    const ecs::Entity position =
-        kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position =
+        ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "NetworkedActor",
-        {{position, kage::sync::ReplicationAudience::All}});
+        {{position, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::server_update_message, 8U);
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
     packet.push_bits(1, 32U);
-    packet.push_bits(1, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(1, ashiato::sync::protocol::server_packet_id_bits);
     packet.push_bits(0, 32U);
     packet.push_bits(1, 16U);
     packet.push_bool(false);
-    kage::sync::protocol::write_network_entity_id(packet, 1);
+    ashiato::sync::protocol::write_network_entity_id(packet, 1);
     packet.push_bool(false);
     packet.push_bits(1, 16U);
-    packet.push_bits(0, kage::sync::protocol::bits_for_range(2U));
+    packet.push_bits(0, ashiato::sync::protocol::bits_for_range(2U));
     packet.push_bits(17, 32U);
     packet.push_bool(true);
     packet.push_bits(10, 8U);
     packet.push_bits(10, 8U);
 
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, {}));
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, {}));
     REQUIRE_FALSE(client.receive(registry, packet));
     REQUIRE(client.pending_ack_count() == 0);
     REQUIRE(client.drain_ack_packets().empty());
 }
 
 TEST_CASE("replication client rejects malformed update packets without ACKing") {
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(registry);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = ashiato_sync_tests::define_position_archetype(registry);
     REQUIRE(archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(registry, 1);
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, {}));
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, {}));
 
-    ecs::BitBuffer empty;
+    ashiato::BitBuffer empty;
     REQUIRE_FALSE(client.receive(registry, empty));
 
-    ecs::BitBuffer wrong_message;
-    wrong_message.push_bits(kage::sync::protocol::client_ack_message, 8U);
+    ashiato::BitBuffer wrong_message;
+    wrong_message.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
     REQUIRE_FALSE(client.receive(registry, wrong_message));
 
-    ecs::BitBuffer truncated_header;
-    truncated_header.push_bits(kage::sync::protocol::server_update_message, 8U);
+    ashiato::BitBuffer truncated_header;
+    truncated_header.push_bits(ashiato::sync::protocol::server_update_message, 8U);
     truncated_header.push_bits(1, 32U);
     REQUIRE_FALSE(client.receive(registry, truncated_header));
 
-    ecs::BitBuffer invalid_archetype;
-    invalid_archetype.push_bits(kage::sync::protocol::server_update_message, 8U);
+    ashiato::BitBuffer invalid_archetype;
+    invalid_archetype.push_bits(ashiato::sync::protocol::server_update_message, 8U);
     invalid_archetype.push_bits(1, 32U);
-    invalid_archetype.push_bits(1, kage::sync::protocol::server_packet_id_bits);
+    invalid_archetype.push_bits(1, ashiato::sync::protocol::server_packet_id_bits);
     invalid_archetype.push_bits(0, 32U);
     invalid_archetype.push_bits(1, 16U);
     invalid_archetype.push_bool(false);
-    kage::sync::protocol::write_network_entity_id(invalid_archetype, 1);
+    ashiato::sync::protocol::write_network_entity_id(invalid_archetype, 1);
     invalid_archetype.push_bool(true);
     invalid_archetype.push_bits(99, 32U);
     REQUIRE_FALSE(client.receive(registry, invalid_archetype));
@@ -412,91 +412,91 @@ TEST_CASE("replication client rejects malformed update packets without ACKing") 
 }
 
 TEST_CASE("replication client rejects malformed entity records without ACKing") {
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(registry);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = ashiato_sync_tests::define_position_archetype(registry);
     REQUIRE(archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
     auto make_update_prefix = [](std::uint16_t record_count = 1) {
-        ecs::BitBuffer packet;
-        packet.push_bits(kage::sync::protocol::server_update_message, 8U);
+        ashiato::BitBuffer packet;
+        packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
         packet.push_bits(1, 32U);
-        packet.push_bits(1, kage::sync::protocol::server_packet_id_bits);
+        packet.push_bits(1, ashiato::sync::protocol::server_packet_id_bits);
         packet.push_bits(0, 32U);
         packet.push_bits(record_count, 16U);
         return packet;
     };
 
     {
-        ecs::BitBuffer packet = make_update_prefix();
+        ashiato::BitBuffer packet = make_update_prefix();
         packet.push_bool(false);
-        kage::sync::protocol::write_network_entity_id(packet, 0);
+        ashiato::sync::protocol::write_network_entity_id(packet, 0);
         packet.push_bool(true);
         packet.push_bits(0, 32U);
 
-        kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, {}));
+        ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, {}));
         REQUIRE_FALSE(client.receive(registry, packet));
         REQUIRE(client.pending_ack_count() == 0);
     }
 
     {
-        ecs::BitBuffer packet = make_update_prefix();
+        ashiato::BitBuffer packet = make_update_prefix();
         packet.push_bool(false);
-        kage::sync::protocol::write_network_entity_id(packet, 1);
+        ashiato::sync::protocol::write_network_entity_id(packet, 1);
         packet.push_bool(true);
         packet.push_bits(0, 32U);
         packet.push_bool(false);
         packet.push_bits(1, 16U);
-        packet.push_bits(2, kage::sync::protocol::bits_for_range(2U));
+        packet.push_bits(2, ashiato::sync::protocol::bits_for_range(2U));
 
-        kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, {}));
+        ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, {}));
         REQUIRE_FALSE(client.receive(registry, packet));
         REQUIRE(client.pending_ack_count() == 0);
     }
 
     {
-        ecs::BitBuffer packet = make_update_prefix();
+        ashiato::BitBuffer packet = make_update_prefix();
         packet.push_bool(false);
-        kage::sync::protocol::write_network_entity_id(packet, 1);
+        ashiato::sync::protocol::write_network_entity_id(packet, 1);
         packet.push_bool(true);
         packet.push_bits(0, 32U);
         packet.push_bool(false);
         packet.push_bits(1, 16U);
-        packet.push_bits(1, kage::sync::protocol::bits_for_range(2U));
+        packet.push_bits(1, ashiato::sync::protocol::bits_for_range(2U));
         packet.push_bits(1, 8U);
 
-        kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, {}));
+        ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, {}));
         REQUIRE_FALSE(client.receive(registry, packet));
         REQUIRE(client.pending_ack_count() == 0);
     }
 }
 
 TEST_CASE("replication client applies destroy records and ACKs tombstones") {
-    ecs::Registry server_registry;
-    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
-    const ecs::Entity server_entity = server_registry.create();
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato_sync_tests::define_position_archetype(server_registry);
+    const ashiato::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
 
-    std::vector<ecs::BitBuffer> packets;
-    kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
 
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
 
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(client.receive(client_registry, packets.back()));
-    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
+    const ashiato::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(local);
-    for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
+    for (const ashiato::BitBuffer& ack : client.drain_ack_packets()) {
         REQUIRE(server.process_packet(server_registry, 1, ack));
     }
 
@@ -505,7 +505,7 @@ TEST_CASE("replication client applies destroy records and ACKs tombstones") {
     REQUIRE(client.receive(client_registry, packets.back()));
     REQUIRE_FALSE(client_registry.alive(local));
 
-    std::vector<ecs::BitBuffer> destroy_acks = client.drain_ack_packets();
+    std::vector<ashiato::BitBuffer> destroy_acks = client.drain_ack_packets();
     REQUIRE(destroy_acks.size() == 1);
     std::vector<AckRecord> acks = read_acks(destroy_acks[0]);
     REQUIRE(acks.size() == 1);
@@ -519,66 +519,66 @@ TEST_CASE("replication client applies destroy records and ACKs tombstones") {
 }
 
 TEST_CASE("replication client packs ACKs within the configured MTU") {
-    ecs::Registry client_registry;
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, kage::sync::ReplicationClientOptions{kage::sync::ReplicationClientNetworkOptions{16}}));
-    ecs::Registry server_registry;
-    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
+    ashiato::Registry client_registry;
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, ashiato::sync::ReplicationClientOptions{ashiato::sync::ReplicationClientNetworkOptions{16}}));
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato_sync_tests::define_position_archetype(server_registry);
 
-    std::vector<ecs::Entity> server_entities;
+    std::vector<ashiato::Entity> server_entities;
     for (int i = 0; i < 3; ++i) {
-        const ecs::Entity entity = server_registry.create();
+        const ashiato::Entity entity = server_registry.create();
         REQUIRE(server_registry.add<Position>(entity, Position{static_cast<float>(i), 0.0f}) != nullptr);
         REQUIRE(start_sync(server_registry, entity, server_archetype));
         server_entities.push_back(entity);
     }
 
-    std::vector<ecs::BitBuffer> packets;
-    kage::sync::ReplicationServerOptions server_options;
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
     server_options.mtu_bytes = 29;
-    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     server.tick(server_registry, server.options().fixed_dt_seconds);
 
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    for (const ecs::BitBuffer& packet : packets) {
+    for (const ashiato::BitBuffer& packet : packets) {
         REQUIRE(client.receive(client_registry, packet));
     }
 
-    std::vector<ecs::BitBuffer> acks = client.drain_ack_packets();
+    std::vector<ashiato::BitBuffer> acks = client.drain_ack_packets();
     REQUIRE(acks.size() == 1);
-    for (const ecs::BitBuffer& ack : acks) {
+    for (const ashiato::BitBuffer& ack : acks) {
         REQUIRE(ack.byte_size() <= 16);
         REQUIRE(read_acks(ack).size() == 3);
     }
 }
 
 TEST_CASE("replication client retains ACKs that cannot fit the configured MTU") {
-    ecs::Registry client_registry;
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, kage::sync::ReplicationClientOptions{kage::sync::ReplicationClientNetworkOptions{3}}));
-    ecs::Registry server_registry;
-    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
-    const ecs::Entity server_entity = server_registry.create();
+    ashiato::Registry client_registry;
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, ashiato::sync::ReplicationClientOptions{ashiato::sync::ReplicationClientNetworkOptions{3}}));
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato_sync_tests::define_position_archetype(server_registry);
+    const ashiato::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
 
-    std::vector<ecs::BitBuffer> packets;
-    kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
 
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
     REQUIRE(client.receive(client_registry, packets.back()));
     REQUIRE(client.pending_ack_count() == 1);
@@ -587,27 +587,27 @@ TEST_CASE("replication client retains ACKs that cannot fit the configured MTU") 
 }
 
 TEST_CASE("replication client rejects duplicate full updates without ACKing again") {
-    ecs::Registry server_registry;
-    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
-    const ecs::Entity server_entity = server_registry.create();
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato_sync_tests::define_position_archetype(server_registry);
+    const ashiato::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
 
-    std::vector<ecs::BitBuffer> packets;
-    kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
 
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
     REQUIRE(client.receive(client_registry, packets.back()));
     REQUIRE(client.drain_ack_packets().size() == 1);
     REQUIRE_FALSE(client.receive(client_registry, packets.back()));
@@ -615,55 +615,55 @@ TEST_CASE("replication client rejects duplicate full updates without ACKing agai
 }
 
 TEST_CASE("replication clients recover independently when one misses ACK processing") {
-    ecs::Registry server_registry;
-    const ecs::Entity server_position =
-        kage::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId server_archetype = kage::sync::define_archetype(
+    ashiato::Registry server_registry;
+    const ashiato::Entity server_position =
+        ashiato::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato::sync::define_archetype(
         server_registry,
         "NetworkedActor",
-        {{server_position, kage::sync::ReplicationAudience::All}});
-    const ecs::Entity server_entity = server_registry.create();
+        {{server_position, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<NetworkedPosition>(server_entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
 
-    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
-    kage::sync::ReplicationServerOptions server_options;
+    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
     server_options.bandwidth_limit_bytes_per_tick = 1024;
-    server_options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
+    server_options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& packet) {
         packets.push_back({client, packet});
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
 
-    ecs::Registry client_one_registry;
-    const ecs::Entity client_one_position =
-        kage::sync::register_sync_component<NetworkedPosition>(client_one_registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId client_one_archetype = kage::sync::define_archetype(
+    ashiato::Registry client_one_registry;
+    const ashiato::Entity client_one_position =
+        ashiato::sync::register_sync_component<NetworkedPosition>(client_one_registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId client_one_archetype = ashiato::sync::define_archetype(
         client_one_registry,
         "NetworkedActor",
-        {{client_one_position, kage::sync::ReplicationAudience::All}});
+        {{client_one_position, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(client_one_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_one_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_one_registry, 1);
 
-    ecs::Registry client_two_registry;
-    const ecs::Entity client_two_position =
-        kage::sync::register_sync_component<NetworkedPosition>(client_two_registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId client_two_archetype = kage::sync::define_archetype(
+    ashiato::Registry client_two_registry;
+    const ashiato::Entity client_two_position =
+        ashiato::sync::register_sync_component<NetworkedPosition>(client_two_registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId client_two_archetype = ashiato::sync::define_archetype(
         client_two_registry,
         "NetworkedActor",
-        {{client_two_position, kage::sync::ReplicationAudience::All}});
+        {{client_two_position, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(client_two_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_two_registry, 2);
+    ashiato_sync_tests::configure_test_client_registry(client_two_registry, 2);
 
-    kage::sync::ReplicationClient client_one(client_one_registry, kage_sync_tests::make_test_client_options(client_one_registry, {}));
-    kage::sync::ReplicationClient client_two(client_two_registry, kage_sync_tests::make_test_client_options(client_two_registry, {}));
+    ashiato::sync::ReplicationClient client_one(client_one_registry, ashiato_sync_tests::make_test_client_options(client_one_registry, {}));
+    ashiato::sync::ReplicationClient client_two(client_two_registry, ashiato_sync_tests::make_test_client_options(client_two_registry, {}));
 
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 2);
     REQUIRE(client_one.receive(client_one_registry, packet_for(packets, 1)));
     REQUIRE(client_two.receive(client_two_registry, packet_for(packets, 2)));
-    for (const ecs::BitBuffer& ack : client_one.drain_ack_packets()) {
+    for (const ashiato::BitBuffer& ack : client_one.drain_ack_packets()) {
         REQUIRE(server.process_packet(server_registry, 1, ack));
     }
     REQUIRE(client_two.drain_ack_packets().size() == 1);
@@ -682,15 +682,15 @@ TEST_CASE("replication clients recover independently when one misses ACK process
     REQUIRE(client_one.receive(client_one_registry, packet_for(packets, 1)));
     REQUIRE(client_two.receive(client_two_registry, packet_for(packets, 2)));
 
-    for (const ecs::BitBuffer& ack : client_one.drain_ack_packets()) {
+    for (const ashiato::BitBuffer& ack : client_one.drain_ack_packets()) {
         REQUIRE(server.process_packet(server_registry, 1, ack));
     }
-    for (const ecs::BitBuffer& ack : client_two.drain_ack_packets()) {
+    for (const ashiato::BitBuffer& ack : client_two.drain_ack_packets()) {
         REQUIRE(server.process_packet(server_registry, 2, ack));
     }
 
-    const ecs::Entity client_one_local = client_one.local_entity(first_allocated_client_entity_network_id(1));
-    const ecs::Entity client_two_local = client_two.local_entity(first_allocated_client_entity_network_id(2));
+    const ashiato::Entity client_one_local = client_one.local_entity(first_allocated_client_entity_network_id(1));
+    const ashiato::Entity client_two_local = client_two.local_entity(first_allocated_client_entity_network_id(2));
     REQUIRE(client_one_registry.get<NetworkedPosition>(client_one_local).x == 2.0f);
     REQUIRE(client_one_registry.get<NetworkedPosition>(client_one_local).y == 3.0f);
     REQUIRE(client_two_registry.get<NetworkedPosition>(client_two_local).x == 2.0f);
@@ -705,49 +705,49 @@ TEST_CASE("replication clients recover independently when one misses ACK process
 }
 
 TEST_CASE("replication clients ACK destroy records independently") {
-    ecs::Registry server_registry;
-    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
-    const ecs::Entity server_entity = server_registry.create();
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato_sync_tests::define_position_archetype(server_registry);
+    const ashiato::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
 
-    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
-    kage::sync::ReplicationServerOptions server_options;
+    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
     server_options.bandwidth_limit_bytes_per_tick = 1024;
-    server_options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
+    server_options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& packet) {
         packets.push_back({client, packet});
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
 
-    ecs::Registry client_one_registry;
-    const kage::sync::SyncArchetypeId client_one_archetype =
-        kage_sync_tests::define_position_archetype(client_one_registry);
+    ashiato::Registry client_one_registry;
+    const ashiato::sync::SyncArchetypeId client_one_archetype =
+        ashiato_sync_tests::define_position_archetype(client_one_registry);
     REQUIRE(client_one_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_one_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_one_registry, 1);
 
-    ecs::Registry client_two_registry;
-    const kage::sync::SyncArchetypeId client_two_archetype =
-        kage_sync_tests::define_position_archetype(client_two_registry);
+    ashiato::Registry client_two_registry;
+    const ashiato::sync::SyncArchetypeId client_two_archetype =
+        ashiato_sync_tests::define_position_archetype(client_two_registry);
     REQUIRE(client_two_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_two_registry, 2);
+    ashiato_sync_tests::configure_test_client_registry(client_two_registry, 2);
 
-    kage::sync::ReplicationClient client_one(client_one_registry, kage_sync_tests::make_test_client_options(client_one_registry, {}));
-    kage::sync::ReplicationClient client_two(client_two_registry, kage_sync_tests::make_test_client_options(client_two_registry, {}));
+    ashiato::sync::ReplicationClient client_one(client_one_registry, ashiato_sync_tests::make_test_client_options(client_one_registry, {}));
+    ashiato::sync::ReplicationClient client_two(client_two_registry, ashiato_sync_tests::make_test_client_options(client_two_registry, {}));
 
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 2);
     REQUIRE(client_one.receive(client_one_registry, packet_for(packets, 1)));
     REQUIRE(client_two.receive(client_two_registry, packet_for(packets, 2)));
-    const ecs::Entity client_one_local = client_one.local_entity(first_allocated_client_entity_network_id(1));
-    const ecs::Entity client_two_local = client_two.local_entity(first_allocated_client_entity_network_id(2));
+    const ashiato::Entity client_one_local = client_one.local_entity(first_allocated_client_entity_network_id(1));
+    const ashiato::Entity client_two_local = client_two.local_entity(first_allocated_client_entity_network_id(2));
     REQUIRE(client_one_local);
     REQUIRE(client_two_local);
-    for (const ecs::BitBuffer& ack : client_one.drain_ack_packets()) {
+    for (const ashiato::BitBuffer& ack : client_one.drain_ack_packets()) {
         REQUIRE(server.process_packet(server_registry, 1, ack));
     }
-    for (const ecs::BitBuffer& ack : client_two.drain_ack_packets()) {
+    for (const ashiato::BitBuffer& ack : client_two.drain_ack_packets()) {
         REQUIRE(server.process_packet(server_registry, 2, ack));
     }
 
@@ -760,8 +760,8 @@ TEST_CASE("replication clients ACK destroy records independently") {
     REQUIRE_FALSE(client_one_registry.alive(client_one_local));
     REQUIRE_FALSE(client_two_registry.alive(client_two_local));
 
-    std::vector<ecs::BitBuffer> client_one_acks = client_one.drain_ack_packets();
-    std::vector<ecs::BitBuffer> client_two_acks = client_two.drain_ack_packets();
+    std::vector<ashiato::BitBuffer> client_one_acks = client_one.drain_ack_packets();
+    std::vector<ashiato::BitBuffer> client_two_acks = client_two.drain_ack_packets();
     REQUIRE(client_one_acks.size() == 1);
     REQUIRE(client_two_acks.size() == 1);
     REQUIRE(read_acks(client_one_acks[0]).size() == 1);
@@ -780,62 +780,62 @@ TEST_CASE("replication clients ACK destroy records independently") {
 }
 
 TEST_CASE("replication client reconciles components when owner visibility changes") {
-    ecs::Registry server_registry;
-    const ecs::Entity server_position =
-        kage::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
-    const ecs::Entity server_health = kage::sync::register_sync_component<Health>(server_registry, "Health");
-    const kage::sync::SyncArchetypeId server_archetype = kage::sync::define_archetype(
+    ashiato::Registry server_registry;
+    const ashiato::Entity server_position =
+        ashiato::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
+    const ashiato::Entity server_health = ashiato::sync::register_sync_component<Health>(server_registry, "Health");
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato::sync::define_archetype(
         server_registry,
         "OwnedActor",
         {
-            {server_position, kage::sync::ReplicationAudience::All},
-            {server_health, kage::sync::ReplicationAudience::Owner},
+            {server_position, ashiato::sync::ReplicationAudience::All},
+            {server_health, ashiato::sync::ReplicationAudience::Owner},
         });
-    const ecs::Entity server_entity = server_registry.create();
+    const ashiato::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<NetworkedPosition>(server_entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
     REQUIRE(server_registry.add<Health>(server_entity, Health{42}) != nullptr);
-    REQUIRE(kage::sync::set_owner(server_registry, server_entity, 1));
+    REQUIRE(ashiato::sync::set_owner(server_registry, server_entity, 1));
 
-    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
-    kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
+    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& packet) {
         packets.push_back({client, packet});
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
 
-    ecs::Registry client_one_registry;
-    const ecs::Entity client_one_position =
-        kage::sync::register_sync_component<NetworkedPosition>(client_one_registry, "NetworkedPosition");
-    const ecs::Entity client_one_health = kage::sync::register_sync_component<Health>(client_one_registry, "Health");
-    const kage::sync::SyncArchetypeId client_one_archetype = kage::sync::define_archetype(
+    ashiato::Registry client_one_registry;
+    const ashiato::Entity client_one_position =
+        ashiato::sync::register_sync_component<NetworkedPosition>(client_one_registry, "NetworkedPosition");
+    const ashiato::Entity client_one_health = ashiato::sync::register_sync_component<Health>(client_one_registry, "Health");
+    const ashiato::sync::SyncArchetypeId client_one_archetype = ashiato::sync::define_archetype(
         client_one_registry,
         "OwnedActor",
         {
-            {client_one_position, kage::sync::ReplicationAudience::All},
-            {client_one_health, kage::sync::ReplicationAudience::Owner},
+            {client_one_position, ashiato::sync::ReplicationAudience::All},
+            {client_one_health, ashiato::sync::ReplicationAudience::Owner},
         });
     REQUIRE(client_one_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_one_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_one_registry, 1);
 
-    ecs::Registry client_two_registry;
-    const ecs::Entity client_two_position =
-        kage::sync::register_sync_component<NetworkedPosition>(client_two_registry, "NetworkedPosition");
-    const ecs::Entity client_two_health = kage::sync::register_sync_component<Health>(client_two_registry, "Health");
-    const kage::sync::SyncArchetypeId client_two_archetype = kage::sync::define_archetype(
+    ashiato::Registry client_two_registry;
+    const ashiato::Entity client_two_position =
+        ashiato::sync::register_sync_component<NetworkedPosition>(client_two_registry, "NetworkedPosition");
+    const ashiato::Entity client_two_health = ashiato::sync::register_sync_component<Health>(client_two_registry, "Health");
+    const ashiato::sync::SyncArchetypeId client_two_archetype = ashiato::sync::define_archetype(
         client_two_registry,
         "OwnedActor",
         {
-            {client_two_position, kage::sync::ReplicationAudience::All},
-            {client_two_health, kage::sync::ReplicationAudience::Owner},
+            {client_two_position, ashiato::sync::ReplicationAudience::All},
+            {client_two_health, ashiato::sync::ReplicationAudience::Owner},
         });
     REQUIRE(client_two_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_two_registry, 2);
+    ashiato_sync_tests::configure_test_client_registry(client_two_registry, 2);
 
-    kage::sync::ReplicationClient client_one(client_one_registry, kage_sync_tests::make_test_client_options(client_one_registry, {}));
-    kage::sync::ReplicationClient client_two(client_two_registry, kage_sync_tests::make_test_client_options(client_two_registry, {}));
+    ashiato::sync::ReplicationClient client_one(client_one_registry, ashiato_sync_tests::make_test_client_options(client_one_registry, {}));
+    ashiato::sync::ReplicationClient client_two(client_two_registry, ashiato_sync_tests::make_test_client_options(client_two_registry, {}));
 
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 2);
@@ -846,19 +846,19 @@ TEST_CASE("replication client reconciles components when owner visibility change
             REQUIRE(client_two.receive(client_two_registry, sent.second));
         }
     }
-    for (const ecs::BitBuffer& ack : client_one.drain_ack_packets()) {
+    for (const ashiato::BitBuffer& ack : client_one.drain_ack_packets()) {
         REQUIRE(server.process_packet(server_registry, 1, ack));
     }
-    for (const ecs::BitBuffer& ack : client_two.drain_ack_packets()) {
+    for (const ashiato::BitBuffer& ack : client_two.drain_ack_packets()) {
         REQUIRE(server.process_packet(server_registry, 2, ack));
     }
 
-    const ecs::Entity client_one_local = client_one.local_entity(first_allocated_client_entity_network_id(1));
-    const ecs::Entity client_two_local = client_two.local_entity(first_allocated_client_entity_network_id(2));
+    const ashiato::Entity client_one_local = client_one.local_entity(first_allocated_client_entity_network_id(1));
+    const ashiato::Entity client_two_local = client_two.local_entity(first_allocated_client_entity_network_id(2));
     REQUIRE(client_one_registry.contains<Health>(client_one_local));
     REQUIRE_FALSE(client_two_registry.contains<Health>(client_two_local));
 
-    REQUIRE(kage::sync::set_owner(server_registry, server_entity, 2));
+    REQUIRE(ashiato::sync::set_owner(server_registry, server_entity, 2));
     packets.clear();
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 2);
@@ -876,86 +876,86 @@ TEST_CASE("replication client reconciles components when owner visibility change
 }
 
 TEST_CASE("replication client applies synced tags and owner-filtered tag visibility") {
-    ecs::Registry server_registry;
-    const ecs::Entity server_visible = server_registry.register_component<Visible>("Visible");
-    const ecs::Entity server_secret = server_registry.register_component<Secret>("Secret");
-    const ecs::Entity server_position =
-        kage::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
-    const kage::sync::SyncArchetypeId server_archetype = kage::sync::define_archetype(
+    ashiato::Registry server_registry;
+    const ashiato::Entity server_visible = server_registry.register_component<Visible>("Visible");
+    const ashiato::Entity server_secret = server_registry.register_component<Secret>("Secret");
+    const ashiato::Entity server_position =
+        ashiato::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato::sync::define_archetype(
         server_registry,
-        kage::sync::SyncArchetypeDesc{
+        ashiato::sync::SyncArchetypeDesc{
             "TaggedActor",
-            {{server_visible, kage::sync::ReplicationAudience::All},
-             {server_secret, kage::sync::ReplicationAudience::Owner}},
-            {{server_position, kage::sync::ReplicationAudience::All}},
+            {{server_visible, ashiato::sync::ReplicationAudience::All},
+             {server_secret, ashiato::sync::ReplicationAudience::Owner}},
+            {{server_position, ashiato::sync::ReplicationAudience::All}},
         });
-    const ecs::Entity server_entity = server_registry.create();
+    const ashiato::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<NetworkedPosition>(server_entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
     REQUIRE(server_registry.add_tag(server_entity, server_visible));
     REQUIRE(server_registry.add_tag(server_entity, server_secret));
-    REQUIRE(kage::sync::set_owner(server_registry, server_entity, 1));
+    REQUIRE(ashiato::sync::set_owner(server_registry, server_entity, 1));
 
-    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
-    kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
+    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& packet) {
         packets.push_back({client, packet});
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
 
-    ecs::Registry owner_registry;
-    const ecs::Entity owner_visible = owner_registry.register_component<Visible>("Visible");
-    const ecs::Entity owner_secret = owner_registry.register_component<Secret>("Secret");
-    const ecs::Entity owner_position =
-        kage::sync::register_sync_component<NetworkedPosition>(owner_registry, "NetworkedPosition");
-    REQUIRE(kage::sync::define_archetype(
+    ashiato::Registry owner_registry;
+    const ashiato::Entity owner_visible = owner_registry.register_component<Visible>("Visible");
+    const ashiato::Entity owner_secret = owner_registry.register_component<Secret>("Secret");
+    const ashiato::Entity owner_position =
+        ashiato::sync::register_sync_component<NetworkedPosition>(owner_registry, "NetworkedPosition");
+    REQUIRE(ashiato::sync::define_archetype(
                 owner_registry,
-                kage::sync::SyncArchetypeDesc{
+                ashiato::sync::SyncArchetypeDesc{
                     "TaggedActor",
-                    {{owner_visible, kage::sync::ReplicationAudience::All},
-                     {owner_secret, kage::sync::ReplicationAudience::Owner}},
-                    {{owner_position, kage::sync::ReplicationAudience::All}},
+                    {{owner_visible, ashiato::sync::ReplicationAudience::All},
+                     {owner_secret, ashiato::sync::ReplicationAudience::Owner}},
+                    {{owner_position, ashiato::sync::ReplicationAudience::All}},
                 }) == server_archetype);
-    kage_sync_tests::configure_test_client_registry(owner_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(owner_registry, 1);
 
-    ecs::Registry non_owner_registry;
-    const ecs::Entity non_owner_visible = non_owner_registry.register_component<Visible>("Visible");
-    const ecs::Entity non_owner_secret = non_owner_registry.register_component<Secret>("Secret");
-    const ecs::Entity non_owner_position =
-        kage::sync::register_sync_component<NetworkedPosition>(non_owner_registry, "NetworkedPosition");
-    REQUIRE(kage::sync::define_archetype(
+    ashiato::Registry non_owner_registry;
+    const ashiato::Entity non_owner_visible = non_owner_registry.register_component<Visible>("Visible");
+    const ashiato::Entity non_owner_secret = non_owner_registry.register_component<Secret>("Secret");
+    const ashiato::Entity non_owner_position =
+        ashiato::sync::register_sync_component<NetworkedPosition>(non_owner_registry, "NetworkedPosition");
+    REQUIRE(ashiato::sync::define_archetype(
                 non_owner_registry,
-                kage::sync::SyncArchetypeDesc{
+                ashiato::sync::SyncArchetypeDesc{
                     "TaggedActor",
-                    {{non_owner_visible, kage::sync::ReplicationAudience::All},
-                     {non_owner_secret, kage::sync::ReplicationAudience::Owner}},
-                    {{non_owner_position, kage::sync::ReplicationAudience::All}},
+                    {{non_owner_visible, ashiato::sync::ReplicationAudience::All},
+                     {non_owner_secret, ashiato::sync::ReplicationAudience::Owner}},
+                    {{non_owner_position, ashiato::sync::ReplicationAudience::All}},
                 }) == server_archetype);
-    kage_sync_tests::configure_test_client_registry(non_owner_registry, 2);
+    ashiato_sync_tests::configure_test_client_registry(non_owner_registry, 2);
 
-    kage::sync::ReplicationClient owner_client(owner_registry, kage_sync_tests::make_test_client_options(owner_registry, {}));
-    kage::sync::ReplicationClient non_owner_client(non_owner_registry, kage_sync_tests::make_test_client_options(non_owner_registry, {}));
+    ashiato::sync::ReplicationClient owner_client(owner_registry, ashiato_sync_tests::make_test_client_options(owner_registry, {}));
+    ashiato::sync::ReplicationClient non_owner_client(non_owner_registry, ashiato_sync_tests::make_test_client_options(non_owner_registry, {}));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(owner_client.receive(owner_registry, packet_for(packets, 1)));
     REQUIRE(non_owner_client.receive(non_owner_registry, packet_for(packets, 2)));
 
-    const ecs::Entity owner_local = owner_client.local_entity(first_allocated_client_entity_network_id(1));
-    const ecs::Entity non_owner_local = non_owner_client.local_entity(first_allocated_client_entity_network_id(2));
+    const ashiato::Entity owner_local = owner_client.local_entity(first_allocated_client_entity_network_id(1));
+    const ashiato::Entity non_owner_local = non_owner_client.local_entity(first_allocated_client_entity_network_id(2));
     REQUIRE(owner_registry.has(owner_local, owner_visible));
     REQUIRE(owner_registry.has(owner_local, owner_secret));
     REQUIRE(non_owner_registry.has(non_owner_local, non_owner_visible));
     REQUIRE_FALSE(non_owner_registry.has(non_owner_local, non_owner_secret));
 
-    for (const ecs::BitBuffer& ack : owner_client.drain_ack_packets()) {
+    for (const ashiato::BitBuffer& ack : owner_client.drain_ack_packets()) {
         REQUIRE(server.process_packet(server_registry, 1, ack));
     }
-    for (const ecs::BitBuffer& ack : non_owner_client.drain_ack_packets()) {
+    for (const ashiato::BitBuffer& ack : non_owner_client.drain_ack_packets()) {
         REQUIRE(server.process_packet(server_registry, 2, ack));
     }
 
-    REQUIRE(kage::sync::set_owner(server_registry, server_entity, 2));
+    REQUIRE(ashiato::sync::set_owner(server_registry, server_entity, 2));
     packets.clear();
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(owner_client.receive(owner_registry, packet_for(packets, 1)));
@@ -967,32 +967,32 @@ TEST_CASE("replication client applies synced tags and owner-filtered tag visibil
 }
 
 TEST_CASE("buffered interpolation rejects stale duplicate packets without ACKing") {
-    ecs::Registry server_registry;
-    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
-    const ecs::Entity server_entity = server_registry.create();
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato_sync_tests::define_position_archetype(server_registry);
+    const ashiato::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
 
-    std::vector<ecs::BitBuffer> packets;
-    kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
 
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, kage::sync::ReplicationClientOptions{
-        kage::sync::ReplicationClientNetworkOptions{1200},
-        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::BufferedInterpolation},
-        kage::sync::ReplicationClientBufferedOptions{1}}));
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, ashiato::sync::ReplicationClientOptions{
+        ashiato::sync::ReplicationClientNetworkOptions{1200},
+        ashiato::sync::ReplicationClientEntityOptions{ashiato::sync::ReplicationClientMode::BufferedInterpolation},
+        ashiato::sync::ReplicationClientBufferedOptions{1}}));
 
     server.tick(server_registry, server.options().fixed_dt_seconds);
-    const ecs::BitBuffer full_packet = packets.back();
+    const ashiato::BitBuffer full_packet = packets.back();
     REQUIRE(client.receive(client_registry, full_packet));
     REQUIRE(client.drain_ack_packets().size() == 1);
     REQUIRE_FALSE(client.receive(client_registry, full_packet));
@@ -1001,7 +1001,7 @@ TEST_CASE("buffered interpolation rejects stale duplicate packets without ACKing
     server_registry.write<Position>(server_entity) = Position{3.0f, 4.0f};
     packets.clear();
     server.tick(server_registry, server.options().fixed_dt_seconds);
-    const ecs::BitBuffer stale_full_packet = full_packet;
+    const ashiato::BitBuffer stale_full_packet = full_packet;
     REQUIRE(client.receive(client_registry, packets.back()));
     REQUIRE(client.drain_ack_packets().size() == 1);
     REQUIRE_FALSE(client.receive(client_registry, stale_full_packet));
@@ -1010,7 +1010,7 @@ TEST_CASE("buffered interpolation rejects stale duplicate packets without ACKing
     REQUIRE(server_registry.destroy(server_entity));
     packets.clear();
     server.tick(server_registry, server.options().fixed_dt_seconds);
-    const ecs::BitBuffer destroy_packet = packets.back();
+    const ashiato::BitBuffer destroy_packet = packets.back();
     REQUIRE(client.receive(client_registry, destroy_packet));
     REQUIRE(client.drain_ack_packets().size() == 1);
     REQUIRE_FALSE(client.receive(client_registry, destroy_packet));
@@ -1018,34 +1018,34 @@ TEST_CASE("buffered interpolation rejects stale duplicate packets without ACKing
 }
 
 TEST_CASE("replication client rejects stale full after destroy and accepts reused network id") {
-    ecs::Registry server_registry;
-    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato_sync_tests::define_position_archetype(server_registry);
 
-    std::vector<ecs::BitBuffer> packets;
-    kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
 
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
 
     auto process_client_acks = [&]() {
-        for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
+        for (const ashiato::BitBuffer& ack : client.drain_ack_packets()) {
             REQUIRE(server.process_packet(server_registry, 1, ack));
         }
     };
 
-    const ecs::Entity first = server_registry.create();
+    const ashiato::Entity first = server_registry.create();
     REQUIRE(server_registry.add<Position>(first, Position{1.0f, 2.0f}) != nullptr);
     REQUIRE(start_sync(server_registry, first, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
-    const ecs::BitBuffer first_full = packets.back();
+    const ashiato::BitBuffer first_full = packets.back();
     const UpdatePacket first_update = read_update(first_full);
     REQUIRE(first_update.records.size() == 1);
     const std::uint32_t reused_wire_network_id = first_update.records[0].network_id;
@@ -1055,14 +1055,14 @@ TEST_CASE("replication client rejects stale full after destroy and accepts reuse
     packets.clear();
     REQUIRE(server_registry.destroy(first));
     server.tick(server_registry, server.options().fixed_dt_seconds);
-    const ecs::BitBuffer destroy = packets.back();
+    const ashiato::BitBuffer destroy = packets.back();
     REQUIRE(client.receive(client_registry, destroy));
     process_client_acks();
     REQUIRE_FALSE(client.receive(client_registry, first_full));
     REQUIRE(client.pending_ack_count() == 0);
 
     packets.clear();
-    const ecs::Entity second = server_registry.create();
+    const ashiato::Entity second = server_registry.create();
     REQUIRE(server_registry.add<Position>(second, Position{3.0f, 4.0f}) != nullptr);
     REQUIRE(start_sync(server_registry, second, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
@@ -1074,19 +1074,19 @@ TEST_CASE("replication client rejects stale full after destroy and accepts reuse
 }
 
 TEST_CASE("replication client rejects stale client entity network ids after wire id reuse") {
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    const ecs::Entity server_entity{42};
+    const ashiato::Entity server_entity{42};
     const std::uint32_t wire_id = test_network_id(server_entity);
-    const kage::sync::ClientEntityNetworkId first_id = test_client_entity_network_id(1, wire_id, 1U);
-    const kage::sync::ClientEntityNetworkId second_id = test_client_entity_network_id(1, wire_id, 2U);
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
+    const ashiato::sync::ClientEntityNetworkId first_id = test_client_entity_network_id(1, wire_id, 1U);
+    const ashiato::sync::ClientEntityNetworkId second_id = test_client_entity_network_id(1, wire_id, 2U);
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{5.0f, 6.0f}}})));
-    const ecs::Entity first_local = client.local_entity(first_id);
+    const ashiato::Entity first_local = client.local_entity(first_id);
     REQUIRE(first_local);
     REQUIRE(client_registry.alive(first_local));
     REQUIRE(client.is_alive_client_entity_network_id(first_id));
@@ -1098,7 +1098,7 @@ TEST_CASE("replication client rejects stale client entity network ids after wire
     REQUIRE(client.drain_ack_packets().size() == 1);
 
     REQUIRE(client.receive(client_registry, make_position_packet(3, {{server_entity, Position{1.0f, 2.0f}}})));
-    const ecs::Entity second_local = client.local_entity(second_id);
+    const ashiato::Entity second_local = client.local_entity(second_id);
     REQUIRE(second_local);
     REQUIRE(second_local != first_local);
     REQUIRE(client.is_alive_client_entity_network_id(second_id));
@@ -1106,16 +1106,16 @@ TEST_CASE("replication client rejects stale client entity network ids after wire
 }
 
 TEST_CASE("replication client does not advance implicit versions twice for destroy resends") {
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    const ecs::Entity server_entity{42};
+    const ashiato::Entity server_entity{42};
     const std::uint32_t wire_id = test_network_id(server_entity);
-    const kage::sync::ClientEntityNetworkId second_id = test_client_entity_network_id(1, wire_id, 2U);
-    const kage::sync::ClientEntityNetworkId third_id = test_client_entity_network_id(1, wire_id, 3U);
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
+    const ashiato::sync::ClientEntityNetworkId second_id = test_client_entity_network_id(1, wire_id, 2U);
+    const ashiato::sync::ClientEntityNetworkId third_id = test_client_entity_network_id(1, wire_id, 3U);
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
     REQUIRE(client.drain_ack_packets().size() == 1);
@@ -1126,13 +1126,13 @@ TEST_CASE("replication client does not advance implicit versions twice for destr
     REQUIRE(client.drain_ack_packets().size() == 1);
 
     REQUIRE(client.receive(client_registry, make_position_packet(4, {{server_entity, Position{5.0f, 6.0f}}})));
-    const ecs::Entity local = client.local_entity(second_id);
+    const ashiato::Entity local = client.local_entity(second_id);
     REQUIRE(local);
     REQUIRE(client_registry.alive(local));
     REQUIRE(client_registry.get<Position>(local).x == 5.0f);
     REQUIRE_FALSE(client.local_entity(third_id));
 
-    const std::vector<ecs::BitBuffer> acks = client.drain_ack_packets();
+    const std::vector<ashiato::BitBuffer> acks = client.drain_ack_packets();
     REQUIRE(acks.size() == 1);
     const std::vector<AckRecord> records = read_acks(acks[0]);
     REQUIRE(records.size() == 1);
@@ -1140,12 +1140,12 @@ TEST_CASE("replication client does not advance implicit versions twice for destr
 }
 
 TEST_CASE("replication client evicts destroy tombstones by deterministic age") {
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
     constexpr std::uint32_t first_wire_id = 2U;
     constexpr std::uint16_t first_packet_destroy_count =
         static_cast<std::uint16_t>(client_destroy_tombstone_capacity - 1U);
@@ -1157,18 +1157,18 @@ TEST_CASE("replication client evicts destroy tombstones by deterministic age") {
         make_destroy_packet_for_wire_ids(2, 2, first_wire_id + first_packet_destroy_count, 2U)));
     REQUIRE_FALSE(client.drain_ack_packets().empty());
 
-    const ecs::Entity evicted_server_entity{first_wire_id - 1U};
-    const kage::sync::ClientEntityNetworkId evicted_id =
+    const ashiato::Entity evicted_server_entity{first_wire_id - 1U};
+    const ashiato::sync::ClientEntityNetworkId evicted_id =
         test_client_entity_network_id(1, first_wire_id, 1U);
     REQUIRE(client.receive(
         client_registry,
         make_position_packet(1, {{evicted_server_entity, Position{1.0f, 2.0f}}}, 2U, 3U)));
-    const ecs::Entity evicted_local = client.local_entity(evicted_id);
+    const ashiato::Entity evicted_local = client.local_entity(evicted_id);
     REQUIRE(evicted_local);
     REQUIRE(client_registry.alive(evicted_local));
 
     constexpr std::uint32_t retained_wire_id = first_wire_id + 1U;
-    const ecs::Entity retained_server_entity{retained_wire_id - 1U};
+    const ashiato::Entity retained_server_entity{retained_wire_id - 1U};
     REQUIRE_FALSE(client.receive(
         client_registry,
         make_position_packet(1, {{retained_server_entity, Position{3.0f, 4.0f}}}, 2U, 4U)));

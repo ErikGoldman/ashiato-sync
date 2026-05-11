@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace kage::sync::server_detail {
+namespace ashiato::sync::server_detail {
 
 template <typename PendingPacketAck>
 std::uint32_t allocate_tracked_packet_id(
@@ -44,7 +44,7 @@ template <typename PendingPacketAck, typename PacketAckRecord>
 void track_packet_ack(
     std::vector<PendingPacketAck>& pending_packet_acks,
     std::uint32_t packet_id,
-    kage::sync::SyncFrame sent_frame,
+    ashiato::sync::SyncFrame sent_frame,
     std::size_t charged_bytes,
     const std::vector<PacketAckRecord>& records) {
     if (records.empty()) {
@@ -53,4 +53,4 @@ void track_packet_ack(
     pending_packet_acks.push_back(PendingPacketAck{packet_id, sent_frame, charged_bytes, records});
 }
 
-}  // namespace kage::sync::server_detail
+}  // namespace ashiato::sync::server_detail

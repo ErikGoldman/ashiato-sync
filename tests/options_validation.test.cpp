@@ -1,6 +1,6 @@
-#include "kage/sync/client.hpp"
-#include "kage/sync/client_clock.hpp"
-#include "kage/sync/server.hpp"
+#include "ashiato/sync/client.hpp"
+#include "ashiato/sync/client_clock.hpp"
+#include "ashiato/sync/server.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -12,44 +12,44 @@ namespace {
 
 template <typename Mutate>
 void require_invalid_client_options(Mutate mutate) {
-    ecs::Registry registry;
-    kage::sync::ReplicationClientOptions options;
+    ashiato::Registry registry;
+    ashiato::sync::ReplicationClientOptions options;
     mutate(options);
-    REQUIRE_THROWS_AS(kage::sync::ReplicationClient(registry, options), std::invalid_argument);
+    REQUIRE_THROWS_AS(ashiato::sync::ReplicationClient(registry, options), std::invalid_argument);
 }
 
 template <typename Mutate>
 void require_invalid_server_options(Mutate mutate) {
-    ecs::Registry registry;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::Registry registry;
+    ashiato::sync::ReplicationServerOptions options;
     mutate(options);
-    REQUIRE_THROWS_AS(kage::sync::ReplicationServer(registry, options), std::invalid_argument);
+    REQUIRE_THROWS_AS(ashiato::sync::ReplicationServer(registry, options), std::invalid_argument);
 }
 
 template <typename Mutate>
 void require_invalid_clock_config(Mutate mutate) {
-    kage::sync::ReplicationClientClockConfig config;
+    ashiato::sync::ReplicationClientClockConfig config;
     mutate(config);
-    REQUIRE_THROWS_AS(kage::sync::ReplicationClientClock(config), std::invalid_argument);
+    REQUIRE_THROWS_AS(ashiato::sync::ReplicationClientClock(config), std::invalid_argument);
 }
 
 }  // namespace
 
-static_assert(!std::is_copy_constructible<kage::sync::ReplicationClient>::value,
+static_assert(!std::is_copy_constructible<ashiato::sync::ReplicationClient>::value,
               "ReplicationClient must remain move-only");
-static_assert(!std::is_copy_assignable<kage::sync::ReplicationClient>::value,
+static_assert(!std::is_copy_assignable<ashiato::sync::ReplicationClient>::value,
               "ReplicationClient must remain move-only");
-static_assert(std::is_move_constructible<kage::sync::ReplicationClient>::value,
+static_assert(std::is_move_constructible<ashiato::sync::ReplicationClient>::value,
               "ReplicationClient must remain movable");
-static_assert(std::is_move_assignable<kage::sync::ReplicationClient>::value,
+static_assert(std::is_move_assignable<ashiato::sync::ReplicationClient>::value,
               "ReplicationClient must remain movable");
-static_assert(!std::is_copy_constructible<kage::sync::ReplicationServer>::value,
+static_assert(!std::is_copy_constructible<ashiato::sync::ReplicationServer>::value,
               "ReplicationServer must remain non-copyable");
-static_assert(!std::is_copy_assignable<kage::sync::ReplicationServer>::value,
+static_assert(!std::is_copy_assignable<ashiato::sync::ReplicationServer>::value,
               "ReplicationServer must remain non-copyable");
-static_assert(!std::is_move_constructible<kage::sync::ReplicationServer>::value,
+static_assert(!std::is_move_constructible<ashiato::sync::ReplicationServer>::value,
               "ReplicationServer must remain non-movable");
-static_assert(!std::is_move_assignable<kage::sync::ReplicationServer>::value,
+static_assert(!std::is_move_assignable<ashiato::sync::ReplicationServer>::value,
               "ReplicationServer must remain non-movable");
 
 TEST_CASE("replication server rejects invalid option values") {
@@ -73,7 +73,7 @@ TEST_CASE("replication server rejects invalid option values") {
             static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) + 1U;
     });
     require_invalid_server_options([](auto& options) {
-        options.protocol.baseline_frame_delta_bits = kage::sync::protocol::baseline_frame_delta_bits + 1U;
+        options.protocol.baseline_frame_delta_bits = ashiato::sync::protocol::baseline_frame_delta_bits + 1U;
     });
     require_invalid_server_options([](auto& options) {
         options.fixed_dt_seconds = std::numeric_limits<double>::infinity();
@@ -82,11 +82,11 @@ TEST_CASE("replication server rejects invalid option values") {
         options.idle_client_timeout_seconds = std::numeric_limits<double>::quiet_NaN();
     });
 
-    kage::sync::ReplicationServerOptions valid;
+    ashiato::sync::ReplicationServerOptions valid;
     valid.idle_client_timeout_seconds = 0.0;
     valid.prioritizer_interval_frames = 0;
-    ecs::Registry registry;
-    REQUIRE_NOTHROW(kage::sync::ReplicationServer(registry, valid));
+    ashiato::Registry registry;
+    REQUIRE_NOTHROW(ashiato::sync::ReplicationServer(registry, valid));
 }
 
 TEST_CASE("replication client rejects invalid option values") {
@@ -97,7 +97,7 @@ TEST_CASE("replication client rejects invalid option values") {
             static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) + 1U;
     });
     require_invalid_client_options([](auto& options) {
-        options.network.protocol.baseline_frame_delta_bits = kage::sync::protocol::baseline_frame_delta_bits + 1U;
+        options.network.protocol.baseline_frame_delta_bits = ashiato::sync::protocol::baseline_frame_delta_bits + 1U;
     });
     require_invalid_client_options([](auto& options) {
         options.buffered.auto_buffered_frame_lag_jitter_multiplier = std::numeric_limits<float>::quiet_NaN();

@@ -1,19 +1,19 @@
-kage_sync_fetch_raylib()
+ashiato_sync_fetch_raylib()
 
-add_executable(kage_sync_balls_example
+add_executable(ashiato_sync_balls_example
     balls.cpp
 )
 
-target_link_libraries(kage_sync_balls_example
+target_link_libraries(ashiato_sync_balls_example
     PRIVATE
-        kage::sync
+        ashiato::sync
         raylib
 )
 
-target_compile_features(kage_sync_balls_example PRIVATE cxx_std_17)
+target_compile_features(ashiato_sync_balls_example PRIVATE cxx_std_17)
 
 if(WIN32)
-    target_link_libraries(kage_sync_balls_example PRIVATE ws2_32)
+    target_link_libraries(ashiato_sync_balls_example PRIVATE ws2_32)
 endif()
 
 add_subdirectory(fps)

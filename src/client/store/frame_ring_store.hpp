@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 
 struct EntityFrameView {
     SyncFrame frame = 0;
@@ -59,4 +59,4 @@ private:
     std::vector<EntityRing> rings_;
 };
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

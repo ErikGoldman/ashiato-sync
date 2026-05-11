@@ -2,7 +2,7 @@
 
 #include "detail/frame_data.hpp"
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 
 using detail::apply_archetype_tags;
 using detail::frame_component_data;
@@ -17,4 +17,4 @@ using detail::tag_bit_set;
 using detail::unchecked_frame_component_data;
 using detail::unchecked_mutable_frame_component_data;
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

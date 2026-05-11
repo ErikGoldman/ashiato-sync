@@ -1,6 +1,6 @@
-#include "kage/sync/tracing.hpp"
+#include "ashiato/sync/tracing.hpp"
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 
 #include <chrono>
 #include <algorithm>
@@ -11,7 +11,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace kage::sync {
+namespace ashiato::sync {
 namespace {
 
 template <typename T>
@@ -148,14 +148,14 @@ SyncTraceEvent read_event_payload(
     event.role = static_cast<SyncTraceRole>(read_pod<std::uint8_t>(payload, offset));
     event.client = read_pod<std::uint64_t>(payload, offset);
     event.frame = read_pod<std::uint32_t>(payload, offset);
-    event.server_entity = ecs::Entity{read_pod<std::uint64_t>(payload, offset)};
-    event.local_entity = ecs::Entity{read_pod<std::uint64_t>(payload, offset)};
+    event.server_entity = ashiato::Entity{read_pod<std::uint64_t>(payload, offset)};
+    event.local_entity = ashiato::Entity{read_pod<std::uint64_t>(payload, offset)};
     event.client_network_id = read_pod<std::uint64_t>(payload, offset);
     event.wire_network_id = read_pod<std::uint32_t>(payload, offset);
     event.network_version = read_pod<std::uint32_t>(payload, offset);
     event.archetype = SyncArchetypeId{read_pod<std::uint32_t>(payload, offset)};
-    event.component = ecs::Entity{read_pod<std::uint64_t>(payload, offset)};
-    event.tag = ecs::Entity{read_pod<std::uint64_t>(payload, offset)};
+    event.component = ashiato::Entity{read_pod<std::uint64_t>(payload, offset)};
+    event.tag = ashiato::Entity{read_pod<std::uint64_t>(payload, offset)};
     event.cue_type = read_pod<std::uint16_t>(payload, offset);
     event.previous_mode = static_cast<ReplicationClientMode>(read_pod<std::uint8_t>(payload, offset));
     event.mode = static_cast<ReplicationClientMode>(read_pod<std::uint8_t>(payload, offset));
@@ -296,15 +296,15 @@ KTraceFrameRun* run_containing_event(KTraceComponentRow& row, SyncFrame frame, s
     return selected;
 }
 
-ecs::Entity cue_row_component() noexcept {
-    return ecs::Entity{std::uint64_t{1} << 63U};
+ashiato::Entity cue_row_component() noexcept {
+    return ashiato::Entity{std::uint64_t{1} << 63U};
 }
 
 void add_cell_event(KTraceComponentRow& row, SyncFrame frame, std::uint32_t event_index) {
     add_cell_state(row, frame, static_cast<KTraceCellState>(0), event_index);
 }
 
-KTraceComponentRow& component_row(std::vector<KTraceComponentRow>& rows, ecs::Entity component) {
+KTraceComponentRow& component_row(std::vector<KTraceComponentRow>& rows, ashiato::Entity component) {
     auto found = std::find_if(rows.begin(), rows.end(), [component](const KTraceComponentRow& row) {
         return row.component == component;
     });
@@ -421,7 +421,7 @@ void SyncTracer::trace(const SyncTraceEvent& event) const {
     if (!enabled_) {
         return;
     }
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     if (event.type == SyncTraceEventType::PacketLog && !packet_logs_enabled_) {
         return;
     }
@@ -514,7 +514,7 @@ void SyncTracer::trace(const SyncTraceEvent& event) const {
     case SyncTraceEventType::ClockSkew:
         if (callbacks_.on_clock_skew) callbacks_.on_clock_skew(event);
         break;
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     case SyncTraceEventType::PacketLog:
         if (!packet_logs_enabled_) {
             break;
@@ -692,7 +692,7 @@ void KTraceDirectoryWriter::write_header(Sink& sink) {
         sink.file.put(static_cast<char>((sink.client >> (byte * 8U)) & 0xffU));
     }
     const std::uint32_t flags =
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
         tracer_.packet_logs_enabled() ? ktrace_flag_packet_logs : 0U;
 #else
         0U;
@@ -981,7 +981,7 @@ KTraceSourceHistory KTraceReader::build_source_history(KTraceFile file) {
             continue;
         }
         if (event.type == SyncTraceEventType::EntityDestroyed) {
-            KTraceComponentRow& row = component_row(entity.components, ecs::Entity{});
+            KTraceComponentRow& row = component_row(entity.components, ashiato::Entity{});
             add_cell_state(row, event.frame, KTraceCellState::EntityDestroyed, event_index);
             continue;
         }
@@ -1147,7 +1147,7 @@ SyncTraceHistory KTraceReader::read_directory(const std::string& directory) cons
         history.sources.push_back(build_source_history(read_file(entry.path().string())));
     }
 
-    std::unordered_map<ClientEntityNetworkId, ecs::Entity> server_entities_by_network_id;
+    std::unordered_map<ClientEntityNetworkId, ashiato::Entity> server_entities_by_network_id;
     for (const KTraceSourceHistory& source : history.sources) {
         if (source.role != SyncTraceRole::Server) {
             continue;
@@ -1188,12 +1188,12 @@ std::unique_ptr<KTraceDirectoryWriter> make_trace_writer(const TraceOptions& opt
     writer_options.truncate_existing = options.truncate_existing;
     auto writer = std::make_unique<KTraceDirectoryWriter>(std::move(writer_options));
     writer->tracer().set_frame_data_enabled(options.frame_data);
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     writer->tracer().set_packet_logs_enabled(options.packet_logs);
 #endif
     return writer;
 }
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync
 
 #endif

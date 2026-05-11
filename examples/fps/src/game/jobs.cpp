@@ -16,7 +16,7 @@ namespace fps {
 
 void record_transform_history(
     FpsTransformHistory& history,
-    kage::sync::SyncFrame frame,
+    ashiato::sync::SyncFrame frame,
     const FpsTransform& transform) {
     FpsTransformHistory::Sample& sample = history.samples[frame & (FpsTransformHistory::capacity - 1U)];
     sample.frame = frame;
@@ -26,7 +26,7 @@ void record_transform_history(
 
 bool sample_transform_history(
     const FpsTransformHistory& history,
-    kage::sync::SyncFrame frame,
+    ashiato::sync::SyncFrame frame,
     FpsTransform& out) {
     const FpsTransformHistory::Sample& exact = history.samples[frame & (FpsTransformHistory::capacity - 1U)];
     if (exact.valid && exact.frame == frame) {
@@ -52,7 +52,7 @@ bool sample_transform_history(
 }
 
 template <typename View>
-auto apply_stun_hit(View& view, ecs::Entity target, int) -> decltype(view.template add<FpsStunned>(target), void()) {
+auto apply_stun_hit(View& view, ashiato::Entity target, int) -> decltype(view.template add<FpsStunned>(target), void()) {
     (void)view.template add<FpsStunned>(target);
     if (view.template contains<FpsStunState>(target)) {
         view.template write<FpsStunState>(target).remaining = stun_seconds;
@@ -65,19 +65,19 @@ auto apply_stun_hit(View& view, ecs::Entity target, int) -> decltype(view.templa
 }
 
 template <typename View>
-void apply_stun_hit(View&, ecs::Entity, long) {
+void apply_stun_hit(View&, ashiato::Entity, long) {
 }
 
 template <typename View>
 void simulate_fire(
     View& view,
-    kage::sync::SyncSettings& sync,
-    const kage::sync::FrameInfo& frame,
-    kage::sync::CueDispatcher& cues,
-    const kage::sync::SyncAuthority& authority,
-    ecs::Entity shooter,
+    ashiato::sync::SyncSettings& sync,
+    const ashiato::sync::FrameInfo& frame,
+    ashiato::sync::CueDispatcher& cues,
+    const ashiato::sync::SyncAuthority& authority,
+    ashiato::Entity shooter,
     const FpsTransform& transform,
-    kage::sync::SyncFrame shot_interpolation_frame) {
+    ashiato::sync::SyncFrame shot_interpolation_frame) {
     const Vector3 origin = eye_position(transform);
     const Vector3 dir = normalize_or_zero(forward_from_angles(transform.yaw, transform.pitch));
     float wall_t = shot_range;
@@ -90,12 +90,12 @@ void simulate_fire(
         wall_normal = cover_normal;
     }
 
-    ecs::Entity best_entity;
+    ashiato::Entity best_entity;
     FpsCombatState* best_combat = nullptr;
     FpsDeathInfo* best_death = nullptr;
     float best_t = wall_t;
-    view.template view<const FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::SyncAuthority>().each(
-        [&view, &best_entity, &best_combat, &best_death, &best_t, shooter, origin, dir, shot_interpolation_frame](ecs::Entity entity, const FpsTransform& target_transform, FpsVelocity&, FpsCombatState& combat, FpsDeathInfo& death, const FpsInput&, kage::sync::SyncSettings&, const kage::sync::SyncAuthority&) {
+    view.template view<const FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, ashiato::sync::SyncSettings, const ashiato::sync::SyncAuthority>().each(
+        [&view, &best_entity, &best_combat, &best_death, &best_t, shooter, origin, dir, shot_interpolation_frame](ashiato::Entity entity, const FpsTransform& target_transform, FpsVelocity&, FpsCombatState& combat, FpsDeathInfo& death, const FpsInput&, ashiato::sync::SyncSettings&, const ashiato::sync::SyncAuthority&) {
             if (entity == shooter || combat.dead != 0U || combat.health <= 0) {
                 return;
             }
@@ -120,7 +120,7 @@ void simulate_fire(
 
     if (best_entity && best_combat != nullptr) {
         if (authority.is_authoritative()) {
-            (void)cues.emit(sync, frame, best_entity, PlayerHitCue{kage::sync::EntityReference{shooter}}, 0.5f);
+            (void)cues.emit(sync, frame, best_entity, PlayerHitCue{ashiato::sync::EntityReference{shooter}}, 0.5f);
 
             const BotBrain* brain = view.template try_get<const BotBrain>(shooter);
             const bool stun_attack = brain != nullptr && brain->stun_attacks != 0U;
@@ -130,19 +130,19 @@ void simulate_fire(
                 best_combat->health = static_cast<std::int16_t>(std::max<int>(0, best_combat->health - shot_damage));
             }
             (void)cues.emit(sync, frame, shooter,
-                HitConfirmCue{kage::sync::EntityReference{best_entity}},
+                HitConfirmCue{ashiato::sync::EntityReference{best_entity}},
                 0.5f,
                 true);
             if (!stun_attack && best_combat->health <= 0 && best_combat->dead == 0U) {
                 best_combat->dead = 1;
                 best_combat->respawn_remaining = respawn_seconds;
                 (void)cues.emit(sync, frame, best_entity,
-                    PlayerDeathCue{kage::sync::EntityReference{shooter}},
+                    PlayerDeathCue{ashiato::sync::EntityReference{shooter}},
                     0.75f,
                     true);
                 if (best_death != nullptr) {
-                    best_death->killer = kage::sync::invalid_client_id;
-                    if (const kage::sync::NetworkOwner* owner = view.template try_get<const kage::sync::NetworkOwner>(shooter)) {
+                    best_death->killer = ashiato::sync::invalid_client_id;
+                    if (const ashiato::sync::NetworkOwner* owner = view.template try_get<const ashiato::sync::NetworkOwner>(shooter)) {
                         best_death->killer = owner->client;
                     }
                 }
@@ -156,17 +156,17 @@ void simulate_fire(
 }
 
 template <typename View>
-auto clear_stun_state(View& view, ecs::Entity entity, int) -> decltype(view.template remove<FpsStunned>(entity), void()) {
+auto clear_stun_state(View& view, ashiato::Entity entity, int) -> decltype(view.template remove<FpsStunned>(entity), void()) {
     view.template remove<FpsStunned>(entity);
     view.template remove<FpsStunState>(entity);
 }
 
 template <typename View>
-void clear_stun_state(View&, ecs::Entity, long) {
+void clear_stun_state(View&, ashiato::Entity, long) {
 }
 
 template <typename View>
-bool is_stun_bot(const View& view, ecs::Entity entity) {
+bool is_stun_bot(const View& view, ashiato::Entity entity) {
     const BotBrain* brain = view.template try_get<const BotBrain>(entity);
     return brain != nullptr && brain->stun_attacks != 0U;
 }
@@ -180,15 +180,15 @@ void hover_stun_bot(FpsTransform& transform, FpsVelocity& velocity) {
 template <typename View>
 void simulate_character_step(
     View& view,
-    ecs::Entity entity,
+    ashiato::Entity entity,
     FpsTransform& transform,
     FpsVelocity& velocity,
     FpsCombatState& combat,
     const FpsInput& input,
-    kage::sync::SyncSettings& sync,
-    const kage::sync::FrameInfo& frame,
-    kage::sync::CueDispatcher& cues,
-    const kage::sync::SyncAuthority& authority,
+    ashiato::sync::SyncSettings& sync,
+    const ashiato::sync::FrameInfo& frame,
+    ashiato::sync::CueDispatcher& cues,
+    const ashiato::sync::SyncAuthority& authority,
     bool stunned) {
     if (combat.dead != 0U) {
         if (authority.is_authoritative()) {
@@ -219,16 +219,16 @@ void simulate_character_step(
     }
 }
 
-void register_game_jobs(ecs::Registry& registry) {
+void register_game_jobs(ashiato::Registry& registry) {
     auto frame_job = registry.job<FpsServerFrame>(-2);
-        frame_job.single_thread().each([](ecs::Entity, FpsServerFrame& frame) {
+        frame_job.single_thread().each([](ashiato::Entity, FpsServerFrame& frame) {
         ++frame.frame;
     });;
 
     auto stun_job = registry.job<FpsStunState>(-1);
         stun_job.single_thread().structural<FpsStunned, FpsStunState>().each([](
         auto& view,
-        ecs::Entity entity,
+        ashiato::Entity entity,
         FpsStunState& stun) {
         stun.remaining = std::max(0.0f, stun.remaining - fixed_dt);
         if (stun.remaining <= 0.0f) {
@@ -238,9 +238,9 @@ void register_game_jobs(ecs::Registry& registry) {
     });;
 
     auto bot_job = registry.job<FpsTransform, FpsCombatState, FpsInput>(-1);
-        bot_job.single_thread().optional<BotBrain>().access_other_entities<const kage::sync::NetworkOwner>().each([](
+        bot_job.single_thread().optional<BotBrain>().access_other_entities<const ashiato::sync::NetworkOwner>().each([](
         auto& view,
-        ecs::Entity entity,
+        ashiato::Entity entity,
         FpsTransform& transform,
         FpsCombatState& combat,
         FpsInput& input) {
@@ -262,14 +262,14 @@ void register_game_jobs(ecs::Registry& registry) {
             to_destination = Vector3{brain.destination.x - position.x, 0.0f, brain.destination.z - position.z};
         }
 
-        ecs::Entity nearest_client;
+        ashiato::Entity nearest_client;
         Vector3 nearest_eye{};
         float nearest_distance_sq = std::numeric_limits<float>::max();
         view.each(
-            [&view, &nearest_distance_sq, &nearest_client, &nearest_eye, entity, &transform](ecs::Entity target, const FpsTransform& target_transform, const FpsCombatState& target_combat, FpsInput&) {
-                const kage::sync::NetworkOwner* owner = view.template try_get<const kage::sync::NetworkOwner>(target);
+            [&view, &nearest_distance_sq, &nearest_client, &nearest_eye, entity, &transform](ashiato::Entity target, const FpsTransform& target_transform, const FpsCombatState& target_combat, FpsInput&) {
+                const ashiato::sync::NetworkOwner* owner = view.template try_get<const ashiato::sync::NetworkOwner>(target);
                 if (target == entity || owner == nullptr ||
-                    owner->client == kage::sync::invalid_client_id || target_combat.dead != 0U) {
+                    owner->client == ashiato::sync::invalid_client_id || target_combat.dead != 0U) {
                     return;
                 }
                 const Vector3 target_eye = eye_position(target_transform);
@@ -308,43 +308,43 @@ void register_game_jobs(ecs::Registry& registry) {
         input.move_y = dot(move_dir, forward);
     });;
 
-    auto character_job = registry.job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::FrameInfo, kage::sync::CueDispatcher, const kage::sync::SyncAuthority>(0);
-        character_job.single_thread().without_tags<const FpsStunned>().access_other_entities<const FpsVisual, const FpsTransformHistory, const kage::sync::NetworkOwner, const BotBrain, FpsStunState>().structural<FpsStunned, FpsStunState>().each([](
+    auto character_job = registry.job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, ashiato::sync::SyncSettings, const ashiato::sync::FrameInfo, ashiato::sync::CueDispatcher, const ashiato::sync::SyncAuthority>(0);
+        character_job.single_thread().without_tags<const FpsStunned>().access_other_entities<const FpsVisual, const FpsTransformHistory, const ashiato::sync::NetworkOwner, const BotBrain, FpsStunState>().structural<FpsStunned, FpsStunState>().each([](
         auto& view,
-        ecs::Entity entity,
+        ashiato::Entity entity,
         FpsTransform& transform,
         FpsVelocity& velocity,
         FpsCombatState& combat,
         FpsDeathInfo& death,
         const FpsInput& input,
-        kage::sync::SyncSettings& sync,
-        const kage::sync::FrameInfo& frame,
-        kage::sync::CueDispatcher& cues,
-        const kage::sync::SyncAuthority& authority) {
+        ashiato::sync::SyncSettings& sync,
+        const ashiato::sync::FrameInfo& frame,
+        ashiato::sync::CueDispatcher& cues,
+        const ashiato::sync::SyncAuthority& authority) {
         (void)death;
         simulate_character_step(view, entity, transform, velocity, combat, input, sync, frame, cues, authority, false);
     });;
 
-    auto stunned_character_job = registry.job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::FrameInfo, kage::sync::CueDispatcher, const kage::sync::SyncAuthority>(0);
-        stunned_character_job.single_thread().with_tags<const FpsStunned>().access_other_entities<const FpsVisual, const FpsTransformHistory, const kage::sync::NetworkOwner, const BotBrain, FpsStunState>().structural<FpsStunned, FpsStunState>().each([](
+    auto stunned_character_job = registry.job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, ashiato::sync::SyncSettings, const ashiato::sync::FrameInfo, ashiato::sync::CueDispatcher, const ashiato::sync::SyncAuthority>(0);
+        stunned_character_job.single_thread().with_tags<const FpsStunned>().access_other_entities<const FpsVisual, const FpsTransformHistory, const ashiato::sync::NetworkOwner, const BotBrain, FpsStunState>().structural<FpsStunned, FpsStunState>().each([](
         auto& view,
-        ecs::Entity entity,
+        ashiato::Entity entity,
         FpsTransform& transform,
         FpsVelocity& velocity,
         FpsCombatState& combat,
         FpsDeathInfo& death,
         const FpsInput& input,
-        kage::sync::SyncSettings& sync,
-        const kage::sync::FrameInfo& frame,
-        kage::sync::CueDispatcher& cues,
-        const kage::sync::SyncAuthority& authority) {
+        ashiato::sync::SyncSettings& sync,
+        const ashiato::sync::FrameInfo& frame,
+        ashiato::sync::CueDispatcher& cues,
+        const ashiato::sync::SyncAuthority& authority) {
         (void)death;
         simulate_character_step(view, entity, transform, velocity, combat, input, sync, frame, cues, authority, true);
     });;
 
     auto history_job = registry.job<const FpsTransform, FpsTransformHistory, const FpsServerFrame>(1);
         history_job.single_thread().each([](
-        ecs::Entity,
+        ashiato::Entity,
         const FpsTransform& transform,
         FpsTransformHistory& history,
         const FpsServerFrame& frame) {
@@ -352,11 +352,11 @@ void register_game_jobs(ecs::Registry& registry) {
     });;
 }
 
-void register_game_jobs(ecs::Registry& registry, kage::sync::ReplicationClient& client) {
+void register_game_jobs(ashiato::Registry& registry, ashiato::sync::ReplicationClient& client) {
     auto bot_job = client.simulation_job<FpsTransform, FpsCombatState, FpsInput>(registry, -1);
-        bot_job.single_thread().optional<BotBrain>().access_other_entities<const kage::sync::NetworkOwner>().each([](
+        bot_job.single_thread().optional<BotBrain>().access_other_entities<const ashiato::sync::NetworkOwner>().each([](
         auto& view,
-        ecs::Entity entity,
+        ashiato::Entity entity,
         FpsTransform& transform,
         FpsCombatState& combat,
         FpsInput& input) {
@@ -378,14 +378,14 @@ void register_game_jobs(ecs::Registry& registry, kage::sync::ReplicationClient& 
             to_destination = Vector3{brain.destination.x - position.x, 0.0f, brain.destination.z - position.z};
         }
 
-        ecs::Entity nearest_client;
+        ashiato::Entity nearest_client;
         Vector3 nearest_eye{};
         float nearest_distance_sq = std::numeric_limits<float>::max();
         view.each(
-            [&view, &nearest_distance_sq, &nearest_client, &nearest_eye, entity, &transform](ecs::Entity target, const FpsTransform& target_transform, const FpsCombatState& target_combat, FpsInput&) {
-                const kage::sync::NetworkOwner* owner = view.template try_get<const kage::sync::NetworkOwner>(target);
+            [&view, &nearest_distance_sq, &nearest_client, &nearest_eye, entity, &transform](ashiato::Entity target, const FpsTransform& target_transform, const FpsCombatState& target_combat, FpsInput&) {
+                const ashiato::sync::NetworkOwner* owner = view.template try_get<const ashiato::sync::NetworkOwner>(target);
                 if (target == entity || owner == nullptr ||
-                    owner->client == kage::sync::invalid_client_id || target_combat.dead != 0U) {
+                    owner->client == ashiato::sync::invalid_client_id || target_combat.dead != 0U) {
                     return;
                 }
                 const Vector3 target_eye = eye_position(target_transform);
@@ -424,36 +424,36 @@ void register_game_jobs(ecs::Registry& registry, kage::sync::ReplicationClient& 
         input.move_y = dot(move_dir, forward);
     });;
 
-    auto character_job = client.simulation_job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::FrameInfo, kage::sync::CueDispatcher, const kage::sync::SyncAuthority>(registry, 0);
-        character_job.single_thread().without_tags<const FpsStunned>().access_other_entities<const FpsVisual, const FpsTransformHistory, const kage::sync::NetworkOwner, const BotBrain>().each([](
+    auto character_job = client.simulation_job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, ashiato::sync::SyncSettings, const ashiato::sync::FrameInfo, ashiato::sync::CueDispatcher, const ashiato::sync::SyncAuthority>(registry, 0);
+        character_job.single_thread().without_tags<const FpsStunned>().access_other_entities<const FpsVisual, const FpsTransformHistory, const ashiato::sync::NetworkOwner, const BotBrain>().each([](
         auto& view,
-        ecs::Entity entity,
+        ashiato::Entity entity,
         FpsTransform& transform,
         FpsVelocity& velocity,
         FpsCombatState& combat,
         FpsDeathInfo& death,
         const FpsInput& input,
-        kage::sync::SyncSettings& sync,
-        const kage::sync::FrameInfo& frame,
-        kage::sync::CueDispatcher& cues,
-        const kage::sync::SyncAuthority& authority) {
+        ashiato::sync::SyncSettings& sync,
+        const ashiato::sync::FrameInfo& frame,
+        ashiato::sync::CueDispatcher& cues,
+        const ashiato::sync::SyncAuthority& authority) {
         (void)death;
         simulate_character_step(view, entity, transform, velocity, combat, input, sync, frame, cues, authority, false);
     });;
 
-    auto stunned_character_job = client.simulation_job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, kage::sync::SyncSettings, const kage::sync::FrameInfo, kage::sync::CueDispatcher, const kage::sync::SyncAuthority>(registry, 0);
-        stunned_character_job.single_thread().with_tags<const FpsStunned>().access_other_entities<const FpsVisual, const FpsTransformHistory, const kage::sync::NetworkOwner, const BotBrain>().each([](
+    auto stunned_character_job = client.simulation_job<FpsTransform, FpsVelocity, FpsCombatState, FpsDeathInfo, const FpsInput, ashiato::sync::SyncSettings, const ashiato::sync::FrameInfo, ashiato::sync::CueDispatcher, const ashiato::sync::SyncAuthority>(registry, 0);
+        stunned_character_job.single_thread().with_tags<const FpsStunned>().access_other_entities<const FpsVisual, const FpsTransformHistory, const ashiato::sync::NetworkOwner, const BotBrain>().each([](
         auto& view,
-        ecs::Entity entity,
+        ashiato::Entity entity,
         FpsTransform& transform,
         FpsVelocity& velocity,
         FpsCombatState& combat,
         FpsDeathInfo& death,
         const FpsInput& input,
-        kage::sync::SyncSettings& sync,
-        const kage::sync::FrameInfo& frame,
-        kage::sync::CueDispatcher& cues,
-        const kage::sync::SyncAuthority& authority) {
+        ashiato::sync::SyncSettings& sync,
+        const ashiato::sync::FrameInfo& frame,
+        ashiato::sync::CueDispatcher& cues,
+        const ashiato::sync::SyncAuthority& authority) {
         (void)death;
         simulate_character_step(view, entity, transform, velocity, combat, input, sync, frame, cues, authority, true);
     });;

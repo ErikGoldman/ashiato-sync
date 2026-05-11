@@ -1,6 +1,6 @@
 #include "test_components.hpp"
 
-#include "ecs/bit_buffer.hpp"
+#include "ashiato/bit_buffer.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -13,9 +13,9 @@
 namespace {
 
 constexpr std::size_t max_packet_bytes = 4096;
-constexpr kage::sync::ClientId fuzz_peer = 1;
+constexpr ashiato::sync::ClientId fuzz_peer = 1;
 
-ecs::BitBuffer make_selected_packet(
+ashiato::BitBuffer make_selected_packet(
     std::uint8_t selector,
     const std::uint8_t* data,
     std::size_t size,
@@ -27,114 +27,114 @@ ecs::BitBuffer make_selected_packet(
         bytes[0] = messages[(selector >> 3U) % message_count];
     }
 
-    ecs::BitBuffer packet;
+    ashiato::BitBuffer packet;
     packet.assign_bytes(std::move(bytes), packet_size * 8U);
     return packet;
 }
 
-void define_fuzz_schema(ecs::Registry& registry) {
-    const ecs::Entity position =
-        kage::sync::register_sync_component<kage_sync_tests::Position>(registry, "Position");
-    const ecs::Entity networked_position =
-        kage::sync::register_sync_component<kage_sync_tests::NetworkedPosition>(registry, "NetworkedPosition");
+void define_fuzz_schema(ashiato::Registry& registry) {
+    const ashiato::Entity position =
+        ashiato::sync::register_sync_component<ashiato_sync_tests::Position>(registry, "Position");
+    const ashiato::Entity networked_position =
+        ashiato::sync::register_sync_component<ashiato_sync_tests::NetworkedPosition>(registry, "NetworkedPosition");
     (void)networked_position;
-    (void)kage::sync::define_archetype(
+    (void)ashiato::sync::define_archetype(
         registry,
         "FuzzActor",
-        {{position, kage::sync::ReplicationAudience::All}});
+        {{position, ashiato::sync::ReplicationAudience::All}});
 }
 
-void setup_client_registry(ecs::Registry& registry) {
+void setup_client_registry(ashiato::Registry& registry) {
     define_fuzz_schema(registry);
-    kage::sync::SyncSettings& settings = registry.write<kage::sync::SyncSettings>();
-    settings.role = kage::sync::SyncRole::Client;
-    registry.write<kage::sync::SyncAuthority>().authoritative = false;
-    (void)kage::sync::set_client_input_component<kage_sync_tests::NetworkedPosition>(registry);
+    ashiato::sync::SyncSettings& settings = registry.write<ashiato::sync::SyncSettings>();
+    settings.role = ashiato::sync::SyncRole::Client;
+    registry.write<ashiato::sync::SyncAuthority>().authoritative = false;
+    (void)ashiato::sync::set_client_input_component<ashiato_sync_tests::NetworkedPosition>(registry);
 }
 
-void setup_server_registry(ecs::Registry& registry) {
+void setup_server_registry(ashiato::Registry& registry) {
     define_fuzz_schema(registry);
-    kage::sync::SyncSettings& settings = registry.write<kage::sync::SyncSettings>();
-    settings.role = kage::sync::SyncRole::Server;
-    registry.write<kage::sync::SyncAuthority>().authoritative = true;
-    (void)kage::sync::set_client_input_component<kage_sync_tests::NetworkedPosition>(registry);
+    ashiato::sync::SyncSettings& settings = registry.write<ashiato::sync::SyncSettings>();
+    settings.role = ashiato::sync::SyncRole::Server;
+    registry.write<ashiato::sync::SyncAuthority>().authoritative = true;
+    (void)ashiato::sync::set_client_input_component<ashiato_sync_tests::NetworkedPosition>(registry);
 }
 
-ecs::BitBuffer make_client_seed_update() {
-    kage_sync_tests::Position position{1.0F, 2.0F};
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::server_update_message, 8U);
+ashiato::BitBuffer make_client_seed_update() {
+    ashiato_sync_tests::Position position{1.0F, 2.0F};
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
     packet.push_bits(1, 32U);
-    packet.push_bits(1, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(1, ashiato::sync::protocol::server_packet_id_bits);
     packet.push_bits(0, 32U);
     packet.push_bits(1, 16U);
     packet.push_bool(false);
-    kage::sync::protocol::write_network_entity_id(packet, 1U);
+    ashiato::sync::protocol::write_network_entity_id(packet, 1U);
     packet.push_bool(true);
     packet.push_bits(0, 32U);
     packet.push_bool(false);
     packet.push_bits(1, 16U);
-    packet.push_bits(1, kage::sync::protocol::bits_for_range(2U));
+    packet.push_bits(1, ashiato::sync::protocol::bits_for_range(2U));
     packet.push_bytes(reinterpret_cast<const char*>(&position), sizeof(position));
     packet.push_bool(false);
     return packet;
 }
 
-ecs::BitBuffer make_server_connect_response(bool accepted) {
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
+ashiato::BitBuffer make_server_connect_response(bool accepted) {
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
     packet.push_bool(accepted);
     if (accepted) {
         packet.push_unsigned_bits(fuzz_peer, 64U);
     } else {
-        kage::sync::protocol::write_string(packet, "bad token");
+        ashiato::sync::protocol::write_string(packet, "bad token");
     }
     return packet;
 }
 
-ecs::BitBuffer make_server_pong() {
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::server_pong_message, 8U);
+ashiato::BitBuffer make_server_pong() {
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::server_pong_message, 8U);
     packet.push_bits(1, 32U);
     packet.push_bits(5, 32U);
-    packet.push_bits(0, kage::sync::protocol::frame_subframe_bits);
+    packet.push_bits(0, ashiato::sync::protocol::frame_subframe_bits);
     packet.push_bits(6, 32U);
-    packet.push_bits(0, kage::sync::protocol::frame_subframe_bits);
+    packet.push_bits(0, ashiato::sync::protocol::frame_subframe_bits);
     return packet;
 }
 
-ecs::BitBuffer make_client_ack() {
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::client_ack_message, 8U);
+ashiato::BitBuffer make_client_ack() {
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
     packet.push_bits(1, 16U);
-    packet.push_bits(1, kage::sync::protocol::server_packet_id_bits);
+    packet.push_bits(1, ashiato::sync::protocol::server_packet_id_bits);
     return packet;
 }
 
-ecs::BitBuffer make_client_connect_request() {
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::client_connect_request_message, 8U);
-    kage::sync::protocol::write_string(packet, "token");
+ashiato::BitBuffer make_client_connect_request() {
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::client_connect_request_message, 8U);
+    ashiato::sync::protocol::write_string(packet, "token");
     return packet;
 }
 
-ecs::BitBuffer make_client_connect_ack() {
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::client_connect_ack_message, 8U);
+ashiato::BitBuffer make_client_connect_ack() {
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::client_connect_ack_message, 8U);
     packet.push_unsigned_bits(fuzz_peer, 64U);
     return packet;
 }
 
-ecs::BitBuffer make_client_ping() {
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::client_ping_message, 8U);
+ashiato::BitBuffer make_client_ping() {
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::client_ping_message, 8U);
     packet.push_bits(1, 32U);
     return packet;
 }
 
-ecs::BitBuffer make_client_input() {
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::client_input_message, 8U);
+ashiato::BitBuffer make_client_input() {
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::client_input_message, 8U);
     packet.push_bits(0, 16U);
     packet.push_bits(0, 32U);
     packet.push_bits(1, 16U);
@@ -146,29 +146,29 @@ ecs::BitBuffer make_client_input() {
     return packet;
 }
 
-void fuzz_client_receive(ecs::BitBuffer packet, bool seed_client) {
-    ecs::Registry registry;
+void fuzz_client_receive(ashiato::BitBuffer packet, bool seed_client) {
+    ashiato::Registry registry;
     setup_client_registry(registry);
 
-    kage::sync::ReplicationClientOptions options;
-    options.entities.default_mode = kage::sync::ReplicationClientMode::Snap;
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Snap;
     options.session.local_client = fuzz_peer;
-    kage::sync::ReplicationClient client(registry, options);
+    ashiato::sync::ReplicationClient client(registry, options);
     if (seed_client) {
         (void)client.receive(registry, make_client_seed_update());
     }
     (void)client.receive(registry, std::move(packet));
 }
 
-void fuzz_server_connected(ecs::BitBuffer packet, bool with_registry) {
-    kage::sync::ReplicationServerOptions options;
-    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    ecs::Registry server_registry;
-    kage::sync::ReplicationServer server(server_registry, options);
+void fuzz_server_connected(ashiato::BitBuffer packet, bool with_registry) {
+    ashiato::sync::ReplicationServerOptions options;
+    options.transport = [](ashiato::sync::ClientId, const ashiato::BitBuffer&) {};
+    ashiato::Registry server_registry;
+    ashiato::sync::ReplicationServer server(server_registry, options);
     (void)server.add_client(fuzz_peer);
 
     if (with_registry) {
-        ecs::Registry registry;
+        ashiato::Registry registry;
         setup_server_registry(registry);
         (void)server.process_packet(registry, fuzz_peer, std::move(packet));
     } else {
@@ -176,13 +176,13 @@ void fuzz_server_connected(ecs::BitBuffer packet, bool with_registry) {
     }
 }
 
-void fuzz_server_connect(ecs::BitBuffer packet) {
-    ecs::Registry registry;
+void fuzz_server_connect(ashiato::BitBuffer packet) {
+    ashiato::Registry registry;
     setup_server_registry(registry);
 
-    kage::sync::ReplicationServerOptions options;
-    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(registry, options);
+    ashiato::sync::ReplicationServerOptions options;
+    options.transport = [](ashiato::sync::ClientId, const ashiato::BitBuffer&) {};
+    ashiato::sync::ReplicationServer server(registry, options);
     (void)server.process_packet(registry, fuzz_peer, std::move(packet));
 }
 
@@ -255,16 +255,16 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     const std::size_t packet_size = size > 2U ? size - 2U : 0U;
 
     constexpr std::uint8_t client_messages[] = {
-        kage::sync::protocol::server_update_message,
-        kage::sync::protocol::server_connect_response_message,
-        kage::sync::protocol::server_pong_message,
+        ashiato::sync::protocol::server_update_message,
+        ashiato::sync::protocol::server_connect_response_message,
+        ashiato::sync::protocol::server_pong_message,
     };
     constexpr std::uint8_t server_messages[] = {
-        kage::sync::protocol::client_ack_message,
-        kage::sync::protocol::client_connect_request_message,
-        kage::sync::protocol::client_connect_ack_message,
-        kage::sync::protocol::client_ping_message,
-        kage::sync::protocol::client_input_message,
+        ashiato::sync::protocol::client_ack_message,
+        ashiato::sync::protocol::client_connect_request_message,
+        ashiato::sync::protocol::client_connect_ack_message,
+        ashiato::sync::protocol::client_ping_message,
+        ashiato::sync::protocol::client_input_message,
     };
 
     switch (scenario % 5U) {

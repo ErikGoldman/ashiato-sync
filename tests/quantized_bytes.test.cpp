@@ -1,4 +1,4 @@
-#include "kage/sync/types.hpp"
+#include "ashiato/sync/types.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -10,8 +10,8 @@
 
 namespace {
 
-std::array<std::uint8_t, kage::sync::QuantizedBytes::max_size> make_pattern() {
-    std::array<std::uint8_t, kage::sync::QuantizedBytes::max_size> out{};
+std::array<std::uint8_t, ashiato::sync::QuantizedBytes::max_size> make_pattern() {
+    std::array<std::uint8_t, ashiato::sync::QuantizedBytes::max_size> out{};
     for (std::size_t index = 0; index < out.size(); ++index) {
         out[index] = static_cast<std::uint8_t>((index * 13U + 7U) & 0xffU);
     }
@@ -19,8 +19,8 @@ std::array<std::uint8_t, kage::sync::QuantizedBytes::max_size> make_pattern() {
 }
 
 void require_prefix(
-    const kage::sync::QuantizedBytes& bytes,
-    const std::array<std::uint8_t, kage::sync::QuantizedBytes::max_size>& pattern,
+    const ashiato::sync::QuantizedBytes& bytes,
+    const std::array<std::uint8_t, ashiato::sync::QuantizedBytes::max_size>& pattern,
     std::size_t size) {
     REQUIRE(bytes.size() >= size);
     for (std::size_t index = 0; index < size; ++index) {
@@ -29,8 +29,8 @@ void require_prefix(
 }
 
 void require_matches(
-    const kage::sync::QuantizedBytes& bytes,
-    const std::array<std::uint8_t, kage::sync::QuantizedBytes::max_size>& pattern,
+    const ashiato::sync::QuantizedBytes& bytes,
+    const std::array<std::uint8_t, ashiato::sync::QuantizedBytes::max_size>& pattern,
     std::size_t size) {
     REQUIRE(bytes.size() == size);
     require_prefix(bytes, pattern, size);
@@ -39,7 +39,7 @@ void require_matches(
 }  // namespace
 
 TEST_CASE("quantized bytes stores inline and overflow payloads") {
-    static_assert(kage::sync::QuantizedBytes::inline_capacity == 64);
+    static_assert(ashiato::sync::QuantizedBytes::inline_capacity == 64);
     const auto pattern = make_pattern();
 
     for (std::size_t size : std::array<std::size_t, 6>{
@@ -48,8 +48,8 @@ TEST_CASE("quantized bytes stores inline and overflow payloads") {
              32U,
              64U,
              65U,
-             kage::sync::QuantizedBytes::max_size}) {
-        kage::sync::QuantizedBytes bytes;
+             ashiato::sync::QuantizedBytes::max_size}) {
+        ashiato::sync::QuantizedBytes bytes;
         bytes.assign(pattern.data(), size);
         require_matches(bytes, pattern, size);
     }
@@ -57,14 +57,14 @@ TEST_CASE("quantized bytes stores inline and overflow payloads") {
 
 TEST_CASE("quantized bytes copies only the active payload") {
     const auto pattern = make_pattern();
-    kage::sync::QuantizedBytes source;
+    ashiato::sync::QuantizedBytes source;
     source.assign(pattern.data(), 65U);
 
-    kage::sync::QuantizedBytes copy(source);
+    ashiato::sync::QuantizedBytes copy(source);
     require_matches(copy, pattern, 65U);
     REQUIRE(copy == source);
 
-    kage::sync::QuantizedBytes assigned;
+    ashiato::sync::QuantizedBytes assigned;
     assigned.assign(pattern.data(), 16U);
     assigned = source;
     require_matches(assigned, pattern, 65U);
@@ -76,17 +76,17 @@ TEST_CASE("quantized bytes copies only the active payload") {
 
 TEST_CASE("quantized bytes moves payloads and leaves source reusable") {
     const auto pattern = make_pattern();
-    kage::sync::QuantizedBytes source;
+    ashiato::sync::QuantizedBytes source;
     source.assign(pattern.data(), 1200U);
 
-    kage::sync::QuantizedBytes moved(std::move(source));
+    ashiato::sync::QuantizedBytes moved(std::move(source));
     require_matches(moved, pattern, 1200U);
     REQUIRE(source.empty());
 
     source.assign(pattern.data(), 32U);
     require_matches(source, pattern, 32U);
 
-    kage::sync::QuantizedBytes assigned;
+    ashiato::sync::QuantizedBytes assigned;
     assigned = std::move(moved);
     require_matches(assigned, pattern, 1200U);
     REQUIRE(moved.empty());
@@ -94,7 +94,7 @@ TEST_CASE("quantized bytes moves payloads and leaves source reusable") {
 
 TEST_CASE("quantized bytes preserves payload prefixes across inline and overflow resizes") {
     const auto pattern = make_pattern();
-    kage::sync::QuantizedBytes bytes;
+    ashiato::sync::QuantizedBytes bytes;
 
     bytes.assign(pattern.data(), 32U);
     bytes.resize(65U);
@@ -111,6 +111,6 @@ TEST_CASE("quantized bytes preserves payload prefixes across inline and overflow
 }
 
 TEST_CASE("quantized bytes rejects payloads above maximum size") {
-    kage::sync::QuantizedBytes bytes;
-    REQUIRE_THROWS_AS(bytes.resize(kage::sync::QuantizedBytes::max_size + 1U), std::length_error);
+    ashiato::sync::QuantizedBytes bytes;
+    REQUIRE_THROWS_AS(bytes.resize(ashiato::sync::QuantizedBytes::max_size + 1U), std::length_error);
 }

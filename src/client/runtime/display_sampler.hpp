@@ -2,13 +2,13 @@
 
 #include "client/state.hpp"
 
-#include "kage/sync/client.hpp"
-#include "kage/sync/client_clock.hpp"
+#include "ashiato/sync/client.hpp"
+#include "ashiato/sync/client_clock.hpp"
 
 #include <cstddef>
 #include <cstdint>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 
 class ClientEntityStore;
 class ClientFrameRingStore;
@@ -26,13 +26,13 @@ public:
         double fixed_dt_seconds) noexcept;
 
     bool sample_fractional_tick_frame(
-        const ecs::Registry& registry,
+        const ashiato::Registry& registry,
         double target_frame,
         FractionalTickSampleBuffer& out) const;
 
 private:
     struct WriteContext {
-        const ecs::Registry& registry;
+        const ashiato::Registry& registry;
         const SyncSettings& settings;
         FractionalTickSampleBuffer& out;
         SyncFrame floor_frame = 0;
@@ -73,4 +73,4 @@ private:
     double fixed_dt_seconds_ = 1.0 / 60.0;
 };
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

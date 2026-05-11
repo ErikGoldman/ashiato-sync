@@ -11,9 +11,9 @@
 #include <utility>
 #include <vector>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 namespace {
 
 thread_local const RollbackReasonTraceContext* rollback_reason_trace_context = nullptr;
@@ -73,7 +73,7 @@ void append_trace_component_data(
     if (component_index < archetype.component_ops.size()) {
         event.component_name = archetype.component_ops[component_index].serialization.name;
     }
-#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+#ifdef ASHIATO_SYNC_TRACE_COMPONENT_DATA
     if (tracer == nullptr || !tracer->frame_data_enabled() || bytes == nullptr ||
         component_index >= archetype.component_ops.size()) {
         return;
@@ -100,7 +100,7 @@ void append_trace_input_component_data(
     const std::uint8_t* bytes,
     SyncTraceEvent& event) {
     event.component_name = ops.serialization.name;
-#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+#ifdef ASHIATO_SYNC_TRACE_COMPONENT_DATA
     if (tracer == nullptr || !tracer->frame_data_enabled() || bytes == nullptr || ops.trace == nullptr) {
         return;
     }
@@ -128,9 +128,9 @@ void append_trace_cue_data(
     const SyncTracer* tracer,
     const SyncSettings& settings,
     SyncCueTypeId cue_type,
-    const ecs::BitBuffer& payload,
+    const ashiato::BitBuffer& payload,
     SyncTraceEvent& event) {
-#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+#ifdef ASHIATO_SYNC_TRACE_COMPONENT_DATA
     if (tracer == nullptr || !tracer->frame_data_enabled() ||
         cue_type >= settings.cue_ops.size() || settings.cue_ops[cue_type].trace == nullptr) {
         return;
@@ -166,7 +166,7 @@ void append_trace_cue_name(const SyncSettings& settings, SyncCueTypeId cue_type,
     }
 }
 
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
 std::string packet_ack_list(const std::vector<std::uint32_t>& acks) {
     std::ostringstream out;
     out << "[";
@@ -205,7 +205,7 @@ void ReplicationClient::close_trace() {
 }
 
 void ReplicationClient::trace_frame_components(
-    const ecs::Registry& registry,
+    const ashiato::Registry& registry,
     const SyncSettings& settings,
     SyncFrame frame,
     bool resimulated,
@@ -248,7 +248,7 @@ void ReplicationClient::trace_frame_components(
                 client_id_,
                 frame);
             event.local_entity = state.identity.local;
-            event.server_entity = ecs::Entity{state.identity.client_entity_network_id};
+            event.server_entity = ashiato::Entity{state.identity.client_entity_network_id};
             event.client_network_id = state.identity.client_entity_network_id;
             event.wire_network_id = state.identity.wire_network_id;
             event.network_version = client_entity_network_id_version(state.identity.client_entity_network_id);
@@ -262,10 +262,10 @@ void ReplicationClient::trace_frame_components(
 }
 
 void ReplicationClient::trace_input_components(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     SyncFrame frame,
-    ecs::Entity component,
+    ashiato::Entity component,
     const std::uint8_t* quantized) {
     if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->frame_data_enabled() ||
         settings.local_client == invalid_client_id || quantized == nullptr || !component) {
@@ -276,7 +276,7 @@ void ReplicationClient::trace_input_components(
         return;
     }
     const SyncComponentOps& ops = found_ops->second;
-    registry.view<const NetworkOwner>().each([&](ecs::Entity entity, const NetworkOwner& owner) {
+    registry.view<const NetworkOwner>().each([&](ashiato::Entity entity, const NetworkOwner& owner) {
         if (owner.client != settings.local_client) {
             return;
         }
@@ -284,7 +284,7 @@ void ReplicationClient::trace_input_components(
         event.local_entity = entity;
         const EntityState* state = find_entity_state_for_local(entity);
         if (state != nullptr && state->identity.client_entity_network_id != invalid_client_entity_network_id) {
-            event.server_entity = ecs::Entity{state->identity.client_entity_network_id};
+            event.server_entity = ashiato::Entity{state->identity.client_entity_network_id};
             event.client_network_id = state->identity.client_entity_network_id;
             event.wire_network_id = state->identity.wire_network_id;
             event.network_version = client_entity_network_id_version(state->identity.client_entity_network_id);
@@ -318,8 +318,8 @@ void ReplicationClient::trace_clock_skew(
     const SyncFrame predicted_lead = predicted_frame >= server_frame ? predicted_frame - server_frame : 0U;
 
     SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ClockSkew, client_id_, local_frame);
-    event.local_entity = ecs::Entity{client_id_ == invalid_client_id ? 0U : client_id_};
-    event.component = ecs::Entity{std::numeric_limits<std::uint64_t>::max() - 1U};
+    event.local_entity = ashiato::Entity{client_id_ == invalid_client_id ? 0U : client_id_};
+    event.component = ashiato::Entity{std::numeric_limits<std::uint64_t>::max() - 1U};
     event.component_name = "Clock";
     std::ostringstream out;
     out << "stage=" << stage
@@ -363,7 +363,7 @@ void ReplicationClient::trace_cue_event(
         return;
     }
     SyncTraceEvent event = make_client_trace_event(type, client_id_, cue.frame);
-    event.server_entity = ecs::Entity{state.identity.client_entity_network_id};
+    event.server_entity = ashiato::Entity{state.identity.client_entity_network_id};
     event.local_entity = state.identity.local;
     event.client_network_id = state.identity.client_entity_network_id;
     event.wire_network_id = state.identity.wire_network_id;
@@ -388,7 +388,7 @@ void ReplicationClient::trace_cue_event(
         return;
     }
     SyncTraceEvent event = make_client_trace_event(type, client_id_, cue.frame);
-    event.server_entity = ecs::Entity{state.identity.client_entity_network_id};
+    event.server_entity = ashiato::Entity{state.identity.client_entity_network_id};
     event.local_entity = state.identity.local;
     event.client_network_id = state.identity.client_entity_network_id;
     event.wire_network_id = state.identity.wire_network_id;
@@ -402,7 +402,7 @@ void ReplicationClient::trace_cue_event(
     tracer_->trace(event);
 }
 
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
 void ReplicationClient::trace_outgoing_ack_packet(const std::vector<std::uint32_t>& acks) const {
     if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->packet_logs_enabled()) {
         return;
@@ -465,4 +465,4 @@ void ReplicationClient::trace_incoming_update_packet(
 #endif
 #endif
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

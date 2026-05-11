@@ -1,13 +1,13 @@
 #pragma once
 
-#include "kage/sync/component_traits.hpp"
+#include "ashiato/sync/component_traits.hpp"
 
 #include <cstdint>
 #include <cstring>
 #include <type_traits>
 #include <utility>
 
-namespace kage::sync::detail {
+namespace ashiato::sync::detail {
 
 template <typename T, typename = void>
 struct has_context_cue_serialize : std::false_type {};
@@ -17,7 +17,7 @@ struct has_context_cue_serialize<
     T,
     std::void_t<decltype(SyncCueTraits<T>::serialize(
         std::declval<const T&>(),
-        std::declval<ecs::BitBuffer&>(),
+        std::declval<ashiato::BitBuffer&>(),
         std::declval<EntityReferenceContext&>()))>> : std::true_type {};
 
 template <typename T, typename = void>
@@ -27,7 +27,7 @@ template <typename T>
 struct has_context_cue_deserialize<
     T,
     std::void_t<decltype(SyncCueTraits<T>::deserialize(
-        std::declval<ecs::BitBuffer&>(),
+        std::declval<ashiato::BitBuffer&>(),
         std::declval<T&>(),
         std::declval<EntityReferenceContext&>()))>> : std::true_type {};
 
@@ -38,14 +38,14 @@ template <typename T>
 struct has_frame_cue_play<
     T,
     std::void_t<decltype(SyncCueTraits<T>::play(
-        std::declval<ecs::Registry&>(),
-        std::declval<ecs::Entity>(),
+        std::declval<ashiato::Registry&>(),
+        std::declval<ashiato::Entity>(),
         std::declval<const T&>(),
         std::declval<float>(),
         std::declval<SyncFrame>()))>> : std::true_type {};
 
 template <typename T>
-void serialize_cue_payload(const T& cue, ecs::BitBuffer& out, EntityReferenceContext* references) {
+void serialize_cue_payload(const T& cue, ashiato::BitBuffer& out, EntityReferenceContext* references) {
     if constexpr (has_context_cue_serialize<T>::value) {
         EntityReferenceContext empty_references;
         SyncCueTraits<T>::serialize(cue, out, references != nullptr ? *references : empty_references);
@@ -56,8 +56,8 @@ void serialize_cue_payload(const T& cue, ecs::BitBuffer& out, EntityReferenceCon
 }
 
 template <typename T>
-bool read_cue_payload(const ecs::BitBuffer& payload, T& out, EntityReferenceContext* references = nullptr) {
-    ecs::BitBuffer copy = payload;
+bool read_cue_payload(const ashiato::BitBuffer& payload, T& out, EntityReferenceContext* references = nullptr) {
+    ashiato::BitBuffer copy = payload;
     if constexpr (has_context_cue_deserialize<T>::value) {
         EntityReferenceContext empty_references;
         return SyncCueTraits<T>::deserialize(copy, out, references != nullptr ? *references : empty_references);
@@ -69,9 +69,9 @@ bool read_cue_payload(const ecs::BitBuffer& payload, T& out, EntityReferenceCont
 
 template <typename T>
 bool play_cue_payload(
-    ecs::Registry& registry,
-    ecs::Entity owner,
-    const ecs::BitBuffer& payload,
+    ashiato::Registry& registry,
+    ashiato::Entity owner,
+    const ashiato::BitBuffer& payload,
     float late_seconds,
     SyncFrame frame,
     EntityReferenceContext* references) {
@@ -89,9 +89,9 @@ bool play_cue_payload(
 
 template <typename T>
 bool rollback_cue_payload(
-    ecs::Registry& registry,
-    ecs::Entity owner,
-    const ecs::BitBuffer& payload,
+    ashiato::Registry& registry,
+    ashiato::Entity owner,
+    const ashiato::BitBuffer& payload,
     EntityReferenceContext* references) {
     T value{};
     if (!read_cue_payload(payload, value, references)) {
@@ -102,8 +102,8 @@ bool rollback_cue_payload(
 
 template <typename T>
 bool equal_cue_payloads(
-    const ecs::BitBuffer& lhs_payload,
-    const ecs::BitBuffer& rhs_payload,
+    const ashiato::BitBuffer& lhs_payload,
+    const ashiato::BitBuffer& rhs_payload,
     EntityReferenceContext* references) {
     T lhs{};
     T rhs{};
@@ -123,14 +123,14 @@ struct has_context_serialize<
     std::void_t<decltype(Traits::serialize(
         std::declval<const Quantized*>(),
         std::declval<const Quantized&>(),
-        std::declval<ecs::BitBuffer&>(),
+        std::declval<ashiato::BitBuffer&>(),
         std::declval<EntityReferenceContext&>()))>> : std::true_type {};
 
 template <typename Traits, typename Quantized>
 void serialize_quantized(
     const Quantized* previous,
     const Quantized& current,
-    ecs::BitBuffer& out,
+    ashiato::BitBuffer& out,
     EntityReferenceContext* references) {
     if constexpr (has_context_serialize<Traits, Quantized>::value) {
         EntityReferenceContext empty_references;
@@ -149,14 +149,14 @@ struct has_context_deserialize<
     Traits,
     Quantized,
     std::void_t<decltype(Traits::deserialize(
-        std::declval<ecs::BitBuffer&>(),
+        std::declval<ashiato::BitBuffer&>(),
         std::declval<const Quantized*>(),
         std::declval<Quantized&>(),
         std::declval<EntityReferenceContext&>()))>> : std::true_type {};
 
 template <typename Traits, typename Quantized>
 bool deserialize_quantized(
-    ecs::BitBuffer& in,
+    ashiato::BitBuffer& in,
     const Quantized* previous,
     Quantized& out,
     EntityReferenceContext* references) {
@@ -336,7 +336,7 @@ typename std::enable_if<!has_should_roll_back<Traits, Quantized>::value, bool>::
     return false;
 }
 
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
 template <typename Traits, typename Quantized, typename = void>
 struct has_trace_component : std::false_type {};
 
@@ -367,7 +367,7 @@ struct has_trace_cue<
         std::declval<SyncTraceStringBuilder&>()))>> : std::true_type {};
 
 template <typename T>
-bool trace_cue_payload(const ecs::BitBuffer& payload, SyncTraceStringBuilder& out) {
+bool trace_cue_payload(const ashiato::BitBuffer& payload, SyncTraceStringBuilder& out) {
     T value{};
     if (!read_cue_payload(payload, value)) {
         return false;
@@ -377,4 +377,4 @@ bool trace_cue_payload(const ecs::BitBuffer& payload, SyncTraceStringBuilder& ou
 }
 #endif
 
-}  // namespace kage::sync::detail
+}  // namespace ashiato::sync::detail

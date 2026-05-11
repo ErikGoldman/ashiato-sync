@@ -1,10 +1,10 @@
-#include "kage/sync/components.hpp"
+#include "ashiato/sync/components.hpp"
 
 #include <cstdint>
 #include <stdexcept>
 #include <utility>
 
-namespace kage::sync {
+namespace ashiato::sync {
 namespace {
 
 constexpr std::size_t max_archetype_tags = 64;
@@ -15,7 +15,7 @@ bool valid_archetype_id(const SyncSettings& settings, SyncArchetypeId id) {
     return id.value < settings.archetypes.size();
 }
 
-void validate_component_replication(const ecs::Registry& registry, const ComponentReplication& replication) {
+void validate_component_replication(const ashiato::Registry& registry, const ComponentReplication& replication) {
     if (!replication.component || registry.component_info(replication.component) == nullptr) {
         throw std::invalid_argument("sync archetype references an unregistered component");
     }
@@ -24,8 +24,8 @@ void validate_component_replication(const ecs::Registry& registry, const Compone
     }
 }
 
-void validate_tag_replication(const ecs::Registry& registry, const SyncTagReplication& replication) {
-    const ecs::ComponentInfo* info = registry.component_info(replication.tag);
+void validate_tag_replication(const ashiato::Registry& registry, const SyncTagReplication& replication) {
+    const ashiato::ComponentInfo* info = registry.component_info(replication.tag);
     if (!replication.tag || info == nullptr || !info->tag) {
         throw std::invalid_argument("sync archetype references an unregistered tag");
     }
@@ -33,16 +33,16 @@ void validate_tag_replication(const ecs::Registry& registry, const SyncTagReplic
 
 }  // namespace
 
-void register_components(ecs::Registry& registry) {
-    registry.register_component<SyncSettings>("kage.sync.SyncSettings");
-    registry.register_component<FrameInfo>("kage.sync.FrameInfo");
-    registry.register_component<CueDispatcher>("kage.sync.CueDispatcher");
-    registry.register_component<SyncAuthority>("kage.sync.SyncAuthority");
-    registry.register_component<Replicated>("kage.sync.Replicated");
-    registry.register_component<NetworkOwner>("kage.sync.NetworkOwner");
-    registry.register_component<FractionalTickSampled>("kage.sync.FractionalTickSampled");
-    registry.register_component<NoResim>("kage.sync.NoResim");
-    registry.register_component<NoSimulate>("kage.sync.NoSimulate");
+void register_components(ashiato::Registry& registry) {
+    registry.register_component<SyncSettings>("ashiato.sync.SyncSettings");
+    registry.register_component<FrameInfo>("ashiato.sync.FrameInfo");
+    registry.register_component<CueDispatcher>("ashiato.sync.CueDispatcher");
+    registry.register_component<SyncAuthority>("ashiato.sync.SyncAuthority");
+    registry.register_component<Replicated>("ashiato.sync.Replicated");
+    registry.register_component<NetworkOwner>("ashiato.sync.NetworkOwner");
+    registry.register_component<FractionalTickSampled>("ashiato.sync.FractionalTickSampled");
+    registry.register_component<NoResim>("ashiato.sync.NoResim");
+    registry.register_component<NoSimulate>("ashiato.sync.NoSimulate");
 }
 
 CueDispatcher::CueDispatcher(const CueDispatcher& other) {
@@ -106,19 +106,19 @@ std::size_t CueDispatcher::size() const noexcept {
     return cues_.size();
 }
 
-const SyncComponentOps* find_component_ops(const ecs::Registry& registry, ecs::Entity component) {
+const SyncComponentOps* find_component_ops(const ashiato::Registry& registry, ashiato::Entity component) {
     const SyncSettings& settings = registry.get<SyncSettings>();
     const auto found = settings.component_ops.find(component.value);
     return found != settings.component_ops.end() ? &found->second : nullptr;
 }
 
-bool set_fractional_tick_sampled(ecs::Registry& registry, ecs::Entity component, bool enabled) {
+bool set_fractional_tick_sampled(ashiato::Registry& registry, ashiato::Entity component, bool enabled) {
     register_components(registry);
     if (!component || registry.component_info(component) == nullptr) {
         return false;
     }
 
-    const ecs::Entity tag = registry.component<FractionalTickSampled>();
+    const ashiato::Entity tag = registry.component<FractionalTickSampled>();
     if (!enabled) {
         if (!registry.has<FractionalTickSampled>(component)) {
             return true;
@@ -134,14 +134,14 @@ bool set_fractional_tick_sampled(ecs::Registry& registry, ecs::Entity component,
     return registry.add_tag(component, tag);
 }
 
-bool is_fractional_tick_sampled(const ecs::Registry& registry, ecs::Entity component) {
+bool is_fractional_tick_sampled(const ashiato::Registry& registry, ashiato::Entity component) {
     if (!component || registry.component_info(component) == nullptr) {
         return false;
     }
     return registry.has<FractionalTickSampled>(component);
 }
 
-SyncArchetypeId define_archetype(ecs::Registry& registry, SyncArchetypeDesc desc) {
+SyncArchetypeId define_archetype(ashiato::Registry& registry, SyncArchetypeDesc desc) {
     register_components(registry);
 
     if (desc.tags.size() > max_archetype_tags) {
@@ -206,7 +206,7 @@ SyncArchetypeId define_archetype(ecs::Registry& registry, SyncArchetypeDesc desc
     return id;
 }
 
-const SyncArchetype* find_archetype(const ecs::Registry& registry, SyncArchetypeId id) {
+const SyncArchetype* find_archetype(const ashiato::Registry& registry, SyncArchetypeId id) {
     const SyncSettings& settings = registry.get<SyncSettings>();
     if (!valid_archetype_id(settings, id)) {
         return nullptr;
@@ -216,13 +216,13 @@ const SyncArchetype* find_archetype(const ecs::Registry& registry, SyncArchetype
 }
 
 SyncArchetypeId define_archetype(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     std::string name,
     std::vector<ComponentReplication> components) {
     return define_archetype(registry, SyncArchetypeDesc{std::move(name), {}, std::move(components)});
 }
 
-bool set_owner(ecs::Registry& registry, ecs::Entity entity, ClientId client) {
+bool set_owner(ashiato::Registry& registry, ashiato::Entity entity, ClientId client) {
     register_components(registry);
 
     if (!registry.alive(entity)) {
@@ -232,7 +232,7 @@ bool set_owner(ecs::Registry& registry, ecs::Entity entity, ClientId client) {
     return registry.add<NetworkOwner>(entity, NetworkOwner{client}) != nullptr;
 }
 
-bool set_client_input_component(ecs::Registry& registry, ecs::Entity component) {
+bool set_client_input_component(ashiato::Registry& registry, ashiato::Entity component) {
     register_components(registry);
     if (!component || registry.component_info(component) == nullptr) {
         return false;
@@ -244,4 +244,4 @@ bool set_client_input_component(ecs::Registry& registry, ecs::Entity component) 
     return true;
 }
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

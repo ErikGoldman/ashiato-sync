@@ -4,7 +4,7 @@
 #include <cstring>
 #include <stdexcept>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 namespace {
 
 bool is_power_of_two(std::size_t value) noexcept {
@@ -189,4 +189,4 @@ bool ClientFrameRingStore::copy_frames(std::uint32_t entity_index, std::vector<E
     return true;
 }
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

@@ -7,12 +7,12 @@
 #include "client/store/frame_ring_store.hpp"
 #include "client/store/input_buffer.hpp"
 
-#include "kage/sync/client.hpp"
+#include "ashiato/sync/client.hpp"
 
 #include <algorithm>
 #include <cstdint>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 namespace {
 
 bool all_zero(const SyncComponentOps::QuantizedBytes& bytes) {
@@ -77,7 +77,7 @@ void ClientPredictionRuntime::schedule_catchup(SyncFrame server_frame, SyncFrame
 
 bool ClientPredictionRuntime::seed_first_authoritative_frame(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     SyncFrame frame) {
     if (has_predicted_frame_) {
@@ -94,7 +94,7 @@ bool ClientPredictionRuntime::seed_first_authoritative_frame(
 
 bool ClientPredictionRuntime::seed_existing_authoritative_frame(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     SyncFrame frame) {
     if (has_predicted_frame_) {
@@ -136,9 +136,9 @@ void ClientPredictionRuntime::queue_rollback(ReplicationClient& client, EntitySt
 
 bool ClientPredictionRuntime::run_frame(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     SyncFrame frame,
-    ecs::RunJobsOptions options) {
+    ashiato::RunJobsOptions options) {
     if (!apply_pending_rollback(client, registry, options)) {
         return false;
     }
@@ -168,7 +168,7 @@ bool ClientPredictionRuntime::run_frame(
 
     last_predicted_frame_ = frame;
     has_predicted_frame_ = true;
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     client.trace_frame_components(
         registry,
         settings,
@@ -182,9 +182,9 @@ bool ClientPredictionRuntime::run_frame(
 
 bool ClientPredictionRuntime::run_catchup(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     std::uint32_t predicted_steps_this_tick,
-    ecs::RunJobsOptions options) {
+    ashiato::RunJobsOptions options) {
     if (client.options_.clock.auto_timing_fast_recovery &&
         client.has_predicted_entities() &&
         has_predicted_frame_ &&
@@ -207,11 +207,11 @@ bool ClientPredictionRuntime::run_catchup(
             client.clock_.advance_predicted_frame_to(frame);
         }
         if (pending_prediction_catchup_server_frame_ != 0U) {
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
             const SyncFrame catchup_server_frame = pending_prediction_catchup_server_frame_;
 #endif
             client.clock_.record_prediction_lead(pending_prediction_catchup_server_frame_, client.clock_.predicted_frame());
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
             client.trace_clock_skew(
                 "prediction_catchup_applied",
                 static_cast<SyncFrame>(std::max(0.0, client.clock_.estimated_server_frame())),
@@ -290,7 +290,7 @@ void ClientPredictionRuntime::capture_original_current(
 
 bool ClientPredictionRuntime::blend_resim_errors(
     ReplicationClient& client,
-    const ecs::Registry& registry,
+    const ashiato::Registry& registry,
     const SyncSettings& settings,
     SyncFrame current_frame,
     const std::vector<OriginalPredictionCapture>& original) {
@@ -350,8 +350,8 @@ bool ClientPredictionRuntime::blend_resim_errors(
 
 bool ClientPredictionRuntime::apply_pending_rollback(
     ReplicationClient& client,
-    ecs::Registry& registry,
-    ecs::RunJobsOptions options) {
+    ashiato::Registry& registry,
+    ashiato::RunJobsOptions options) {
     if (!has_pending_prediction_rollback_) {
         return true;
     }
@@ -393,28 +393,28 @@ bool ClientPredictionRuntime::apply_pending_rollback(
 
 bool ClientPredictionRuntime::resimulate_all(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     SyncFrame begin_frame,
     SyncFrame current_frame,
-    ecs::RunJobsOptions options) {
+    ashiato::RunJobsOptions options) {
     return resimulate(client, registry, begin_frame, current_frame, options, ResimScope::All);
 }
 
 bool ClientPredictionRuntime::resimulate_affected(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     SyncFrame begin_frame,
     SyncFrame current_frame,
-    ecs::RunJobsOptions options) {
+    ashiato::RunJobsOptions options) {
     return resimulate(client, registry, begin_frame, current_frame, options, ResimScope::Affected);
 }
 
 bool ClientPredictionRuntime::resimulate(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     SyncFrame begin_frame,
     SyncFrame current_frame,
-    ecs::RunJobsOptions options,
+    ashiato::RunJobsOptions options,
     ResimScope scope) {
     const SyncSettings& settings = registry.get<SyncSettings>();
     bool has_entities_to_resimulate = true;
@@ -441,7 +441,7 @@ bool ClientPredictionRuntime::resimulate(
 
 bool ClientPredictionRuntime::prepare_resimulation(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     SyncFrame begin_frame,
     ResimScope scope,
@@ -486,10 +486,10 @@ bool ClientPredictionRuntime::prepare_resimulation(
 
 bool ClientPredictionRuntime::run_resimulation_frame(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     SyncFrame frame,
-    ecs::RunJobsOptions options,
+    ashiato::RunJobsOptions options,
     ResimScope scope) {
     if (scope == ResimScope::All && !client.apply_frame(registry, frame)) {
         return false;
@@ -507,7 +507,7 @@ bool ClientPredictionRuntime::run_resimulation_frame(
     if (!quantize_resimulated(client, registry, settings, frame, scope)) {
         return false;
     }
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     client.trace_frame_components(
         registry,
         settings,
@@ -521,7 +521,7 @@ bool ClientPredictionRuntime::run_resimulation_frame(
 
 bool ClientPredictionRuntime::quantize_resimulated(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     SyncFrame frame,
     ResimScope scope) {
@@ -543,4 +543,4 @@ bool ClientPredictionRuntime::quantize_resimulated(
     return true;
 }
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

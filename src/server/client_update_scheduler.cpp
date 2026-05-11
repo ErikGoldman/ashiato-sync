@@ -1,20 +1,20 @@
-#include "kage/sync/server.hpp"
+#include "ashiato/sync/server.hpp"
 
 #include "server/detail.hpp"
 #include "server/packet.hpp"
 #include "server/state.hpp"
 
-#include "kage/sync/protocol.hpp"
+#include "ashiato/sync/protocol.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::UpdateScheduler::send_client(
     ReplicationServer& server,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     ServerClientReplicator& replication,
     std::uint32_t completed_frames) {
@@ -160,7 +160,7 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
                 records_,
                 destroy.network_id,
                 options.protocol.network_entity_id_tier0_bits);
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
             server.trace_entity_destroyed(replication.id, destroy.entity, destroy.network_id, destroy.network_version);
 #endif
             packet_ack_records_.push_back(PacketAckRecord{destroy.entity, server.frame(), true});
@@ -221,7 +221,7 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
         records_.push_bool(false);
         records_.push_buffer_bits(serialized_.payload);
         PacketAckRecord ack_record{server.replicated_slot_entity(slot), server.frame(), false};
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
         if (const ClientEntityState* entity_state = replication.entities.try_get(slot)) {
             server.append_server_packet_ack_cues(settings, *entity_state, ack_record);
         }
@@ -301,4 +301,4 @@ void server_detail::ServerClientReplicator::UpdateScheduler::cleanup_dirty_queue
         replication.dirty_queue.dirty_replicated_indices.end());
 }
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

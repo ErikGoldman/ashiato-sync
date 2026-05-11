@@ -1,6 +1,6 @@
 #pragma once
 
-#include "kage/sync/types.hpp"
+#include "ashiato/sync/types.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 class ReplicationBandwidthBudget;
 
@@ -459,4 +459,4 @@ inline void ReplicationBandwidthShare::combine(Result& combined, const Result& r
     combined.stopped_for_budget = combined.stopped_for_budget || result.stopped_for_budget;
 }
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

@@ -1,11 +1,11 @@
-#include "kage/sync/server.hpp"
+#include "ashiato/sync/server.hpp"
 
 #include "server/state.hpp"
 
 #include <algorithm>
 #include <limits>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 void ReplicationServer::retain_quantized_frame(std::uint32_t quantized_frame) {
     if (quantized_frame != invalid_quantized_frame_id &&
@@ -87,4 +87,4 @@ bool ReplicationServer::same_quantized_frame_components(
     return true;
 }
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

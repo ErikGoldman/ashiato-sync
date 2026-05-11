@@ -73,7 +73,7 @@ def write_index_html(path: Path, history: dict) -> None:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kage Sync Benchmarks</title>
+<title>Ashiato Sync Benchmarks</title>
 <style>
 :root {{
   color-scheme: light dark;
@@ -151,7 +151,7 @@ a {{ color: var(--accent); }}
 </head>
 <body>
 <main>
-<h1>Kage Sync Benchmarks</h1>
+<h1>Ashiato Sync Benchmarks</h1>
 <p>CPU and bandwidth results are stored per commit and summarized here over time.</p>
 <div class="toolbar">
   <label>Filter <input id="filter" type="search" placeholder="benchmark or scenario"></label>

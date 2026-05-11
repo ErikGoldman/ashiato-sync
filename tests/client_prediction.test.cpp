@@ -9,50 +9,50 @@
 #include <utility>
 #include <vector>
 
-using namespace kage_sync_tests;
+using namespace ashiato_sync_tests;
 
 TEST_CASE("predicted client mode requires ShouldRollBack traits") {
-    ecs::Registry server_registry;
-    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
-    const ecs::Entity server_entity = server_registry.create();
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato_sync_tests::define_position_archetype(server_registry);
+    const ashiato::Entity server_entity = server_registry.create();
 
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClientOptions options;
-    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, options));
 
     try {
         (void)client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}));
         FAIL("expected missing prediction rollback trait error");
-    } catch (const kage::sync::ClientError& error) {
-        REQUIRE(error.status() == kage::sync::ClientStatus::MissingPredictionRollbackTrait);
+    } catch (const ashiato::sync::ClientError& error) {
+        REQUIRE(error.status() == ashiato::sync::ClientStatus::MissingPredictionRollbackTrait);
     }
 }
 
 TEST_CASE("predicted client snaps first frame predicts locally and skips matching rollback") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "PredictedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(registry, 1);
-    kage::sync::ReplicationClientOptions options;
-    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
-    client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    client.simulation_job<PredictedPosition>(registry, 0).each([](ashiato::Entity, PredictedPosition& position) {
         position.x += 1.0f;
     });
 
-    const ecs::Entity server_entity = registry.create();
+    const ashiato::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
-    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+    const ashiato::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
     REQUIRE(registry.get<PredictedPosition>(local).x == 0.0f);
 
@@ -64,26 +64,26 @@ TEST_CASE("predicted client snaps first frame predicts locally and skips matchin
 }
 
 TEST_CASE("predicted client rolls back and resimulates mismatched frames") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "PredictedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(registry, 1);
-    kage::sync::ReplicationClientOptions options;
-    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
-    options.prediction.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
-    client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    options.prediction.rollback_policy = ashiato::sync::ReplicationRollbackPolicy::All;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    client.simulation_job<PredictedPosition>(registry, 0).each([](ashiato::Entity, PredictedPosition& position) {
         position.x += 1.0f;
     });
 
-    const ecs::Entity server_entity = registry.create();
+    const ashiato::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
-    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+    const ashiato::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
     REQUIRE(registry.get<PredictedPosition>(local).x == 1.0f);
 
@@ -93,39 +93,39 @@ TEST_CASE("predicted client rolls back and resimulates mismatched frames") {
     REQUIRE(registry.get<PredictedPosition>(local).x == 3.0f);
 }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 
 TEST_CASE("predicted client starts bundled authoritative rollback from latest received baseline") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "PredictedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
-    kage::sync::ReplicationClientOptions options;
-    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
-    options.prediction.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    options.prediction.rollback_policy = ashiato::sync::ReplicationRollbackPolicy::All;
     options.prediction.auto_lead_frames = false;
     options.prediction.lead_frames = 0;
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
-    client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    client.simulation_job<PredictedPosition>(registry, 0).each([](ashiato::Entity, PredictedPosition& position) {
         position.x += 1.0f;
     });
 
-    std::vector<kage::sync::SyncTraceEvent> events;
-    kage::sync::SyncTracer tracer;
+    std::vector<ashiato::sync::SyncTraceEvent> events;
+    ashiato::sync::SyncTracer tracer;
     tracer.set_frame_data_enabled(true);
-    tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
-        [&](const kage::sync::SyncTraceEvent& event) { events.push_back(event); }});
+    tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { events.push_back(event); }});
     client.set_tracer(&tracer);
 
-    const ecs::Entity server_entity = registry.create();
+    const ashiato::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
-    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+    const ashiato::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
 
     tick_client_fixed_frames(client, registry, 3);
@@ -135,9 +135,9 @@ TEST_CASE("predicted client starts bundled authoritative rollback from latest re
     REQUIRE(client.receive(registry, make_predicted_position_packet(3, server_entity, PredictedPosition{3.0f, 0.0f}, 3)));
     tick_client_fixed_frames(client, registry, 1);
 
-    std::vector<kage::sync::SyncFrame> resim_frames;
-    for (const kage::sync::SyncTraceEvent& event : events) {
-        if (event.type == kage::sync::SyncTraceEventType::ResimulatedFrameComponent &&
+    std::vector<ashiato::sync::SyncFrame> resim_frames;
+    for (const ashiato::sync::SyncTraceEvent& event : events) {
+        if (event.type == ashiato::sync::SyncTraceEventType::ResimulatedFrameComponent &&
             event.component == position_component) {
             resim_frames.push_back(event.frame);
         }
@@ -151,33 +151,33 @@ TEST_CASE("predicted client starts bundled authoritative rollback from latest re
 #endif
 
 TEST_CASE("predicted client rolls back locally predicted cues missing from authoritative frame") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "PredictedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
     registry.register_component<CuePlayback>("CuePlayback");
-    kage::sync::register_sync_cue<TestCue>(registry);
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato::sync::register_sync_cue<TestCue>(registry);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
     bool emit_prediction_cue = true;
-    kage::sync::ReplicationClientOptions options;
-    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
-    options.prediction.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    options.prediction.rollback_policy = ashiato::sync::ReplicationRollbackPolicy::All;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
     client.simulation_job<
         PredictedPosition,
-        kage::sync::SyncSettings,
-        kage::sync::FrameInfo,
-        kage::sync::CueDispatcher>(registry, 0).each(
-        [&](ecs::Entity entity,
+        ashiato::sync::SyncSettings,
+        ashiato::sync::FrameInfo,
+        ashiato::sync::CueDispatcher>(registry, 0).each(
+        [&](ashiato::Entity entity,
             PredictedPosition& position,
-            kage::sync::SyncSettings& settings,
-            kage::sync::FrameInfo& frame,
-            kage::sync::CueDispatcher& cues) {
+            ashiato::sync::SyncSettings& settings,
+            ashiato::sync::FrameInfo& frame,
+            ashiato::sync::CueDispatcher& cues) {
             position.x += 1.0f;
             if (emit_prediction_cue) {
                 REQUIRE(cues.emit(settings, frame, entity, TestCue{7}, 1.0f));
@@ -185,9 +185,9 @@ TEST_CASE("predicted client rolls back locally predicted cues missing from autho
             }
         });
 
-    const ecs::Entity server_entity = registry.create();
+    const ashiato::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
-    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+    const ashiato::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
     REQUIRE(registry.get<CuePlayback>(local).plays == 1);
     REQUIRE(registry.get<CuePlayback>(local).rollbacks == 0);
@@ -197,33 +197,33 @@ TEST_CASE("predicted client rolls back locally predicted cues missing from autho
 }
 
 TEST_CASE("predicted client keeps locally predicted cues replayed during resimulation") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "PredictedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
     registry.register_component<CuePlayback>("CuePlayback");
-    kage::sync::register_sync_cue<TestCue>(registry);
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato::sync::register_sync_cue<TestCue>(registry);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
-    kage::sync::ReplicationClientOptions options;
-    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
-    options.prediction.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    options.prediction.rollback_policy = ashiato::sync::ReplicationRollbackPolicy::All;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
     int prediction_jobs = 0;
     client.simulation_job<
         PredictedPosition,
-        kage::sync::SyncSettings,
-        kage::sync::FrameInfo,
-        kage::sync::CueDispatcher>(registry, 0).each(
-        [&](ecs::Entity entity,
+        ashiato::sync::SyncSettings,
+        ashiato::sync::FrameInfo,
+        ashiato::sync::CueDispatcher>(registry, 0).each(
+        [&](ashiato::Entity entity,
             PredictedPosition& position,
-            kage::sync::SyncSettings& settings,
-            kage::sync::FrameInfo& frame,
-            kage::sync::CueDispatcher& cues) {
+            ashiato::sync::SyncSettings& settings,
+            ashiato::sync::FrameInfo& frame,
+            ashiato::sync::CueDispatcher& cues) {
             position.x += 1.0f;
             ++prediction_jobs;
             if (prediction_jobs == 2 || prediction_jobs == 3) {
@@ -231,9 +231,9 @@ TEST_CASE("predicted client keeps locally predicted cues replayed during resimul
             }
         });
 
-    const ecs::Entity server_entity = registry.create();
+    const ashiato::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
-    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+    const ashiato::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
     REQUIRE_FALSE(registry.contains<CuePlayback>(local));
     REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
@@ -246,50 +246,50 @@ TEST_CASE("predicted client keeps locally predicted cues replayed during resimul
     REQUIRE(registry.get<CuePlayback>(local).rollbacks == 0);
 }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 
 TEST_CASE("predicted client traces rollback reason separately from rollback conflict") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "PredictedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(registry, 1);
-    kage::sync::ReplicationClientOptions options;
-    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
-    client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    client.simulation_job<PredictedPosition>(registry, 0).each([](ashiato::Entity, PredictedPosition& position) {
         position.x += 1.0f;
     });
 
-    std::vector<kage::sync::SyncTraceEvent> events;
-    kage::sync::SyncTracer tracer;
-    tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
-        [&](const kage::sync::SyncTraceEvent& event) { events.push_back(event); }});
+    std::vector<ashiato::sync::SyncTraceEvent> events;
+    ashiato::sync::SyncTracer tracer;
+    tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { events.push_back(event); }});
     client.set_tracer(&tracer);
 
-    const ecs::Entity server_entity = registry.create();
+    const ashiato::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
     REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
     REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
 
-    const auto conflict = std::find_if(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
-        return event.type == kage::sync::SyncTraceEventType::PredictionRollbackConflict;
+    const auto conflict = std::find_if(events.begin(), events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::PredictionRollbackConflict;
     });
     REQUIRE(conflict != events.end());
     REQUIRE(conflict->component == position_component);
     REQUIRE(conflict->component_name == "PredictedPosition");
     REQUIRE(conflict->data.empty());
 
-    const auto reason = std::find_if(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
-        return event.type == kage::sync::SyncTraceEventType::RollbackReason;
+    const auto reason = std::find_if(events.begin(), events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::RollbackReason;
     });
     REQUIRE(reason != events.end());
-    REQUIRE(std::count_if(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
-        return event.type == kage::sync::SyncTraceEventType::RollbackReason;
+    REQUIRE(std::count_if(events.begin(), events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::RollbackReason;
     }) == 1);
     REQUIRE(reason->component == position_component);
     REQUIRE(reason->component_name == "PredictedPosition");
@@ -297,32 +297,32 @@ TEST_CASE("predicted client traces rollback reason separately from rollback conf
 }
 
 TEST_CASE("predicted cue rollback tracing records server mismatch reason") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "PredictedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
     registry.register_component<CuePlayback>("CuePlayback");
-    kage::sync::register_sync_cue<TestCue>(registry);
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato::sync::register_sync_cue<TestCue>(registry);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
     bool emit_prediction_cue = true;
-    kage::sync::ReplicationClientOptions options;
-    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
     client.simulation_job<
         PredictedPosition,
-        kage::sync::SyncSettings,
-        kage::sync::FrameInfo,
-        kage::sync::CueDispatcher>(registry, 0).each(
-        [&](ecs::Entity entity,
+        ashiato::sync::SyncSettings,
+        ashiato::sync::FrameInfo,
+        ashiato::sync::CueDispatcher>(registry, 0).each(
+        [&](ashiato::Entity entity,
             PredictedPosition& position,
-            kage::sync::SyncSettings& settings,
-            kage::sync::FrameInfo& frame,
-            kage::sync::CueDispatcher& cues) {
+            ashiato::sync::SyncSettings& settings,
+            ashiato::sync::FrameInfo& frame,
+            ashiato::sync::CueDispatcher& cues) {
             position.x += 1.0f;
             if (emit_prediction_cue) {
                 REQUIRE(cues.emit(settings, frame, entity, TestCue{7}, 1.0f));
@@ -330,52 +330,52 @@ TEST_CASE("predicted cue rollback tracing records server mismatch reason") {
             }
         });
 
-    std::vector<kage::sync::SyncTraceEvent> events;
-    kage::sync::SyncTracer tracer;
-    tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
-        [&](const kage::sync::SyncTraceEvent& event) { events.push_back(event); }});
+    std::vector<ashiato::sync::SyncTraceEvent> events;
+    ashiato::sync::SyncTracer tracer;
+    tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { events.push_back(event); }});
     client.set_tracer(&tracer);
 
-    const ecs::Entity server_entity = registry.create();
+    const ashiato::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
     REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
     REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
 
-    REQUIRE(std::any_of(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
-        return event.type == kage::sync::SyncTraceEventType::CueRolledBack &&
+    REQUIRE(std::any_of(events.begin(), events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::CueRolledBack &&
             event.data.find("rollback_reason=server_mismatch") != std::string::npos;
     }));
 }
 
 TEST_CASE("predicted cue rollback tracing records resim omission reason") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "PredictedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
     registry.register_component<CuePlayback>("CuePlayback");
-    kage::sync::register_sync_cue<TestCue>(registry);
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato::sync::register_sync_cue<TestCue>(registry);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
     int prediction_jobs = 0;
     bool emit_during_resim = false;
-    kage::sync::ReplicationClientOptions options;
-    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
-    options.prediction.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    options.prediction.rollback_policy = ashiato::sync::ReplicationRollbackPolicy::All;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
     client.simulation_job<
         PredictedPosition,
-        kage::sync::SyncSettings,
-        kage::sync::FrameInfo,
-        kage::sync::CueDispatcher>(registry, 0).each(
-        [&](ecs::Entity entity,
+        ashiato::sync::SyncSettings,
+        ashiato::sync::FrameInfo,
+        ashiato::sync::CueDispatcher>(registry, 0).each(
+        [&](ashiato::Entity entity,
             PredictedPosition& position,
-            kage::sync::SyncSettings& settings,
-            kage::sync::FrameInfo& frame,
-            kage::sync::CueDispatcher& cues) {
+            ashiato::sync::SyncSettings& settings,
+            ashiato::sync::FrameInfo& frame,
+            ashiato::sync::CueDispatcher& cues) {
             position.x += 1.0f;
             ++prediction_jobs;
             if (prediction_jobs == 2 || emit_during_resim) {
@@ -383,47 +383,47 @@ TEST_CASE("predicted cue rollback tracing records resim omission reason") {
             }
         });
 
-    std::vector<kage::sync::SyncTraceEvent> events;
-    kage::sync::SyncTracer tracer;
-    tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
-        [&](const kage::sync::SyncTraceEvent& event) { events.push_back(event); }});
+    std::vector<ashiato::sync::SyncTraceEvent> events;
+    ashiato::sync::SyncTracer tracer;
+    tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { events.push_back(event); }});
     client.set_tracer(&tracer);
 
-    const ecs::Entity server_entity = registry.create();
+    const ashiato::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
     REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
     REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
     REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
     REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
 
-    REQUIRE(std::any_of(events.begin(), events.end(), [](const kage::sync::SyncTraceEvent& event) {
-        return event.type == kage::sync::SyncTraceEventType::CueRolledBack &&
+    REQUIRE(std::any_of(events.begin(), events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::CueRolledBack &&
             event.data.find("rollback_reason=resim_not_replayed") != std::string::npos;
     }));
 }
 #endif
 
 TEST_CASE("predicted client keeps local prediction phase when authoritative frames arrive early") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "PredictedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
-    kage::sync::ReplicationClientOptions options;
-    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
-    client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    client.simulation_job<PredictedPosition>(registry, 0).each([](ashiato::Entity, PredictedPosition& position) {
         position.x += 1.0f;
     });
 
-    const ecs::Entity server_entity = registry.create();
+    const ashiato::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f}, 1)));
-    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+    const ashiato::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
 
     REQUIRE(client.tick(registry, client.fixed_dt_seconds() * 0.5));
@@ -435,28 +435,28 @@ TEST_CASE("predicted client keeps local prediction phase when authoritative fram
 }
 
 TEST_CASE("predicted client ONLY_AFFECTED resim runs jobs for affected entities") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "PredictedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
     int calls = 0;
 
-    kage::sync::ReplicationClientOptions options;
-    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
-    options.prediction.rollback_policy = kage::sync::ReplicationRollbackPolicy::OnlyAffected;
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
-    client.simulation_job<PredictedPosition>(registry, 0).each([&](ecs::Entity, PredictedPosition& position) {
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    options.prediction.rollback_policy = ashiato::sync::ReplicationRollbackPolicy::OnlyAffected;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    client.simulation_job<PredictedPosition>(registry, 0).each([&](ashiato::Entity, PredictedPosition& position) {
         ++calls;
         position.x += 1.0f;
     });
 
-    const ecs::Entity first_server = registry.create();
-    const ecs::Entity second_server = registry.create();
+    const ashiato::Entity first_server = registry.create();
+    const ashiato::Entity second_server = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, first_server, PredictedPosition{0.0f, 0.0f}, 1)));
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, second_server, PredictedPosition{0.0f, 0.0f}, 2)));
     REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
@@ -473,35 +473,35 @@ TEST_CASE("predicted client ONLY_AFFECTED resim runs jobs for affected entities"
 }
 
 TEST_CASE("predicted client cosmetic jobs do not run during resimulation") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "PredictedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
     int simulation_calls = 0;
     int cosmetic_calls = 0;
 
-    kage::sync::ReplicationClientOptions options;
-    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
-    options.prediction.rollback_policy = kage::sync::ReplicationRollbackPolicy::All;
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    options.prediction.rollback_policy = ashiato::sync::ReplicationRollbackPolicy::All;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
 
-    client.simulation_job<PredictedPosition>(registry, 0).each([&](ecs::Entity, PredictedPosition& position) {
+    client.simulation_job<PredictedPosition>(registry, 0).each([&](ashiato::Entity, PredictedPosition& position) {
         ++simulation_calls;
         position.x += 1.0f;
     });
-    const ecs::Entity cosmetic_job =
-        client.cosmetic_job<PredictedPosition>(registry, 1).each([&](ecs::Entity, PredictedPosition&) {
+    const ashiato::Entity cosmetic_job =
+        client.cosmetic_job<PredictedPosition>(registry, 1).each([&](ashiato::Entity, PredictedPosition&) {
             ++cosmetic_calls;
         });
-    REQUIRE(registry.has<kage::sync::NoResim>(cosmetic_job));
+    REQUIRE(registry.has<ashiato::sync::NoResim>(cosmetic_job));
 
-    const ecs::Entity server_entity = registry.create();
+    const ashiato::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
     REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
     REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
@@ -516,18 +516,18 @@ TEST_CASE("predicted client cosmetic jobs do not run during resimulation") {
 }
 
 TEST_CASE("client simulation jobs skip NoSimulate entities") {
-    ecs::Registry registry;
+    ashiato::Registry registry;
     registry.register_component<PredictedPosition>("PredictedPosition");
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
-    const ecs::Entity simulated = registry.create();
-    const ecs::Entity skipped = registry.create();
+    const ashiato::Entity simulated = registry.create();
+    const ashiato::Entity skipped = registry.create();
     REQUIRE(registry.add<PredictedPosition>(simulated, PredictedPosition{0.0f, 0.0f}) != nullptr);
     REQUIRE(registry.add<PredictedPosition>(skipped, PredictedPosition{0.0f, 0.0f}) != nullptr);
-    REQUIRE(registry.add<kage::sync::NoSimulate>(skipped));
+    REQUIRE(registry.add<ashiato::sync::NoSimulate>(skipped));
 
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, {}));
-    client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, {}));
+    client.simulation_job<PredictedPosition>(registry, 0).each([](ashiato::Entity, PredictedPosition& position) {
         position.x += 1.0f;
     });
 
@@ -538,23 +538,23 @@ TEST_CASE("client simulation jobs skip NoSimulate entities") {
 }
 
 TEST_CASE("predicted client applies authoritative destroys immediately") {
-    ecs::Registry registry;
-    const ecs::Entity position_component =
-        kage::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
-    const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
         registry,
         "PredictedActor",
-        {{position_component, kage::sync::ReplicationAudience::All}});
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
-    const ecs::Entity server_entity = registry.create();
-    kage::sync::ReplicationClientOptions options;
-    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
+    const ashiato::Entity server_entity = registry.create();
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
 
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
-    const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+    const ashiato::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
     REQUIRE(local);
     REQUIRE(registry.alive(local));
 

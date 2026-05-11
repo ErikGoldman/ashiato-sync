@@ -9,25 +9,25 @@
 
 namespace {
 
-using namespace kage::sync::benchmarks;
+using namespace ashiato::sync::benchmarks;
 
 void BM_ServerTickFullBudget(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int client_count = static_cast<int>(state.range(1));
 
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_entities(registry, entity_count);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_archetype(registry);
+    const std::vector<ashiato::Entity> entities = create_entities(registry, entity_count);
 
     std::uint64_t sent = 0;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * 128U;
     options.fixed_entity_replication_cost_bytes = 128U;
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& packet) {
         sent += client ^ packet.byte_size();
         benchmark::DoNotOptimize(sent);
     };
-    kage::sync::ReplicationServer server(options);
+    ashiato::sync::ReplicationServer server(registry, options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
     server.rediscover_all_replicated_entities(registry);
@@ -45,19 +45,19 @@ void BM_ServerTickBudgetLimited(benchmark::State& state) {
     const int client_count = static_cast<int>(state.range(1));
     const int sends_per_client = static_cast<int>(state.range(2));
 
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_entities(registry, entity_count);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_archetype(registry);
+    const std::vector<ashiato::Entity> entities = create_entities(registry, entity_count);
 
     std::uint64_t sent = 0;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(sends_per_client) * 128U;
     options.fixed_entity_replication_cost_bytes = 128U;
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& packet) {
         sent += client + packet.byte_size();
         benchmark::DoNotOptimize(sent);
     };
-    kage::sync::ReplicationServer server(options);
+    ashiato::sync::ReplicationServer server(registry, options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
     server.rediscover_all_replicated_entities(registry);
@@ -73,23 +73,23 @@ void BM_ServerTickBudgetLimited(benchmark::State& state) {
 void BM_ServerRefreshReplicatedChanges(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
 
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_entities(registry, entity_count);
-    kage::sync::ReplicationServerOptions options;
-    options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(options);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_archetype(registry);
+    const std::vector<ashiato::Entity> entities = create_entities(registry, entity_count);
+    ashiato::sync::ReplicationServerOptions options;
+    options.transport = [](ashiato::sync::ClientId, const ashiato::BitBuffer&) {};
+    ashiato::sync::ReplicationServer server(registry, options);
     add_clients(server, 4);
 
     for (auto _ : state) {
-        for (const ecs::Entity entity : entities) {
-            benchmark::DoNotOptimize(registry.add<kage::sync::Replicated>(
+        for (const ashiato::Entity entity : entities) {
+            benchmark::DoNotOptimize(registry.add<ashiato::sync::Replicated>(
                 entity,
-                kage::sync::Replicated{archetype}));
+                ashiato::sync::Replicated{archetype}));
         }
         server.rediscover_all_replicated_entities(registry);
-        for (const ecs::Entity entity : entities) {
-            benchmark::DoNotOptimize(registry.remove<kage::sync::Replicated>(entity));
+        for (const ashiato::Entity entity : entities) {
+            benchmark::DoNotOptimize(registry.remove<ashiato::sync::Replicated>(entity));
         }
         server.rediscover_all_replicated_entities(registry);
     }
@@ -101,19 +101,19 @@ void BM_ServerAddClientsAfterReplicated(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int client_count = static_cast<int>(state.range(1));
 
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_entities(registry, entity_count);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_archetype(registry);
+    const std::vector<ashiato::Entity> entities = create_entities(registry, entity_count);
 
     for (auto _ : state) {
-        kage::sync::ReplicationServer server;
+        ashiato::sync::ReplicationServer server(registry);
         add_replication_configs(registry, entities, archetype);
         server.rediscover_all_replicated_entities(registry);
         for (int i = 0; i < client_count; ++i) {
-            benchmark::DoNotOptimize(server.add_client(static_cast<kage::sync::ClientId>(i + 1)));
+            benchmark::DoNotOptimize(server.add_client(static_cast<ashiato::sync::ClientId>(i + 1)));
         }
-        for (const ecs::Entity entity : entities) {
-            registry.remove<kage::sync::Replicated>(entity);
+        for (const ashiato::Entity entity : entities) {
+            registry.remove<ashiato::sync::Replicated>(entity);
         }
         server.rediscover_all_replicated_entities(registry);
     }
@@ -125,19 +125,19 @@ void BM_ServerTickSerializedFullBudget(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int client_count = static_cast<int>(state.range(1));
 
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_position_entities(registry, entity_count);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_archetype(registry);
+    const std::vector<ashiato::Entity> entities = create_position_entities(registry, entity_count);
 
     std::uint64_t sent = 0;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(Position);
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
 
-    kage::sync::ReplicationServer server(options);
+    ashiato::sync::ReplicationServer server(registry, options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
     server.rediscover_all_replicated_entities(registry);
@@ -150,27 +150,27 @@ void BM_ServerTickSerializedFullBudget(benchmark::State& state) {
         state.iterations() * static_cast<std::int64_t>(entity_count) * static_cast<std::int64_t>(client_count));
 }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 void BM_ServerTickTracingRuntimeDisabled(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int client_count = static_cast<int>(state.range(1));
 
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_position_entities(registry, entity_count);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_archetype(registry);
+    const std::vector<ashiato::Entity> entities = create_position_entities(registry, entity_count);
 
     std::uint64_t sent = 0;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(Position);
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
 
-    kage::sync::SyncTracer tracer;
+    ashiato::sync::SyncTracer tracer;
     tracer.set_enabled(false);
 
-    kage::sync::ReplicationServer server(options);
+    ashiato::sync::ReplicationServer server(registry, options);
     server.set_tracer(&tracer);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
@@ -188,27 +188,27 @@ void BM_ServerTickTracingCallbacks(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int client_count = static_cast<int>(state.range(1));
 
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_position_entities(registry, entity_count);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_archetype(registry);
+    const std::vector<ashiato::Entity> entities = create_position_entities(registry, entity_count);
 
     std::uint64_t sent = 0;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(Position);
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
 
     std::uint64_t events = 0;
-    kage::sync::SyncTraceCallbacks callbacks;
-    callbacks.on_event = [&](const kage::sync::SyncTraceEvent&) {
+    ashiato::sync::SyncTraceCallbacks callbacks;
+    callbacks.on_event = [&](const ashiato::sync::SyncTraceEvent&) {
         ++events;
         benchmark::DoNotOptimize(events);
     };
-    kage::sync::SyncTracer tracer(callbacks);
+    ashiato::sync::SyncTracer tracer(callbacks);
 
-    kage::sync::ReplicationServer server(options);
+    ashiato::sync::ReplicationServer server(registry, options);
     server.set_tracer(&tracer);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
@@ -226,28 +226,28 @@ void BM_ServerTickTracingFrameData(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int client_count = static_cast<int>(state.range(1));
 
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_position_entities(registry, entity_count);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_archetype(registry);
+    const std::vector<ashiato::Entity> entities = create_position_entities(registry, entity_count);
 
     std::uint64_t sent = 0;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(Position);
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
 
     std::uint64_t events = 0;
-    kage::sync::SyncTraceCallbacks callbacks;
-    callbacks.on_event = [&](const kage::sync::SyncTraceEvent&) {
+    ashiato::sync::SyncTraceCallbacks callbacks;
+    callbacks.on_event = [&](const ashiato::sync::SyncTraceEvent&) {
         ++events;
         benchmark::DoNotOptimize(events);
     };
-    kage::sync::SyncTracer tracer(callbacks);
+    ashiato::sync::SyncTracer tracer(callbacks);
     tracer.set_frame_data_enabled(true);
 
-    kage::sync::ReplicationServer server(options);
+    ashiato::sync::ReplicationServer server(registry, options);
     server.set_tracer(&tracer);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
@@ -266,19 +266,19 @@ void BM_ServerTickSerializedDelta(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int client_count = static_cast<int>(state.range(1));
 
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
+    const std::vector<ashiato::Entity> entities = create_delta_entities(registry, entity_count);
 
     std::uint64_t sent = 0;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition);
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
 
-    kage::sync::ReplicationServer server(options);
+    ashiato::sync::ReplicationServer server(registry, options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -296,19 +296,19 @@ void BM_ServerTickSerializedBudgetLimited(benchmark::State& state) {
     const int client_count = static_cast<int>(state.range(1));
     const int sends_per_client = static_cast<int>(state.range(2));
 
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_position_entities(registry, entity_count);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_archetype(registry);
+    const std::vector<ashiato::Entity> entities = create_position_entities(registry, entity_count);
 
     std::uint64_t sent = 0;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(sends_per_client) * sizeof(Position);
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
 
-    kage::sync::ReplicationServer server(options);
+    ashiato::sync::ReplicationServer server(registry, options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
     server.rediscover_all_replicated_entities(registry);
@@ -325,20 +325,20 @@ void BM_ServerTickPackedFullBudget(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int client_count = static_cast<int>(state.range(1));
 
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_position_entities(registry, entity_count);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_archetype(registry);
+    const std::vector<ashiato::Entity> entities = create_position_entities(registry, entity_count);
 
     std::uint64_t sent = 0;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(Position) * 4U;
     options.mtu_bytes = 1200;
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
 
-    kage::sync::ReplicationServer server(options);
+    ashiato::sync::ReplicationServer server(registry, options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
     server.rediscover_all_replicated_entities(registry);
@@ -355,24 +355,24 @@ void BM_ServerTickPackedAckedDeltaShared(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int client_count = static_cast<int>(state.range(1));
 
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
+    const std::vector<ashiato::Entity> entities = create_delta_entities(registry, entity_count);
 
-    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
+    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> packets;
     packets.reserve(static_cast<std::size_t>(entity_count) * static_cast<std::size_t>(client_count));
 
     std::uint64_t sent = 0;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition) * 4U;
     options.mtu_bytes = 1200;
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         packets.push_back({client, payload});
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
 
-    kage::sync::ReplicationServer server(options);
+    ashiato::sync::ReplicationServer server(registry, options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -392,20 +392,20 @@ void BM_ServerTickPackedMtuLimited(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int client_count = static_cast<int>(state.range(1));
 
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
+    const std::vector<ashiato::Entity> entities = create_delta_entities(registry, entity_count);
 
     std::uint64_t sent = 0;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition) * 4U;
     options.mtu_bytes = 256;
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
 
-    kage::sync::ReplicationServer server(options);
+    ashiato::sync::ReplicationServer server(registry, options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
     server.rediscover_all_replicated_entities(registry);
@@ -424,38 +424,34 @@ void BM_ServerProcessAckPacket(benchmark::State& state) {
     std::int64_t processed = 0;
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry server_registry;
-        const kage::sync::SyncArchetypeId archetype = define_delta_archetype(server_registry);
-        const std::vector<ecs::Entity> entities = create_delta_entities(server_registry, entity_count);
+        ashiato::Registry server_registry;
+        const ashiato::sync::SyncArchetypeId archetype = define_delta_archetype(server_registry);
+        const std::vector<ashiato::Entity> entities = create_delta_entities(server_registry, entity_count);
 
-        std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> sent;
-        kage::sync::ReplicationServerOptions server_options;
+        std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> sent;
+        ashiato::sync::ReplicationServerOptions server_options;
         server_options.bandwidth_limit_bytes_per_tick =
             static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition) * 16U;
         server_options.mtu_bytes = 1200;
-        server_options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
+        server_options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& packet) {
             sent.push_back({client, packet});
         };
 
-        kage::sync::ReplicationServer server(server_options);
+        ashiato::sync::ReplicationServer server(server_registry, server_options);
         server.add_client(1);
         add_replication_configs(server_registry, entities, archetype);
         server.tick(server_registry, server.options().fixed_dt_seconds);
 
-        ecs::Registry client_registry;
+        ashiato::Registry client_registry;
         define_client_delta_schema(client_registry, false);
-        kage::sync::ReplicationClient client(client_registry, kage::sync::ReplicationClientOptions{
-        kage::sync::ReplicationClientNetworkOptions{1200},
-        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::Snap},
-        kage::sync::ReplicationClientBufferedOptions{2,
-            64}});
+        ashiato::sync::ReplicationClient client(client_registry, make_client_options(ashiato::sync::ReplicationClientMode::Snap));
         for (const auto& packet : sent) {
             benchmark::DoNotOptimize(client.receive(client_registry, packet.second));
         }
-        std::vector<ecs::BitBuffer> acks = client.drain_ack_packets();
+        std::vector<ashiato::BitBuffer> acks = client.drain_ack_packets();
         state.ResumeTiming();
 
-        for (const ecs::BitBuffer& ack : acks) {
+        for (const ashiato::BitBuffer& ack : acks) {
             processed += server.process_packet(server_registry, 1, ack) ? 1 : 0;
         }
         benchmark::DoNotOptimize(processed);
@@ -470,26 +466,26 @@ void BM_ServerTickDestroyBurst(benchmark::State& state) {
     std::uint64_t sent = 0;
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
-        const kage::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
-        const std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
+        ashiato::Registry registry;
+        const ashiato::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
+        const std::vector<ashiato::Entity> entities = create_delta_entities(registry, entity_count);
 
-        std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
-        kage::sync::ReplicationServerOptions options;
+        std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> packets;
+        ashiato::sync::ReplicationServerOptions options;
         options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * 32U;
         options.mtu_bytes = 1200;
-        options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+        options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
             packets.push_back({client, payload});
             sent += client + payload.byte_size();
         };
 
-        kage::sync::ReplicationServer server(options);
+        ashiato::sync::ReplicationServer server(registry, options);
         server.add_client(1);
         add_replication_configs(registry, entities, archetype);
         server.tick(registry, server.options().fixed_dt_seconds);
         ack_packets(server, registry, packets);
         packets.clear();
-        for (const ecs::Entity entity : entities) {
+        for (const ashiato::Entity entity : entities) {
             registry.destroy(entity);
         }
         state.ResumeTiming();
@@ -505,24 +501,24 @@ void BM_ServerTickPendingDestroysBudgetLimited(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int destroys_per_tick = static_cast<int>(state.range(1));
 
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
+    const std::vector<ashiato::Entity> entities = create_delta_entities(registry, entity_count);
 
     std::uint64_t sent = 0;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(destroys_per_tick) * 16U;
     options.mtu_bytes = 1200;
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
 
-    kage::sync::ReplicationServer server(options);
+    ashiato::sync::ReplicationServer server(registry, options);
     server.add_client(1);
     add_replication_configs(registry, entities, archetype);
     server.tick(registry, server.options().fixed_dt_seconds);
-    for (const ecs::Entity entity : entities) {
+    for (const ashiato::Entity entity : entities) {
         registry.destroy(entity);
     }
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -538,35 +534,32 @@ void BM_ServerTickMutatingAckedDelta(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int client_count = static_cast<int>(state.range(1));
 
-    ecs::Registry server_registry;
-    const kage::sync::SyncArchetypeId archetype = define_delta_archetype(server_registry);
-    const std::vector<ecs::Entity> entities = create_delta_entities(server_registry, entity_count);
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_delta_archetype(server_registry);
+    const std::vector<ashiato::Entity> entities = create_delta_entities(server_registry, entity_count);
 
-    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
+    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> packets;
     packets.reserve(static_cast<std::size_t>(entity_count) * static_cast<std::size_t>(client_count));
 
-    kage::sync::ReplicationServerOptions server_options;
+    ashiato::sync::ReplicationServerOptions server_options;
     server_options.bandwidth_limit_bytes_per_tick =
         static_cast<std::size_t>(entity_count) * sizeof(DeltaPosition) * 16U;
     server_options.mtu_bytes = 1200;
-    server_options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
+    server_options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& packet) {
         packets.push_back({client, packet});
     };
-    kage::sync::ReplicationServer server(server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     add_clients(server, client_count);
     add_replication_configs(server_registry, entities, archetype);
 
-    std::vector<ecs::Registry> client_registries(static_cast<std::size_t>(client_count));
-    std::vector<kage::sync::ReplicationClient> clients;
+    std::vector<ashiato::Registry> client_registries(static_cast<std::size_t>(client_count));
+    std::vector<ashiato::sync::ReplicationClient> clients;
     clients.reserve(static_cast<std::size_t>(client_count));
     for (int client_index = 0; client_index < client_count; ++client_index) {
         define_client_delta_schema(client_registries[static_cast<std::size_t>(client_index)], false);
         clients.emplace_back(
             client_registries[static_cast<std::size_t>(client_index)],
-            kage::sync::ReplicationClientOptions{
-                kage::sync::ReplicationClientNetworkOptions{1200},
-                kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::Snap},
-                kage::sync::ReplicationClientBufferedOptions{2, 64}});
+            make_client_options(ashiato::sync::ReplicationClientMode::Snap));
     }
 
     std::uint64_t consumed = 0;
@@ -586,8 +579,8 @@ void BM_ServerTickMutatingAckedDelta(benchmark::State& state) {
             benchmark::DoNotOptimize(clients[client_index].receive(client_registries[client_index], packet.second));
         }
         for (int client_index = 0; client_index < client_count; ++client_index) {
-            const auto id = static_cast<kage::sync::ClientId>(client_index + 1);
-            for (const ecs::BitBuffer& ack :
+            const auto id = static_cast<ashiato::sync::ClientId>(client_index + 1);
+            for (const ashiato::BitBuffer& ack :
                  clients[static_cast<std::size_t>(client_index)].drain_ack_packets()) {
                 benchmark::DoNotOptimize(server.process_packet(server_registry, id, ack));
             }
@@ -603,20 +596,20 @@ void BM_ServerTickOwnerAudienceMixed(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int client_count = static_cast<int>(state.range(1));
 
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_owned_entities(registry, entity_count, client_count);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_archetype(registry);
+    const std::vector<ashiato::Entity> entities = create_owned_entities(registry, entity_count, client_count);
 
     std::uint64_t sent = 0;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * 64U;
     options.mtu_bytes = 1200;
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
 
-    kage::sync::ReplicationServer server(options);
+    ashiato::sync::ReplicationServer server(registry, options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
     server.rediscover_all_replicated_entities(registry);
@@ -634,30 +627,30 @@ void BM_ServerTickTaggedOwnerMixed(benchmark::State& state) {
     const int client_count = static_cast<int>(state.range(1));
     const int tag_count = static_cast<int>(state.range(2));
 
-    ecs::Registry registry;
+    ashiato::Registry registry;
     const TaggedSchema schema = define_tagged_archetype(registry, tag_count);
-    const std::vector<ecs::Entity> entities =
+    const std::vector<ashiato::Entity> entities =
         create_tagged_entities(registry, entity_count, client_count, schema.tags);
 
-    std::vector<std::pair<kage::sync::ClientId, ecs::BitBuffer>> packets;
+    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> packets;
     packets.reserve(static_cast<std::size_t>(entity_count) * static_cast<std::size_t>(client_count));
     std::uint64_t sent = 0;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * 96U;
     options.mtu_bytes = 1200;
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         packets.push_back({client, payload});
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
 
-    kage::sync::ReplicationServer server(options);
+    ashiato::sync::ReplicationServer server(registry, options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, schema.archetype);
     server.tick(registry, server.options().fixed_dt_seconds);
     for (int client_index = 0; client_index < client_count; ++client_index) {
-        const auto client = static_cast<kage::sync::ClientId>(client_index + 1);
-        for (const ecs::Entity entity : entities) {
+        const auto client = static_cast<ashiato::sync::ClientId>(client_index + 1);
+        for (const ashiato::Entity entity : entities) {
             benchmark::DoNotOptimize(server.acknowledge_entity(client, entity, 1));
         }
     }
@@ -665,8 +658,8 @@ void BM_ServerTickTaggedOwnerMixed(benchmark::State& state) {
 
     int tick = 0;
     for (auto _ : state) {
-        const ecs::Entity tag = schema.tags[static_cast<std::size_t>(tick) % schema.tags.size()];
-        for (const ecs::Entity entity : entities) {
+        const ashiato::Entity tag = schema.tags[static_cast<std::size_t>(tick) % schema.tags.size()];
+        for (const ashiato::Entity entity : entities) {
             if ((tick & 1) == 0) {
                 registry.add_tag(entity, tag);
             } else {
@@ -686,20 +679,20 @@ void BM_ServerTickArchetypeDiversity(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int client_count = static_cast<int>(state.range(1));
 
-    ecs::Registry registry;
-    const std::vector<kage::sync::SyncArchetypeId> archetypes = define_diverse_archetypes(registry);
-    const std::vector<ecs::Entity> entities = create_diverse_entities(registry, entity_count, archetypes, client_count);
+    ashiato::Registry registry;
+    const std::vector<ashiato::sync::SyncArchetypeId> archetypes = define_diverse_archetypes(registry);
+    const std::vector<ashiato::Entity> entities = create_diverse_entities(registry, entity_count, archetypes, client_count);
 
     std::uint64_t sent = 0;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * 96U;
     options.mtu_bytes = 1200;
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
 
-    kage::sync::ReplicationServer server(options);
+    ashiato::sync::ReplicationServer server(registry, options);
     add_clients(server, client_count);
     add_diverse_replication_configs(registry, entities, archetypes);
     server.rediscover_all_replicated_entities(registry);
@@ -717,21 +710,21 @@ void BM_ServerTickStressScheduler(benchmark::State& state) {
     const int client_count = static_cast<int>(state.range(1));
     const int worker_threads = static_cast<int>(state.range(2));
 
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
-    const std::vector<ecs::Entity> entities = create_delta_entities(registry, entity_count);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
+    const std::vector<ashiato::Entity> entities = create_delta_entities(registry, entity_count);
 
     std::uint64_t sent = 0;
-    kage::sync::ReplicationServerOptions options;
+    ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024U * 1024U;
     options.mtu_bytes = 1200;
     options.serialized_worker_threads = static_cast<std::size_t>(worker_threads);
-    options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
     };
 
-    kage::sync::ReplicationServer server(options);
+    ashiato::sync::ReplicationServer server(registry, options);
     add_clients(server, client_count);
     add_replication_configs(registry, entities, archetype);
     server.rediscover_all_replicated_entities(registry);
@@ -753,7 +746,7 @@ void BM_BitBufferUnalignedBytes(benchmark::State& state) {
     std::vector<char> bytes(static_cast<std::size_t>(byte_count), 'x');
 
     for (auto _ : state) {
-        ecs::BitBuffer buffer;
+        ashiato::BitBuffer buffer;
         buffer.reserve_bytes(static_cast<std::size_t>(byte_count) + 1U);
         buffer.push_bool(true);
         buffer.push_bytes(bytes.data(), bytes.size());
@@ -765,7 +758,7 @@ void BM_BitBufferUnalignedBytes(benchmark::State& state) {
 
 void BM_BitBufferUnalignedReadUnsigned(benchmark::State& state) {
     const int bit_count = static_cast<int>(state.range(0));
-    ecs::BitBuffer source;
+    ashiato::BitBuffer source;
     source.reserve_bytes(static_cast<std::size_t>(bit_count + 8));
     source.push_bool(true);
     for (int index = 0; index < bit_count; ++index) {
@@ -774,7 +767,7 @@ void BM_BitBufferUnalignedReadUnsigned(benchmark::State& state) {
 
     std::uint64_t sum = 0;
     for (auto _ : state) {
-        ecs::BitBuffer input = source;
+        ashiato::BitBuffer input = source;
         benchmark::DoNotOptimize(input.read_bool());
         for (int index = 0; index < bit_count; ++index) {
             sum += input.read_unsigned_bits(64U);
@@ -787,14 +780,14 @@ void BM_BitBufferUnalignedReadUnsigned(benchmark::State& state) {
 
 void BM_BitBufferAppendBits(benchmark::State& state) {
     const int bit_count = static_cast<int>(state.range(0));
-    ecs::BitBuffer source;
-    source.reserve_bytes(kage::sync::protocol::bytes_for_bits(static_cast<std::size_t>(bit_count)));
+    ashiato::BitBuffer source;
+    source.reserve_bytes(ashiato::sync::protocol::bytes_for_bits(static_cast<std::size_t>(bit_count)));
     for (int bit = 0; bit < bit_count; ++bit) {
         source.push_bool((bit & 1) != 0);
     }
 
     for (auto _ : state) {
-        ecs::BitBuffer destination;
+        ashiato::BitBuffer destination;
         destination.reserve_bytes(source.byte_size());
         destination.push_buffer_bits(source);
         benchmark::DoNotOptimize(destination.byte_size());
@@ -811,7 +804,7 @@ void BM_QuantizedBytesAssign(benchmark::State& state) {
     }
 
     for (auto _ : state) {
-        kage::sync::QuantizedBytes bytes;
+        ashiato::sync::QuantizedBytes bytes;
         bytes.assign(source.data(), source.size());
         benchmark::DoNotOptimize(bytes.data());
         benchmark::DoNotOptimize(bytes.size());
@@ -826,11 +819,11 @@ void BM_QuantizedBytesCopy(benchmark::State& state) {
     for (std::size_t index = 0; index < source_bytes.size(); ++index) {
         source_bytes[index] = static_cast<std::uint8_t>((index * 13U + 7U) & 0xffU);
     }
-    kage::sync::QuantizedBytes source;
+    ashiato::sync::QuantizedBytes source;
     source.assign(source_bytes.data(), source_bytes.size());
 
     for (auto _ : state) {
-        kage::sync::QuantizedBytes bytes = source;
+        ashiato::sync::QuantizedBytes bytes = source;
         benchmark::DoNotOptimize(bytes.data());
         benchmark::DoNotOptimize(bytes.size());
     }
@@ -841,20 +834,20 @@ void BM_QuantizedBytesCopy(benchmark::State& state) {
 void BM_ServerProcessInputPacket(benchmark::State& state) {
     const int frame_count = static_cast<int>(state.range(0));
 
-    ecs::Registry client_registry;
-    kage::sync::register_sync_component<DeltaPosition>(client_registry, "DeltaPosition");
-    kage::sync::configure_client(client_registry, 1);
-    kage::sync::set_client_input_component<DeltaPosition>(client_registry);
-    const ecs::Entity client_owned = client_registry.create();
-    kage::sync::set_owner(client_registry, client_owned, 1);
-    kage::sync::ReplicationClient client(client_registry);
+    ashiato::Registry client_registry;
+    ashiato::sync::register_sync_component<DeltaPosition>(client_registry, "DeltaPosition");
+    ashiato::sync::ReplicationClientOptions client_options = make_client_options(ashiato::sync::ReplicationClientMode::Snap);
+    ashiato::sync::set_client_input_component<DeltaPosition>(client_registry);
+    const ashiato::Entity client_owned = client_registry.create();
+    ashiato::sync::set_owner(client_registry, client_owned, 1);
+    ashiato::sync::ReplicationClient client(client_registry, client_options);
     for (int frame = 0; frame < frame_count; ++frame) {
         client.set_input(client_registry, DeltaPosition{frame, frame + 1});
         client.tick(client_registry, client.fixed_dt_seconds());
     }
-    std::vector<ecs::BitBuffer> packets = client.drain_packets();
-    auto input_packet = std::find_if(packets.begin(), packets.end(), [](ecs::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
+    std::vector<ashiato::BitBuffer> packets = client.drain_packets();
+    auto input_packet = std::find_if(packets.begin(), packets.end(), [](ashiato::BitBuffer packet) {
+        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
     });
     if (input_packet == packets.end()) {
         state.SkipWithError("client did not emit input packet");
@@ -863,13 +856,15 @@ void BM_ServerProcessInputPacket(benchmark::State& state) {
 
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
-        kage::sync::register_sync_component<DeltaPosition>(registry, "DeltaPosition");
-        kage::sync::configure_server(registry);
-        kage::sync::set_client_input_component<DeltaPosition>(registry);
-        kage::sync::ReplicationServer server;
+        ashiato::Registry registry;
+        ashiato::sync::register_sync_component<DeltaPosition>(registry, "DeltaPosition");
+        ashiato::sync::register_components(registry);
+        registry.write<ashiato::sync::SyncSettings>().role = ashiato::sync::SyncRole::Server;
+        registry.write<ashiato::sync::SyncAuthority>().authoritative = true;
+        ashiato::sync::set_client_input_component<DeltaPosition>(registry);
+        ashiato::sync::ReplicationServer server(registry);
         server.add_client(1);
-        ecs::BitBuffer packet = *input_packet;
+        ashiato::BitBuffer packet = *input_packet;
         state.ResumeTiming();
 
         benchmark::DoNotOptimize(server.process_packet(registry, 1, packet));
@@ -881,33 +876,35 @@ void BM_ServerProcessInputPacket(benchmark::State& state) {
 void BM_ServerTickInputUpsert(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
 
-    ecs::Registry registry;
-    kage::sync::register_sync_component<DeltaPosition>(registry, "DeltaPosition");
-    kage::sync::configure_server(registry);
-    kage::sync::set_client_input_component<DeltaPosition>(registry);
+    ashiato::Registry registry;
+    ashiato::sync::register_sync_component<DeltaPosition>(registry, "DeltaPosition");
+    ashiato::sync::register_components(registry);
+        registry.write<ashiato::sync::SyncSettings>().role = ashiato::sync::SyncRole::Server;
+        registry.write<ashiato::sync::SyncAuthority>().authoritative = true;
+    ashiato::sync::set_client_input_component<DeltaPosition>(registry);
     for (int index = 0; index < entity_count; ++index) {
-        const ecs::Entity entity = registry.create();
-        kage::sync::set_owner(registry, entity, 1);
+        const ashiato::Entity entity = registry.create();
+        ashiato::sync::set_owner(registry, entity, 1);
     }
 
-    ecs::Registry client_registry;
-    kage::sync::register_sync_component<DeltaPosition>(client_registry, "DeltaPosition");
-    kage::sync::configure_client(client_registry, 1);
-    kage::sync::set_client_input_component<DeltaPosition>(client_registry);
-    const ecs::Entity client_owned = client_registry.create();
-    kage::sync::set_owner(client_registry, client_owned, 1);
-    kage::sync::ReplicationClient client(client_registry);
+    ashiato::Registry client_registry;
+    ashiato::sync::register_sync_component<DeltaPosition>(client_registry, "DeltaPosition");
+    ashiato::sync::ReplicationClientOptions client_options = make_client_options(ashiato::sync::ReplicationClientMode::Snap);
+    ashiato::sync::set_client_input_component<DeltaPosition>(client_registry);
+    const ashiato::Entity client_owned = client_registry.create();
+    ashiato::sync::set_owner(client_registry, client_owned, 1);
+    ashiato::sync::ReplicationClient client(client_registry, client_options);
     client.set_input(client_registry, DeltaPosition{10, 20});
     client.tick(client_registry, client.fixed_dt_seconds());
-    std::vector<ecs::BitBuffer> packets = client.drain_packets();
+    std::vector<ashiato::BitBuffer> packets = client.drain_packets();
 
-    kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(server_options);
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [](ashiato::sync::ClientId, const ashiato::BitBuffer&) {};
+    ashiato::sync::ReplicationServer server(registry, server_options);
     server.add_client(1);
-    for (const ecs::BitBuffer& packet : packets) {
-        ecs::BitBuffer copy = packet;
-        if (static_cast<std::uint8_t>(copy.read_bits(8U)) == kage::sync::protocol::client_input_message) {
+    for (const ashiato::BitBuffer& packet : packets) {
+        ashiato::BitBuffer copy = packet;
+        if (static_cast<std::uint8_t>(copy.read_bits(8U)) == ashiato::sync::protocol::client_input_message) {
             benchmark::DoNotOptimize(server.process_packet(registry, 1, packet));
         }
     }
@@ -926,23 +923,25 @@ void BM_ServerTickCappedLargeDelta(benchmark::State& state) {
 
     for (auto _ : state) {
         state.PauseTiming();
-        ecs::Registry registry;
-        kage::sync::configure_server(registry);
+        ashiato::Registry registry;
+        ashiato::sync::register_components(registry);
+        registry.write<ashiato::sync::SyncSettings>().role = ashiato::sync::SyncRole::Server;
+        registry.write<ashiato::sync::SyncAuthority>().authoritative = true;
         struct TickCounter {
             int frames = 0;
         };
         registry.register_component<TickCounter>("TickCounter");
         for (int index = 0; index < entity_count; ++index) {
-            const ecs::Entity entity = registry.create();
+            const ashiato::Entity entity = registry.create();
             registry.add<TickCounter>(entity, TickCounter{});
         }
-        registry.job<TickCounter>(0).each([](ecs::Entity, TickCounter& counter) {
+        registry.job<TickCounter>(0).each([](ashiato::Entity, TickCounter& counter) {
             ++counter.frames;
         });
-        kage::sync::ReplicationServerOptions options;
+        ashiato::sync::ReplicationServerOptions options;
         options.max_fixed_steps_per_tick = static_cast<std::uint32_t>(cap_frames);
-        options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-        kage::sync::ReplicationServer server(options);
+        options.transport = [](ashiato::sync::ClientId, const ashiato::BitBuffer&) {};
+        ashiato::sync::ReplicationServer server(registry, options);
         state.ResumeTiming();
 
         benchmark::DoNotOptimize(server.tick(
@@ -991,7 +990,7 @@ BENCHMARK(BM_ServerTickBudgetLimited)->Apply(LimitedTickArgs);
 BENCHMARK(BM_ServerRefreshReplicatedChanges)->Apply(ChurnArgs);
 BENCHMARK(BM_ServerAddClientsAfterReplicated)->Apply(AddClientArgs);
 BENCHMARK(BM_ServerTickSerializedFullBudget)->Apply(TickArgs);
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 BENCHMARK(BM_ServerTickTracingRuntimeDisabled)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickTracingCallbacks)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickTracingFrameData)->Apply(TickArgs);

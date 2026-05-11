@@ -1,8 +1,8 @@
 #pragma once
 
-#include "kage/sync/types.hpp"
+#include "ashiato/sync/types.hpp"
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 
 #include <condition_variable>
 #include <cstdint>
@@ -17,7 +17,7 @@
 #include <unordered_set>
 #include <vector>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 enum class SyncTraceRole : std::uint8_t {
     Server = 1,
@@ -61,14 +61,14 @@ struct SyncTraceEvent {
     SyncTraceRole role = SyncTraceRole::Server;
     ClientId client = invalid_client_id;
     SyncFrame frame = 0;
-    ecs::Entity server_entity{};
-    ecs::Entity local_entity{};
+    ashiato::Entity server_entity{};
+    ashiato::Entity local_entity{};
     ClientEntityNetworkId client_network_id = invalid_client_entity_network_id;
     std::uint32_t wire_network_id = 0;
     std::uint32_t network_version = 0;
     SyncArchetypeId archetype = invalid_sync_archetype_id;
-    ecs::Entity component{};
-    ecs::Entity tag{};
+    ashiato::Entity component{};
+    ashiato::Entity tag{};
     SyncCueTypeId cue_type = 0;
     ReplicationClientMode previous_mode = ReplicationClientMode::Snap;
     ReplicationClientMode mode = ReplicationClientMode::Snap;
@@ -107,7 +107,7 @@ struct SyncTraceCallbacks {
     std::function<void(const SyncTraceEvent&)> on_rollback_reason;
     std::function<void(const SyncTraceEvent&)> on_input_starved;
     std::function<void(const SyncTraceEvent&)> on_clock_skew;
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     std::function<void(const SyncTraceEvent&)> on_packet_log;
 #endif
 };
@@ -118,13 +118,13 @@ public:
 
     bool enabled() const noexcept { return enabled_; }
     bool frame_data_enabled() const noexcept { return frame_data_enabled_; }
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     bool packet_logs_enabled() const noexcept { return packet_logs_enabled_; }
 #endif
 
     void set_enabled(bool enabled) noexcept { enabled_ = enabled; }
     void set_frame_data_enabled(bool enabled) noexcept { frame_data_enabled_ = enabled; }
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     void set_packet_logs_enabled(bool enabled) noexcept { packet_logs_enabled_ = enabled; }
 #endif
     void set_callbacks(SyncTraceCallbacks callbacks);
@@ -135,7 +135,7 @@ public:
 private:
     bool enabled_ = true;
     bool frame_data_enabled_ = false;
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     bool packet_logs_enabled_ = false;
 #endif
     SyncTraceCallbacks callbacks_;
@@ -278,7 +278,7 @@ struct KTraceFrameRun {
 };
 
 struct KTraceComponentRow {
-    ecs::Entity component{};
+    ashiato::Entity component{};
     std::vector<KTraceFrameRun> runs;
     std::vector<KTraceRunId> run_skiplist;
     KTraceRunId active_run = invalid_trace_run;
@@ -290,8 +290,8 @@ struct KTraceEntityRow {
     ClientEntityNetworkId client_network_id = invalid_client_entity_network_id;
     std::uint32_t wire_network_id = 0;
     std::uint32_t network_version = 0;
-    ecs::Entity server_entity{};
-    ecs::Entity local_entity{};
+    ashiato::Entity server_entity{};
+    ashiato::Entity local_entity{};
     SyncArchetypeId archetype = invalid_sync_archetype_id;
     std::vector<KTraceComponentRow> components;
 };
@@ -367,6 +367,6 @@ public:
 
 std::unique_ptr<KTraceDirectoryWriter> make_trace_writer(const TraceOptions& options);
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync
 
 #endif

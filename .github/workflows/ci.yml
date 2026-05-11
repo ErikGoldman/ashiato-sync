@@ -40,30 +40,30 @@ jobs:
 
     defaults:
       run:
-        working-directory: kage-sync
+        working-directory: ashiato-sync
 
     steps:
-      - name: Check out kage-sync
+      - name: Check out ashiato-sync
         uses: actions/checkout@v4
         with:
-          path: kage-sync
+          path: ashiato-sync
 
-      - name: Check out kagesoko ECS
+      - name: Check out Ashiato ECS
         uses: actions/checkout@v4
         with:
-          repository: ErikGoldman/kagesoto
+          repository: ErikGoldman/ashiato
           path: main
-          token: ${{ secrets.KAGESOTO_CHECKOUT_TOKEN || github.token }}
+          token: ${{ secrets.ASHIATO_CHECKOUT_TOKEN || github.token }}
 
       - name: Configure
         run: >
           cmake -S . -B build-coverage
           -DCMAKE_BUILD_TYPE=Debug
           -DBUILD_TESTING=ON
-          -DKAGE_SYNC_BUILD_BENCHMARKS=OFF
-          -DKAGE_SYNC_BUILD_EXAMPLES=OFF
-          -DKAGE_SYNC_BUILD_TRACE_VIEWER=OFF
-          -DKAGE_SYNC_ENABLE_COVERAGE=ON
+          -DASHIATO_SYNC_BUILD_BENCHMARKS=OFF
+          -DASHIATO_SYNC_BUILD_EXAMPLES=OFF
+          -DASHIATO_SYNC_BUILD_TRACE_VIEWER=OFF
+          -DASHIATO_SYNC_ENABLE_COVERAGE=ON
 
       - name: Build tests, run tests, and collect coverage
         run: cmake --build build-coverage --parallel --target coverage
@@ -72,7 +72,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
-          path: kage-sync/build-coverage/coverage
+          path: ashiato-sync/build-coverage/coverage
 
   memory-smoke:
     name: End-to-end memory smoke
@@ -80,24 +80,24 @@ jobs:
 
     defaults:
       run:
-        working-directory: kage-sync
+        working-directory: ashiato-sync
 
     env:
       ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:strict_string_checks=1
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
 
     steps:
-      - name: Check out kage-sync
+      - name: Check out ashiato-sync
         uses: actions/checkout@v4
         with:
-          path: kage-sync
+          path: ashiato-sync
 
-      - name: Check out kagesoko ECS
+      - name: Check out Ashiato ECS
         uses: actions/checkout@v4
         with:
-          repository: ErikGoldman/kagesoto
+          repository: ErikGoldman/ashiato
           path: main
-          token: ${{ secrets.KAGESOTO_CHECKOUT_TOKEN || github.token }}
+          token: ${{ secrets.ASHIATO_CHECKOUT_TOKEN || github.token }}
 
       - name: Configure sanitizer smoke build
         run: >
@@ -108,21 +108,21 @@ jobs:
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
           -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined"
           -DBUILD_TESTING=OFF
-          -DKAGE_SYNC_BUILD_BENCHMARKS=ON
-          -DKAGE_SYNC_BUILD_EXAMPLES=OFF
-          -DKAGE_SYNC_BUILD_TRACE_VIEWER=OFF
-          -DKAGE_SYNC_KAGESOKO_SOURCE_DIR=${{ github.workspace }}/main
-          -DKAGE_SYNC_BALL_STRESS_RUN_ARGS="--duration-seconds 5 --report text"
-          -DKAGE_SYNC_PREDICTION_STRESS_RUN_ARGS="--ticks 900 --latency-frames 10 --misprediction-percent 5 --report text"
+          -DASHIATO_SYNC_BUILD_BENCHMARKS=ON
+          -DASHIATO_SYNC_BUILD_EXAMPLES=OFF
+          -DASHIATO_SYNC_BUILD_TRACE_VIEWER=OFF
+          -DASHIATO_SYNC_ASHIATO_SOURCE_DIR=${{ github.workspace }}/main
+          -DASHIATO_SYNC_BALL_STRESS_RUN_ARGS="--duration-seconds 5 --report text"
+          -DASHIATO_SYNC_PREDICTION_STRESS_RUN_ARGS="--ticks 900 --latency-frames 10 --misprediction-percent 5 --report text"
 
       - name: Build end-to-end smoke tools
-        run: cmake --build build-memory-smoke --parallel --target kage_sync_ball_stress kage_sync_prediction_stress
+        run: cmake --build build-memory-smoke --parallel --target ashiato_sync_ball_stress ashiato_sync_prediction_stress
 
       - name: Run ball stress under sanitizers
-        run: cmake --build build-memory-smoke --target run_kage_sync_ball_stress
+        run: cmake --build build-memory-smoke --target run_ashiato_sync_ball_stress
 
       - name: Run prediction stress under sanitizers
-        run: cmake --build build-memory-smoke --target run_kage_sync_prediction_stress
+        run: cmake --build build-memory-smoke --target run_ashiato_sync_prediction_stress
 
   benchmarks:
     name: Characteristic benchmarks
@@ -131,33 +131,33 @@ jobs:
 
     defaults:
       run:
-        working-directory: kage-sync
+        working-directory: ashiato-sync
 
     steps:
-      - name: Check out kage-sync
+      - name: Check out ashiato-sync
         uses: actions/checkout@v4
         with:
-          path: kage-sync
+          path: ashiato-sync
 
-      - name: Check out kagesoko ECS
+      - name: Check out Ashiato ECS
         uses: actions/checkout@v4
         with:
-          repository: ErikGoldman/kagesoto
+          repository: ErikGoldman/ashiato
           path: main
-          token: ${{ secrets.KAGESOTO_CHECKOUT_TOKEN || github.token }}
+          token: ${{ secrets.ASHIATO_CHECKOUT_TOKEN || github.token }}
 
       - name: Configure benchmarks
         run: >
           cmake -S . -B build-benchmarks
           -DCMAKE_BUILD_TYPE=RelWithDebInfo
           -DBUILD_TESTING=OFF
-          -DKAGE_SYNC_BUILD_BENCHMARKS=ON
-          -DKAGE_SYNC_BUILD_EXAMPLES=OFF
-          -DKAGE_SYNC_BUILD_TRACE_VIEWER=OFF
-          -DKAGE_SYNC_KAGESOKO_SOURCE_DIR=${{ github.workspace }}/main
+          -DASHIATO_SYNC_BUILD_BENCHMARKS=ON
+          -DASHIATO_SYNC_BUILD_EXAMPLES=OFF
+          -DASHIATO_SYNC_BUILD_TRACE_VIEWER=OFF
+          -DASHIATO_SYNC_ASHIATO_SOURCE_DIR=${{ github.workspace }}/main
 
       - name: Build benchmarks
-        run: cmake --build build-benchmarks --parallel --target kage_sync_benchmark kage_sync_ball_stress kage_sync_prediction_stress
+        run: cmake --build build-benchmarks --parallel --target ashiato_sync_benchmark ashiato_sync_ball_stress ashiato_sync_prediction_stress
 
       - name: Run benchmarks
         run: >
@@ -177,7 +177,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-results
-          path: kage-sync/benchmark-results
+          path: ashiato-sync/benchmark-results
 
   pages:
     name: Publish Pages
@@ -194,10 +194,10 @@ jobs:
       id-token: write
 
     steps:
-      - name: Check out kage-sync
+      - name: Check out ashiato-sync
         uses: actions/checkout@v4
         with:
-          path: kage-sync
+          path: ashiato-sync
 
       - name: Download coverage artifact
         uses: actions/download-artifact@v4
@@ -213,7 +213,7 @@ jobs:
 
       - name: Build benchmark pages
         run: >
-          python3 kage-sync/scripts/ci/build_benchmark_pages.py
+          python3 ashiato-sync/scripts/ci/build_benchmark_pages.py
           --site-dir site
           --results-dir benchmark-results
           --history-url "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/benchmarks/history/index.json"

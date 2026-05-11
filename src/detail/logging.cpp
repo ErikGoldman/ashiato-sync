@@ -8,7 +8,7 @@
 #include <memory>
 #include <string_view>
 
-namespace kage::sync::detail {
+namespace ashiato::sync::detail {
 namespace {
 
 void append_json_string(spdlog::memory_buf_t& dest, std::string_view value) {
@@ -173,4 +173,4 @@ std::string log_token(std::string_view value) {
     return result;
 }
 
-}  // namespace kage::sync::detail
+}  // namespace ashiato::sync::detail

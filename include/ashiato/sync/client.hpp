@@ -1,8 +1,8 @@
 #pragma once
 
-#include "kage/sync/client_clock.hpp"
-#include "kage/sync/components.hpp"
-#include "kage/sync/logging.hpp"
+#include "ashiato/sync/client_clock.hpp"
+#include "ashiato/sync/components.hpp"
+#include "ashiato/sync/logging.hpp"
 
 #include <array>
 #include <cstddef>
@@ -16,7 +16,7 @@
 #include <utility>
 #include <vector>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 class SyncTracer;
 class KTraceDirectoryWriter;
@@ -51,25 +51,25 @@ class ClientInputBuffer;
 }  // namespace client_detail
 
 struct ReplicatedComponentUpdate {
-    ecs::Entity component;
+    ashiato::Entity component;
     SyncComponentOps::QuantizedBytes bytes;
 };
 
 struct ReplicatedEntityUpdateView {
     ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
-    ecs::Entity local_entity;
+    ashiato::Entity local_entity;
     SyncArchetypeId archetype;
     SyncFrame frame = 0;
     std::uint64_t tag_mask = 0;
 
     template <typename T>
-    bool try_get(const ecs::Registry& registry, T& out) const {
-        const ecs::Entity component = registry.component<T>();
+    bool try_get(const ashiato::Registry& registry, T& out) const {
+        const ashiato::Entity component = registry.component<T>();
         return try_get(registry, component, &out);
     }
 
-    bool try_get(const ecs::Registry& registry, ecs::Entity component, void* out) const;
-    bool has_tag(const ecs::Registry& registry, ecs::Entity tag) const;
+    bool try_get(const ashiato::Registry& registry, ashiato::Entity component, void* out) const;
+    bool has_tag(const ashiato::Registry& registry, ashiato::Entity tag) const;
 
 private:
     friend class ReplicationClient;
@@ -80,17 +80,17 @@ private:
 
 struct FractionalTickSample {
     ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
-    ecs::Entity local_entity;
+    ashiato::Entity local_entity;
     SyncFrame frame = 0;
     float alpha = 0.0f;
 
     template <typename T>
-    bool try_get_sampled_value(const ecs::Registry& registry, T& out) const {
-        const ecs::Entity component = registry.component<T>();
+    bool try_get_sampled_value(const ashiato::Registry& registry, T& out) const {
+        const ashiato::Entity component = registry.component<T>();
         return try_get_sampled_value(registry, component, &out);
     }
 
-    bool try_get_sampled_value(const ecs::Registry& registry, ecs::Entity component, void* out) const;
+    bool try_get_sampled_value(const ashiato::Registry& registry, ashiato::Entity component, void* out) const;
 
 private:
     friend class ReplicationClient;
@@ -207,12 +207,12 @@ struct ReplicationClientOptions {
     ReplicationClientSessionOptions session;
     ReplicationClientClockOptions clock;
     LoggingOptions logging;
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     TraceOptions trace;
 #endif
 };
 
-#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+#ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
 inline constexpr std::size_t interpolation_diagnostics_window_frames = 120;
 
 struct ReplicationClientInterpolationDiagnostics {
@@ -279,7 +279,7 @@ namespace detail {
 template <typename JobBuilder, bool IsCosmeticJob>
 class ClientJobBuilder {
 public:
-    ClientJobBuilder(ecs::Registry& registry, JobBuilder builder, std::vector<ecs::Entity>& jobs)
+    ClientJobBuilder(ashiato::Registry& registry, JobBuilder builder, std::vector<ashiato::Entity>& jobs)
         : registry_(&registry), builder_(std::move(builder)), jobs_(&jobs) {}
 
     ClientJobBuilder& max_threads(std::size_t count) {
@@ -298,8 +298,8 @@ public:
     }
 
     template <typename Fn>
-    ecs::Entity each(Fn&& fn) {
-        const ecs::Entity job = builder_.each(std::forward<Fn>(fn));
+    ashiato::Entity each(Fn&& fn) {
+        const ashiato::Entity job = builder_.each(std::forward<Fn>(fn));
         if constexpr (IsCosmeticJob) {
             registry_->template add<NoResim>(job);
         }
@@ -348,7 +348,7 @@ public:
     }
 
     template <typename T>
-    decltype(auto) get(ecs::Entity entity) const {
+    decltype(auto) get(ashiato::Entity entity) const {
         return builder_.template get<T>(entity);
     }
 
@@ -358,7 +358,7 @@ public:
     }
 
     template <typename T>
-    decltype(auto) write(ecs::Entity entity) {
+    decltype(auto) write(ashiato::Entity entity) {
         return builder_.template write<T>(entity);
     }
 
@@ -368,9 +368,9 @@ public:
     }
 
 private:
-    ecs::Registry* registry_;
+    ashiato::Registry* registry_;
     JobBuilder builder_;
-    std::vector<ecs::Entity>* jobs_;
+    std::vector<ashiato::Entity>* jobs_;
 };
 
 }  // namespace detail
@@ -388,7 +388,7 @@ public:
     static constexpr std::size_t buffered_frame_capacity = 64;
     static constexpr std::size_t prediction_frame_capacity = 64;
 
-    explicit ReplicationClient(ecs::Registry& registry, ReplicationClientOptions options = {});
+    explicit ReplicationClient(ashiato::Registry& registry, ReplicationClientOptions options = {});
     ~ReplicationClient();
     ReplicationClient(const ReplicationClient& other) = delete;
     ReplicationClient& operator=(const ReplicationClient& other) = delete;
@@ -406,7 +406,7 @@ public:
     LogLevel log_level() const noexcept {
         return options_.logging.level;
     }
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     void set_tracer(SyncTracer* tracer) noexcept;
     void set_trace_options(TraceOptions options);
     void flush_trace();
@@ -415,7 +415,7 @@ public:
 
     bool set_default_entity_mode(ReplicationClientMode mode) noexcept;
     void set_entity_mode(
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         ClientEntityNetworkId client_entity_network_id,
         ReplicationClientMode mode);
     bool has_entity(ClientEntityNetworkId client_entity_network_id) const noexcept;
@@ -423,39 +423,39 @@ public:
     bool set_buffered_frame_lag(SyncFrame frames) noexcept;
     SyncFrame current_buffered_frame_lag() const noexcept;
     template <typename T>
-    bool set_input(ecs::Registry& registry, const T& input) {
-        const ecs::Entity component = registry.template component<T>();
+    bool set_input(ashiato::Registry& registry, const T& input) {
+        const ashiato::Entity component = registry.template component<T>();
         const SyncSettings& settings = registry.template get<SyncSettings>();
         if (settings.input_component != component) {
             return false;
         }
         return set_input_bytes(registry, component, &input);
     }
-    bool tick(ecs::Registry& registry, double dt_seconds, ecs::RunJobsOptions prediction_options = {});
-    void set_packet_sender(std::function<void(const ecs::BitBuffer&)> sender);
-    void receive_packet(ecs::BitBuffer packet);
-    bool receive(ecs::Registry& registry, ecs::BitBuffer packet);
+    bool tick(ashiato::Registry& registry, double dt_seconds, ashiato::RunJobsOptions prediction_options = {});
+    void set_packet_sender(std::function<void(const ashiato::BitBuffer&)> sender);
+    void receive_packet(ashiato::BitBuffer packet);
+    bool receive(ashiato::Registry& registry, ashiato::BitBuffer packet);
     template <typename... Components>
-    auto cosmetic_job(ecs::Registry& registry, int order) {
+    auto cosmetic_job(ashiato::Registry& registry, int order) {
         auto builder = registry.template job<Components...>(order);
         return detail::ClientJobBuilder<decltype(builder), true>(registry, std::move(builder), cosmetic_jobs_);
     }
     template <typename... Components>
-    auto simulation_job(ecs::Registry& registry, int order) {
+    auto simulation_job(ashiato::Registry& registry, int order) {
         auto builder = registry.template job<Components...>(order).template without_tags<const NoSimulate>();
         return detail::ClientJobBuilder<decltype(builder), false>(registry, std::move(builder), simulation_jobs_);
     }
-    bool apply_frame(ecs::Registry& registry, SyncFrame buffered_frame);
+    bool apply_frame(ashiato::Registry& registry, SyncFrame buffered_frame);
     bool sample_fractional_tick_frame(
-        const ecs::Registry& registry,
+        const ashiato::Registry& registry,
         double target_frame,
         FractionalTickSampleBuffer& out) const;
-    const FractionalTickSampleBuffer& fractional_tick_frame(const ecs::Registry& registry);
-    std::vector<ecs::BitBuffer> drain_packets();
-    std::vector<ecs::BitBuffer> drain_ack_packets();
+    const FractionalTickSampleBuffer& fractional_tick_frame(const ashiato::Registry& registry);
+    std::vector<ashiato::BitBuffer> drain_packets();
+    std::vector<ashiato::BitBuffer> drain_ack_packets();
     std::size_t pending_ack_count() const noexcept;
     bool is_alive_client_entity_network_id(ClientEntityNetworkId client_entity_network_id) const noexcept;
-    ecs::Entity local_entity(ClientEntityNetworkId client_entity_network_id) const;
+    ashiato::Entity local_entity(ClientEntityNetworkId client_entity_network_id) const;
     EntityReferenceStatus resolve_entity_reference(EntityReference& reference) const noexcept;
     ClientId client_id() const noexcept {
         return client_id_;
@@ -491,7 +491,7 @@ public:
     ObservabilityStats observability_stats() const noexcept {
         return observability_stats_;
     }
-#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+#ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     const ReplicationClientInterpolationDiagnostics& interpolation_diagnostics() const noexcept {
         return interpolation_diagnostics_;
     }
@@ -506,7 +506,7 @@ protected:
         std::size_t predicted = prediction_frame_capacity;
     };
 
-    ReplicationClient(ecs::Registry& registry, ReplicationClientOptions options, FrameHistoryCapacities capacities);
+    ReplicationClient(ashiato::Registry& registry, ReplicationClientOptions options, FrameHistoryCapacities capacities);
 
 private:
     friend class client_detail::ClientBufferedRuntime;
@@ -536,25 +536,25 @@ private:
     const EntityState* find_entity_state(ClientEntityNetworkId client_entity_network_id) const noexcept;
     EntityState* find_entity_state_by_wire_id(std::uint32_t wire_network_id) noexcept;
     const EntityState* find_entity_state_by_wire_id(std::uint32_t wire_network_id) const noexcept;
-    EntityState* find_entity_state_for_local(ecs::Entity local) noexcept;
-#ifdef KAGE_SYNC_ENABLE_TRACING
+    EntityState* find_entity_state_for_local(ashiato::Entity local) noexcept;
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     void register_local_entity_index(const EntityState& state);
     void unregister_local_entity_index(const EntityState& state);
 #endif
     EntityState* ensure_entity_state(
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         ClientEntityNetworkId client_entity_network_id,
         std::uint32_t wire_network_id);
-    void erase_entity_state(ecs::Registry& registry, std::uint32_t entity_index, bool destroy_local);
+    void erase_entity_state(ashiato::Registry& registry, std::uint32_t entity_index, bool destroy_local);
     void sync_entity_memberships(EntityState& state);
     bool destroy_tombstone_blocks(std::uint32_t wire_network_id, SyncFrame frame) const;
     void record_destroy_tombstone(std::uint32_t wire_network_id, SyncFrame frame);
     const QuantizedFrameData* find_baseline(const EntityState& state, SyncFrame frame) const noexcept;
     bool validate_buffered_archetype(const SyncSettings& settings, SyncArchetypeId archetype) const;
-    bool ensure_local_entity(ecs::Registry& registry, EntityState& state);
+    bool ensure_local_entity(ashiato::Registry& registry, EntityState& state);
     std::uint64_t registry_tag_mask(
-        const ecs::Registry& registry,
-        ecs::Entity entity,
+        const ashiato::Registry& registry,
+        ashiato::Entity entity,
         const SyncArchetype& archetype) const;
     void trace_applied_tag_delta(
         const SyncArchetype& archetype,
@@ -563,21 +563,21 @@ private:
         std::uint64_t previous_tag_mask,
         std::uint64_t next_tag_mask);
     bool apply_registry_tags(
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncArchetype& archetype,
         EntityState& state,
         SyncFrame frame,
         std::uint64_t tag_mask,
         bool verify_tag_apply);
     bool remove_missing_registry_components(
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncArchetype& archetype,
         const EntityState& state,
         SyncFrame frame,
         std::uint64_t previous_present_mask,
         std::uint64_t next_present_mask);
     bool apply_registry_frame(
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncArchetype& archetype,
         EntityState& state,
         const RegistryFrameApplyInfo& input);
@@ -597,48 +597,48 @@ private:
         SyncFrame from_frame,
         SyncFrame to_frame);
     bool apply_buffered_sample(
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
         const client_detail::EntityFrameView& sample);
     bool apply_frame_data(
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
         SyncFrame frame,
         bool entity_present,
         const QuantizedFrameData& baseline);
     bool apply_snap_sample(
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
         const QuantizedFrameData& decoded,
         bool full);
     bool validate_predicted_archetype(const SyncSettings& settings, SyncArchetypeId archetype) const;
     bool quantize_predicted_entity(
-        const ecs::Registry& registry,
+        const ashiato::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
         SyncFrame frame);
-    void apply_buffered_frames_to_ecs(
-        ecs::Registry& registry,
+    void apply_buffered_frames_to_ashiato(
+        ashiato::Registry& registry,
         const ReplicationClientClock::FrameRange& frames);
     bool run_predicted_frames(
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const ReplicationClientClock::FrameRange& frames,
-        ecs::RunJobsOptions options);
-#ifdef KAGE_SYNC_ENABLE_TRACING
-    void trace_local_time_frames(ecs::Registry& registry, const ReplicationClientClock::FrameRange& frames);
+        ashiato::RunJobsOptions options);
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    void trace_local_time_frames(ashiato::Registry& registry, const ReplicationClientClock::FrameRange& frames);
 #endif
     bool compare_predicted_frame(
         const SyncSettings& settings,
         EntityState& state,
         SyncFrame frame,
         const QuantizedFrameData& authoritative) const;
-    const ecs::JobGraph& resim_job_graph(ecs::Registry& registry);
-    bool apply_latest_snap(ecs::Registry& registry, const SyncSettings& settings, EntityState& state);
+    const ashiato::JobGraph& resim_job_graph(ashiato::Registry& registry);
+    bool apply_latest_snap(ashiato::Registry& registry, const SyncSettings& settings, EntityState& state);
     bool switch_entity_mode(
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
         ReplicationClientMode mode);
@@ -656,41 +656,41 @@ private:
         QuantizedFrameData baseline,
         BaselineUpdate baseline_update);
     void record_authoritative_absent(EntityState& state, SyncFrame frame);
-    bool transition_to_snap(ecs::Registry& registry, const SyncSettings& settings, EntityState& state);
+    bool transition_to_snap(ashiato::Registry& registry, const SyncSettings& settings, EntityState& state);
     bool transition_to_buffered(const SyncSettings& settings, EntityState& state);
-    bool transition_to_predict(ecs::Registry& registry, const SyncSettings& settings, EntityState& state);
+    bool transition_to_predict(ashiato::Registry& registry, const SyncSettings& settings, EntityState& state);
     bool has_buffered_entities() const noexcept;
     bool has_predicted_entities() const noexcept;
     void blend_snap_errors(const SyncSettings& settings, float dt_seconds);
-#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+#ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     void record_interpolation_frame(std::uint64_t checks, std::uint64_t starvations) noexcept;
 #endif
     void remember_baseline(EntityState& state);
     void queue_ack(std::uint32_t packet_id);
-    bool receive_connect_response(ecs::Registry& registry, ecs::BitBuffer& packet);
-    bool receive_pong(ecs::Registry& registry, ecs::BitBuffer& packet, const ReceiveContext& context);
-    bool receive_entity_update(ecs::Registry& registry, ecs::BitBuffer& packet, const ReceiveContext& context);
+    bool receive_connect_response(ashiato::Registry& registry, ashiato::BitBuffer& packet);
+    bool receive_pong(ashiato::Registry& registry, ashiato::BitBuffer& packet, const ReceiveContext& context);
+    bool receive_entity_update(ashiato::Registry& registry, ashiato::BitBuffer& packet, const ReceiveContext& context);
     bool update_prediction_input_prefill_from_entity_update(
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         SyncFrame server_frame,
         const ReceiveContext& context);
     bool apply_prediction_input_prefill(
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         SyncFrame server_frame,
         SyncFrame prefill_input_frame,
         SyncFrame prediction_snap_lead_frames);
-    void drain_connect_packets(std::vector<ecs::BitBuffer>& packets);
-    void drain_ping_packets(std::vector<ecs::BitBuffer>& packets);
-    void drain_ack_packets_into(std::vector<ecs::BitBuffer>& packets);
-    void drain_input_packets_into(std::vector<ecs::BitBuffer>& packets);
-    void process_inbound_packets(ecs::Registry& registry);
+    void drain_connect_packets(std::vector<ashiato::BitBuffer>& packets);
+    void drain_ping_packets(std::vector<ashiato::BitBuffer>& packets);
+    void drain_ack_packets_into(std::vector<ashiato::BitBuffer>& packets);
+    void drain_input_packets_into(std::vector<ashiato::BitBuffer>& packets);
+    void process_inbound_packets(ashiato::Registry& registry);
     void send_pending_packets();
     void log_info(const char* event, const std::string& fields) const;
     void log_server_packet_warning(std::uint8_t message, const char* reason_code, const char* reason_detail);
     void log_client_error(std::uint8_t message, const char* event, const char* reason);
     ClientEntityNetworkId client_entity_network_id_for_wire(std::uint32_t wire_network_id);
     void advance_wire_network_id_version(std::uint32_t wire_network_id);
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     enum class TraceFrameComponentScope {
         All,
         NonPredicted,
@@ -698,17 +698,17 @@ private:
     };
 
     void trace_frame_components(
-        const ecs::Registry& registry,
+        const ashiato::Registry& registry,
         const SyncSettings& settings,
         SyncFrame frame,
         bool resimulated = false,
         bool only_pending_rollback = false,
         TraceFrameComponentScope scope = TraceFrameComponentScope::All);
     void trace_input_components(
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         SyncFrame frame,
-        ecs::Entity component,
+        ashiato::Entity component,
         const std::uint8_t* quantized);
     void trace_clock_skew(
         const char* stage,
@@ -732,7 +732,7 @@ private:
         const EntityPlayedCue& cue,
         const char* rollback_reason = nullptr,
         const char* cue_source = nullptr) const;
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     void trace_outgoing_ack_packet(const std::vector<std::uint32_t>& acks) const;
     void trace_outgoing_input_packet(
         const std::vector<std::uint32_t>& acks,
@@ -747,21 +747,21 @@ private:
         std::uint16_t record_count) const;
 #endif
 #endif
-    bool set_input_bytes(ecs::Registry& registry, ecs::Entity component, const void* input);
-    void set_client_id(ecs::Registry& registry, ClientId client) noexcept;
-    bool record_input_frame(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame);
-    bool fill_input_frames_through(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame);
-    bool apply_input_frame(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame);
+    bool set_input_bytes(ashiato::Registry& registry, ashiato::Entity component, const void* input);
+    void set_client_id(ashiato::Registry& registry, ClientId client) noexcept;
+    bool record_input_frame(ashiato::Registry& registry, const SyncSettings& settings, SyncFrame frame);
+    bool fill_input_frames_through(ashiato::Registry& registry, const SyncSettings& settings, SyncFrame frame);
+    bool apply_input_frame(ashiato::Registry& registry, const SyncSettings& settings, SyncFrame frame);
 
     ReplicationClientOptions options_;
     double fixed_dt_seconds_ = 1.0 / 60.0;
     ReplicationClientClock clock_;
-#ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
+#ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     ReplicationClientInterpolationDiagnostics interpolation_diagnostics_;
 #endif
-    std::vector<ecs::Entity> simulation_jobs_;
-    std::vector<ecs::Entity> cosmetic_jobs_;
-    ecs::JobGraph resim_job_graph_;
+    std::vector<ashiato::Entity> simulation_jobs_;
+    std::vector<ashiato::Entity> cosmetic_jobs_;
+    ashiato::JobGraph resim_job_graph_;
     bool resim_job_graph_valid_ = false;
     std::unique_ptr<client_detail::ClientEntityStore> entity_store_;
     std::unique_ptr<client_detail::ClientPredictionRuntime> prediction_;
@@ -780,7 +780,7 @@ private:
     FractionalTickSampleBuffer fractional_tick_frame_;
     FractionalTickSampleBuffer fractional_tick_scratch_;
     ClientId client_id_ = invalid_client_id;
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     SyncTracer* tracer_ = nullptr;
     std::unique_ptr<KTraceDirectoryWriter> trace_writer_;
 #endif
@@ -814,7 +814,7 @@ public:
     static constexpr std::size_t buffered_frame_capacity = BufferedFrameCapacity;
     static constexpr std::size_t prediction_frame_capacity = PredictionFrameCapacity;
 
-    explicit ReplicationClientT(ecs::Registry& registry, ReplicationClientOptions options = {})
+    explicit ReplicationClientT(ashiato::Registry& registry, ReplicationClientOptions options = {})
         : ReplicationClient(
               registry,
               configure(std::move(options)),
@@ -827,4 +827,4 @@ private:
     }
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

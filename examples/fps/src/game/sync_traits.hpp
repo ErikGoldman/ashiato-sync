@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 using fps::FpsCombatState;
 using fps::FpsDeathInfo;
@@ -41,14 +41,14 @@ inline float decode_fps_signed_fixed_16(std::uint64_t bits, float scale) {
     return static_cast<float>(quantized) / scale;
 }
 
-inline void serialize_fps_cue_position(Vector3 value, ecs::BitBuffer& out) {
+inline void serialize_fps_cue_position(Vector3 value, ashiato::BitBuffer& out) {
     constexpr float scale = 256.0f;
     out.push_unsigned_bits(encode_fps_signed_fixed_16(value.x, scale, -32768, 32767), 16U);
     out.push_unsigned_bits(encode_fps_signed_fixed_16(value.y, scale, -32768, 32767), 16U);
     out.push_unsigned_bits(encode_fps_signed_fixed_16(value.z, scale, -32768, 32767), 16U);
 }
 
-inline Vector3 deserialize_fps_cue_position(ecs::BitBuffer& in) {
+inline Vector3 deserialize_fps_cue_position(ashiato::BitBuffer& in) {
     constexpr float scale = 256.0f;
     return Vector3{
         decode_fps_signed_fixed_16(in.read_unsigned_bits(16U), scale),
@@ -56,14 +56,14 @@ inline Vector3 deserialize_fps_cue_position(ecs::BitBuffer& in) {
         decode_fps_signed_fixed_16(in.read_unsigned_bits(16U), scale)};
 }
 
-inline void serialize_fps_cue_normal(Vector3 value, ecs::BitBuffer& out) {
+inline void serialize_fps_cue_normal(Vector3 value, ashiato::BitBuffer& out) {
     constexpr float scale = 32767.0f;
     out.push_unsigned_bits(encode_fps_signed_fixed_16(value.x, scale, -32767, 32767), 16U);
     out.push_unsigned_bits(encode_fps_signed_fixed_16(value.y, scale, -32767, 32767), 16U);
     out.push_unsigned_bits(encode_fps_signed_fixed_16(value.z, scale, -32767, 32767), 16U);
 }
 
-inline Vector3 deserialize_fps_cue_normal(ecs::BitBuffer& in) {
+inline Vector3 deserialize_fps_cue_normal(ashiato::BitBuffer& in) {
     constexpr float scale = 32767.0f;
     return Vector3{
         std::clamp(decode_fps_signed_fixed_16(in.read_unsigned_bits(16U), scale), -1.0f, 1.0f),
@@ -85,11 +85,11 @@ struct SyncComponentTraits<FpsUniquePlayerId> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_unsigned_bits(current.value, 64U);
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         out.value = in.read_unsigned_bits(64U);
         return true;
     }
@@ -112,11 +112,11 @@ struct SyncComponentTraits<NetworkOwner> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_unsigned_bits(current.client, 64U);
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         out.client = static_cast<ClientId>(in.read_unsigned_bits(64U));
         return true;
     }
@@ -140,11 +140,11 @@ struct SyncComponentTraits<FpsTransform> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(out));
         return true;
     }
@@ -205,7 +205,7 @@ struct SyncComponentTraits<FpsTransform> {
         return false;
     }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
         out.append("x=");
         out.append_number(value.x);
@@ -233,11 +233,11 @@ struct SyncComponentTraits<FpsVelocity> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(out));
         return true;
     }
@@ -251,7 +251,7 @@ struct SyncComponentTraits<FpsVelocity> {
         return false;
     }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
         out.append("x=");
         out.append_number(value.x);
@@ -277,11 +277,11 @@ struct SyncComponentTraits<FpsCombatState> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(out));
         return true;
     }
@@ -304,7 +304,7 @@ struct SyncComponentTraits<FpsCombatState> {
         return false;
     }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
         out.append("health=");
         out.append_number(value.health);
@@ -338,11 +338,11 @@ struct SyncComponentTraits<FpsDeathInfo> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_unsigned_bits(current.killer, 64U);
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         out.killer = static_cast<ClientId>(in.read_unsigned_bits(64U));
         return true;
     }
@@ -351,7 +351,7 @@ struct SyncComponentTraits<FpsDeathInfo> {
         return false;
     }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
         out.append("killer=");
         out.append_number(value.killer);
@@ -371,11 +371,11 @@ struct SyncComponentTraits<FpsVisual> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(out));
         return true;
     }
@@ -390,7 +390,7 @@ struct SyncComponentTraits<FpsVisual> {
         return false;
     }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
         out.append("radius=");
         out.append_number(value.radius);
@@ -420,16 +420,16 @@ struct SyncComponentTraits<FpsInput> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(out));
         return true;
     }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
         out.append("move=");
         out.append_number(value.move_x);
@@ -453,14 +453,14 @@ struct SyncComponentTraits<FpsInput> {
 
 template <>
 struct SyncCueTraits<ShotCue> {
-    static void serialize(const ShotCue&, ecs::BitBuffer&) {
+    static void serialize(const ShotCue&, ashiato::BitBuffer&) {
     }
 
-    static bool deserialize(ecs::BitBuffer&, ShotCue&) {
+    static bool deserialize(ashiato::BitBuffer&, ShotCue&) {
         return true;
     }
 
-    static bool play(ecs::Registry& registry, ecs::Entity owner, const ShotCue&, float late_seconds) {
+    static bool play(ashiato::Registry& registry, ashiato::Entity owner, const ShotCue&, float late_seconds) {
         const float seconds = std::max(0.03f, 0.12f - late_seconds);
         if (registry.contains<FpsShotEffect>(owner)) {
             FpsShotEffect& effect = registry.write<FpsShotEffect>(owner);
@@ -471,7 +471,7 @@ struct SyncCueTraits<ShotCue> {
         return true;
     }
 
-    static bool rollback(ecs::Registry& registry, ecs::Entity owner, const ShotCue&) {
+    static bool rollback(ashiato::Registry& registry, ashiato::Entity owner, const ShotCue&) {
         registry.remove<FpsShotEffect>(owner);
         return true;
     }
@@ -483,18 +483,18 @@ struct SyncCueTraits<ShotCue> {
 
 template <>
 struct SyncCueTraits<SurfaceHitCue> {
-    static void serialize(const SurfaceHitCue& cue, ecs::BitBuffer& out) {
+    static void serialize(const SurfaceHitCue& cue, ashiato::BitBuffer& out) {
         detail::serialize_fps_cue_position(cue.position, out);
         detail::serialize_fps_cue_normal(cue.normal, out);
     }
 
-    static bool deserialize(ecs::BitBuffer& in, SurfaceHitCue& out) {
+    static bool deserialize(ashiato::BitBuffer& in, SurfaceHitCue& out) {
         out.position = detail::deserialize_fps_cue_position(in);
         out.normal = detail::deserialize_fps_cue_normal(in);
         return true;
     }
 
-    static bool play(ecs::Registry& registry, ecs::Entity owner, const SurfaceHitCue& cue, float late_seconds) {
+    static bool play(ashiato::Registry& registry, ashiato::Entity owner, const SurfaceHitCue& cue, float late_seconds) {
         if (!registry.contains<FpsSurfaceHitEffect>(owner)) {
             registry.add<FpsSurfaceHitEffect>(owner);
         }
@@ -517,7 +517,7 @@ struct SyncCueTraits<SurfaceHitCue> {
         return true;
     }
 
-    static bool rollback(ecs::Registry& registry, ecs::Entity owner, const SurfaceHitCue&) {
+    static bool rollback(ashiato::Registry& registry, ashiato::Entity owner, const SurfaceHitCue&) {
         registry.remove<FpsSurfaceHitEffect>(owner);
         return true;
     }
@@ -533,7 +533,7 @@ struct SyncCueTraits<SurfaceHitCue> {
             normal_dot >= 0.92f;
     }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     static void trace(const SurfaceHitCue& cue, SyncTraceStringBuilder& out) {
         out.append("position=");
         out.append_number(cue.position.x);
@@ -553,18 +553,18 @@ struct SyncCueTraits<SurfaceHitCue> {
 
 template <>
 struct SyncCueTraits<PlayerHitCue> {
-    static void serialize(const PlayerHitCue& cue, ecs::BitBuffer& out, EntityReferenceContext& references) {
+    static void serialize(const PlayerHitCue& cue, ashiato::BitBuffer& out, EntityReferenceContext& references) {
         (void)write_entity_reference(out, cue.shooter, references);
     }
 
-    static bool deserialize(ecs::BitBuffer& in, PlayerHitCue& out, EntityReferenceContext& references) {
+    static bool deserialize(ashiato::BitBuffer& in, PlayerHitCue& out, EntityReferenceContext& references) {
         return read_entity_reference(in, references, out.shooter);
     }
 
-    static bool play(ecs::Registry& registry, ecs::Entity owner, const PlayerHitCue&, float late_seconds, SyncFrame frame) {
+    static bool play(ashiato::Registry& registry, ashiato::Entity owner, const PlayerHitCue&, float late_seconds, SyncFrame frame) {
         bool suppressed = false;
-        std::vector<ecs::Entity> remove_empty;
-        registry.view<FpsHitConfirmSuppression>().each([&suppressed, &remove_empty, frame, owner](ecs::Entity entity, FpsHitConfirmSuppression& suppressions) {
+        std::vector<ashiato::Entity> remove_empty;
+        registry.view<FpsHitConfirmSuppression>().each([&suppressed, &remove_empty, frame, owner](ashiato::Entity entity, FpsHitConfirmSuppression& suppressions) {
             for (auto entry = suppressions.entries.begin(); entry != suppressions.entries.end();) {
                 const bool match =
                     entry->frame == frame &&
@@ -580,7 +580,7 @@ struct SyncCueTraits<PlayerHitCue> {
                 remove_empty.push_back(entity);
             }
         });
-        for (ecs::Entity entity : remove_empty) {
+        for (ashiato::Entity entity : remove_empty) {
             registry.remove<FpsHitConfirmSuppression>(entity);
         }
         if (suppressed) {
@@ -592,14 +592,14 @@ struct SyncCueTraits<PlayerHitCue> {
         return true;
     }
 
-    static bool rollback(ecs::Registry& registry, ecs::Entity owner, const PlayerHitCue&) {
+    static bool rollback(ashiato::Registry& registry, ashiato::Entity owner, const PlayerHitCue&) {
         registry.remove<FpsHitEffect>(owner);
         return true;
     }
 
     static bool equals_cue(const PlayerHitCue& lhs, const PlayerHitCue& rhs) {
-        if (lhs.shooter.client_entity_network_id != kage::sync::invalid_client_entity_network_id ||
-            rhs.shooter.client_entity_network_id != kage::sync::invalid_client_entity_network_id) {
+        if (lhs.shooter.client_entity_network_id != ashiato::sync::invalid_client_entity_network_id ||
+            rhs.shooter.client_entity_network_id != ashiato::sync::invalid_client_entity_network_id) {
             return lhs.shooter.client_entity_network_id == rhs.shooter.client_entity_network_id;
         }
         return lhs.shooter.entity == rhs.shooter.entity;
@@ -608,15 +608,15 @@ struct SyncCueTraits<PlayerHitCue> {
 
 template <>
 struct SyncCueTraits<HitConfirmCue> {
-    static void serialize(const HitConfirmCue& cue, ecs::BitBuffer& out, EntityReferenceContext& references) {
+    static void serialize(const HitConfirmCue& cue, ashiato::BitBuffer& out, EntityReferenceContext& references) {
         (void)write_entity_reference(out, cue.victim, references);
     }
 
-    static bool deserialize(ecs::BitBuffer& in, HitConfirmCue& out, EntityReferenceContext& references) {
+    static bool deserialize(ashiato::BitBuffer& in, HitConfirmCue& out, EntityReferenceContext& references) {
         return read_entity_reference(in, references, out.victim);
     }
 
-    static bool play(ecs::Registry& registry, ecs::Entity owner, const HitConfirmCue& cue, float late_seconds, SyncFrame frame) {
+    static bool play(ashiato::Registry& registry, ashiato::Entity owner, const HitConfirmCue& cue, float late_seconds, SyncFrame frame) {
         if (!cue.victim.entity || !registry.alive(cue.victim.entity)) {
             return true;
         }
@@ -639,7 +639,7 @@ struct SyncCueTraits<HitConfirmCue> {
         return true;
     }
 
-    static bool rollback(ecs::Registry& registry, ecs::Entity owner, const HitConfirmCue& cue) {
+    static bool rollback(ashiato::Registry& registry, ashiato::Entity owner, const HitConfirmCue& cue) {
         if (cue.victim.entity) {
             registry.remove<FpsHitEffect>(cue.victim.entity);
         }
@@ -655,33 +655,33 @@ struct SyncCueTraits<HitConfirmCue> {
 
 template <>
 struct SyncCueTraits<PlayerDeathCue> {
-    static void serialize(const PlayerDeathCue& cue, ecs::BitBuffer& out, EntityReferenceContext& references) {
+    static void serialize(const PlayerDeathCue& cue, ashiato::BitBuffer& out, EntityReferenceContext& references) {
         (void)write_entity_reference(out, cue.shooter, references);
     }
 
-    static bool deserialize(ecs::BitBuffer& in, PlayerDeathCue& out, EntityReferenceContext& references) {
+    static bool deserialize(ashiato::BitBuffer& in, PlayerDeathCue& out, EntityReferenceContext& references) {
         return read_entity_reference(in, references, out.shooter);
     }
 
-    static bool play(ecs::Registry& registry, ecs::Entity owner, const PlayerDeathCue&, float late_seconds, SyncFrame) {
+    static bool play(ashiato::Registry& registry, ashiato::Entity owner, const PlayerDeathCue&, float late_seconds, SyncFrame) {
         registry.add<FpsHitEffect>(
             owner,
             FpsHitEffect{std::max(0.04f, 0.45f - late_seconds), 0, FpsHitSound::Died});
         return true;
     }
 
-    static bool rollback(ecs::Registry& registry, ecs::Entity owner, const PlayerDeathCue&) {
+    static bool rollback(ashiato::Registry& registry, ashiato::Entity owner, const PlayerDeathCue&) {
         registry.remove<FpsHitEffect>(owner);
         return true;
     }
 
     static bool equals_cue(const PlayerDeathCue& lhs, const PlayerDeathCue& rhs) {
-        if (lhs.shooter.client_entity_network_id != kage::sync::invalid_client_entity_network_id ||
-            rhs.shooter.client_entity_network_id != kage::sync::invalid_client_entity_network_id) {
+        if (lhs.shooter.client_entity_network_id != ashiato::sync::invalid_client_entity_network_id ||
+            rhs.shooter.client_entity_network_id != ashiato::sync::invalid_client_entity_network_id) {
             return lhs.shooter.client_entity_network_id == rhs.shooter.client_entity_network_id;
         }
         return lhs.shooter.entity == rhs.shooter.entity;
     }
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

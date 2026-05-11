@@ -1,9 +1,9 @@
 #pragma once
 
-#include "kage/sync/client.hpp"
-#include "kage/sync/server.hpp"
+#include "ashiato/sync/client.hpp"
+#include "ashiato/sync/server.hpp"
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 class FractionalTickSampler {
 public:
@@ -12,8 +12,8 @@ public:
 
     ClientId local_client() const noexcept;
     double target_frame() const noexcept;
-    void capture_server_frame(ecs::Registry& registry);
-    const std::vector<FractionalTickSample>& entities(const ecs::Registry& registry);
+    void capture_server_frame(ashiato::Registry& registry);
+    const std::vector<FractionalTickSample>& entities(const ashiato::Registry& registry);
 
 private:
     enum class Source {
@@ -32,8 +32,8 @@ private:
         bool valid = false;
     };
 
-    void rebuild_from_client(const ecs::Registry& registry);
-    void rebuild_from_server(const ecs::Registry& registry);
+    void rebuild_from_client(const ashiato::Registry& registry);
+    void rebuild_from_server(const ashiato::Registry& registry);
 
     Source source_;
     ReplicationClient* client_ = nullptr;
@@ -43,4 +43,4 @@ private:
     std::vector<FractionalTickSample> samples_;
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

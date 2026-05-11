@@ -1,13 +1,13 @@
 #pragma once
 
-#include "ecs/bit_buffer.hpp"
-#include "kage/sync/protocol.hpp"
+#include "ashiato/bit_buffer.hpp"
+#include "ashiato/sync/protocol.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 
 struct ClientAckPacketTrace {
     std::vector<std::uint32_t> acks;
@@ -22,11 +22,11 @@ public:
     void drain_ack_packets(
         std::size_t mtu_bytes,
         std::size_t packet_id_bits,
-        std::vector<ecs::BitBuffer>& packets,
+        std::vector<ashiato::BitBuffer>& packets,
         std::vector<ClientAckPacketTrace>* traces);
 
 private:
     std::vector<std::uint32_t> pending_;
 };
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

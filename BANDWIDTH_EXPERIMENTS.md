@@ -3,13 +3,13 @@
 Benchmark scenario unless noted:
 
 ```sh
-./build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --wire-diagnostics --report text
+./build-bench/ashiato_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --wire-diagnostics --report text
 ```
 
 The `build-bench` configuration uses `RelWithDebInfo` and
-`KAGE_SYNC_BUILD_BENCHMARKS=ON`.
+`ASHIATO_SYNC_BUILD_BENCHMARKS=ON`.
 
-Artifact: `build-bench/kage_sync_ball_stress`
+Artifact: `build-bench/ashiato_sync_ball_stress`
 
 ## Baseline
 
@@ -242,10 +242,10 @@ measured interpolation buffer depth, but no longer changes latency/jitter.
 Command:
 
 ```sh
-./build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --wire-diagnostics --report text
+./build-bench/ashiato_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --wire-diagnostics --report text
 ```
 
-Artifact: `build-bench/kage_sync_ball_stress`
+Artifact: `build-bench/ashiato_sync_ball_stress`
 
 Result:
 
@@ -287,13 +287,13 @@ upserts no longer serialize the server ECS entity id.
 Command:
 
 ```sh
-./build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --wire-diagnostics --report text
+./build-bench/ashiato_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --wire-diagnostics --report text
 ```
 
-Artifact: `build-bench/kage_sync_ball_stress`
+Artifact: `build-bench/ashiato_sync_ball_stress`
 
-Profile artifact: `/tmp/kage_sync_client_local_wire_ids_gprof.txt` from
-`build-bench-gprof/kage_sync_ball_stress`
+Profile artifact: `/tmp/ashiato_sync_client_local_wire_ids_gprof.txt` from
+`build-bench-gprof/ashiato_sync_ball_stress`
 
 Result:
 
@@ -335,10 +335,10 @@ of `16`; IDs `256..8388607` encode in `25` bits.
 Command:
 
 ```sh
-./build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --wire-diagnostics --report text
+./build-bench/ashiato_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --wire-diagnostics --report text
 ```
 
-Artifact: `build-bench/kage_sync_ball_stress`
+Artifact: `build-bench/ashiato_sync_ball_stress`
 
 Result:
 
@@ -380,10 +380,10 @@ width from a compile-time argument.
 Command:
 
 ```sh
-./build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --wire-diagnostics --report text
+./build-bench/ashiato_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --wire-diagnostics --report text
 ```
 
-Artifact: `build-bench/kage_sync_ball_stress`
+Artifact: `build-bench/ashiato_sync_ball_stress`
 
 Result:
 

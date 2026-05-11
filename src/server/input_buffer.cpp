@@ -1,10 +1,10 @@
 #include "server/input_buffer.hpp"
 
-#include "kage/sync/detail/bit_reader.hpp"
+#include "ashiato/sync/detail/bit_reader.hpp"
 
 #include <algorithm>
 
-namespace kage::sync::server_detail {
+namespace ashiato::sync::server_detail {
 
 bool ServerInputBuffer::set_local_frame(
     SyncFrame frame,
@@ -33,7 +33,7 @@ bool ServerInputBuffer::set_local_frame(
 }
 
 bool ServerInputBuffer::process_packet_payload(
-    ecs::BitBuffer& packet,
+    ashiato::BitBuffer& packet,
     const SyncComponentOps& ops,
     std::size_t capacity_frames,
     ServerInputPacketTrace* trace) {
@@ -164,4 +164,4 @@ ServerInputForFrame ServerInputBuffer::select_input_for_frame(SyncFrame due_fram
     return due;
 }
 
-}  // namespace kage::sync::server_detail
+}  // namespace ashiato::sync::server_detail

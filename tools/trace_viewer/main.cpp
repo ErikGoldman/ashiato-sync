@@ -1,5 +1,5 @@
-#include "kage/sync/tracing.hpp"
-#include "kage/sync/types.hpp"
+#include "ashiato/sync/tracing.hpp"
+#include "ashiato/sync/types.hpp"
 
 #include <GLFW/glfw3.h>
 #include <imgui.h>
@@ -30,12 +30,12 @@
 #include <unordered_set>
 #include <vector>
 
-#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
+#if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 #endif
 
-#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION) && !defined(_WIN32)
+#if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION) && !defined(_WIN32)
 #include <cerrno>
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -43,13 +43,13 @@
 #include <unistd.h>
 #endif
 
-#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION) && !defined(MSG_NOSIGNAL)
+#if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION) && !defined(MSG_NOSIGNAL)
 #define MSG_NOSIGNAL 0
 #endif
 
 namespace {
 
-using namespace kage::sync;
+using namespace ashiato::sync;
 
 constexpr float label_width = 340.0f;
 constexpr float row_height = 24.0f;
@@ -67,7 +67,7 @@ constexpr ImU32 timeline_link_color = IM_COL32(194, 200, 210, 125);
 struct SelectedCell {
     int source_index = -1;
     ClientEntityNetworkId network_id = invalid_client_entity_network_id;
-    ecs::Entity component{};
+    ashiato::Entity component{};
     SyncFrame frame = 0;
     KTraceRunId run = 0;
     std::vector<std::uint32_t> event_indices;
@@ -253,7 +253,7 @@ struct EntityExpansionKeyHash {
 struct ComponentExpansionKey {
     int source_index = -1;
     ClientEntityNetworkId network_id = invalid_client_entity_network_id;
-    ecs::Entity component{};
+    ashiato::Entity component{};
 };
 
 bool operator==(const ComponentExpansionKey& lhs, const ComponentExpansionKey& rhs) {
@@ -289,7 +289,7 @@ struct ViewerState {
     std::vector<PacketClientTimeline> packet_clients;
     std::uint64_t packet_log_min_us = 0;
     std::uint64_t packet_log_max_us = 0;
-    std::unordered_map<ClientEntityNetworkId, ecs::Entity> server_entities_by_network_id;
+    std::unordered_map<ClientEntityNetworkId, ashiato::Entity> server_entities_by_network_id;
     int selected_packet_client = 0;
     std::array<char, 1024> picker_path{};
     std::vector<DirectoryPickerEntry> picker_entries;
@@ -297,14 +297,14 @@ struct ViewerState {
     int picker_selected = -1;
     bool directory_has_ktrace_files = false;
     bool picker_path_has_ktrace_files = false;
-#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
+#if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
     std::string screenshot_path;
     std::string last_screenshot_path;
     std::string control_socket_path;
 #endif
     std::unordered_set<EntityExpansionKey, EntityExpansionKeyHash> expanded_entities;
     std::unordered_set<ComponentExpansionKey, ComponentExpansionKeyHash> expanded_components;
-#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
+#if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
     std::uint32_t screenshot_counter = 0;
     bool screenshot_requested = false;
     bool screenshot_failed = false;
@@ -316,7 +316,7 @@ struct ViewerState {
     TraceLoadState loader;
 };
 
-#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
+#if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
 struct PendingMouseClick {
     float x = 0.0f;
     float y = 0.0f;
@@ -390,7 +390,7 @@ bool has_state(const KTraceFrameCell& cell, KTraceCellState state) {
     return (cell.state_mask & static_cast<std::uint32_t>(state)) != 0U;
 }
 
-bool is_cue_row_component(ecs::Entity component) noexcept {
+bool is_cue_row_component(ashiato::Entity component) noexcept {
     return (component.value & (std::uint64_t{1} << 63U)) != 0U;
 }
 
@@ -400,12 +400,12 @@ double elapsed_ms(Clock::time_point start, Clock::time_point end = Clock::now())
     return std::chrono::duration<double, std::milli>(end - start).count();
 }
 
-#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
+#if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
 std::string default_screenshot_path(ViewerState& state) {
     const auto now = std::chrono::system_clock::now().time_since_epoch();
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
     std::filesystem::path path = std::filesystem::temp_directory_path();
-    path /= "kage_sync_trace_viewer_" + std::to_string(ms) + "_" + std::to_string(state.screenshot_counter++) + ".png";
+    path /= "ashiato_sync_trace_viewer_" + std::to_string(ms) + "_" + std::to_string(state.screenshot_counter++) + ".png";
     return path.string();
 }
 
@@ -494,7 +494,7 @@ bool write_framebuffer_png(const std::string& path, int width, int height, std::
 }
 #endif
 
-#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
+#if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
 int mouse_button_from_token(const std::string& token) {
     if (token.empty() || token == "left" || token == "0") {
         return 0;
@@ -1426,7 +1426,7 @@ std::string entity_label(const KTraceEntityRow& entity) {
     return out.str();
 }
 
-std::string component_label(const KTraceSourceHistory& source, ecs::Entity component) {
+std::string component_label(const KTraceSourceHistory& source, ashiato::Entity component) {
     if (!component) {
         return "entity lifetime";
     }
@@ -1791,7 +1791,7 @@ void draw_cell(
     SyncFrame min_frame,
     int row,
     const KTraceEntityRow& entity,
-    ecs::Entity component,
+    ashiato::Entity component,
     KTraceRunId run,
     int source_index,
     ViewerState& state,
@@ -1855,7 +1855,7 @@ bool component_expanded(
     const ViewerState& state,
     int source_index,
     const KTraceEntityRow& entity,
-    ecs::Entity component) {
+    ashiato::Entity component) {
     return state.expanded_components.count(ComponentExpansionKey{source_index, entity.client_network_id, component}) != 0U;
 }
 
@@ -1915,7 +1915,7 @@ void toggle_component_expanded(
     ViewerState& state,
     int source_index,
     const KTraceEntityRow& entity,
-    ecs::Entity component) {
+    ashiato::Entity component) {
     const ComponentExpansionKey key{source_index, entity.client_network_id, component};
     if (state.expanded_components.count(key) != 0U) {
         state.expanded_components.erase(key);
@@ -1949,7 +1949,7 @@ void draw_component_toggle(
     ViewerState& state,
     int source_index,
     const KTraceEntityRow& entity,
-    ecs::Entity component,
+    ashiato::Entity component,
     const ImVec2& pos) {
     const auto found = std::find_if(entity.components.begin(), entity.components.end(), [component](const KTraceComponentRow& row) {
         return row.component == component;
@@ -2029,7 +2029,7 @@ void append_entity_frame_event_indices(
     const KTraceEntityRow& entity,
     SyncFrame frame,
     std::vector<std::uint32_t>& out) {
-    for_each_entity_cell(entity, [&](ecs::Entity, KTraceRunId, const KTraceFrameCell& cell) {
+    for_each_entity_cell(entity, [&](ashiato::Entity, KTraceRunId, const KTraceFrameCell& cell) {
         if (cell.frame == frame) {
             out.insert(out.end(), cell.event_indices.begin(), cell.event_indices.end());
         }
@@ -2038,7 +2038,7 @@ void append_entity_frame_event_indices(
 
 void append_component_frame_event_indices(
     const KTraceEntityRow& entity,
-    ecs::Entity component_id,
+    ashiato::Entity component_id,
     SyncFrame frame,
     std::vector<std::uint32_t>& out) {
     for (const KTraceComponentRow& component : entity.components) {
@@ -2093,7 +2093,7 @@ int draw_entity_summary_cells(
     int drawn = 0;
     for (SyncFrame frame = first_visible_frame; frame <= last_visible_frame; ++frame) {
         SummaryState summary = SummaryState::None;
-        for_each_entity_cell(entity, [&](ecs::Entity, KTraceRunId, const KTraceFrameCell& cell) {
+        for_each_entity_cell(entity, [&](ashiato::Entity, KTraceRunId, const KTraceFrameCell& cell) {
             if (cell.frame == frame) {
                 aggregate_entity_cell(summary, cell);
             }
@@ -2101,7 +2101,7 @@ int draw_entity_summary_cells(
         if (summary != SummaryState::None) {
             KTraceFrameCell cell = summary_cell(frame, summary);
             append_entity_frame_event_indices(entity, frame, cell.event_indices);
-            draw_cell(draw, source, cell, origin, scroll_x, scroll_y, min_frame, row, entity, ecs::Entity{}, 0, source_index, state);
+            draw_cell(draw, source, cell, origin, scroll_x, scroll_y, min_frame, row, entity, ashiato::Entity{}, 0, source_index, state);
             ++drawn;
         }
     }
@@ -2142,7 +2142,7 @@ int draw_component_summary_cells(
 
 SummaryState entity_summary_at_frame(const KTraceEntityRow& entity, SyncFrame frame) {
     SummaryState summary = SummaryState::None;
-    for_each_entity_cell(entity, [&](ecs::Entity, KTraceRunId, const KTraceFrameCell& cell) {
+    for_each_entity_cell(entity, [&](ashiato::Entity, KTraceRunId, const KTraceFrameCell& cell) {
         if (cell.frame == frame) {
             aggregate_entity_cell(summary, cell);
         }
@@ -2166,7 +2166,7 @@ SummaryState component_summary_at_frame(
 
 std::vector<SyncFrame> entity_summary_frames(const KTraceEntityRow& entity) {
     std::vector<SyncFrame> frames;
-    for_each_entity_cell(entity, [&](ecs::Entity, KTraceRunId, const KTraceFrameCell& cell) {
+    for_each_entity_cell(entity, [&](ashiato::Entity, KTraceRunId, const KTraceFrameCell& cell) {
         frames.push_back(cell.frame);
     });
     std::sort(frames.begin(), frames.end());
@@ -2174,7 +2174,7 @@ std::vector<SyncFrame> entity_summary_frames(const KTraceEntityRow& entity) {
     return frames;
 }
 
-std::vector<SyncFrame> component_summary_frames(const KTraceEntityRow& entity, ecs::Entity component_id) {
+std::vector<SyncFrame> component_summary_frames(const KTraceEntityRow& entity, ashiato::Entity component_id) {
     std::vector<SyncFrame> frames;
     for (const KTraceComponentRow& component : entity.components) {
         if (component.component != component_id) {
@@ -2193,7 +2193,7 @@ void append_nav_cell(
     std::vector<TimelineNavCell>& out,
     int source_index,
     const KTraceEntityRow& entity,
-    ecs::Entity component,
+    ashiato::Entity component,
     const KTraceFrameCell& cell,
     KTraceRunId run,
     int row) {
@@ -2217,7 +2217,7 @@ std::vector<TimelineNavCell> collect_timeline_nav_cells(
                 }
                 KTraceFrameCell cell = summary_cell(frame, summary);
                 append_entity_frame_event_indices(entity, frame, cell.event_indices);
-                append_nav_cell(cells, source_index, entity, ecs::Entity{}, cell, 0, row);
+                append_nav_cell(cells, source_index, entity, ashiato::Entity{}, cell, 0, row);
             }
             ++row;
             continue;
@@ -2276,7 +2276,7 @@ void rebuild_source_metrics(ViewerState& state);
 void update_source_metrics(ViewerState& state, int source_index);
 
 void apply_server_entity_links(SyncTraceHistory& history) {
-    std::unordered_map<ClientEntityNetworkId, ecs::Entity> server_entities_by_network_id;
+    std::unordered_map<ClientEntityNetworkId, ashiato::Entity> server_entities_by_network_id;
     for (const KTraceSourceHistory& source : history.sources) {
         if (source.role != SyncTraceRole::Server) {
             continue;
@@ -4271,14 +4271,14 @@ void render_details(ViewerState& state) {
 void render_app(ViewerState& state) {
     ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize, ImGuiCond_Always);
-    ImGui::Begin("Kage Sync Trace Viewer", nullptr,
+    ImGui::Begin("Ashiato Sync Trace Viewer", nullptr,
         ImGuiWindowFlags_NoDecoration |
             ImGuiWindowFlags_NoMove |
             ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_NoScrollbar |
             ImGuiWindowFlags_NoScrollWithMouse);
 
-    ImGui::TextColored(ImVec4(0.86f, 0.91f, 0.98f, 1.0f), "Kage Sync Trace Viewer");
+    ImGui::TextColored(ImVec4(0.86f, 0.91f, 0.98f, 1.0f), "Ashiato Sync Trace Viewer");
     ImGui::SameLine();
     ImGui::TextColored(ImVec4(0.48f, 0.55f, 0.65f, 1.0f), "%zu sources", state.history.sources.size());
 
@@ -4447,7 +4447,7 @@ void write_metric_block(std::ofstream& out, const char* name, const std::vector<
 
 void write_benchmark_report(const ViewerState& state) {
     const std::string path = state.benchmark.options.report_path.empty()
-        ? std::string("/tmp/kage_sync_trace_viewer_benchmark.json")
+        ? std::string("/tmp/ashiato_sync_trace_viewer_benchmark.json")
         : state.benchmark.options.report_path;
     std::ofstream out(path);
     if (!out) {
@@ -4530,7 +4530,7 @@ bool parse_args(int argc, char** argv, ViewerState& state) {
                 if (!parse_int_arg(require_value(), "--benchmark-frames", state.benchmark.options.frames)) {
                     return false;
                 }
-#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
+#if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
             } else if (arg == "--control-socket") {
                 state.control_socket_path = require_value();
 #endif
@@ -4574,7 +4574,7 @@ int main(int argc, char** argv) {
 #if __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
-    GLFWwindow* window = glfwCreateWindow(1400, 900, "Kage Sync Trace Viewer", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(1400, 900, "Ashiato Sync Trace Viewer", nullptr, nullptr);
     if (window == nullptr) {
         std::fprintf(stderr, "failed to create trace viewer window\n");
         glfwTerminate();
@@ -4595,7 +4595,7 @@ int main(int argc, char** argv) {
         load_directory(state);
     }
 
-#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
+#if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
     ControlServer control_server;
     std::string control_error;
     if (!start_control_server(control_server, state.control_socket_path, control_error)) {
@@ -4628,15 +4628,15 @@ int main(int argc, char** argv) {
         glfwPollEvents();
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
-#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
+#if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
         poll_control_server(control_server, state, automation_input, window);
 #endif
         process_loader_messages(state);
-#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
+#if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
         apply_automation_input(automation_input);
 #endif
         ImGui::NewFrame();
-#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
+#if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
         if (!state.benchmark.options.enabled && ImGui::IsKeyPressed(ImGuiKey_F12, false)) {
             request_screenshot(state);
         }
@@ -4653,7 +4653,7 @@ int main(int argc, char** argv) {
         glClearColor(0.08f, 0.08f, 0.09f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
+#if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
         if (state.screenshot_requested) {
             const std::string path = screenshot_output_path(state);
             std::string error;
@@ -4686,7 +4686,7 @@ int main(int argc, char** argv) {
         write_benchmark_report(state);
     }
 
-#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
+#if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
     stop_control_server(control_server);
 #endif
     stop_loading_directory(state);
@@ -4695,7 +4695,7 @@ int main(int argc, char** argv) {
     ImGui::DestroyContext();
     glfwDestroyWindow(window);
     glfwTerminate();
-#if defined(KAGE_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
+#if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
     return state.screenshot_failed ? 1 : 0;
 #else
     return 0;

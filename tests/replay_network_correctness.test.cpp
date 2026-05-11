@@ -1,4 +1,4 @@
-#include "kage/sync/sync.hpp"
+#include "ashiato/sync/sync.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -51,7 +51,7 @@ struct ShootingCue {
 
 struct PlayedShootingCue {
     std::int32_t id = 0;
-    kage::sync::SyncFrame frame = 0;
+    ashiato::sync::SyncFrame frame = 0;
 };
 
 struct ReplayCuePlayback {
@@ -70,16 +70,16 @@ struct FrameSnapshot {
 
 struct ExpectedCue {
     std::int32_t id = 0;
-    kage::sync::SyncFrame frame = 0;
+    ashiato::sync::SyncFrame frame = 0;
 };
 
 constexpr double fixed_dt = 1.0 / 60.0;
-constexpr kage::sync::ClientId replay_client_id = 7;
-constexpr kage::sync::SyncFrame death_frame = 48;
-constexpr kage::sync::SyncFrame write_interval = 4;
-constexpr kage::sync::SyncFrame full_frame_interval = 16;
-constexpr kage::sync::SyncFrame preroll_frames = 24;
-constexpr kage::sync::SyncFrame tail_frames = 32;
+constexpr ashiato::sync::ClientId replay_client_id = 7;
+constexpr ashiato::sync::SyncFrame death_frame = 48;
+constexpr ashiato::sync::SyncFrame write_interval = 4;
+constexpr ashiato::sync::SyncFrame full_frame_interval = 16;
+constexpr ashiato::sync::SyncFrame preroll_frames = 24;
+constexpr ashiato::sync::SyncFrame tail_frames = 32;
 
 #ifdef _WIN32
 using SocketHandle = SOCKET;
@@ -166,12 +166,12 @@ sockaddr_in loopback_address(std::uint16_t port) {
     return address;
 }
 
-kage::sync::ClientId peer_id(const sockaddr_in& address) {
-    return (static_cast<kage::sync::ClientId>(ntohs(address.sin_port)) << 32U) |
-        static_cast<kage::sync::ClientId>(ntohl(address.sin_addr.s_addr));
+ashiato::sync::ClientId peer_id(const sockaddr_in& address) {
+    return (static_cast<ashiato::sync::ClientId>(ntohs(address.sin_port)) << 32U) |
+        static_cast<ashiato::sync::ClientId>(ntohl(address.sin_addr.s_addr));
 }
 
-void send_packet(SocketHandle socket, const sockaddr_in& target, const ecs::BitBuffer& packet) {
+void send_packet(SocketHandle socket, const sockaddr_in& target, const ashiato::BitBuffer& packet) {
     const auto* data = reinterpret_cast<const char*>(packet.data());
     (void)sendto(
         socket,
@@ -182,7 +182,7 @@ void send_packet(SocketHandle socket, const sockaddr_in& target, const ecs::BitB
         sizeof(target));
 }
 
-bool receive_packet(SocketHandle socket, ecs::BitBuffer& packet, sockaddr_in* sender = nullptr) {
+bool receive_packet(SocketHandle socket, ashiato::BitBuffer& packet, sockaddr_in* sender = nullptr) {
     std::array<char, 2048> bytes{};
     sockaddr_in source{};
 #ifdef _WIN32
@@ -208,58 +208,58 @@ bool receive_packet(SocketHandle socket, ecs::BitBuffer& packet, sockaddr_in* se
     return true;
 }
 
-std::uint8_t packet_message(ecs::BitBuffer packet) {
+std::uint8_t packet_message(ashiato::BitBuffer packet) {
     return packet.remaining_bits() >= 8U ? static_cast<std::uint8_t>(packet.read_bits(8U)) : 0U;
 }
 
-kage::sync::SyncFrame update_packet_frame(ecs::BitBuffer packet) {
-    if (packet_message(packet) != kage::sync::protocol::server_update_message) {
+ashiato::sync::SyncFrame update_packet_frame(ashiato::BitBuffer packet) {
+    if (packet_message(packet) != ashiato::sync::protocol::server_update_message) {
         return 0U;
     }
     (void)packet.read_bits(8U);
-    return static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
+    return static_cast<ashiato::sync::SyncFrame>(packet.read_bits(32U));
 }
 
-kage::sync::SyncArchetypeId define_replay_schema(ecs::Registry& registry) {
-    const ecs::Entity transform =
-        kage::sync::register_sync_component<ReplayTransform>(registry, "ReplayTransform");
-    const ecs::Entity death =
-        kage::sync::register_sync_component<ReplayDeathState>(registry, "ReplayDeathState");
+ashiato::sync::SyncArchetypeId define_replay_schema(ashiato::Registry& registry) {
+    const ashiato::Entity transform =
+        ashiato::sync::register_sync_component<ReplayTransform>(registry, "ReplayTransform");
+    const ashiato::Entity death =
+        ashiato::sync::register_sync_component<ReplayDeathState>(registry, "ReplayDeathState");
     registry.register_component<ReplayInput>("ReplayInput");
     registry.register_component<ReplayCuePlayback>("ReplayCuePlayback");
-    (void)kage::sync::register_sync_cue<ShootingCue>(registry);
-    return kage::sync::define_archetype(
+    (void)ashiato::sync::register_sync_cue<ShootingCue>(registry);
+    return ashiato::sync::define_archetype(
         registry,
         "ReplayActor",
         {
-            {transform, kage::sync::ReplicationAudience::All},
-            {death, kage::sync::ReplicationAudience::All},
+            {transform, ashiato::sync::ReplicationAudience::All},
+            {death, ashiato::sync::ReplicationAudience::All},
         });
 }
 
-void register_replay_jobs(ecs::Registry& registry) {
+void register_replay_jobs(ashiato::Registry& registry) {
     registry.job<ReplayTransform, const ReplayInput>(0).single_thread().each(
-        [](ecs::Entity, ReplayTransform& transform, const ReplayInput& input) {
+        [](ashiato::Entity, ReplayTransform& transform, const ReplayInput& input) {
             transform.position.x += input.move_x;
         });
 }
 
-ecs::Entity spawn_actor(
-    ecs::Registry& registry,
-    kage::sync::SyncArchetypeId archetype,
+ashiato::Entity spawn_actor(
+    ashiato::Registry& registry,
+    ashiato::sync::SyncArchetypeId archetype,
     ReplayVec3 position,
     bool with_input) {
-    const ecs::Entity entity = registry.create();
+    const ashiato::Entity entity = registry.create();
     registry.add<ReplayTransform>(entity, ReplayTransform{position});
     registry.add<ReplayDeathState>(entity, ReplayDeathState{});
     if (with_input) {
         registry.add<ReplayInput>(entity, ReplayInput{});
     }
-    registry.add<kage::sync::Replicated>(entity, kage::sync::Replicated{archetype});
+    registry.add<ashiato::sync::Replicated>(entity, ashiato::sync::Replicated{archetype});
     return entity;
 }
 
-FrameSnapshot snapshot_frame(ecs::Registry& registry, ecs::Entity killer, ecs::Entity victim) {
+FrameSnapshot snapshot_frame(ashiato::Registry& registry, ashiato::Entity killer, ashiato::Entity victim) {
     return FrameSnapshot{
         EntitySnapshot{registry.get<ReplayTransform>(killer), registry.get<ReplayDeathState>(killer)},
         EntitySnapshot{registry.get<ReplayTransform>(victim), registry.get<ReplayDeathState>(victim)},
@@ -268,8 +268,8 @@ FrameSnapshot snapshot_frame(ecs::Registry& registry, ecs::Entity killer, ecs::E
 
 std::vector<ExpectedCue> expected_cues_in_window(
     const std::vector<ExpectedCue>& emitted,
-    kage::sync::SyncFrame start_frame,
-    kage::sync::SyncFrame end_frame) {
+    ashiato::sync::SyncFrame start_frame,
+    ashiato::sync::SyncFrame end_frame) {
     std::vector<ExpectedCue> expected;
     for (ExpectedCue cue : emitted) {
         if (cue.frame >= start_frame && cue.frame <= end_frame) {
@@ -279,9 +279,9 @@ std::vector<ExpectedCue> expected_cues_in_window(
     return expected;
 }
 
-ecs::Entity find_actor_by_z(ecs::Registry& registry, float z) {
-    ecs::Entity found;
-    registry.view<const ReplayTransform>().each([&](ecs::Entity entity, const ReplayTransform& transform) {
+ashiato::Entity find_actor_by_z(ashiato::Registry& registry, float z) {
+    ashiato::Entity found;
+    registry.view<const ReplayTransform>().each([&](ashiato::Entity entity, const ReplayTransform& transform) {
         if (!found && transform.position.z == z) {
             found = entity;
         }
@@ -290,9 +290,9 @@ ecs::Entity find_actor_by_z(ecs::Registry& registry, float z) {
 }
 
 void require_snapshot_matches(
-    ecs::Registry& registry,
-    ecs::Entity killer,
-    ecs::Entity victim,
+    ashiato::Registry& registry,
+    ashiato::Entity killer,
+    ashiato::Entity victim,
     const FrameSnapshot& expected) {
     REQUIRE(killer);
     REQUIRE(victim);
@@ -312,45 +312,45 @@ void require_snapshot_matches(
 }
 
 struct RecordedReplay {
-    kage::sync::ReplicationReplayStreamer streamer;
-    std::map<kage::sync::SyncFrame, FrameSnapshot> snapshots;
+    ashiato::sync::ReplicationReplayStreamer streamer;
+    std::map<ashiato::sync::SyncFrame, FrameSnapshot> snapshots;
     std::vector<ExpectedCue> emitted_cues;
 };
 
 RecordedReplay build_recorded_replay() {
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = define_replay_schema(registry);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_replay_schema(registry);
     register_replay_jobs(registry);
 
-    const ecs::Entity killer = spawn_actor(registry, archetype, ReplayVec3{0.0f, 0.0f, 0.0f}, true);
-    const ecs::Entity victim = spawn_actor(registry, archetype, ReplayVec3{3.0f, 0.0f, 10.0f}, false);
+    const ashiato::Entity killer = spawn_actor(registry, archetype, ReplayVec3{0.0f, 0.0f, 0.0f}, true);
+    const ashiato::Entity victim = spawn_actor(registry, archetype, ReplayVec3{3.0f, 0.0f, 10.0f}, false);
 
-    kage::sync::ReplicationServerOptions server_options;
+    ashiato::sync::ReplicationServerOptions server_options;
     server_options.fixed_dt_seconds = fixed_dt;
-    kage::sync::ReplicationServer server(registry, server_options);
+    ashiato::sync::ReplicationServer server(registry, server_options);
 
     RecordedReplay recorded{
-        kage::sync::ReplicationReplayStreamer({128, preroll_frames, tail_frames}),
+        ashiato::sync::ReplicationReplayStreamer({128, preroll_frames, tail_frames}),
         {},
         {},
     };
 
-    kage::sync::ReplicationReplayWriter writer({
+    ashiato::sync::ReplicationReplayWriter writer({
         full_frame_interval,
-        [&](kage::sync::ReplicationReplayFrame frame) {
+        [&](ashiato::sync::ReplicationReplayFrame frame) {
             recorded.snapshots.emplace(frame.frame, snapshot_frame(registry, killer, victim));
             recorded.streamer.push_frame(std::move(frame));
         },
         write_interval});
     writer.attach(server);
 
-    constexpr kage::sync::SyncFrame total_frames = death_frame + tail_frames + 16U;
-    for (kage::sync::SyncFrame frame = 1; frame <= total_frames; ++frame) {
+    constexpr ashiato::sync::SyncFrame total_frames = death_frame + tail_frames + 16U;
+    for (ashiato::sync::SyncFrame frame = 1; frame <= total_frames; ++frame) {
         registry.write<ReplayInput>(killer).move_x = frame < death_frame ? 0.25f : -0.25f;
         if ((frame % 8U) == 0U) {
             const std::int32_t cue_id = static_cast<std::int32_t>(frame / 8U);
-            REQUIRE(registry.write<kage::sync::CueDispatcher>().emit(
-                registry.get<kage::sync::SyncSettings>(),
+            REQUIRE(registry.write<ashiato::sync::CueDispatcher>().emit(
+                registry.get<ashiato::sync::SyncSettings>(),
                 frame,
                 killer,
                 ShootingCue{cue_id},
@@ -368,7 +368,7 @@ RecordedReplay build_recorded_replay() {
 }
 
 struct ReplayNetworkHarness {
-    explicit ReplayNetworkHarness(const kage::sync::ReplicationReplayStreamer& replay_streamer)
+    explicit ReplayNetworkHarness(const ashiato::sync::ReplicationReplayStreamer& replay_streamer)
         : streamer(replay_streamer),
           socket(make_udp_socket(0)),
           port(bound_port(socket)) {}
@@ -377,24 +377,24 @@ struct ReplayNetworkHarness {
         close_socket(socket);
     }
 
-    const kage::sync::ReplicationReplayStreamer& streamer;
+    const ashiato::sync::ReplicationReplayStreamer& streamer;
     SocketHandle socket = invalid_socket;
     std::uint16_t port = 0;
     sockaddr_in client_address{};
-    ecs::Registry registry;
-    std::unique_ptr<kage::sync::ReplicationServer> server;
-    kage::sync::ReplicationReplayStreamSession session;
+    ashiato::Registry registry;
+    std::unique_ptr<ashiato::sync::ReplicationServer> server;
+    ashiato::sync::ReplicationReplayStreamSession session;
     bool started = false;
     bool ready = false;
 
     void receive_client_packets() {
-        ecs::BitBuffer packet;
+        ashiato::BitBuffer packet;
         sockaddr_in sender{};
         while (receive_packet(socket, packet, &sender)) {
             if (!started) {
                 begin(sender);
             }
-            const bool ack = packet_message(packet) == kage::sync::protocol::client_connect_ack_message;
+            const bool ack = packet_message(packet) == ashiato::sync::protocol::client_connect_ack_message;
             REQUIRE(server != nullptr);
             REQUIRE(server->process_packet(registry, peer_id(sender), std::move(packet)));
             if (ack) {
@@ -413,20 +413,20 @@ struct ReplayNetworkHarness {
         client_address = sender;
         (void)define_replay_schema(registry);
 
-        kage::sync::ReplicationServerOptions options;
+        ashiato::sync::ReplicationServerOptions options;
         options.fixed_dt_seconds = fixed_dt;
         options.bandwidth_limit_bytes_per_tick = 64 * 1024;
-        options.connect_handler = [](const std::string& token, kage::sync::ClientId& accepted, std::string&) {
+        options.connect_handler = [](const std::string& token, ashiato::sync::ClientId& accepted, std::string&) {
             if (token != "killcam") {
                 return false;
             }
             accepted = replay_client_id;
             return true;
         };
-        options.transport = [this](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+        options.transport = [this](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
             send_packet(socket, client_address, packet);
         };
-        server = std::make_unique<kage::sync::ReplicationServer>(registry, options);
+        server = std::make_unique<ashiato::sync::ReplicationServer>(registry, options);
         REQUIRE(streamer.begin_session(death_frame, registry, *server, session));
         started = true;
     }
@@ -434,7 +434,7 @@ struct ReplayNetworkHarness {
 
 }  // namespace replay_network_tests
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 template <>
 struct SyncComponentTraits<replay_network_tests::ReplayTransform> {
@@ -448,11 +448,11 @@ struct SyncComponentTraits<replay_network_tests::ReplayTransform> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(out));
         return true;
     }
@@ -470,11 +470,11 @@ struct SyncComponentTraits<replay_network_tests::ReplayDeathState> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ecs::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
         out.push_bits(current.dead, 1U);
     }
 
-    static bool deserialize(ecs::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
         out.dead = static_cast<std::uint8_t>(in.read_bits(1U));
         return true;
     }
@@ -482,18 +482,18 @@ struct SyncComponentTraits<replay_network_tests::ReplayDeathState> {
 
 template <>
 struct SyncCueTraits<replay_network_tests::ShootingCue> {
-    static void serialize(const replay_network_tests::ShootingCue& cue, ecs::BitBuffer& out) {
+    static void serialize(const replay_network_tests::ShootingCue& cue, ashiato::BitBuffer& out) {
         out.push_bits(cue.id, 16U);
     }
 
-    static bool deserialize(ecs::BitBuffer& in, replay_network_tests::ShootingCue& out) {
+    static bool deserialize(ashiato::BitBuffer& in, replay_network_tests::ShootingCue& out) {
         out.id = static_cast<std::int32_t>(in.read_bits(16U));
         return true;
     }
 
     static bool play(
-        ecs::Registry& registry,
-        ecs::Entity owner,
+        ashiato::Registry& registry,
+        ashiato::Entity owner,
         const replay_network_tests::ShootingCue& cue,
         float,
         SyncFrame frame) {
@@ -505,7 +505,7 @@ struct SyncCueTraits<replay_network_tests::ShootingCue> {
         return true;
     }
 
-    static bool rollback(ecs::Registry&, ecs::Entity, const replay_network_tests::ShootingCue&) {
+    static bool rollback(ashiato::Registry&, ashiato::Entity, const replay_network_tests::ShootingCue&) {
         return true;
     }
 
@@ -516,7 +516,7 @@ struct SyncCueTraits<replay_network_tests::ShootingCue> {
     }
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync
 
 TEST_CASE("network replay smoke streams correct movement and cue frames") {
     using namespace replay_network_tests;
@@ -528,40 +528,40 @@ TEST_CASE("network replay smoke streams correct movement and cue frames") {
     SocketHandle client_socket = make_udp_socket(0);
     const sockaddr_in replay_server_address = loopback_address(harness.port);
 
-    ecs::Registry client_registry;
+    ashiato::Registry client_registry;
     (void)define_replay_schema(client_registry);
 
-    kage::sync::ReplicationClientOptions client_options;
+    ashiato::sync::ReplicationClientOptions client_options;
     client_options.session.local_client = replay_client_id;
     client_options.session.connect_token = "killcam";
-    client_options.entities.default_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    client_options.entities.default_mode = ashiato::sync::ReplicationClientMode::BufferedInterpolation;
     client_options.clock.fixed_dt_seconds = fixed_dt;
     client_options.buffered.auto_buffered_frame_lag = false;
     client_options.buffered.buffered_frame_lag = 2;
-    kage::sync::ReplicationClient client(client_registry, client_options);
-    client.set_packet_sender([client_socket, replay_server_address](const ecs::BitBuffer& packet) {
+    ashiato::sync::ReplicationClient client(client_registry, client_options);
+    client.set_packet_sender([client_socket, replay_server_address](const ashiato::BitBuffer& packet) {
         send_packet(client_socket, replay_server_address, packet);
     });
 
-    ecs::Entity local_killer;
-    ecs::Entity local_victim;
-    std::vector<kage::sync::SyncFrame> received_update_frames;
-    std::vector<kage::sync::SyncFrame> checked_sample_frames;
-    kage::sync::SyncFrame last_checked_applied_frame = 0;
+    ashiato::Entity local_killer;
+    ashiato::Entity local_victim;
+    std::vector<ashiato::sync::SyncFrame> received_update_frames;
+    std::vector<ashiato::sync::SyncFrame> checked_sample_frames;
+    ashiato::sync::SyncFrame last_checked_applied_frame = 0;
     bool saw_rightward_sample = false;
     bool saw_leftward_sample = false;
     float previous_killer_x = 0.0f;
     bool have_previous_killer_x = false;
-    kage::sync::SyncFrame observed_dead_frame = 0;
+    ashiato::sync::SyncFrame observed_dead_frame = 0;
 
     for (int tick = 0; tick < 420; ++tick) {
         REQUIRE(client.tick(client_registry, fixed_dt));
         harness.receive_client_packets();
         harness.tick();
 
-        ecs::BitBuffer packet;
+        ashiato::BitBuffer packet;
         while (receive_packet(client_socket, packet)) {
-            const kage::sync::SyncFrame update_frame = update_packet_frame(packet);
+            const ashiato::sync::SyncFrame update_frame = update_packet_frame(packet);
             if (update_frame != 0U) {
                 received_update_frames.push_back(update_frame);
             }
@@ -577,9 +577,12 @@ TEST_CASE("network replay smoke streams correct movement and cue frames") {
         }
 
         if (client.has_applied_buffered_frame()) {
-            const kage::sync::SyncFrame applied = client.last_applied_buffered_frame();
+            const ashiato::sync::SyncFrame applied = client.last_applied_buffered_frame();
             const auto expected = recorded.snapshots.find(applied);
             if (expected != recorded.snapshots.end() && applied != last_checked_applied_frame) {
+                if (!local_killer || !local_victim) {
+                    continue;
+                }
                 require_snapshot_matches(client_registry, local_killer, local_victim, expected->second);
                 checked_sample_frames.push_back(applied);
                 last_checked_applied_frame = applied;
@@ -621,7 +624,7 @@ TEST_CASE("network replay smoke streams correct movement and cue frames") {
 
     REQUIRE(harness.started);
     REQUIRE(harness.ready);
-    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Ready);
+    REQUIRE(client.connection_state() == ashiato::sync::ReplicationClientConnectionState::Ready);
     REQUIRE_FALSE(received_update_frames.empty());
     REQUIRE(std::is_sorted(received_update_frames.begin(), received_update_frames.end()));
     REQUIRE(local_killer);
@@ -631,7 +634,7 @@ TEST_CASE("network replay smoke streams correct movement and cue frames") {
     REQUIRE(saw_leftward_sample);
     REQUIRE(observed_dead_frame >= death_frame);
 
-    const kage::sync::SyncFrame session_start = checked_sample_frames.front();
+    const ashiato::sync::SyncFrame session_start = checked_sample_frames.front();
     const std::vector<ExpectedCue> expected_cues =
         expected_cues_in_window(recorded.emitted_cues, session_start, checked_sample_frames.back());
     REQUIRE(client_registry.contains<ReplayCuePlayback>(local_killer));

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "kage/sync/components.hpp"
-#include "kage/sync/server_frame_consumer.hpp"
+#include "ashiato/sync/components.hpp"
+#include "ashiato/sync/server_frame_consumer.hpp"
 #include "server/bandwidth_controller.hpp"
 
 #include <cstddef>
@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 class ReplicationServer;
 
@@ -30,7 +30,7 @@ struct ClientEntityState {
         SyncFrame expire_frame = 0;
         SyncCueTypeId type = 0;
         float relevance_seconds = 0.0f;
-        ecs::BitBuffer payload;
+        ashiato::BitBuffer payload;
     };
 
     std::uint32_t baseline = invalid_quantized_frame_id;
@@ -60,7 +60,7 @@ struct ClientDirtyQueue {
 };
 
 struct ClientDestroyState {
-    ecs::Entity entity;
+    ashiato::Entity entity;
     SyncFrame frame = 0;
     std::uint64_t reset_epoch = 0;
     std::uint32_t network_id = 0;
@@ -74,10 +74,10 @@ struct PacketAckRecord {
         std::string data;
     };
 
-    ecs::Entity entity;
+    ashiato::Entity entity;
     SyncFrame frame = 0;
     bool destroy = false;
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     std::vector<CueSummary> cues{};
 #endif
 };
@@ -91,7 +91,7 @@ struct PendingPacketAck {
 
 struct SerializedEntity {
     std::uint32_t quantized_frame = invalid_quantized_frame_id;
-    ecs::BitBuffer payload;
+    ashiato::BitBuffer payload;
 };
 
 struct SerializedCandidate {
@@ -130,9 +130,9 @@ struct ServerClientReplicator final : ServerRegistryDirtyFrameListener, ServerFr
         std::size_t size() const noexcept;
         ClientDestroyState& at(std::size_t index) noexcept;
         const ClientDestroyState& at(std::size_t index) const noexcept;
-        void enqueue(ecs::Entity entity, SyncFrame frame, std::uint32_t network_id, std::uint32_t network_version);
-        bool acknowledge(ServerClientReplicator& client, ecs::Entity entity, SyncFrame frame);
-        bool contains_ack_record(ecs::Entity entity, SyncFrame frame) const;
+        void enqueue(ashiato::Entity entity, SyncFrame frame, std::uint32_t network_id, std::uint32_t network_version);
+        bool acknowledge(ServerClientReplicator& client, ashiato::Entity entity, SyncFrame frame);
+        bool contains_ack_record(ashiato::Entity entity, SyncFrame frame) const;
     };
 
     struct NetworkIds {
@@ -173,7 +173,7 @@ struct ServerClientReplicator final : ServerRegistryDirtyFrameListener, ServerFr
         bool client_acknowledged_destroy(
             ReplicationServer& server,
             ServerClientReplicator& client,
-            ecs::Entity entity,
+            ashiato::Entity entity,
             SyncFrame frame);
         bool packet_ack_record_pending(
             const ReplicationServer& server,
@@ -217,7 +217,7 @@ struct ServerClientReplicator final : ServerRegistryDirtyFrameListener, ServerFr
     bool enqueue_destroy(
         ReplicationServer& replication_server,
         std::uint32_t replicated_index,
-        ecs::Entity entity,
+        ashiato::Entity entity,
         SyncFrame frame);
     bool acknowledge_entity(ReplicationServer& replication_server, std::uint32_t replicated_index, SyncFrame frame);
 };
@@ -225,7 +225,7 @@ struct ServerClientReplicator final : ServerRegistryDirtyFrameListener, ServerFr
 struct ServerClientReplicator::UpdateWriter {
     bool serialize_entity(
         ReplicationServer& server,
-        const ecs::Registry& registry,
+        const ashiato::Registry& registry,
         const SyncSettings& settings,
         ServerClientReplicator& client,
         std::uint32_t slot,
@@ -236,13 +236,13 @@ struct ServerClientReplicator::UpdateWriter {
 private:
     void write_entity_record(
         ReplicationServer& server,
-        const ecs::Registry& registry,
+        const ashiato::Registry& registry,
         const SyncSettings& settings,
         ServerClientReplicator& client,
         std::uint32_t slot,
         std::uint32_t quantized_frame,
         std::uint64_t component_mask,
-        ecs::BitBuffer& out);
+        ashiato::BitBuffer& out);
 
     QuantizedFrameData quantized_frame_scratch_;
     std::vector<std::uint64_t> quantized_frame_dirty_scratch_;
@@ -251,7 +251,7 @@ private:
 struct ServerClientReplicator::UpdateScheduler {
     ReplicationServer::ReplicationSendResult send_client(
         ReplicationServer& server,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         ServerClientReplicator& replication,
         std::uint32_t completed_frames);
@@ -267,11 +267,11 @@ private:
     std::vector<SerializedCandidate> candidates_;
     std::vector<SerializedCandidate> update_candidates_;
     std::vector<std::size_t> destroy_order_;
-    ecs::BitBuffer records_;
+    ashiato::BitBuffer records_;
     std::vector<PacketAckRecord> packet_ack_records_;
     SerializedEntity serialized_;
     UpdateWriter writer_;
 };
 
 }  // namespace server_detail
-}  // namespace kage::sync
+}  // namespace ashiato::sync

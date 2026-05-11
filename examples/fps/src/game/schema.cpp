@@ -6,18 +6,18 @@
 
 namespace fps {
 
-SyncSchema define_schema(ecs::Registry& registry) {
-    const ecs::Entity transform = kage::sync::register_sync_component<FpsTransform>(registry, "FpsTransform");
-    const ecs::Entity velocity = kage::sync::register_sync_component<FpsVelocity>(registry, "FpsVelocity");
-    const ecs::Entity combat = kage::sync::register_sync_component<FpsCombatState>(registry, "FpsCombatState");
-    const ecs::Entity death = kage::sync::register_sync_component<FpsDeathInfo>(registry, "FpsDeathInfo");
-    const ecs::Entity visual = kage::sync::register_sync_component<FpsVisual>(registry, "FpsVisual");
-    const ecs::Entity unique_player_id = kage::sync::register_sync_component<FpsUniquePlayerId>(registry, "FpsUniquePlayerId");
-    const ecs::Entity owner = kage::sync::register_sync_component<kage::sync::NetworkOwner>(registry, "kage.sync.NetworkOwner");
-    const ecs::Entity no_simulate = registry.component<kage::sync::NoSimulate>();
-    const ecs::Entity stunned = registry.register_component<FpsStunned>("FpsStunned");
+SyncSchema define_schema(ashiato::Registry& registry) {
+    const ashiato::Entity transform = ashiato::sync::register_sync_component<FpsTransform>(registry, "FpsTransform");
+    const ashiato::Entity velocity = ashiato::sync::register_sync_component<FpsVelocity>(registry, "FpsVelocity");
+    const ashiato::Entity combat = ashiato::sync::register_sync_component<FpsCombatState>(registry, "FpsCombatState");
+    const ashiato::Entity death = ashiato::sync::register_sync_component<FpsDeathInfo>(registry, "FpsDeathInfo");
+    const ashiato::Entity visual = ashiato::sync::register_sync_component<FpsVisual>(registry, "FpsVisual");
+    const ashiato::Entity unique_player_id = ashiato::sync::register_sync_component<FpsUniquePlayerId>(registry, "FpsUniquePlayerId");
+    const ashiato::Entity owner = ashiato::sync::register_sync_component<ashiato::sync::NetworkOwner>(registry, "ashiato.sync.NetworkOwner");
+    const ashiato::Entity no_simulate = registry.component<ashiato::sync::NoSimulate>();
+    const ashiato::Entity stunned = registry.register_component<FpsStunned>("FpsStunned");
     registry.register_component<FpsKillCamTarget>("FpsKillCamTarget");
-    kage::sync::register_sync_component<FpsInput>(registry, "FpsInput");
+    ashiato::sync::register_sync_component<FpsInput>(registry, "FpsInput");
     registry.register_component<FpsShotEffect>("FpsShotEffect");
     registry.register_component<FpsHitEffect>("FpsHitEffect");
     registry.register_component<FpsSurfaceHitEffect>("FpsSurfaceHitEffect");
@@ -26,40 +26,40 @@ SyncSchema define_schema(ecs::Registry& registry) {
     registry.register_component<FpsServerFrame>("FpsServerFrame");
     registry.register_component<FpsStunState>("FpsStunState");
     registry.register_component<BotBrain>("BotBrain");
-    (void)kage::sync::set_fractional_tick_sampled(registry, transform);
-    (void)kage::sync::register_sync_cue<ShotCue>(registry);
-    (void)kage::sync::register_sync_cue<SurfaceHitCue>(registry);
-    (void)kage::sync::register_sync_cue<PlayerHitCue>(registry);
-    (void)kage::sync::register_sync_cue<HitConfirmCue>(registry);
-    (void)kage::sync::register_sync_cue<PlayerDeathCue>(registry);
-    (void)kage::sync::set_client_input_component<FpsInput>(registry);
+    (void)ashiato::sync::set_fractional_tick_sampled(registry, transform);
+    (void)ashiato::sync::register_sync_cue<ShotCue>(registry);
+    (void)ashiato::sync::register_sync_cue<SurfaceHitCue>(registry);
+    (void)ashiato::sync::register_sync_cue<PlayerHitCue>(registry);
+    (void)ashiato::sync::register_sync_cue<HitConfirmCue>(registry);
+    (void)ashiato::sync::register_sync_cue<PlayerDeathCue>(registry);
+    (void)ashiato::sync::set_client_input_component<FpsInput>(registry);
     return SyncSchema{
-        kage::sync::define_archetype(
+        ashiato::sync::define_archetype(
             registry,
-            kage::sync::SyncArchetypeDesc{
+            ashiato::sync::SyncArchetypeDesc{
                 "FpsCharacter",
                 {
-                    {no_simulate, kage::sync::ReplicationAudience::All},
-                    {stunned, kage::sync::ReplicationAudience::All},
+                    {no_simulate, ashiato::sync::ReplicationAudience::All},
+                    {stunned, ashiato::sync::ReplicationAudience::All},
                 },
                 {
-                {transform, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate},
-                {velocity, kage::sync::ReplicationAudience::All},
-                {combat, kage::sync::ReplicationAudience::All},
-                {death, kage::sync::ReplicationAudience::All},
-                {visual, kage::sync::ReplicationAudience::All},
-                {unique_player_id, kage::sync::ReplicationAudience::All},
-                {owner, kage::sync::ReplicationAudience::All},
+                {transform, ashiato::sync::ReplicationAudience::All, ashiato::sync::ComponentInterpolation::Interpolate},
+                {velocity, ashiato::sync::ReplicationAudience::All},
+                {combat, ashiato::sync::ReplicationAudience::All},
+                {death, ashiato::sync::ReplicationAudience::All},
+                {visual, ashiato::sync::ReplicationAudience::All},
+                {unique_player_id, ashiato::sync::ReplicationAudience::All},
+                {owner, ashiato::sync::ReplicationAudience::All},
                 }})};
 }
 
-ecs::Entity spawn_character(
-    ecs::Registry& registry,
+ashiato::Entity spawn_character(
+    ashiato::Registry& registry,
     const SyncSchema& schema,
     Vector3 position,
     Color color,
-    kage::sync::ClientId owner) {
-    const ecs::Entity entity = registry.create();
+    ashiato::sync::ClientId owner) {
+    const ashiato::Entity entity = registry.create();
     registry.add<FpsTransform>(entity, FpsTransform{position.x, position.y, position.z, 0.0f, 0.0f});
     registry.add<FpsVelocity>(entity, FpsVelocity{});
     registry.add<FpsCombatState>(entity, FpsCombatState{});
@@ -76,13 +76,13 @@ ecs::Entity spawn_character(
             0});
     registry.add<FpsInput>(entity, FpsInput{});
     registry.add<FpsUniquePlayerId>(entity, FpsUniquePlayerId{entity.value});
-    if (registry.get<kage::sync::SyncSettings>().role == kage::sync::SyncRole::Server) {
+    if (registry.get<ashiato::sync::SyncSettings>().role == ashiato::sync::SyncRole::Server) {
         registry.add<FpsTransformHistory>(entity, FpsTransformHistory{});
     }
-    if (owner != kage::sync::invalid_client_id) {
-        (void)kage::sync::set_owner(registry, entity, owner);
+    if (owner != ashiato::sync::invalid_client_id) {
+        (void)ashiato::sync::set_owner(registry, entity, owner);
     }
-    registry.add<kage::sync::Replicated>(entity, kage::sync::Replicated{schema.character});
+    registry.add<ashiato::sync::Replicated>(entity, ashiato::sync::Replicated{schema.character});
     return entity;
 }
 

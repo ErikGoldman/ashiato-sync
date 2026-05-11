@@ -24,15 +24,15 @@
 namespace fps {
 
 struct FpsEntityModeSelector {
-    ecs::Registry* registry = nullptr;
+    ashiato::Registry* registry = nullptr;
 
-    kage::sync::ReplicationClientMode operator()(const kage::sync::ReplicatedEntityUpdateView& update) const {
-        kage::sync::NetworkOwner owner{};
+    ashiato::sync::ReplicationClientMode operator()(const ashiato::sync::ReplicatedEntityUpdateView& update) const {
+        ashiato::sync::NetworkOwner owner{};
         if (registry != nullptr && update.try_get(*registry, owner) &&
-            owner.client == registry->get<kage::sync::SyncSettings>().local_client) {
-            return kage::sync::ReplicationClientMode::Predict;
+            owner.client == registry->get<ashiato::sync::SyncSettings>().local_client) {
+            return ashiato::sync::ReplicationClientMode::Predict;
         }
-        return kage::sync::ReplicationClientMode::BufferedInterpolation;
+        return ashiato::sync::ReplicationClientMode::BufferedInterpolation;
     }
 };
 
@@ -53,30 +53,30 @@ void draw_kill_cam_overlay() {
 }
 
 void run_client(const AppConfig& config) {
-    ecs::Registry registry;
+    ashiato::Registry registry;
     const SyncSchema schema = define_schema(registry);
     (void)schema;
-    kage::sync::configure_client(registry, 1);
 
-    kage::sync::ReplicationClientOptions client_options;
+    ashiato::sync::ReplicationClientOptions client_options;
+    client_options.session.local_client = 1;
     client_options.session.connect_token = "fps";
-    client_options.entities.default_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    client_options.entities.default_mode = ashiato::sync::ReplicationClientMode::BufferedInterpolation;
     client_options.clock.fixed_dt_seconds = fixed_dt;
-    client_options.prediction.rollback_policy = kage::sync::ReplicationRollbackPolicy::OnlyAffected;
+    client_options.prediction.rollback_policy = ashiato::sync::ReplicationRollbackPolicy::OnlyAffected;
     client_options.buffered.buffered_frame_lag = 2;
     client_options.entities.mode_selector = FpsEntityModeSelector{&registry};
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     client_options.trace = make_trace_options(config);
 #endif
-    kage::sync::ReplicationClient client(registry, client_options);
+    ashiato::sync::ReplicationClient client(registry, client_options);
     register_game_jobs(registry, client);
-    kage::sync::FractionalTickSampler client_display(client);
-    std::unique_ptr<kage::sync::FractionalTickSampler> death_cam_display;
+    ashiato::sync::FractionalTickSampler client_display(client);
+    std::unique_ptr<ashiato::sync::FractionalTickSampler> death_cam_display;
 
     SocketHandle socket = make_udp_socket(0);
     const sockaddr_in server_address = make_address(config.host, config.port);
 
-    InitWindow(1280, 720, "kage-sync FPS");
+    InitWindow(1280, 720, "ashiato-sync FPS");
     InitAudioDevice();
     EnableCursor();
     SetTargetFPS(120);
@@ -87,7 +87,7 @@ void run_client(const AppConfig& config) {
 
     FpsInput current_input{};
     MouseLookState look;
-    const kage::sync::examples::NetworkSimulatorSettings initial_link_settings{
+    const ashiato::sync::examples::NetworkSimulatorSettings initial_link_settings{
         std::max(0.0, config.latency_ms),
         std::max(0.0, config.jitter_ms),
         std::clamp(config.loss_percent, 0.0, 100.0),
@@ -103,7 +103,7 @@ void run_client(const AppConfig& config) {
     bool was_local_dead = false;
     bool show_latency_stats = true;
     double packet_drop_remaining_seconds = 0.0;
-    client.set_packet_sender([&packet_drop_remaining_seconds, &outgoing_link, &link_time_seconds](const ecs::BitBuffer& packet) {
+    client.set_packet_sender([&packet_drop_remaining_seconds, &outgoing_link, &link_time_seconds](const ashiato::BitBuffer& packet) {
         if (packet_drop_remaining_seconds <= 0.0) {
             (void)outgoing_link.enqueue(0, packet, link_time_seconds);
         }
@@ -115,9 +115,9 @@ void run_client(const AppConfig& config) {
         packet_drop_remaining_seconds =
             std::max(0.0, packet_drop_remaining_seconds - static_cast<double>(dt));
         const double display_target = client.fractional_tick_target_frame();
-        const kage::sync::SyncFrame display_target_frame =
+        const ashiato::sync::SyncFrame display_target_frame =
             display_target > 0.0 && std::isfinite(display_target)
-            ? static_cast<kage::sync::SyncFrame>(std::floor(display_target))
+            ? static_cast<ashiato::sync::SyncFrame>(std::floor(display_target))
             : 0U;
         current_input = read_player_input(current_input, look, display_target_frame);
         if (IsKeyPressed(KEY_SLASH)) {
@@ -130,7 +130,7 @@ void run_client(const AppConfig& config) {
         (void)client.set_input(registry, current_input);
 
         const bool dropping_packets = packet_drop_remaining_seconds > 0.0;
-        ecs::BitBuffer received;
+        ashiato::BitBuffer received;
         while (receive_packet(socket, received)) {
             if (!dropping_packets) {
                 (void)incoming_link.enqueue(0, received, link_time_seconds);
@@ -139,7 +139,7 @@ void run_client(const AppConfig& config) {
         if (dropping_packets) {
             (void)incoming_link.drop_queued(link_time_seconds);
         } else {
-            incoming_link.deliver_ready(link_time_seconds, [&client](int, const ecs::BitBuffer& packet) {
+            incoming_link.deliver_ready(link_time_seconds, [&client](int, const ashiato::BitBuffer& packet) {
                 client.receive_packet(packet);
             });
         }
@@ -147,15 +147,15 @@ void run_client(const AppConfig& config) {
         if (dropping_packets) {
             (void)outgoing_link.drop_queued(link_time_seconds);
         } else {
-            outgoing_link.deliver_ready(link_time_seconds, [socket, server_address](int, const ecs::BitBuffer& packet) {
+            outgoing_link.deliver_ready(link_time_seconds, [socket, server_address](int, const ashiato::BitBuffer& packet) {
                 send_packet(socket, server_address, packet);
             });
         }
 
-        auto find_local_entity = [](ecs::Registry& source) {
-            ecs::Entity result;
-            const kage::sync::ClientId local_client_id = source.get<kage::sync::SyncSettings>().local_client;
-            source.view<const kage::sync::NetworkOwner>().each([&result, local_client_id](ecs::Entity entity, const kage::sync::NetworkOwner& owner) {
+        auto find_local_entity = [](ashiato::Registry& source) {
+            ashiato::Entity result;
+            const ashiato::sync::ClientId local_client_id = source.get<ashiato::sync::SyncSettings>().local_client;
+            source.view<const ashiato::sync::NetworkOwner>().each([&result, local_client_id](ashiato::Entity entity, const ashiato::sync::NetworkOwner& owner) {
                 if (owner.client == local_client_id) {
                     result = entity;
                 }
@@ -163,7 +163,7 @@ void run_client(const AppConfig& config) {
             return result;
         };
 
-        const ecs::Entity live_local_entity = find_local_entity(registry);
+        const ashiato::Entity live_local_entity = find_local_entity(registry);
         bool is_local_dead = false;
         if (live_local_entity && registry.alive(live_local_entity)) {
             if (const FpsCombatState* combat = registry.try_get<FpsCombatState>(live_local_entity)) {
@@ -171,31 +171,31 @@ void run_client(const AppConfig& config) {
             }
         }
         if (is_local_dead && !was_local_dead && !death_cam.active()) {
-            death_cam.start(config.host, config.replay_port, registry.get<kage::sync::SyncSettings>().local_client);
+            death_cam.start(config.host, config.replay_port, registry.get<ashiato::sync::SyncSettings>().local_client);
             previous_dead.clear();
         }
         was_local_dead = is_local_dead;
         death_cam.tick(dt);
 
-        const ecs::Entity replay_local_entity = death_cam.active() ? find_local_entity(death_cam.registry()) : ecs::Entity{};
-        const bool replay_ready = replay_local_entity != ecs::Entity{};
+        const ashiato::Entity replay_local_entity = death_cam.active() ? find_local_entity(death_cam.registry()) : ashiato::Entity{};
+        const bool replay_ready = replay_local_entity != ashiato::Entity{};
         if (replay_ready && death_cam_display == nullptr) {
-            death_cam_display = std::make_unique<kage::sync::FractionalTickSampler>(death_cam.client());
+            death_cam_display = std::make_unique<ashiato::sync::FractionalTickSampler>(death_cam.client());
         } else if (!replay_ready) {
             death_cam_display.reset();
         }
-        ecs::Registry& render_registry = replay_ready ? death_cam.registry() : registry;
-        kage::sync::ReplicationClient& render_client = replay_ready ? death_cam.client() : client;
-        kage::sync::FractionalTickSampler& render_display_source =
+        ashiato::Registry& render_registry = replay_ready ? death_cam.registry() : registry;
+        ashiato::sync::ReplicationClient& render_client = replay_ready ? death_cam.client() : client;
+        ashiato::sync::FractionalTickSampler& render_display_source =
             replay_ready ? *death_cam_display : client_display;
-        ecs::Entity local_entity = find_local_entity(render_registry);
-        const std::vector<kage::sync::FractionalTickSample>& render_display =
+        ashiato::Entity local_entity = find_local_entity(render_registry);
+        const std::vector<ashiato::sync::FractionalTickSample>& render_display =
             render_display_source.entities(render_registry);
         if (replay_ready) {
-            const ecs::Entity kill_cam_target = render_registry.component<FpsKillCamTarget>();
-            ecs::Entity ecs_target;
+            const ashiato::Entity kill_cam_target = render_registry.component<FpsKillCamTarget>();
+            ashiato::Entity ecs_target;
             render_registry.view<const FpsTransform>().with_tags<const FpsKillCamTarget>().each(
-                [&ecs_target](ecs::Entity entity, const FpsTransform&) {
+                [&ecs_target](ashiato::Entity entity, const FpsTransform&) {
                     if (!ecs_target) {
                         ecs_target = entity;
                     }
@@ -204,7 +204,7 @@ void run_client(const AppConfig& config) {
             if (replay_target_player_id != 0U) {
                 render_registry.view<const FpsUniquePlayerId, const FpsTransform>().each(
                     [&ecs_target, replay_target_player_id](
-                        ecs::Entity entity,
+                        ashiato::Entity entity,
                         const FpsUniquePlayerId& unique,
                         const FpsTransform&) {
                         if (unique.value == replay_target_player_id) {
@@ -240,7 +240,7 @@ void run_client(const AppConfig& config) {
         if (local_entity && render_registry.alive(local_entity)) {
             FpsTransform sampled_transform{};
             const FpsTransform* transform = nullptr;
-            for (const kage::sync::FractionalTickSample& sample : render_display) {
+            for (const ashiato::sync::FractionalTickSample& sample : render_display) {
                 if (sample.local_entity == local_entity && sample.try_get_sampled_value(render_registry, sampled_transform)) {
                     transform = &sampled_transform;
                     break;
@@ -271,7 +271,7 @@ void run_client(const AppConfig& config) {
         ClearBackground(Color{20, 22, 26, 255});
         BeginMode3D(camera);
         draw_arena();
-        for (const kage::sync::FractionalTickSample& sample : render_display) {
+        for (const ashiato::sync::FractionalTickSample& sample : render_display) {
             FpsTransform transform{};
             if (!sample.try_get_sampled_value(render_registry, transform)) {
                 continue;
@@ -315,7 +315,7 @@ void run_client(const AppConfig& config) {
             particle_color.a = static_cast<unsigned char>(alpha * static_cast<float>(particle.color.a));
             DrawSphere(particle.position, 0.035f, particle_color);
         }
-        render_registry.view<const FpsSurfaceHitEffect>().each([](ecs::Entity, const FpsSurfaceHitEffect& effect) {
+        render_registry.view<const FpsSurfaceHitEffect>().each([](ashiato::Entity, const FpsSurfaceHitEffect& effect) {
             for (const WallParticle& particle : effect.particles) {
                 const float alpha = std::clamp(particle.seconds / 0.35f, 0.0f, 1.0f);
                 Color particle_color = particle.color;
@@ -329,14 +329,14 @@ void run_client(const AppConfig& config) {
         }
         rlDisableDepthTest();
 
-        render_registry.view<FpsShotEffect>().each([&shot_sound](ecs::Entity entity, FpsShotEffect& effect) {
+        render_registry.view<FpsShotEffect>().each([&shot_sound](ashiato::Entity entity, FpsShotEffect& effect) {
             if (effect.sound_played == 0U) {
                 PlaySound(shot_sound);
                 effect.sound_played = 1;
             }
             (void)entity;
         });
-        render_registry.view<FpsHitEffect>().each([&hit_confirm_sound, &took_damage_sound, &death_sound, local_entity](ecs::Entity entity, FpsHitEffect& effect) {
+        render_registry.view<FpsHitEffect>().each([&hit_confirm_sound, &took_damage_sound, &death_sound, local_entity](ashiato::Entity entity, FpsHitEffect& effect) {
             if (effect.sound_played != 0U) {
                 return;
             }
@@ -391,8 +391,8 @@ void run_client(const AppConfig& config) {
         DrawText(TextFormat("ammo %u / %d", local_combat.ammo, magazine_size), 30, 56, 20, RAYWHITE);
         DrawText(
             replay_ready
-                ? TextFormat("replay client %llu", static_cast<unsigned long long>(render_registry.get<kage::sync::SyncSettings>().local_client))
-                : TextFormat("client %llu", static_cast<unsigned long long>(render_registry.get<kage::sync::SyncSettings>().local_client)),
+                ? TextFormat("replay client %llu", static_cast<unsigned long long>(render_registry.get<ashiato::sync::SyncSettings>().local_client))
+                : TextFormat("client %llu", static_cast<unsigned long long>(render_registry.get<ashiato::sync::SyncSettings>().local_client)),
             30,
             82,
             14,
@@ -411,7 +411,7 @@ void run_client(const AppConfig& config) {
                 106,
                 14,
                 Color{190, 200, 215, 255});
-            const kage::sync::ReplicationClientTimingStats& timing = client.timing_stats();
+            const ashiato::sync::ReplicationClientTimingStats& timing = client.timing_stats();
             DrawRectangle(18, 132, 470, 164, Color{12, 14, 18, 170});
             DrawText("controls", 30, 142, 16, RAYWHITE);
             DrawText("WASD move   Mouse aim   Space jump   R reload", 30, 168, 14, Color{210, 220, 235, 255});
@@ -468,7 +468,7 @@ void run_client(const AppConfig& config) {
                     TextFormat(
                         "buffer current %u  capacity %zu",
                         client.current_buffered_frame_lag(),
-                        kage::sync::ReplicationClient::buffered_frame_capacity),
+                        ashiato::sync::ReplicationClient::buffered_frame_capacity),
                     stats_x + 12,
                     144,
                     14,
@@ -522,7 +522,7 @@ void run_client(const AppConfig& config) {
     UnloadSound(death_sound);
     CloseAudioDevice();
     CloseWindow();
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     client.close_trace();
 #endif
     close_socket(socket);

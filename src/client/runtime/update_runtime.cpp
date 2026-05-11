@@ -8,10 +8,10 @@
 #include "client/runtime/prediction_runtime.hpp"
 #include "client/tracing.hpp"
 
-#include "kage/sync/client.hpp"
-#include "kage/sync/detail/bit_reader.hpp"
-#include "kage/sync/protocol.hpp"
-#include "kage/sync/tracing.hpp"
+#include "ashiato/sync/client.hpp"
+#include "ashiato/sync/detail/bit_reader.hpp"
+#include "ashiato/sync/protocol.hpp"
+#include "ashiato/sync/tracing.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -19,7 +19,7 @@
 #include <sstream>
 #include <utility>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 namespace {
 
 using client_detail::frame_component_data;
@@ -35,7 +35,7 @@ using client_detail::sync_slot_count;
 
 bool ClientUpdateRuntime::apply_update(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     detail::BitReader& packet,
     std::uint32_t packet_id,
     SyncFrame frame,
@@ -101,7 +101,7 @@ ReplicationClientMode ClientUpdateRuntime::select_entity_mode(
 
 bool ClientUpdateRuntime::apply_upsert(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     SyncFrame frame,
     std::uint32_t wire_network_id,
@@ -296,7 +296,7 @@ bool ClientUpdateRuntime::decode_full_upsert_record_payload(
             return false;
         }
         EntityReferenceContext* references = ops.references_entities ? references_for_component() : nullptr;
-        ecs::ComponentSerializationContext serialization_context{references};
+        ashiato::ComponentSerializationContext serialization_context{references};
         if (!ops.serialization.deserialize(
                 packet.raw(),
                 nullptr,
@@ -383,7 +383,7 @@ bool ClientUpdateRuntime::decode_delta_upsert_record_payload(
             return false;
         }
         EntityReferenceContext* references = ops.references_entities ? references_for_component() : nullptr;
-        ecs::ComponentSerializationContext serialization_context{references};
+        ashiato::ComponentSerializationContext serialization_context{references};
         if (!ops.serialization.deserialize(
                 packet.raw(),
                 previous_bytes,
@@ -442,7 +442,7 @@ void ClientUpdateRuntime::trace_cues_received(
     const SyncSettings& settings,
     const UpsertMetadata& metadata,
     const std::vector<EntityCue>& out) {
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     if (!out.empty()) {
         std::vector<std::string>& cue_summaries = client.cue_runtime_->store().current_packet_cue_summaries;
         cue_summaries.reserve(cue_summaries.size() + out.size());
@@ -451,7 +451,7 @@ void ClientUpdateRuntime::trace_cues_received(
             summary << "{entity=" << metadata.client_entity_network_id
                 << ",frame=" << cue.frame
                 << ",type=" << cue.type;
-#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+#ifdef ASHIATO_SYNC_TRACE_COMPONENT_DATA
             if (client.tracer_ != nullptr && client.tracer_->frame_data_enabled() &&
                 cue.type < settings.cue_ops.size() && settings.cue_ops[cue.type].trace != nullptr) {
                 SyncTraceStringBuilder builder;
@@ -465,11 +465,11 @@ void ClientUpdateRuntime::trace_cues_received(
         }
     }
 #endif
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     if (client.tracer_ != nullptr && client.tracer_->enabled()) {
         for (const EntityCue& cue : out) {
             SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::CueReceived, client.client_id_, cue.frame);
-            event.server_entity = ecs::Entity{metadata.client_entity_network_id};
+            event.server_entity = ashiato::Entity{metadata.client_entity_network_id};
             event.client_network_id = metadata.client_entity_network_id;
             event.wire_network_id = metadata.wire_network_id;
             event.network_version = client_entity_network_id_version(metadata.client_entity_network_id);
@@ -491,7 +491,7 @@ void ClientUpdateRuntime::trace_cues_received(
 
 EntityState* ClientUpdateRuntime::ensure_upsert_entity(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     const UpsertMetadata& metadata,
     const AuthoritativeUpsertRecord& record,
@@ -501,7 +501,7 @@ EntityState* ClientUpdateRuntime::ensure_upsert_entity(
         !metadata.found_state->mode.selected;
     ReplicatedEntityUpdateView mode_update;
     mode_update.client_entity_network_id = metadata.client_entity_network_id;
-    mode_update.local_entity = metadata.found_state != nullptr ? metadata.found_state->identity.local : ecs::Entity{};
+    mode_update.local_entity = metadata.found_state != nullptr ? metadata.found_state->identity.local : ashiato::Entity{};
     mode_update.archetype = metadata.archetype;
     mode_update.frame = metadata.frame;
     mode_update.tag_mask = record.authoritative.tag_mask;
@@ -513,11 +513,11 @@ EntityState* ClientUpdateRuntime::ensure_upsert_entity(
         return nullptr;
     }
     EntityState& state = *ensured_state;
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     if (client.tracer_ != nullptr && client.tracer_->enabled() &&
         metadata.is_full_upsert && (metadata.found_state == nullptr || metadata.previous_absent)) {
         SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::EntityReceived, client.client_id_, metadata.frame);
-        event.server_entity = ecs::Entity{metadata.client_entity_network_id};
+        event.server_entity = ashiato::Entity{metadata.client_entity_network_id};
         event.local_entity = state.identity.local;
         event.client_network_id = metadata.client_entity_network_id;
         event.wire_network_id = metadata.wire_network_id;
@@ -527,10 +527,10 @@ EntityState* ClientUpdateRuntime::ensure_upsert_entity(
     }
 #endif
     if (mode_needs_selection) {
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
         if (client.tracer_ != nullptr && client.tracer_->enabled() && state.mode.current != selected_mode) {
             SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ModeChanged, client.client_id_, metadata.frame);
-            event.server_entity = ecs::Entity{metadata.client_entity_network_id};
+            event.server_entity = ashiato::Entity{metadata.client_entity_network_id};
             event.local_entity = state.identity.local;
             event.client_network_id = metadata.client_entity_network_id;
             event.wire_network_id = metadata.wire_network_id;
@@ -586,7 +586,7 @@ void ClientUpdateRuntime::trace_received_upsert_record(
     const UpsertMetadata& metadata,
     const AuthoritativeUpsertRecord& record,
     const EntityState& state) {
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     if (client.tracer_ == nullptr || !client.tracer_->enabled()) {
         return;
     }
@@ -598,7 +598,7 @@ void ClientUpdateRuntime::trace_received_upsert_record(
         if (tags_changed) {
             for (std::size_t tag_index = 0; tag_index < definition.tags.size(); ++tag_index) {
                 SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::TagReceived, client.client_id_, metadata.frame);
-                event.server_entity = ecs::Entity{metadata.client_entity_network_id};
+                event.server_entity = ashiato::Entity{metadata.client_entity_network_id};
                 event.local_entity = state.identity.local;
                 event.client_network_id = metadata.client_entity_network_id;
                 event.wire_network_id = metadata.wire_network_id;
@@ -621,7 +621,7 @@ void ClientUpdateRuntime::trace_received_upsert_record(
             continue;
         }
         SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::ComponentReceived, client.client_id_, metadata.frame);
-        event.server_entity = ecs::Entity{metadata.client_entity_network_id};
+        event.server_entity = ashiato::Entity{metadata.client_entity_network_id};
         event.local_entity = state.identity.local;
         event.client_network_id = metadata.client_entity_network_id;
         event.wire_network_id = metadata.wire_network_id;
@@ -643,7 +643,7 @@ void ClientUpdateRuntime::trace_received_upsert_record(
 
 bool ClientUpdateRuntime::apply_upsert_record(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
     const UpsertMetadata& metadata,
@@ -695,7 +695,7 @@ void ClientUpdateRuntime::finish_upsert(ReplicationClient& client, const UpsertM
 
 bool ClientUpdateRuntime::apply_destroy(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     SyncFrame frame,
     std::uint32_t wire_network_id) {
     EntityState* state = client.find_entity_state_by_wire_id(wire_network_id);
@@ -710,15 +710,15 @@ bool ClientUpdateRuntime::apply_destroy(
         return true;
     }
     const ClientEntityNetworkId client_entity_network_id = state->identity.client_entity_network_id;
-#ifdef KAGE_SYNC_ENABLE_TRACING
-    const ecs::Entity local_entity = state->identity.local;
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    const ashiato::Entity local_entity = state->identity.local;
     const SyncArchetypeId archetype = state->identity.archetype;
     auto trace_destroy = [&]() {
         if (client.tracer_ == nullptr || !client.tracer_->enabled()) {
             return;
         }
         SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::EntityDestroyed, client.client_id_, frame);
-        event.server_entity = ecs::Entity{client_entity_network_id};
+        event.server_entity = ashiato::Entity{client_entity_network_id};
         event.local_entity = local_entity;
         event.client_network_id = client_entity_network_id;
         event.wire_network_id = wire_network_id;
@@ -733,7 +733,7 @@ bool ClientUpdateRuntime::apply_destroy(
     }
     client.record_destroy_tombstone(wire_network_id, frame);
     client.advance_wire_network_id_version(wire_network_id);
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     trace_destroy();
 #endif
     return true;
@@ -741,7 +741,7 @@ bool ClientUpdateRuntime::apply_destroy(
 
 bool ClientUpdateRuntime::apply_destroy_for_mode(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     SyncFrame frame,
     EntityState& state,
     ClientEntityNetworkId client_entity_network_id) {
@@ -758,7 +758,7 @@ bool ClientUpdateRuntime::apply_destroy_for_mode(
 
 bool ClientUpdateRuntime::apply_snap_destroy(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     SyncFrame frame,
     EntityState& state,
     ClientEntityNetworkId client_entity_network_id) {
@@ -775,7 +775,7 @@ bool ClientUpdateRuntime::apply_snap_destroy(
 
 bool ClientUpdateRuntime::apply_upsert_for_mode(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
     const UpsertModeApplyContext& context) {
@@ -829,7 +829,7 @@ bool ClientUpdateRuntime::apply_upsert_for_mode(
 
 bool ClientUpdateRuntime::apply_snap_upsert(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
     const UpsertModeApplyContext& context) {
@@ -856,7 +856,7 @@ bool ClientUpdateRuntime::apply_snap_upsert(
 
 bool ClientUpdateRuntime::apply_buffered_upsert(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     SyncFrame frame,
     ClientEntityNetworkId client_entity_network_id,
@@ -899,7 +899,7 @@ bool ClientUpdateRuntime::apply_buffered_upsert(
 
 bool ClientUpdateRuntime::apply_buffered_destroy(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     SyncFrame frame,
     ClientEntityNetworkId client_entity_network_id) {
     EntityState* state_ptr = client.find_entity_state(client_entity_network_id);
@@ -934,7 +934,7 @@ bool ClientUpdateRuntime::apply_buffered_destroy(
 
 bool ClientUpdateRuntime::apply_predicted_upsert(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     SyncFrame frame,
     ClientEntityNetworkId client_entity_network_id,
@@ -988,7 +988,7 @@ bool ClientUpdateRuntime::apply_predicted_upsert(
 
 bool ClientUpdateRuntime::apply_predicted_destroy(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     SyncFrame frame,
     ClientEntityNetworkId client_entity_network_id) {
     EntityState* state_ptr = client.find_entity_state(client_entity_network_id);
@@ -1004,4 +1004,4 @@ bool ClientUpdateRuntime::apply_predicted_destroy(
     return true;
 }
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

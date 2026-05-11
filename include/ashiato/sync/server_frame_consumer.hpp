@@ -1,18 +1,18 @@
 #pragma once
 
-#include "kage/sync/types.hpp"
+#include "ashiato/sync/types.hpp"
 
 #include <cstdint>
 #include <memory>
 #include <vector>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 class ReplicationServer;
 
 struct ServerDestroyedReplicatedSlot {
     std::uint32_t slot = 0;
-    ecs::Entity entity;
+    ashiato::Entity entity;
 };
 
 struct ServerDestroyedReplicatedSlotView {
@@ -26,8 +26,8 @@ struct ServerDestroyedReplicatedSlotView {
 
 struct ServerRegistryDirtyFrame {
     ReplicationServer& server;
-    ecs::Registry& registry;
-    ecs::Registry::DirtyView dirty;
+    ashiato::Registry& registry;
+    ashiato::Registry::DirtyView dirty;
     SyncFrame frame = 0;
     QueuedSyncCueView cues;
     ServerDestroyedReplicatedSlotView destroyed_slots;
@@ -72,7 +72,7 @@ private:
 
 struct ServerFrameBatch {
     ReplicationServer& server;
-    ecs::Registry& registry;
+    ashiato::Registry& registry;
     double dt_seconds = 0.0;
     std::uint32_t completed_frames = 0;
 };
@@ -114,4 +114,4 @@ private:
     std::uint64_t id_ = 0;
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

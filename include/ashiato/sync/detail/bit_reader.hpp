@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ecs/bit_buffer.hpp"
+#include "ashiato/bit_buffer.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -8,11 +8,11 @@
 #include <limits>
 #include <type_traits>
 
-namespace kage::sync::detail {
+namespace ashiato::sync::detail {
 
 class BitReader {
 public:
-    explicit BitReader(ecs::BitBuffer& buffer) noexcept
+    explicit BitReader(ashiato::BitBuffer& buffer) noexcept
         : buffer_(buffer) {}
 
     bool read_bits(std::size_t bits, bool& out) {
@@ -72,7 +72,7 @@ public:
         return true;
     }
 
-    bool read_buffer_bits(ecs::BitBuffer& out, std::size_t bits) {
+    bool read_buffer_bits(ashiato::BitBuffer& out, std::size_t bits) {
         if (buffer_.remaining_bits() < bits) {
             return false;
         }
@@ -80,12 +80,12 @@ public:
         return true;
     }
 
-    ecs::BitBuffer& raw() noexcept {
+    ashiato::BitBuffer& raw() noexcept {
         return buffer_;
     }
 
 private:
-    ecs::BitBuffer& buffer_;
+    ashiato::BitBuffer& buffer_;
 };
 
-}  // namespace kage::sync::detail
+}  // namespace ashiato::sync::detail

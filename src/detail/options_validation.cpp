@@ -5,7 +5,7 @@
 #include <limits>
 #include <stdexcept>
 
-namespace kage::sync::detail {
+namespace ashiato::sync::detail {
 namespace {
 
 bool is_power_of_two(std::size_t value) noexcept {
@@ -274,4 +274,4 @@ ReplicationServerOptions validate_server_options(ReplicationServerOptions option
     return options;
 }
 
-}  // namespace kage::sync::detail
+}  // namespace ashiato::sync::detail

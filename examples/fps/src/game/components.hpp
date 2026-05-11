@@ -2,7 +2,7 @@
 
 #include "game/constants.hpp"
 
-#include "kage/sync/sync.hpp"
+#include "ashiato/sync/sync.hpp"
 
 #include <array>
 #include <cstdint>
@@ -69,12 +69,12 @@ struct FpsInput {
     std::uint32_t jump_seq = 0;
     std::uint32_t fire_seq = 0;
     std::uint32_t reload_seq = 0;
-    kage::sync::SyncFrame shot_interpolation_frame = 0;
+    ashiato::sync::SyncFrame shot_interpolation_frame = 0;
 };
 
 struct FpsTransformHistory {
     struct Sample {
-        kage::sync::SyncFrame frame = 0;
+        ashiato::sync::SyncFrame frame = 0;
         FpsTransform transform;
         bool valid = false;
     };
@@ -84,11 +84,11 @@ struct FpsTransformHistory {
 };
 
 struct FpsServerFrame {
-    kage::sync::SyncFrame frame = 0;
+    ashiato::sync::SyncFrame frame = 0;
 };
 
 struct FpsDeathInfo {
-    kage::sync::ClientId killer = kage::sync::invalid_client_id;
+    ashiato::sync::ClientId killer = ashiato::sync::invalid_client_id;
 };
 
 struct FpsShotEffect {
@@ -122,9 +122,9 @@ struct FpsSurfaceHitEffect {
 
 struct FpsHitConfirmSuppression {
     struct Entry {
-        ecs::Entity victim;
-        kage::sync::ClientEntityNetworkId victim_network_id = kage::sync::invalid_client_entity_network_id;
-        kage::sync::SyncFrame frame = 0;
+        ashiato::Entity victim;
+        ashiato::sync::ClientEntityNetworkId victim_network_id = ashiato::sync::invalid_client_entity_network_id;
+        ashiato::sync::SyncFrame frame = 0;
         float seconds = 0.0f;
     };
 
@@ -147,14 +147,14 @@ struct MouseLookState {
 };
 
 struct SyncSchema {
-    kage::sync::SyncArchetypeId character;
+    ashiato::sync::SyncArchetypeId character;
 };
 
 }  // namespace fps
 
-namespace ecs {
+namespace ashiato {
 
 template <>
 struct is_singleton_component<fps::FpsServerFrame> : std::true_type {};
 
-}  // namespace ecs
+}  // namespace ashiato

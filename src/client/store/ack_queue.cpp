@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 
 void ClientAckQueue::push(std::uint32_t packet_id) {
     pending_.push_back(packet_id);
@@ -20,7 +20,7 @@ std::vector<std::uint32_t>& ClientAckQueue::pending() noexcept {
 void ClientAckQueue::drain_ack_packets(
     std::size_t mtu_bytes,
     std::size_t packet_id_bits,
-    std::vector<ecs::BitBuffer>& packets,
+    std::vector<ashiato::BitBuffer>& packets,
     std::vector<ClientAckPacketTrace>* traces) {
     if (pending_.empty()) {
         pending_.clear();
@@ -42,7 +42,7 @@ void ClientAckQueue::drain_ack_packets(
     }
 
     packets.reserve(packets.size() + (pending_.size() + max_acks_per_packet - 1U) / max_acks_per_packet);
-    ecs::BitBuffer packet;
+    ashiato::BitBuffer packet;
     std::uint16_t packet_ack_count = 0;
     std::size_t packet_count_offset = 0;
     ClientAckPacketTrace trace;
@@ -64,7 +64,7 @@ void ClientAckQueue::drain_ack_packets(
             traces->push_back(trace);
         }
         packets.push_back(std::move(packet));
-        packet = ecs::BitBuffer{};
+        packet = ashiato::BitBuffer{};
     };
 
     begin_packet();
@@ -82,4 +82,4 @@ void ClientAckQueue::drain_ack_packets(
     pending_.clear();
 }
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

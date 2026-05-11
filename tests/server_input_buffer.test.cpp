@@ -4,14 +4,14 @@
 
 namespace {
 
-kage::sync::SyncComponentOps byte_input_ops() {
-    kage::sync::SyncComponentOps ops;
+ashiato::sync::SyncComponentOps byte_input_ops() {
+    ashiato::sync::SyncComponentOps ops;
     ops.serialization.quantized_size = 1;
     ops.serialization.deserialize = [](
-        ecs::BitBuffer& packet,
+        ashiato::BitBuffer& packet,
         const std::uint8_t*,
         std::uint8_t* out,
-        ecs::ComponentSerializationContext*) {
+        ashiato::ComponentSerializationContext*) {
         if (packet.remaining_bits() < 8U) {
             return false;
         }
@@ -24,8 +24,8 @@ kage::sync::SyncComponentOps byte_input_ops() {
 }  // namespace
 
 TEST_CASE("ServerInputBuffer decodes full input frames and selects due inputs") {
-    kage::sync::server_detail::ServerInputBuffer buffer;
-    ecs::BitBuffer packet;
+    ashiato::sync::server_detail::ServerInputBuffer buffer;
+    ashiato::BitBuffer packet;
     packet.push_bits(0, 32U);
     packet.push_bits(2, 16U);
     packet.push_bool(true);
@@ -33,7 +33,7 @@ TEST_CASE("ServerInputBuffer decodes full input frames and selects due inputs") 
     packet.push_bits(10, 8U);
     packet.push_bits(11, 8U);
 
-    kage::sync::server_detail::ServerInputPacketTrace trace;
+    ashiato::sync::server_detail::ServerInputPacketTrace trace;
     REQUIRE(buffer.process_packet_payload(packet, byte_input_ops(), 4, &trace));
     REQUIRE(buffer.ack_frame() == 4);
     REQUIRE(buffer.stats().latest_received_input_frame == 4);
@@ -41,7 +41,7 @@ TEST_CASE("ServerInputBuffer decodes full input frames and selects due inputs") 
     REQUIRE(trace.first_input_frame == 3);
     REQUIRE(trace.last_input_frame == 4);
 
-    kage::sync::server_detail::ServerInputForFrame due = buffer.select_input_for_frame(3, 1);
+    ashiato::sync::server_detail::ServerInputForFrame due = buffer.select_input_for_frame(3, 1);
     REQUIRE(due.bytes != nullptr);
     REQUIRE((*due.bytes)[0] == 10);
     REQUIRE(due.input_frame == 3);
@@ -64,14 +64,14 @@ TEST_CASE("ServerInputBuffer decodes full input frames and selects due inputs") 
 }
 
 TEST_CASE("ServerInputBuffer accepts missing delta baseline without consuming input frames") {
-    kage::sync::server_detail::ServerInputBuffer buffer;
-    ecs::BitBuffer packet;
+    ashiato::sync::server_detail::ServerInputBuffer buffer;
+    ashiato::BitBuffer packet;
     packet.push_bits(7, 32U);
     packet.push_bits(1, 16U);
     packet.push_bool(false);
     packet.push_bits(99, 8U);
 
-    kage::sync::server_detail::ServerInputPacketTrace trace;
+    ashiato::sync::server_detail::ServerInputPacketTrace trace;
     REQUIRE(buffer.process_packet_payload(packet, byte_input_ops(), 4, &trace));
     REQUIRE(buffer.ack_frame() == 7);
     REQUIRE(buffer.stats().latest_received_input_frame == 0);

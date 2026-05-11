@@ -3,13 +3,13 @@
 #include "client/state.hpp"
 #include "client/store/frame_ring_store.hpp"
 
-#include "ecs/ecs.hpp"
-#include "kage/sync/client_clock.hpp"
+#include "ashiato/ashiato.hpp"
+#include "ashiato/sync/client_clock.hpp"
 
 #include <cstddef>
 #include <cstdint>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 class ReplicationClient;
 
@@ -41,9 +41,9 @@ public:
 
     bool apply_frames(
         ReplicationClient& client,
-        ecs::Registry& registry,
+        ashiato::Registry& registry,
         const ReplicationClientClock::FrameRange& frames);
-    bool apply_frame(ReplicationClient& client, ecs::Registry& registry, SyncFrame buffered_frame);
+    bool apply_frame(ReplicationClient& client, ashiato::Registry& registry, SyncFrame buffered_frame);
 
 private:
     ClientFrameRingStore buffered_frames_;
@@ -52,4 +52,4 @@ private:
 };
 
 }  // namespace client_detail
-}  // namespace kage::sync
+}  // namespace ashiato::sync

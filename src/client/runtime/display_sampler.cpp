@@ -5,14 +5,14 @@
 #include "client/store/frame_ring_store.hpp"
 #include "client/runtime/prediction_runtime.hpp"
 
-#include "kage/sync/components.hpp"
+#include "ashiato/sync/components.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <utility>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 
 ClientDisplaySampler::ClientDisplaySampler(
     const ReplicationClientClock& clock,
@@ -83,7 +83,7 @@ bool ClientDisplaySampler::append_frame_sample(
     const SyncArchetype& archetype = context.settings.archetypes[archetype_id.value];
     display.components_.reserve(archetype.components.size());
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
-        const ecs::Entity component = archetype.components[component_index].component;
+        const ashiato::Entity component = archetype.components[component_index].component;
         if (!frame_has_component(baseline, component_index) ||
             !context.registry.has<FractionalTickSampled>(component)) {
             continue;
@@ -282,7 +282,7 @@ bool ClientDisplaySampler::append_live_sample(WriteContext& context, const Entit
     const SyncArchetype& archetype = context.settings.archetypes[state.identity.archetype.value];
     display.components_.reserve(archetype.components.size());
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
-        const ecs::Entity component = archetype.components[component_index].component;
+        const ashiato::Entity component = archetype.components[component_index].component;
         if (!context.registry.has<FractionalTickSampled>(component)) {
             continue;
         }
@@ -322,7 +322,7 @@ bool ClientDisplaySampler::append_live_sample(WriteContext& context, const Entit
 }
 
 bool ClientDisplaySampler::sample_fractional_tick_frame(
-    const ecs::Registry& registry,
+    const ashiato::Registry& registry,
     double target_frame,
     FractionalTickSampleBuffer& out) const {
     out.clear();
@@ -376,4 +376,4 @@ bool ClientDisplaySampler::sample_fractional_tick_frame(
     return context.all_valid;
 }
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

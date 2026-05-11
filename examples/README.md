@@ -1,4 +1,4 @@
-# Kage Sync Examples
+# Ashiato Sync Examples
 
 This directory contains interactive examples for exercising the sync library under
 local UDP transport, simulated network conditions, prediction, buffered
@@ -7,16 +7,16 @@ interpolation, and bandwidth control.
 Build the examples with:
 
 ```sh
-cmake -S . -B build-examples -DKAGE_SYNC_BUILD_EXAMPLES=ON
-cmake --build build-examples --target kage_sync_balls_example
-cmake --build build-examples --target kage_sync_fps_example
+cmake -S . -B build-examples -DASHIATO_SYNC_BUILD_EXAMPLES=ON
+cmake --build build-examples --target ashiato_sync_balls_example
+cmake --build build-examples --target ashiato_sync_fps_example
 ```
 
 The executable paths are usually:
 
 ```sh
-./build-examples/examples/kage_sync_balls_example
-./build-examples/examples/fps/kage_sync_fps_example
+./build-examples/examples/ashiato_sync_balls_example
+./build-examples/examples/fps/ashiato_sync_fps_example
 ```
 
 ## Network Simulation
@@ -56,7 +56,7 @@ For effectively unlimited bandwidth in the examples:
 ## Tracing
 
 Tracing flags require a build with tracing enabled. Packet log tracing requires
-`KAGE_SYNC_TRACE_PACKET_LOGS`.
+`ASHIATO_SYNC_TRACE_PACKET_LOGS`.
 
 - `--trace-dir DIR`: write a trace capture to `DIR`.
 - `--trace-frame-data on|off`: include per-frame component data.
@@ -64,7 +64,7 @@ Tracing flags require a build with tracing enabled. Packet log tracing requires
 
 ## Balls Example
 
-`kage_sync_balls_example` runs a local server and one local client in a single
+`ashiato_sync_balls_example` runs a local server and one local client in a single
 process. It spawns moving replicated balls, expires and replaces them over time,
 and renders the client view with raylib. It is useful for testing replication
 load, entity churn, interpolation, prediction, packet loss, and bandwidth limits.
@@ -72,13 +72,13 @@ load, entity churn, interpolation, prediction, packet loss, and bandwidth limits
 Basic run:
 
 ```sh
-./build-examples/examples/kage_sync_balls_example
+./build-examples/examples/ashiato_sync_balls_example
 ```
 
 Buffered interpolation with unlimited simulated bandwidth:
 
 ```sh
-./build-examples/examples/kage_sync_balls_example \
+./build-examples/examples/ashiato_sync_balls_example \
   --client-mode buffered-interpolation \
   --link-bandwidth-kbps 0 \
   --bandwidth-mode static \
@@ -108,7 +108,7 @@ Runtime controls:
 
 ## FPS Example
 
-`kage_sync_fps_example` is a small first-person networked game. It can run as a
+`ashiato_sync_fps_example` is a small first-person networked game. It can run as a
 dedicated server, a client, a listen server, or a launcher that starts a server
 and multiple local clients. It exercises client prediction, buffered remote
 entities, input replication, cues, replay recording, and simulated links.
@@ -116,20 +116,20 @@ entities, input replication, cues, replay recording, and simulated links.
 Run a dedicated server and a separate client:
 
 ```sh
-./build-examples/examples/fps/kage_sync_fps_example --server --port 37043 --bots 4
-./build-examples/examples/fps/kage_sync_fps_example --client --host 127.0.0.1 --port 37043
+./build-examples/examples/fps/ashiato_sync_fps_example --server --port 37043 --bots 4
+./build-examples/examples/fps/ashiato_sync_fps_example --client --host 127.0.0.1 --port 37043
 ```
 
 Run a listen server:
 
 ```sh
-./build-examples/examples/fps/kage_sync_fps_example --listen --clients 1 --bots 4
+./build-examples/examples/fps/ashiato_sync_fps_example --listen --clients 1 --bots 4
 ```
 
 Run a local launcher that starts one server and multiple clients:
 
 ```sh
-./build-examples/examples/fps/kage_sync_fps_example --clients 2 --bots 4
+./build-examples/examples/fps/ashiato_sync_fps_example --clients 2 --bots 4
 ```
 
 FPS mode flags:

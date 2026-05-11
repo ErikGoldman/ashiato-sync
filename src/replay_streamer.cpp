@@ -1,9 +1,9 @@
-#include "kage/sync/replay_streamer.hpp"
+#include "ashiato/sync/replay_streamer.hpp"
 
 #include "detail/frame_data.hpp"
 
-#include "kage/sync/components.hpp"
-#include "kage/sync/detail/bit_reader.hpp"
+#include "ashiato/sync/components.hpp"
+#include "ashiato/sync/detail/bit_reader.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -11,14 +11,14 @@
 #include <unordered_set>
 #include <utility>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 struct ReplicationReplayStreamSessionAccess {
-    static std::unordered_map<std::uint32_t, ecs::Entity>& entities(ReplicationReplayStreamSession& session) {
+    static std::unordered_map<std::uint32_t, ashiato::Entity>& entities(ReplicationReplayStreamSession& session) {
         return session.entities_;
     }
 
-    static const std::unordered_map<std::uint32_t, ecs::Entity>& entities(const ReplicationReplayStreamSession& session) {
+    static const std::unordered_map<std::uint32_t, ashiato::Entity>& entities(const ReplicationReplayStreamSession& session) {
         return session.entities_;
     }
 
@@ -48,7 +48,7 @@ ClientEntityNetworkId replay_network_id_for_wire(void*, std::uint32_t wire_netwo
     return make_client_entity_network_id(0U, wire_network_id, 1U);
 }
 
-ecs::Entity replay_local_entity(void* userContext, ClientEntityNetworkId network_id) {
+ashiato::Entity replay_local_entity(void* userContext, ClientEntityNetworkId network_id) {
     auto& data = *static_cast<ReplayApplyReferenceContextData*>(userContext);
     if (data.session == nullptr) {
         return {};
@@ -56,7 +56,7 @@ ecs::Entity replay_local_entity(void* userContext, ClientEntityNetworkId network
     const std::uint32_t replay_id = client_entity_network_id_wire_id(network_id);
     const auto& entities = ReplicationReplayStreamSessionAccess::entities(*data.session);
     const auto found = entities.find(replay_id);
-    return found == entities.end() ? ecs::Entity{} : found->second;
+    return found == entities.end() ? ashiato::Entity{} : found->second;
 }
 
 EntityReferenceContext make_reference_context(ReplicationReplayStreamSession& session) {
@@ -70,9 +70,9 @@ EntityReferenceContext make_reference_context(ReplicationReplayStreamSession& se
     return context;
 }
 
-ecs::Entity entity_for_replay_id(
+ashiato::Entity entity_for_replay_id(
     ReplicationReplayStreamSession& session,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     std::uint32_t replay_id) {
     if (replay_id == 0U) {
         return {};
@@ -82,14 +82,14 @@ ecs::Entity entity_for_replay_id(
     if (found != entities.end() && registry.alive(found->second)) {
         return found->second;
     }
-    const ecs::Entity entity = registry.create();
+    const ashiato::Entity entity = registry.create();
     entities[replay_id] = entity;
     return entity;
 }
 
 void destroy_replay_entity(
     ReplicationReplayStreamSession& session,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     std::uint32_t replay_id) {
     auto& entities = ReplicationReplayStreamSessionAccess::entities(session);
     const auto found = entities.find(replay_id);
@@ -101,12 +101,12 @@ void destroy_replay_entity(
 }
 
 void apply_tags(
-    ecs::Registry& registry,
-    ecs::Entity entity,
+    ashiato::Registry& registry,
+    ashiato::Entity entity,
     const SyncArchetype& archetype,
     std::uint64_t tag_mask) {
     for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
-        const ecs::Entity tag = archetype.tags[tag_index].tag;
+        const ashiato::Entity tag = archetype.tags[tag_index].tag;
         if ((tag_mask & (std::uint64_t{1} << tag_index)) != 0U) {
             registry.add_tag(entity, tag);
         } else {
@@ -116,8 +116,8 @@ void apply_tags(
 }
 
 bool apply_components(
-    ecs::Registry& registry,
-    ecs::Entity entity,
+    ashiato::Registry& registry,
+    ashiato::Entity entity,
     const SyncArchetype& archetype,
     std::uint64_t present_mask,
     detail::BitReader& payload,
@@ -130,7 +130,7 @@ bool apply_components(
     for (std::uint16_t component = 0; component < component_count; ++component) {
         std::uint16_t component_index = 0;
         std::uint16_t component_bits = 0;
-        ecs::BitBuffer component_payload;
+        ashiato::BitBuffer component_payload;
         if (!payload.read_bits(16U, component_index) ||
             !payload.read_bits(16U, component_bits) ||
             !payload.read_buffer_bits(component_payload, component_bits)) {
@@ -148,7 +148,7 @@ bool apply_components(
         }
         std::vector<std::uint8_t>& scratch = ReplicationReplayStreamSessionAccess::scratch(session);
         scratch.assign(ops.serialization.quantized_size, 0U);
-        ecs::ComponentSerializationContext serialization_context{ops.references_entities ? &references : nullptr};
+        ashiato::ComponentSerializationContext serialization_context{ops.references_entities ? &references : nullptr};
         if (!ops.serialization.deserialize(
                 component_payload,
                 nullptr,
@@ -218,7 +218,7 @@ void ReplicationReplayStreamer::push_frame(ReplicationReplayFrame&& frame) {
 
 bool ReplicationReplayStreamer::begin_session(
     SyncFrame focus_frame,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     ReplicationServer& server,
     ReplicationReplayStreamSession& session) const {
     if (count_ == 0U) {
@@ -252,7 +252,7 @@ bool ReplicationReplayStreamer::begin_session(
 
 bool ReplicationReplayStreamer::begin_network_session(
     SyncFrame focus_frame,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     ReplicationServer& server,
     ReplicationReplayStreamSession& session,
     ReplicationReplayNetworkSessionOptions options) const {
@@ -285,7 +285,7 @@ bool ReplicationReplayStreamer::attach_network_session_bandwidth(
 
 bool ReplicationReplayStreamer::tick_session(
     ReplicationReplayStreamSession& session,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     ReplicationServer& server) const {
     if (!session.active) {
         session.active = false;
@@ -317,19 +317,19 @@ bool ReplicationReplayStreamer::tick_session(
 
 bool ReplicationReplayStreamer::apply_frame(
     const ReplicationReplayFrame& frame,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     ReplicationReplayStreamSession& session) const {
     return apply_frame(frame, registry, session, true);
 }
 
 bool ReplicationReplayStreamer::apply_frame(
     const ReplicationReplayFrame& frame,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     ReplicationReplayStreamSession& session,
     bool include_cues) const {
     try {
         const SyncSettings& settings = registry.get<SyncSettings>();
-        ecs::BitBuffer payload = frame.payload;
+        ashiato::BitBuffer payload = frame.payload;
         detail::BitReader reader(payload);
         EntityReferenceContext references = make_reference_context(session);
         std::unordered_set<std::uint32_t> full_replay_ids;
@@ -366,7 +366,7 @@ bool ReplicationReplayStreamer::apply_frame(
             }
             const SyncArchetypeId archetype_id{archetype_value};
             const SyncArchetype& archetype = settings.archetypes[archetype_id.value];
-            const ecs::Entity entity = entity_for_replay_id(session, registry, replay_id);
+            const ashiato::Entity entity = entity_for_replay_id(session, registry, replay_id);
             if (!entity) {
                 return false;
             }
@@ -400,9 +400,9 @@ bool ReplicationReplayStreamer::apply_frame(
 }
 
 bool ReplicationReplayStreamer::apply_cues(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
-    ecs::BitBuffer& payload,
+    ashiato::BitBuffer& payload,
     EntityReferenceContext& references,
     ReplicationReplayStreamSession& session) const {
     detail::BitReader reader(payload);
@@ -425,7 +425,7 @@ bool ReplicationReplayStreamer::apply_cues(
         float relevance_seconds = 0.0f;
         bool only_replicate_to_owner = false;
         std::uint16_t cue_bits = 0;
-        ecs::BitBuffer cue_payload;
+        ashiato::BitBuffer cue_payload;
         if (!reader.read_bits(32U, owner_replay_id) ||
             !reader.read_bits(32U, frame) ||
             !reader.read_bits(16U, type) ||
@@ -500,4 +500,4 @@ std::size_t ReplicationReplayStreamer::find_start_frame(SyncFrame focus_frame) c
     return start;
 }
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

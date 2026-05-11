@@ -19,18 +19,18 @@
 
 namespace fps {
 
-kage::sync::SyncFrame g_server_frame = 0;
+ashiato::sync::SyncFrame g_server_frame = 0;
 
 struct ServerPlayer {
-    kage::sync::ClientId client = kage::sync::invalid_client_id;
-    ecs::Entity entity;
+    ashiato::sync::ClientId client = ashiato::sync::invalid_client_id;
+    ashiato::Entity entity;
 };
 
-void spawn_bots(ecs::Registry& registry, const SyncSchema& schema, int count) {
+void spawn_bots(ashiato::Registry& registry, const SyncSchema& schema, int count) {
     for (int i = 0; i < count; ++i) {
         const float angle = static_cast<float>(i) * 1.7f;
         const bool stun_bot = (i & 1) != 0;
-        const ecs::Entity bot = spawn_character(
+        const ashiato::Entity bot = spawn_character(
             registry,
             schema,
             Vector3{std::sin(angle) * 4.5f, stun_bot ? stun_bot_hover_y : 0.0f, std::cos(angle) * 4.5f},
@@ -50,17 +50,17 @@ void spawn_bots(ecs::Registry& registry, const SyncSchema& schema, int count) {
                 random_spawn_position(),
                 random_spawn_float(3.0f, 8.0f),
                 static_cast<std::uint8_t>(stun_bot ? 1U : 0U)});
-        registry.add<kage::sync::NoSimulate>(bot);
+        registry.add<ashiato::sync::NoSimulate>(bot);
     }
 }
 
-kage::sync::ReplicationServerOptions make_fps_server_options(
+ashiato::sync::ReplicationServerOptions make_fps_server_options(
     const AppConfig& config,
-    std::unordered_map<kage::sync::ClientId, sockaddr_in>& peers,
-    std::unordered_map<kage::sync::ClientId, kage::sync::examples::NetworkSimulator<sockaddr_in>>& downstream_links,
+    std::unordered_map<ashiato::sync::ClientId, sockaddr_in>& peers,
+    std::unordered_map<ashiato::sync::ClientId, ashiato::sync::examples::NetworkSimulator<sockaddr_in>>& downstream_links,
     double& link_time_seconds,
-    std::vector<kage::sync::ClientId>& pending_spawns) {
-    kage::sync::ReplicationServerOptions options;
+    std::vector<ashiato::sync::ClientId>& pending_spawns) {
+    ashiato::sync::ReplicationServerOptions options;
     const auto bytes_per_second = [](double kbps) {
         return static_cast<std::size_t>(std::max(1.0, kbps * 1000.0 / 8.0));
     };
@@ -76,24 +76,24 @@ kage::sync::ReplicationServerOptions make_fps_server_options(
         options.bandwidth.max_bytes_per_second);
     options.bandwidth.max_burst_bytes = options.mtu_bytes * 4U;
     options.fixed_dt_seconds = fixed_dt;
-    options.connect_handler = [&pending_spawns](const std::string&, kage::sync::ClientId& client, std::string&) {
+    options.connect_handler = [&pending_spawns](const std::string&, ashiato::sync::ClientId& client, std::string&) {
         pending_spawns.push_back(client);
         return true;
     };
-    const kage::sync::examples::NetworkSimulatorSettings link_settings{
+    const ashiato::sync::examples::NetworkSimulatorSettings link_settings{
         std::max(0.0, config.latency_ms),
         std::max(0.0, config.jitter_ms),
         std::clamp(config.loss_percent, 0.0, 100.0),
         std::max(0.0, config.link_bandwidth_kbps),
         static_cast<std::size_t>(std::max(0.0, config.link_queue_kb) * 1024.0)};
-    options.transport = [&peers, &downstream_links, &link_time_seconds, link_settings](kage::sync::ClientId peer, const ecs::BitBuffer& packet) {
+    options.transport = [&peers, &downstream_links, &link_time_seconds, link_settings](ashiato::sync::ClientId peer, const ashiato::BitBuffer& packet) {
         const auto found = peers.find(peer);
         if (found != peers.end()) {
             auto& link = downstream_links.try_emplace(peer, link_settings, static_cast<std::uint32_t>(peer)).first->second;
             (void)link.enqueue(found->second, packet, link_time_seconds);
         }
     };
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     options.trace = make_trace_options(config);
 #else
     (void)config;
@@ -103,21 +103,21 @@ kage::sync::ReplicationServerOptions make_fps_server_options(
 
 void receive_server_packets(
     SocketHandle socket,
-    std::unordered_map<kage::sync::ClientId, sockaddr_in>& peers,
-    kage::sync::ReplicationServer& server) {
-    ecs::BitBuffer packet;
+    std::unordered_map<ashiato::sync::ClientId, sockaddr_in>& peers,
+    ashiato::sync::ReplicationServer& server) {
+    ashiato::BitBuffer packet;
     sockaddr_in sender{};
     while (receive_packet(socket, packet, &sender)) {
-        const kage::sync::ClientId peer = peer_id(sender);
+        const ashiato::sync::ClientId peer = peer_id(sender);
         peers[peer] = sender;
         server.receive_packet(peer, packet);
     }
 }
 
-ecs::Entity spawn_remote_player(
-    ecs::Registry& registry,
+ashiato::Entity spawn_remote_player(
+    ashiato::Registry& registry,
     const SyncSchema& schema,
-    kage::sync::ClientId client) {
+    ashiato::sync::ClientId client) {
     const float phase = static_cast<float>(client) * 1.31f;
     return spawn_character(
         registry,
@@ -132,12 +132,12 @@ ecs::Entity spawn_remote_player(
 }
 
 void spawn_pending_remote_players(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSchema& schema,
-    std::vector<kage::sync::ClientId>& pending_spawns,
+    std::vector<ashiato::sync::ClientId>& pending_spawns,
     std::vector<ServerPlayer>* players = nullptr) {
-    for (const kage::sync::ClientId client : pending_spawns) {
-        const ecs::Entity entity = spawn_remote_player(registry, schema, client);
+    for (const ashiato::sync::ClientId client : pending_spawns) {
+        const ashiato::Entity entity = spawn_remote_player(registry, schema, client);
         if (players != nullptr) {
             players->push_back(ServerPlayer{client, entity});
         }
@@ -147,21 +147,22 @@ void spawn_pending_remote_players(
 }
 
 void run_server_mode(const AppConfig& config, bool listen_mode) {
-    ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    ashiato::Registry registry;
     const SyncSchema schema = define_schema(registry);
     register_game_jobs(registry);
     FpsReplayRecorder replay_recorder(config.replay_dir);
     FpsReplayServer replay_server(replay_recorder, config.replay_port);
 
     SocketHandle socket = make_udp_socket(config.port);
-    std::unordered_map<kage::sync::ClientId, sockaddr_in> peers;
-    std::unordered_map<kage::sync::ClientId, kage::sync::examples::NetworkSimulator<sockaddr_in>> downstream_links;
+    std::unordered_map<ashiato::sync::ClientId, sockaddr_in> peers;
+    std::unordered_map<ashiato::sync::ClientId, ashiato::sync::examples::NetworkSimulator<sockaddr_in>> downstream_links;
     double link_time_seconds = 0.0;
-    std::vector<kage::sync::ClientId> pending_spawns;
+    std::vector<ashiato::sync::ClientId> pending_spawns;
     std::vector<ServerPlayer> players;
 
-    kage::sync::ReplicationServer server(make_fps_server_options(config, peers, downstream_links, link_time_seconds, pending_spawns));
+    ashiato::sync::ReplicationServer server(
+        registry,
+        make_fps_server_options(config, peers, downstream_links, link_time_seconds, pending_spawns));
     replay_recorder.attach(server);
     replay_server.attach(server);
 
@@ -172,10 +173,10 @@ void run_server_mode(const AppConfig& config, bool listen_mode) {
     spawn_bots(registry, schema, config.bots);
 
     if (listen_mode) {
-        std::cout << "kage_sync_fps_example listen server hosting on UDP " << config.port
+        std::cout << "ashiato_sync_fps_example listen server hosting on UDP " << config.port
                   << " as client " << listen->host_client() << '\n';
     } else {
-        std::cout << "kage_sync_fps_example server listening on UDP " << config.port << '\n';
+        std::cout << "ashiato_sync_fps_example server listening on UDP " << config.port << '\n';
     }
 
     auto previous = std::chrono::steady_clock::now();
@@ -193,7 +194,7 @@ void run_server_mode(const AppConfig& config, bool listen_mode) {
 
         (void)server.tick(registry, dt);
         for (auto& entry : downstream_links) {
-            entry.second.deliver_ready(link_time_seconds, [socket](const sockaddr_in& target, const ecs::BitBuffer& packet) {
+            entry.second.deliver_ready(link_time_seconds, [socket](const sockaddr_in& target, const ashiato::BitBuffer& packet) {
                 send_packet(socket, target, packet);
             });
         }
@@ -211,7 +212,7 @@ void run_server_mode(const AppConfig& config, bool listen_mode) {
             listen->render(registry, server);
         }
     }
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     server.close_trace();
 #endif
     close_socket(socket);

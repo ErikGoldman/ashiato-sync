@@ -14,7 +14,7 @@ struct TestAckRecord {
 
 struct TestPendingPacketAck {
     std::uint32_t packet_id = 0;
-    kage::sync::SyncFrame sent_frame = 0;
+    ashiato::sync::SyncFrame sent_frame = 0;
     std::size_t charged_bytes = 0;
     std::vector<TestAckRecord> records;
 };
@@ -29,7 +29,7 @@ TEST_CASE("server packet ack tracker removes stale entries when packet ids wrap"
         TestPendingPacketAck{2, 0, 200, std::vector<TestAckRecord>{{20}}},
     };
 
-    const std::uint32_t packet_id = kage::sync::server_detail::allocate_tracked_packet_id(
+    const std::uint32_t packet_id = ashiato::sync::server_detail::allocate_tracked_packet_id(
         next_packet_id,
         pending,
         max_pending_packet_acks);
@@ -43,7 +43,7 @@ TEST_CASE("server packet ack tracker removes stale entries when packet ids wrap"
 TEST_CASE("server packet ack tracker stores only packets with ack records") {
     std::vector<TestPendingPacketAck> pending;
 
-    kage::sync::server_detail::track_packet_ack(
+    ashiato::sync::server_detail::track_packet_ack(
         pending,
         1,
         10,
@@ -51,7 +51,7 @@ TEST_CASE("server packet ack tracker stores only packets with ack records") {
         std::vector<TestAckRecord>{});
     REQUIRE(pending.empty());
 
-    kage::sync::server_detail::track_packet_ack(
+    ashiato::sync::server_detail::track_packet_ack(
         pending,
         2,
         11,
@@ -72,7 +72,7 @@ TEST_CASE("server packet ack tracker trims oldest pending packets to the configu
         TestPendingPacketAck{4, 0, 400, std::vector<TestAckRecord>{{40}}},
     };
 
-    kage::sync::server_detail::enforce_pending_packet_ack_limit(pending, 2);
+    ashiato::sync::server_detail::enforce_pending_packet_ack_limit(pending, 2);
 
     REQUIRE(pending.size() == 2);
     REQUIRE(pending[0].packet_id == 3);

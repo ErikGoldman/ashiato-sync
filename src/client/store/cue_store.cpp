@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 
 EntityPlayedCue* ClientCueStore::find_played(
     const SyncSettings& settings,
@@ -114,4 +114,4 @@ void ClientCueStore::erase_for_entity(std::uint32_t entity_index) {
     erase_buffered_for_entity(entity_index);
 }
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

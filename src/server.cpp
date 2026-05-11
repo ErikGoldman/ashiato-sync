@@ -1,6 +1,6 @@
-#include "kage/sync/server.hpp"
+#include "ashiato/sync/server.hpp"
 
-#include "kage/sync/bandwidth_budget.hpp"
+#include "ashiato/sync/bandwidth_budget.hpp"
 #include "detail/frame_data.hpp"
 #include "detail/logging.hpp"
 #include "detail/options_validation.hpp"
@@ -8,8 +8,8 @@
 #include "server/packet.hpp"
 #include "server/state.hpp"
 
-#include "kage/sync/protocol.hpp"
-#include "kage/sync/tracing.hpp"
+#include "ashiato/sync/protocol.hpp"
+#include "ashiato/sync/tracing.hpp"
 
 #include <spdlog/logger.h>
 
@@ -26,7 +26,7 @@
 #include <string>
 #include <utility>
 
-namespace kage::sync {
+namespace ashiato::sync {
 namespace {
 
 constexpr std::size_t max_pending_quantized_frames_per_entity = 64;
@@ -79,10 +79,10 @@ FixedStepAdvance consume_fixed_steps(
 
 struct OutboundPacket {
     ClientId client = invalid_client_id;
-    ecs::BitBuffer packet;
+    ashiato::BitBuffer packet;
 };
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 using server_detail::make_server_trace_event;
 
 void append_trace_component_data(
@@ -94,7 +94,7 @@ void append_trace_component_data(
     if (component_index < archetype.component_ops.size()) {
         event.component_name = archetype.component_ops[component_index].serialization.name;
     }
-#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+#ifdef ASHIATO_SYNC_TRACE_COMPONENT_DATA
     if (tracer == nullptr || !tracer->frame_data_enabled() || bytes == nullptr ||
         component_index >= archetype.component_ops.size()) {
         return;
@@ -121,7 +121,7 @@ void append_trace_input_component_data(
     const std::uint8_t* bytes,
     SyncTraceEvent& event) {
     event.component_name = ops.serialization.name;
-#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+#ifdef ASHIATO_SYNC_TRACE_COMPONENT_DATA
     if (tracer == nullptr || !tracer->frame_data_enabled() || bytes == nullptr || ops.trace == nullptr) {
         return;
     }
@@ -140,9 +140,9 @@ void append_trace_cue_data(
     const SyncTracer* tracer,
     const SyncSettings& settings,
     SyncCueTypeId cue_type,
-    const ecs::BitBuffer& payload,
+    const ashiato::BitBuffer& payload,
     SyncTraceEvent& event) {
-#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+#ifdef ASHIATO_SYNC_TRACE_COMPONENT_DATA
     if (tracer == nullptr || !tracer->frame_data_enabled() ||
         cue_type >= settings.cue_ops.size() || settings.cue_ops[cue_type].trace == nullptr) {
         return;
@@ -178,7 +178,7 @@ void append_trace_cue_name(const SyncSettings& settings, SyncCueTypeId cue_type,
     }
 }
 
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
 std::string packet_ack_list(const std::vector<std::uint32_t>& acks) {
     std::ostringstream out;
     out << "[";
@@ -196,9 +196,9 @@ std::string packet_ack_list(const std::vector<std::uint32_t>& acks) {
 #endif
 
 std::uint64_t visible_tag_mask(
-    const ecs::Registry& registry,
+    const ashiato::Registry& registry,
     const SyncArchetype& archetype,
-    ecs::Entity entity,
+    ashiato::Entity entity,
     ClientId client) {
     std::uint64_t mask = 0;
     const NetworkOwner* owner = registry.try_get<NetworkOwner>(entity);
@@ -217,11 +217,11 @@ std::uint64_t visible_tag_mask(
 
 }  // namespace
 
-ReplicationServer::ReplicationServer(ecs::Registry& registry, ReplicationServerOptions options)
+ReplicationServer::ReplicationServer(ashiato::Registry& registry, ReplicationServerOptions options)
     : options_(detail::validate_server_options(std::move(options))),
       registry_dirty_frame_listeners_(std::make_shared<ServerRegistryDirtyFrameSubscription::State>()),
       frame_batch_listeners_(std::make_shared<ServerFrameBatchListenerSubscription::State>()),
-      logger_(detail::make_logger(options_.logging, "kage.sync.server")) {
+      logger_(detail::make_logger(options_.logging, "ashiato.sync.server")) {
     register_components(registry);
     SyncSettings& settings = registry.write<SyncSettings>();
     settings.role = SyncRole::Server;
@@ -229,7 +229,7 @@ ReplicationServer::ReplicationServer(ecs::Registry& registry, ReplicationServerO
     registry.write<SyncAuthority>().authoritative = true;
     set_local_client_id(registry, invalid_client_id);
     server_dirty_frame_subscription_ = registry_dirty_frame_broadcaster_.subscribe(*this);
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     set_trace_options(options_.trace);
 #endif
 }
@@ -248,13 +248,13 @@ void ReplicationServer::set_transport(TransportFn transport) {
 
 void ReplicationServer::set_logger(std::shared_ptr<spdlog::logger> logger) {
     options_.logging.logger = std::move(logger);
-    logger_ = detail::make_logger(options_.logging, "kage.sync.server");
+    logger_ = detail::make_logger(options_.logging, "ashiato.sync.server");
 }
 
 void ReplicationServer::set_log_level(LogLevel level) {
     options_.logging.level = level;
     if (logger_ == nullptr) {
-        logger_ = detail::make_logger(options_.logging, "kage.sync.server");
+        logger_ = detail::make_logger(options_.logging, "ashiato.sync.server");
     } else {
         logger_->set_level(detail::to_spdlog_level(level));
     }
@@ -368,7 +368,7 @@ ServerFrameBatchListenerSubscription ReplicationServer::subscribe_frame_batch_li
     return ServerFrameBatchListenerSubscription(frame_batch_listeners_, id);
 }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 void ReplicationServer::set_tracer(SyncTracer* tracer) noexcept {
     trace_writer_.reset();
     tracer_ = tracer;
@@ -428,7 +428,7 @@ bool ReplicationServer::add_client_state(ClientState state) {
             " client=" + std::to_string(client) +
             " ready=" + (ready_for_updates ? std::string("true") : std::string("false")));
     }
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     if (tracer_ != nullptr && tracer_->enabled()) {
         SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::ClientConnected, client, frame_);
         tracer_->trace(event);
@@ -470,12 +470,12 @@ bool ReplicationServer::add_client_for_peer(ClientId peer, ClientId client, bool
     return add_client_state(std::move(state));
 }
 
-void ReplicationServer::set_local_client_id(ecs::Registry& registry, ClientId client) noexcept {
+void ReplicationServer::set_local_client_id(ashiato::Registry& registry, ClientId client) noexcept {
     local_client_ = client;
     registry.write<SyncSettings>().local_client = client;
 }
 
-ClientId ReplicationServer::add_local_client(ecs::Registry& registry) {
+ClientId ReplicationServer::add_local_client(ashiato::Registry& registry) {
     if (local_client_ != invalid_client_id) {
         return invalid_client_id;
     }
@@ -508,8 +508,8 @@ bool ReplicationServer::is_local_client(ClientId client) const noexcept {
     return found != client_to_index_.end() && clients_[found->second].local;
 }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
-void ReplicationServer::trace_frame_components(const ecs::Registry& registry, const SyncSettings& settings) {
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+void ReplicationServer::trace_frame_components(const ashiato::Registry& registry, const SyncSettings& settings) {
     if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->frame_data_enabled()) {
         return;
     }
@@ -541,10 +541,10 @@ void ReplicationServer::trace_frame_components(const ecs::Registry& registry, co
 }
 
 void ReplicationServer::trace_input_component(
-    ecs::Entity entity,
+    ashiato::Entity entity,
     ClientState& client,
     SyncFrame frame,
-    ecs::Entity component,
+    ashiato::Entity component,
     const SyncComponentOps& ops,
     const std::uint8_t* quantized) {
     if (tracer_ == nullptr || !tracer_->enabled() || quantized == nullptr || !component) {
@@ -573,11 +573,11 @@ void ReplicationServer::trace_input_component(
 }
 
 void ReplicationServer::trace_input_starved(
-    ecs::Entity entity,
+    ashiato::Entity entity,
     ClientState& client,
     SyncFrame frame_for_input,
     SyncFrame frame_from_input,
-    ecs::Entity component,
+    ashiato::Entity component,
     const SyncComponentOps& ops) {
     if (tracer_ == nullptr || !tracer_->enabled() || !component) {
         return;
@@ -605,7 +605,7 @@ void ReplicationServer::trace_input_starved(
     tracer_->trace(event);
 }
 
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
 void ReplicationServer::trace_incoming_ack_packet(ServerClientReplicator& client, const std::vector<std::uint32_t>& acks) const {
     if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->packet_logs_enabled()) {
         return;
@@ -682,7 +682,7 @@ void ReplicationServer::trace_outgoing_update_packet(
             out << "{entity=" << record.entity.value
                 << ",frame=" << cue.frame
                 << ",type=" << cue.type;
-#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+#ifdef ASHIATO_SYNC_TRACE_COMPONENT_DATA
             if (tracer_ != nullptr && tracer_->frame_data_enabled() && !cue.data.empty()) {
                 out << ",data=" << cue.data;
             }
@@ -706,7 +706,7 @@ void ReplicationServer::append_packet_ack_cues(
         PacketAckRecord::CueSummary summary;
         summary.frame = cue.frame;
         summary.type = cue.type;
-#ifdef KAGE_SYNC_TRACE_COMPONENT_DATA
+#ifdef ASHIATO_SYNC_TRACE_COMPONENT_DATA
         if (tracer_ != nullptr && tracer_->frame_data_enabled() &&
             cue.type < settings.cue_ops.size() && settings.cue_ops[cue.type].trace != nullptr) {
             SyncTraceStringBuilder builder;
@@ -723,7 +723,7 @@ void ReplicationServer::append_packet_ack_cues(
 #endif
 #endif
 
-bool ReplicationServer::remove_client(ecs::Registry& registry, ClientId client) {
+bool ReplicationServer::remove_client(ashiato::Registry& registry, ClientId client) {
     const auto found = client_to_index_.find(client);
     if (found == client_to_index_.end()) {
         return false;
@@ -733,7 +733,7 @@ bool ReplicationServer::remove_client(ecs::Registry& registry, ClientId client) 
     const ClientId removed_peer = clients_[index].peer;
     const ClientId removed_id = clients_[index].id;
     const bool removed_local = clients_[index].local;
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     const ClientId removed_client = clients_[index].id;
 #endif
     if (clients_[index].replication != nullptr) {
@@ -760,7 +760,7 @@ bool ReplicationServer::remove_client(ecs::Registry& registry, ClientId client) 
     } else {
         set_local_client_id(registry, invalid_client_id);
     }
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     if (tracer_ != nullptr && tracer_->enabled()) {
         SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::ClientDisconnected, removed_client, frame_);
         tracer_->trace(event);
@@ -903,7 +903,7 @@ std::size_t ReplicationServer::begin_client_bandwidth_tick(ClientId client) {
 }
 
 ReplicationServer::ReplicationSendResult ReplicationServer::flush_client_updates(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     ClientId client) {
     const auto found = client_to_index_.find(client);
     if (found == client_to_index_.end() || found->second >= clients_.size()) {
@@ -916,9 +916,9 @@ ReplicationServer::ReplicationSendResult ReplicationServer::flush_client_updates
     return flush_client_updates(registry, *state.replication);
 }
 
-void ReplicationServer::rediscover_all_replicated_entities(ecs::Registry& registry) {
+void ReplicationServer::rediscover_all_replicated_entities(ashiato::Registry& registry) {
     if (!replicated_initialized_) {
-        registry.view<const Replicated>().each([&](ecs::Entity entity, const Replicated& replicated) {
+        registry.view<const Replicated>().each([&](ashiato::Entity entity, const Replicated& replicated) {
             upsert_replicated(registry, entity, replicated.archetype);
         });
         replicated_initialized_ = true;
@@ -930,30 +930,30 @@ void ReplicationServer::rediscover_all_replicated_entities(ecs::Registry& regist
             deactivate_replicated(slot);
         }
     }
-    registry.view<const Replicated>().each([&](ecs::Entity entity, const Replicated& replicated) {
+    registry.view<const Replicated>().each([&](ashiato::Entity entity, const Replicated& replicated) {
         upsert_replicated(registry, entity, replicated.archetype);
     });
 }
 
-void ReplicationServer::rediscover_replicated_entities(ecs::Registry& registry, ecs::Registry::DirtyView dirty) {
+void ReplicationServer::rediscover_replicated_entities(ashiato::Registry& registry, ashiato::Registry::DirtyView dirty) {
     if (!replicated_initialized_) {
-        registry.view<const Replicated>().each([&](ecs::Entity entity, const Replicated& replicated) {
+        registry.view<const Replicated>().each([&](ashiato::Entity entity, const Replicated& replicated) {
             upsert_replicated(registry, entity, replicated.archetype);
         });
         replicated_initialized_ = true;
         return;
     }
 
-    dirty.each_removed<Replicated>([&](ecs::Registry::ComponentRemoval removal) {
+    dirty.each_removed<Replicated>([&](ashiato::Registry::ComponentRemoval removal) {
         deactivate_entity_index(removal.entity_index);
     });
 
-    dirty.each_dirty<Replicated>([&](ecs::Entity entity, const void* value) {
+    dirty.each_dirty<Replicated>([&](ashiato::Entity entity, const void* value) {
         upsert_replicated(registry, entity, static_cast<const Replicated*>(value)->archetype);
     });
 }
 
-bool ReplicationServer::is_replicated(ecs::Entity entity) const {
+bool ReplicationServer::is_replicated(ashiato::Entity entity) const {
     return entity_to_replicated_index_.find(entity.value) != entity_to_replicated_index_.end();
 }
 
@@ -974,15 +974,15 @@ bool ReplicationServer::replicated_slot_active(std::uint32_t slot) const noexcep
     return slot < replicated_.size() && replicated_[slot].active;
 }
 
-ecs::Entity ReplicationServer::replicated_slot_entity(std::uint32_t slot) const noexcept {
-    return slot < replicated_.size() ? replicated_[slot].entity : ecs::Entity{};
+ashiato::Entity ReplicationServer::replicated_slot_entity(std::uint32_t slot) const noexcept {
+    return slot < replicated_.size() ? replicated_[slot].entity : ashiato::Entity{};
 }
 
 SyncArchetypeId ReplicationServer::replicated_slot_archetype(std::uint32_t slot) const noexcept {
     return slot < replicated_.size() ? replicated_[slot].archetype : SyncArchetypeId{};
 }
 
-bool ReplicationServer::replicated_slot_is_replicable(const ecs::Registry& registry, std::uint32_t slot) const {
+bool ReplicationServer::replicated_slot_is_replicable(const ashiato::Registry& registry, std::uint32_t slot) const {
     return replicated_is_replicable(registry, slot);
 }
 
@@ -990,7 +990,7 @@ void ReplicationServer::deactivate_replicated_slot(std::uint32_t slot) {
     deactivate_replicated(slot);
 }
 
-std::uint32_t ReplicationServer::replicated_slot_for_entity(ecs::Entity entity) const noexcept {
+std::uint32_t ReplicationServer::replicated_slot_for_entity(ashiato::Entity entity) const noexcept {
     const auto found = entity_to_replicated_index_.find(entity.value);
     return found != entity_to_replicated_index_.end() ? found->second : invalid_quantized_frame_id;
 }
@@ -1001,7 +1001,7 @@ std::uint32_t ReplicationServer::replicated_slot_for_entity_index(std::uint32_t 
 }
 
 std::uint32_t ReplicationServer::quantized_frame_for_client(
-    const ecs::Registry& registry,
+    const ashiato::Registry& registry,
     const SyncSettings& settings,
     const server_detail::ServerClientReplicator& client,
     std::uint32_t slot,
@@ -1054,7 +1054,7 @@ void ReplicationServer::send_server_update_packet(
     server_detail::ServerClientReplicator& client,
     SyncFrame frame,
     std::uint16_t entity_count,
-    const ecs::BitBuffer& records,
+    const ashiato::BitBuffer& records,
     const std::vector<server_detail::PacketAckRecord>& ack_records) {
     send_packet(client, frame, entity_count, records, ack_records);
 }
@@ -1080,7 +1080,7 @@ bool ReplicationServer::prepare_client_update_send(server_detail::ServerClientRe
 }
 
 ReplicationServer::ReplicationSendResult ReplicationServer::flush_client_updates(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     server_detail::ServerClientReplicator& replication) {
     if (!prepare_client_update_send(replication)) {
         return {};
@@ -1097,7 +1097,7 @@ void ReplicationServer::detach_client_bandwidth_participant(ServerClientReplicat
     replication.bandwidth_participant = invalid_bandwidth_participant_id;
 }
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 SyncTracer* ReplicationServer::server_tracer() const noexcept {
     return tracer_;
 }
@@ -1121,7 +1121,7 @@ void ReplicationServer::trace_entity_started_syncing(
 
 void ReplicationServer::trace_entity_destroyed(
     ClientId client,
-    ecs::Entity entity,
+    ashiato::Entity entity,
     std::uint32_t network_id,
     std::uint32_t network_version) {
     if (tracer_ == nullptr || !tracer_->enabled()) {
@@ -1136,7 +1136,7 @@ void ReplicationServer::trace_entity_destroyed(
     tracer_->trace(event);
 }
 
-#ifdef KAGE_SYNC_TRACE_PACKET_LOGS
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
 void ReplicationServer::append_server_packet_ack_cues(
     const SyncSettings& settings,
     const server_detail::ClientEntityState& state,
@@ -1146,7 +1146,7 @@ void ReplicationServer::append_server_packet_ack_cues(
 #endif
 #endif
 
-bool ReplicationServer::acknowledge_entity(ClientId client, ecs::Entity entity, SyncFrame frame) {
+bool ReplicationServer::acknowledge_entity(ClientId client, ashiato::Entity entity, SyncFrame frame) {
     const auto client_found = client_to_index_.find(client);
     const auto replicated_found = entity_to_replicated_index_.find(entity.value);
     if (client_found == client_to_index_.end() || replicated_found == entity_to_replicated_index_.end()) {
@@ -1160,11 +1160,11 @@ bool ReplicationServer::acknowledge_entity(ClientId client, ecs::Entity entity, 
     return client_state.replication->acknowledge_entity(*this, replicated_found->second, frame);
 }
 
-void ReplicationServer::receive_packet(ClientId client, ecs::BitBuffer packet) {
+void ReplicationServer::receive_packet(ClientId client, ashiato::BitBuffer packet) {
     inbound_packets_.push_back(PendingInboundPacket{client, std::move(packet)});
 }
 
-bool ReplicationServer::process_packet(ClientId client, ecs::BitBuffer packet) {
+bool ReplicationServer::process_packet(ClientId client, ashiato::BitBuffer packet) {
     const bool previous_processing = processing_client_packet_;
     const bool previous_server_error_logged = server_error_logged_;
     processing_client_packet_ = true;
@@ -1215,7 +1215,7 @@ bool ReplicationServer::process_packet(ClientId client, ecs::BitBuffer packet) {
     }
 }
 
-bool ReplicationServer::process_packet(ecs::Registry& registry, ClientId client, ecs::BitBuffer packet) {
+bool ReplicationServer::process_packet(ashiato::Registry& registry, ClientId client, ashiato::BitBuffer packet) {
     const bool previous_processing = processing_client_packet_;
     const bool previous_server_error_logged = server_error_logged_;
     processing_client_packet_ = true;
@@ -1256,7 +1256,7 @@ bool ReplicationServer::process_packet(ecs::Registry& registry, ClientId client,
     }
 }
 
-bool ReplicationServer::process_connect_request_packet(ClientId peer, ecs::BitBuffer& packet) {
+bool ReplicationServer::process_connect_request_packet(ClientId peer, ashiato::BitBuffer& packet) {
     std::string token;
     if (!protocol::read_string(packet, token)) {
         log_client_packet_warning(peer, protocol::client_connect_request_message, "malformed_connect_request", "malformed_connect_request");
@@ -1287,7 +1287,7 @@ bool ReplicationServer::process_connect_request_packet(ClientId peer, ecs::BitBu
         if (accepted && error.empty() && accepted_client > max_client_entity_network_id_client) {
             error = "client id out of range";
         }
-        ecs::BitBuffer response;
+        ashiato::BitBuffer response;
         response.reserve_bytes(options_.mtu_bytes);
         response.push_bits(protocol::server_connect_response_message, 8U);
         response.push_bool(false);
@@ -1314,10 +1314,10 @@ bool ReplicationServer::process_connect_request_packet(ClientId peer, ecs::BitBu
 }
 
 bool ReplicationServer::process_message_from_connected_client(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     ClientState& client,
     std::uint8_t message,
-    ecs::BitBuffer& packet) {
+    ashiato::BitBuffer& packet) {
     switch (message) {
     case protocol::client_connect_ack_message:
         return process_connection_request_ack_packet(client, packet);
@@ -1341,7 +1341,7 @@ bool ReplicationServer::process_message_from_connected_client(
     }
 }
 
-bool ReplicationServer::process_connection_request_ack_packet(ClientState& client, ecs::BitBuffer& packet) {
+bool ReplicationServer::process_connection_request_ack_packet(ClientState& client, ashiato::BitBuffer& packet) {
     detail::BitReader reader(packet);
     ClientId acked_client = invalid_client_id;
     if (!reader.read_bits(64U, acked_client)) {
@@ -1360,7 +1360,7 @@ bool ReplicationServer::process_connection_request_ack_packet(ClientState& clien
     return true;
 }
 
-bool ReplicationServer::process_ping_packet(ClientState& client, ecs::BitBuffer& packet) {
+bool ReplicationServer::process_ping_packet(ClientState& client, ashiato::BitBuffer& packet) {
     detail::BitReader reader(packet);
     std::uint32_t sequence = 0;
     if (!reader.read_bits(32U, sequence)) {
@@ -1376,14 +1376,14 @@ bool ReplicationServer::process_ping_packet(ClientState& client, ecs::BitBuffer&
     return true;
 }
 
-bool ReplicationServer::process_client_ack_packet(ServerClientReplicator& replication, ecs::BitBuffer& packet) {
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+bool ReplicationServer::process_client_ack_packet(ServerClientReplicator& replication, ashiato::BitBuffer& packet) {
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     std::vector<std::uint32_t> acks;
 #endif
     const ClientUpdateAckResult ack_result = process_client_acks_from_packet(
         replication,
         packet
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
         ,
         acks
 #endif
@@ -1392,13 +1392,13 @@ bool ReplicationServer::process_client_ack_packet(ServerClientReplicator& replic
         log_client_packet_warning(replication.peer, protocol::client_ack_message, "malformed_ack_packet", "malformed_ack_packet");
         return false;
     }
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     trace_incoming_ack_packet(replication, acks);
 #endif
     return ack_result.all_acknowledged;
 }
 
-bool ReplicationServer::set_local_input_bytes(ecs::Registry& registry, ecs::Entity component, const void* input) {
+bool ReplicationServer::set_local_input_bytes(ashiato::Registry& registry, ashiato::Entity component, const void* input) {
     if (local_client_ == invalid_client_id || input == nullptr) {
         return false;
     }
@@ -1430,8 +1430,8 @@ bool ReplicationServer::set_local_input_bytes(ecs::Registry& registry, ecs::Enti
 
 ReplicationServer::ClientUpdateAckResult ReplicationServer::process_client_acks_from_packet(
     ServerClientReplicator& replication,
-    ecs::BitBuffer& packet
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+    ashiato::BitBuffer& packet
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     ,
     std::vector<std::uint32_t>& trace_acks
 #endif
@@ -1442,7 +1442,7 @@ ReplicationServer::ClientUpdateAckResult ReplicationServer::process_client_acks_
     if (!reader.read_bits(16U, ack_count)) {
         return ClientUpdateAckResult{};
     }
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     trace_acks.reserve(trace_acks.size() + ack_count);
 #endif
 
@@ -1452,7 +1452,7 @@ ReplicationServer::ClientUpdateAckResult ReplicationServer::process_client_acks_
         if (!reader.read_bits(packet_id_bits, packet_id)) {
             return ClientUpdateAckResult{};
         }
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
         trace_acks.push_back(packet_id);
 #endif
         all_acknowledged =
@@ -1463,9 +1463,9 @@ ReplicationServer::ClientUpdateAckResult ReplicationServer::process_client_acks_
 }
 
 bool ReplicationServer::process_input_with_acks_packet(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     ClientState& client,
-    ecs::BitBuffer& packet) {
+    ashiato::BitBuffer& packet) {
     const SyncSettings& settings = registry.get<SyncSettings>();
     if (!settings.input_component) {
         log_server_error(client.peer, "client_input", "server registry has no input component");
@@ -1486,13 +1486,13 @@ bool ReplicationServer::process_input_with_acks_packet(
         return false;
     }
     ServerClientReplicator& replication = *client.replication;
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     std::vector<std::uint32_t> acks;
 #endif
     const ClientUpdateAckResult ack_result = process_client_acks_from_packet(
         replication,
         packet
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
         ,
         acks
 #endif
@@ -1507,7 +1507,7 @@ bool ReplicationServer::process_input_with_acks_packet(
         log_client_packet_warning(client.peer, protocol::client_input_message, "malformed_input_payload", "malformed_input_payload");
         return false;
     }
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     trace_incoming_input_packet(client, acks, trace.baseline_frame, trace.first_input_frame, trace.last_input_frame);
 #endif
     return true;
@@ -1584,7 +1584,7 @@ std::size_t ReplicationServer::retained_quantized_frame_bytes() const noexcept {
     return bytes;
 }
 
-void ReplicationServer::push_client_inputs_to_ecs(ecs::Registry& registry) {
+void ReplicationServer::push_client_inputs_to_ashiato(ashiato::Registry& registry) {
     const SyncSettings& settings = registry.get<SyncSettings>();
     if (!settings.input_component) {
         return;
@@ -1598,7 +1598,7 @@ void ReplicationServer::push_client_inputs_to_ecs(ecs::Registry& registry) {
     std::unordered_map<ClientId, server_detail::ServerInputForFrame> input_for_frame_cache;
 
     registry.view<const NetworkOwner>().each([this, &input_for_frame_cache, input_frame_num, &ops, &settings, &registry]
-          (ecs::Entity entity, const NetworkOwner& owner) {
+          (ashiato::Entity entity, const NetworkOwner& owner) {
         const auto found_client = client_to_index_.find(owner.client);
         if (found_client == client_to_index_.end()) {
             return;
@@ -1611,13 +1611,13 @@ void ReplicationServer::push_client_inputs_to_ecs(ecs::Registry& registry) {
         }
 
         if (input_for_frame.bytes == nullptr || input_for_frame.bytes->size() != ops.serialization.quantized_size) {
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
             trace_input_starved(entity, client, input_frame_num, input_for_frame.input_frame, settings.input_component, ops);
 #endif
             return;
         }
         (void)ops.serialization.push_to_registry(registry, entity, input_for_frame.bytes->data());
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
         trace_input_component(entity, client, input_frame_num, settings.input_component, ops, input_for_frame.bytes->data());
         if (input_for_frame.input_frame < input_frame_num) {
             trace_input_starved(entity, client, input_frame_num, input_for_frame.input_frame, settings.input_component, ops);
@@ -1626,7 +1626,7 @@ void ReplicationServer::push_client_inputs_to_ecs(ecs::Registry& registry) {
     });
 }
 
-bool ReplicationServer::tick(ecs::Registry& registry, double dt_seconds) {
+bool ReplicationServer::tick(ashiato::Registry& registry, double dt_seconds) {
     if (dt_seconds < 0.0 || !std::isfinite(dt_seconds)) {
         return false;
     }
@@ -1654,7 +1654,7 @@ bool ReplicationServer::tick(ecs::Registry& registry, double dt_seconds) {
     for (std::uint32_t step = 0; step < completed_frames; ++step) {
         ++frame_;
         registry.write<FrameInfo>().frame = frame_;
-        push_client_inputs_to_ecs(registry);
+        push_client_inputs_to_ashiato(registry);
         registry.run_jobs();
         push_dirty_info_to_listeners(registry);
     }
@@ -1666,11 +1666,11 @@ bool ReplicationServer::tick(ecs::Registry& registry, double dt_seconds) {
     return true;
 }
 
-bool ReplicationServer::advance_frame_without_simulating(ecs::Registry& registry) {
+bool ReplicationServer::advance_frame_without_simulating(ashiato::Registry& registry) {
     return advance_frame_without_simulating(registry, frame_ + 1U);
 }
 
-bool ReplicationServer::advance_frame_without_simulating(ecs::Registry& registry, SyncFrame frame) {
+bool ReplicationServer::advance_frame_without_simulating(ashiato::Registry& registry, SyncFrame frame) {
     if (frame == 0U) {
         return false;
     }
@@ -1708,7 +1708,7 @@ void ReplicationServer::resend_pending_connect_responses(double dt_seconds) {
     }
 }
 
-void ReplicationServer::disconnect_timed_out_clients(ecs::Registry& registry) {
+void ReplicationServer::disconnect_timed_out_clients(ashiato::Registry& registry) {
     if (options_.idle_client_timeout_seconds == 0.0) {
         return;
     }
@@ -1730,7 +1730,7 @@ void ReplicationServer::disconnect_timed_out_clients(ecs::Registry& registry) {
     }
 }
 
-void ReplicationServer::push_dirty_info_to_listeners(ecs::Registry& registry) {
+void ReplicationServer::push_dirty_info_to_listeners(ashiato::Registry& registry) {
     post_tick_destroyed_slots_.clear();
     registry_dirty_frame_broadcaster_.broadcast(registry);
     SyncSettings& settings = registry.write<SyncSettings>();
@@ -1739,24 +1739,24 @@ void ReplicationServer::push_dirty_info_to_listeners(ecs::Registry& registry) {
     post_tick_destroyed_slots_.clear();
 }
 
-void ReplicationServer::on_registry_dirty_frame(const ecs::RegistryDirtyFrame& frame) {
+void ReplicationServer::on_registry_dirty_frame(const ashiato::RegistryDirtyFrame& frame) {
     rediscover_replicated_entities(frame.registry, frame.dirty);
     const SyncSettings& settings = frame.registry.get<SyncSettings>();
     capture_dirty_generations(frame.dirty, settings);
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     trace_frame_components(frame.registry, settings);
 #endif
     broadcast_registry_dirty_frame(frame);
 }
 
 void ReplicationServer::push_frame_to_listeners(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     double dt_seconds,
     std::uint32_t completed_frames) {
     broadcast_frame_batch(registry, dt_seconds, completed_frames);
 }
 
-void ReplicationServer::broadcast_registry_dirty_frame(const ecs::RegistryDirtyFrame& frame) {
+void ReplicationServer::broadcast_registry_dirty_frame(const ashiato::RegistryDirtyFrame& frame) {
     ServerRegistryDirtyFrame server_frame{
         *this,
         frame.registry,
@@ -1788,7 +1788,7 @@ void ReplicationServer::remove_unsubscribed_registry_dirty_frame_listeners() {
 }
 
 void ReplicationServer::broadcast_frame_batch(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     double dt_seconds,
     std::uint32_t completed_frames) {
     ServerFrameBatch batch{*this, registry, dt_seconds, completed_frames};
@@ -1811,16 +1811,16 @@ void ReplicationServer::remove_unsubscribed_frame_batch_listeners() {
         frame_batch_listeners_->listeners.end());
 }
 
-void ReplicationServer::capture_dirty_generations(ecs::Registry::DirtyView dirty, const SyncSettings& settings) {
+void ReplicationServer::capture_dirty_generations(ashiato::Registry::DirtyView dirty, const SyncSettings& settings) {
     for (const SyncArchetype& archetype : settings.archetypes) {
         for (const SyncTagReplication& tag_replication : archetype.tags) {
-            dirty.each_dirty(tag_replication.tag, [&](ecs::Entity entity, const void*) {
+            dirty.each_dirty(tag_replication.tag, [&](ashiato::Entity entity, const void*) {
                 const auto found = entity_to_replicated_index_.find(entity.value);
                 if (found != entity_to_replicated_index_.end()) {
                     mark_dirty_tag(settings, found->second, tag_replication.tag);
                 }
             });
-            dirty.each_removed(tag_replication.tag, [&](ecs::Registry::ComponentRemoval removal) {
+            dirty.each_removed(tag_replication.tag, [&](ashiato::Registry::ComponentRemoval removal) {
                 const auto found = entity_index_to_replicated_index_.find(removal.entity_index);
                 if (found != entity_index_to_replicated_index_.end()) {
                     mark_dirty_tag(settings, found->second, tag_replication.tag);
@@ -1830,14 +1830,14 @@ void ReplicationServer::capture_dirty_generations(ecs::Registry::DirtyView dirty
     }
 
     for (const auto& component_ops : settings.component_ops) {
-        const ecs::Entity component{component_ops.first};
-        dirty.each_dirty(component, [&](ecs::Entity entity, const void*) {
+        const ashiato::Entity component{component_ops.first};
+        dirty.each_dirty(component, [&](ashiato::Entity entity, const void*) {
             const auto found = entity_to_replicated_index_.find(entity.value);
             if (found != entity_to_replicated_index_.end()) {
                 mark_dirty_component(settings, found->second, component);
             }
         });
-        dirty.each_removed(component, [&](ecs::Registry::ComponentRemoval removal) {
+        dirty.each_removed(component, [&](ashiato::Registry::ComponentRemoval removal) {
             const auto found = entity_index_to_replicated_index_.find(removal.entity_index);
             if (found != entity_index_to_replicated_index_.end()) {
                 mark_dirty_component(settings, found->second, component);
@@ -1845,13 +1845,13 @@ void ReplicationServer::capture_dirty_generations(ecs::Registry::DirtyView dirty
         });
     }
 
-    dirty.each_dirty<NetworkOwner>([&](ecs::Entity entity, const void*) {
+    dirty.each_dirty<NetworkOwner>([&](ashiato::Entity entity, const void*) {
         const auto found = entity_to_replicated_index_.find(entity.value);
         if (found != entity_to_replicated_index_.end()) {
             mark_owner_visibility_dirty(settings, found->second);
         }
     });
-    dirty.each_removed<NetworkOwner>([&](ecs::Registry::ComponentRemoval removal) {
+    dirty.each_removed<NetworkOwner>([&](ashiato::Registry::ComponentRemoval removal) {
         const auto found = entity_index_to_replicated_index_.find(removal.entity_index);
         if (found != entity_index_to_replicated_index_.end()) {
             mark_owner_visibility_dirty(settings, found->second);
@@ -1860,7 +1860,7 @@ void ReplicationServer::capture_dirty_generations(ecs::Registry::DirtyView dirty
 }
 
 bool ReplicationServer::play_local_cue(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     const QueuedSyncCue& cue) {
     if (local_client_ == invalid_client_id ||
@@ -1880,7 +1880,7 @@ bool ReplicationServer::play_local_cue(
     EntityReferenceContext reference_context;
     reference_context.userContext = &reference_context_data;
     reference_context.network_entity_id_tier0_bits = options_.protocol.network_entity_id_tier0_bits;
-    reference_context.server_network_id_for_entity = [](void* userContext, ecs::Entity entity) {
+    reference_context.server_network_id_for_entity = [](void* userContext, ashiato::Entity entity) {
         ReferenceContextData& data = *static_cast<ReferenceContextData*>(userContext);
         const auto found = data.server->entity_to_replicated_index_.find(entity.value);
         if (found == data.server->entity_to_replicated_index_.end()) {
@@ -1903,12 +1903,12 @@ bool ReplicationServer::play_local_cue(
         ReferenceContextData& data = *static_cast<ReferenceContextData*>(userContext);
         const std::uint32_t slot = client_entity_network_id_wire_id(network_id) - 1U;
         if (slot >= data.server->replicated_.size() || !data.server->replicated_[slot].active) {
-            return ecs::Entity{};
+            return ashiato::Entity{};
         }
         return data.server->replicated_[slot].entity;
     };
 
-    ecs::BitBuffer payload = cue.payload;
+    ashiato::BitBuffer payload = cue.payload;
     if (settings.cue_ops[cue.type].references_entities) {
         if (!cue.value || settings.cue_ops[cue.type].serialize == nullptr) {
             return false;
@@ -1920,7 +1920,7 @@ bool ReplicationServer::play_local_cue(
 }
 
 void ReplicationServer::capture_queued_cues(
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     CueDispatcher& cues) {
     const QueuedSyncCueView queued = cues.view();
@@ -1931,7 +1931,7 @@ void ReplicationServer::capture_queued_cues(
             continue;
         }
         (void)play_local_cue(registry, settings, cue);
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
         if (tracer_ != nullptr && tracer_->enabled()) {
             SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::CueEmitted, invalid_client_id, cue.frame);
             event.server_entity = cue.entity;
@@ -1951,7 +1951,7 @@ void ReplicationServer::capture_queued_cues(
 }
 
 void ReplicationServer::attach_cue_to_clients(
-    const ecs::Registry& registry,
+    const ashiato::Registry& registry,
     const SyncSettings& settings,
     std::uint32_t slot,
     const QueuedSyncCue& cue) {
@@ -1977,7 +1977,7 @@ void ReplicationServer::attach_cue_to_clients(
         if (state == nullptr) {
             continue;
         }
-        ecs::BitBuffer payload = cue.payload;
+        ashiato::BitBuffer payload = cue.payload;
         if (settings.cue_ops[cue.type].references_entities) {
             if (!cue.value) {
                 continue;
@@ -1990,7 +1990,7 @@ void ReplicationServer::attach_cue_to_clients(
             EntityReferenceContext reference_context;
             reference_context.userContext = &reference_context_data;
             reference_context.network_entity_id_tier0_bits = options_.protocol.network_entity_id_tier0_bits;
-            reference_context.server_network_id_for_entity = [](void* userContext, ecs::Entity entity) {
+            reference_context.server_network_id_for_entity = [](void* userContext, ashiato::Entity entity) {
                 ReferenceContextData& data = *static_cast<ReferenceContextData*>(userContext);
                 const auto found = data.server->entity_to_replicated_index_.find(entity.value);
                 if (found == data.server->entity_to_replicated_index_.end()) {
@@ -2023,7 +2023,7 @@ void ReplicationServer::attach_cue_to_clients(
 void ReplicationServer::mark_dirty_component(
     const SyncSettings& settings,
     std::uint32_t slot,
-    ecs::Entity component) {
+    ashiato::Entity component) {
     if (slot >= replicated_.size() || !replicated_[slot].active) {
         return;
     }
@@ -2047,7 +2047,7 @@ void ReplicationServer::mark_dirty_component(
     }
 }
 
-void ReplicationServer::mark_dirty_tag(const SyncSettings& settings, std::uint32_t slot, ecs::Entity tag) {
+void ReplicationServer::mark_dirty_tag(const SyncSettings& settings, std::uint32_t slot, ashiato::Entity tag) {
     if (slot >= replicated_.size() || !replicated_[slot].active) {
         return;
     }
@@ -2133,7 +2133,7 @@ bool ReplicationServer::archetype_is_same_frame_cacheable(const SyncArchetype& a
 
 bool server_detail::ServerClientReplicator::UpdateWriter::serialize_entity(
     ReplicationServer& server,
-    const ecs::Registry& registry,
+    const ashiato::Registry& registry,
     const SyncSettings& settings,
     ServerClientReplicator& client,
     std::uint32_t slot,
@@ -2175,7 +2175,7 @@ bool server_detail::ServerClientReplicator::UpdateWriter::serialize_entity(
 }
 
 std::uint32_t ReplicationServer::find_or_create_quantized_frame(
-    const ecs::Registry& registry,
+    const ashiato::Registry& registry,
     const SyncSettings& settings,
     const ServerClientReplicator& client,
     std::uint32_t slot,
@@ -2287,7 +2287,7 @@ std::uint32_t ReplicationServer::find_or_create_quantized_frame(
         free_quantized_frames_.pop_back();
     } else {
         if (quantized_frames_.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
-            throw std::length_error("kage sync quantized frame space exhausted");
+            throw std::length_error("Ashiato Sync quantized frame space exhausted");
         }
         index = static_cast<std::uint32_t>(quantized_frames_.size());
         quantized_frames_.push_back(QuantizedFrame{});
@@ -2311,13 +2311,13 @@ std::uint32_t ReplicationServer::find_or_create_quantized_frame(
 
 void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
     ReplicationServer& server,
-    const ecs::Registry& registry,
+    const ashiato::Registry& registry,
     const SyncSettings& settings,
     ServerClientReplicator& client,
     std::uint32_t slot,
     std::uint32_t quantized_frame_id,
     std::uint64_t component_mask,
-    ecs::BitBuffer& out) {
+    ashiato::BitBuffer& out) {
     const ClientEntityState* entity_state = client.entities.try_get(slot);
     if (entity_state == nullptr) {
         return;
@@ -2351,7 +2351,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
         if (!reference_context_initialized) {
             reference_context.userContext = &reference_context_data;
             reference_context.network_entity_id_tier0_bits = server.options().protocol.network_entity_id_tier0_bits;
-            reference_context.server_network_id_for_entity = [](void* userContext, ecs::Entity entity) {
+            reference_context.server_network_id_for_entity = [](void* userContext, ashiato::Entity entity) {
                 ReferenceContextData& data = *static_cast<ReferenceContextData*>(userContext);
                 const std::uint32_t reference_slot = data.server->replicated_slot_for_entity(entity);
                 if (reference_slot == server_detail::invalid_quantized_frame_id ||
@@ -2422,7 +2422,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
         }
         if ((changed_mask & sync_slot_bit(0)) != 0U) {
             out.push_unsigned_bits(quantized_data->tag_mask, archetype.tags.size());
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
             if (server.server_tracer() != nullptr && server.server_tracer()->enabled()) {
                 for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
                     SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::TagSent, client.id, quantized_frame);
@@ -2451,7 +2451,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
             if (previous == nullptr || current == nullptr) {
                 throw std::logic_error("replicated quantized frame component bytes are missing");
             }
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
             if (server.server_tracer() != nullptr && server.server_tracer()->enabled()) {
                 SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::ComponentSent, client.id, quantized_frame);
                 event.server_entity = server.replicated_slot_entity(slot);
@@ -2465,7 +2465,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
             }
 #endif
             EntityReferenceContext* references = ops.references_entities ? references_for_component() : nullptr;
-            ecs::ComponentSerializationContext serialization_context{references};
+            ashiato::ComponentSerializationContext serialization_context{references};
             ops.serialization.serialize(previous, current, out, references != nullptr ? &serialization_context : nullptr);
         }
         const std::size_t cue_count = std::min(entity_state->pending_cues.size(), max_cues_per_entity_record);
@@ -2479,7 +2479,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
                 out.push_bytes(reinterpret_cast<const char*>(&cue.relevance_seconds), sizeof(cue.relevance_seconds));
                 out.push_bits(static_cast<std::int64_t>(cue.payload.bit_size()), 16U);
                 out.push_buffer_bits(cue.payload);
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
                 if (server.server_tracer() != nullptr && server.server_tracer()->enabled()) {
                     SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::CueSent, client.id, cue.frame);
                     event.server_entity = server.replicated_slot_entity(slot);
@@ -2530,7 +2530,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
             out.push_bits(0, sync_slot_bits);
         }
         out.push_unsigned_bits((*quantized_data).tag_mask, archetype.tags.size());
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
         if (server.server_tracer() != nullptr && server.server_tracer()->enabled()) {
             for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
                 SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::TagSent, client.id, quantized_frame);
@@ -2563,7 +2563,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
         if (!use_presence_mask) {
             out.push_bits(static_cast<std::int64_t>(component_index + 1U), sync_slot_bits);
         }
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
         if (server.server_tracer() != nullptr && server.server_tracer()->enabled()) {
             SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::ComponentSent, client.id, quantized_frame);
             event.server_entity = server.replicated_slot_entity(slot);
@@ -2577,7 +2577,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
         }
 #endif
         EntityReferenceContext* references = ops.references_entities ? references_for_component() : nullptr;
-        ecs::ComponentSerializationContext serialization_context{references};
+        ashiato::ComponentSerializationContext serialization_context{references};
         ops.serialization.serialize(nullptr, current, out, references != nullptr ? &serialization_context : nullptr);
     }
 
@@ -2592,7 +2592,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
             out.push_bytes(reinterpret_cast<const char*>(&cue.relevance_seconds), sizeof(cue.relevance_seconds));
             out.push_bits(static_cast<std::int64_t>(cue.payload.bit_size()), 16U);
             out.push_buffer_bits(cue.payload);
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
             if (server.server_tracer() != nullptr && server.server_tracer()->enabled()) {
                 SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::CueSent, client.id, cue.frame);
                 event.server_entity = server.replicated_slot_entity(slot);
@@ -2613,14 +2613,14 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
     (void)registry;
 }
 
-bool ReplicationServer::valid_archetype(const ecs::Registry& registry, SyncArchetypeId archetype) const {
+bool ReplicationServer::valid_archetype(const ashiato::Registry& registry, SyncArchetypeId archetype) const {
     const SyncSettings& settings = registry.get<SyncSettings>();
     return archetype.value < settings.archetypes.size();
 }
 
-bool ReplicationServer::upsert_replicated(ecs::Registry& registry, ecs::Entity entity, SyncArchetypeId archetype) {
+bool ReplicationServer::upsert_replicated(ashiato::Registry& registry, ashiato::Entity entity, SyncArchetypeId archetype) {
     if (!registry.alive(entity) || !valid_archetype(registry, archetype)) {
-        deactivate_entity_index(ecs::Registry::entity_index(entity));
+        deactivate_entity_index(ashiato::Registry::entity_index(entity));
         return false;
     }
 
@@ -2655,7 +2655,7 @@ bool ReplicationServer::upsert_replicated(ecs::Registry& registry, ecs::Entity e
         return true;
     }
 
-    deactivate_entity_index(ecs::Registry::entity_index(entity));
+    deactivate_entity_index(ashiato::Registry::entity_index(entity));
 
     const std::uint32_t slot = allocate_replicated_slot(entity, archetype);
     const SyncSettings& settings = registry.get<SyncSettings>();
@@ -2667,7 +2667,7 @@ bool ReplicationServer::upsert_replicated(ecs::Registry& registry, ecs::Entity e
             1U);
     }
     entity_to_replicated_index_[key] = slot;
-    entity_index_to_replicated_index_[ecs::Registry::entity_index(entity)] = slot;
+    entity_index_to_replicated_index_[ashiato::Registry::entity_index(entity)] = slot;
     for (ClientState& client : clients_) {
         if (client.replication == nullptr) {
             continue;
@@ -2682,7 +2682,7 @@ bool ReplicationServer::upsert_replicated(ecs::Registry& registry, ecs::Entity e
     return true;
 }
 
-std::uint32_t ReplicationServer::allocate_replicated_slot(ecs::Entity entity, SyncArchetypeId archetype) {
+std::uint32_t ReplicationServer::allocate_replicated_slot(ashiato::Entity entity, SyncArchetypeId archetype) {
     if (!free_replicated_indices_.empty()) {
         const std::uint32_t slot = free_replicated_indices_.back();
         free_replicated_indices_.pop_back();
@@ -2692,7 +2692,7 @@ std::uint32_t ReplicationServer::allocate_replicated_slot(ecs::Entity entity, Sy
     }
 
     if (replicated_.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
-        throw std::length_error("kage sync replicated slot space exhausted");
+        throw std::length_error("Ashiato Sync replicated slot space exhausted");
     }
 
     const std::uint32_t slot = static_cast<std::uint32_t>(replicated_.size());
@@ -2706,10 +2706,10 @@ void ReplicationServer::deactivate_replicated(std::uint32_t slot) {
         return;
     }
 
-    const ecs::Entity entity = replicated_[slot].entity;
+    const ashiato::Entity entity = replicated_[slot].entity;
     post_tick_destroyed_slots_.push_back(ServerDestroyedReplicatedSlot{slot, entity});
     entity_to_replicated_index_.erase(entity.value);
-    entity_index_to_replicated_index_.erase(ecs::Registry::entity_index(entity));
+    entity_index_to_replicated_index_.erase(ashiato::Registry::entity_index(entity));
     replicated_[slot].active = false;
     replicated_[slot].quantized_frames.clear();
     replicated_[slot].same_frame_quantized_frame = invalid_quantized_frame_id;
@@ -2744,13 +2744,13 @@ void ReplicationServer::remove_replicated_from_client_replicators(std::uint32_t 
     }
 }
 
-bool ReplicationServer::replicated_is_replicable(const ecs::Registry& registry, std::uint32_t slot) const {
+bool ReplicationServer::replicated_is_replicable(const ashiato::Registry& registry, std::uint32_t slot) const {
     if (slot >= replicated_.size() || !replicated_[slot].active) {
         return false;
     }
 
-    const ecs::Entity entity = replicated_[slot].entity;
+    const ashiato::Entity entity = replicated_[slot].entity;
     return registry.alive(entity) && registry.contains<Replicated>(entity);
 }
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

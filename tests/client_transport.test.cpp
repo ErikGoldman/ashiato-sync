@@ -13,13 +13,13 @@
 #include <utility>
 #include <vector>
 
-using namespace kage_sync_tests;
+using namespace ashiato_sync_tests;
 
 namespace {
 
 std::shared_ptr<spdlog::logger> make_test_logger(std::ostringstream& out) {
     auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(out);
-    auto logger = std::make_shared<spdlog::logger>("test.kage.sync.client", sink);
+    auto logger = std::make_shared<spdlog::logger>("test.ashiato.sync.client", sink);
     logger->set_pattern("%l %v");
     return logger;
 }
@@ -27,12 +27,12 @@ std::shared_ptr<spdlog::logger> make_test_logger(std::ostringstream& out) {
 }  // namespace
 
 TEST_CASE("replication client tick emits packets through configured sender") {
-    ecs::Registry registry;
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
-    std::vector<ecs::BitBuffer> sent;
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, {}));
-    client.set_packet_sender([&](const ecs::BitBuffer& packet) {
+    std::vector<ashiato::BitBuffer> sent;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, {}));
+    client.set_packet_sender([&](const ashiato::BitBuffer& packet) {
         sent.push_back(packet);
     });
 
@@ -43,16 +43,16 @@ TEST_CASE("replication client tick emits packets through configured sender") {
 TEST_CASE("replication client logs malformed server packets as warnings") {
     std::ostringstream logs;
 
-    ecs::Registry registry;
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
-    kage::sync::ReplicationClientOptions options;
-    options.logging.level = kage::sync::LogLevel::Warning;
+    ashiato::sync::ReplicationClientOptions options;
+    options.logging.level = ashiato::sync::LogLevel::Warning;
     options.logging.logger = make_test_logger(logs);
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
 
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::server_update_message, 8U);
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
     packet.push_bits(1U, 32U);
 
     REQUIRE_FALSE(client.receive(registry, packet));
@@ -62,7 +62,7 @@ TEST_CASE("replication client logs malformed server packets as warnings") {
     REQUIRE(output.find("reason=malformed_server_update") != std::string::npos);
     REQUIRE(output.find("error event=transport_error") == std::string::npos);
 
-    const kage::sync::ReplicationClient::ObservabilityStats stats = client.observability_stats();
+    const ashiato::sync::ReplicationClient::ObservabilityStats stats = client.observability_stats();
     REQUIRE(stats.server_packet_warnings == 1);
     REQUIRE(stats.client_errors == 0);
 }
@@ -70,17 +70,17 @@ TEST_CASE("replication client logs malformed server packets as warnings") {
 TEST_CASE("replication client can suppress repeated server packet warning logs") {
     std::ostringstream logs;
 
-    ecs::Registry registry;
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
-    kage::sync::ReplicationClientOptions options;
-    options.logging.level = kage::sync::LogLevel::Warning;
+    ashiato::sync::ReplicationClientOptions options;
+    options.logging.level = ashiato::sync::LogLevel::Warning;
     options.logging.max_warning_logs_per_source = 1;
     options.logging.logger = make_test_logger(logs);
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
 
-    ecs::BitBuffer packet;
-    packet.push_bits(kage::sync::protocol::server_update_message, 8U);
+    ashiato::BitBuffer packet;
+    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
     packet.push_bits(1U, 32U);
 
     REQUIRE_FALSE(client.receive(registry, packet));
@@ -91,7 +91,7 @@ TEST_CASE("replication client can suppress repeated server packet warning logs")
     REQUIRE(output.find("event=server_packet_rejected") != std::string::npos);
     REQUIRE(output.find("event=server_packet_warnings_suppressed") != std::string::npos);
 
-    const kage::sync::ReplicationClient::ObservabilityStats stats = client.observability_stats();
+    const ashiato::sync::ReplicationClient::ObservabilityStats stats = client.observability_stats();
     REQUIRE(stats.server_packet_warnings == 3);
     REQUIRE(stats.suppressed_server_packet_warnings == 2);
 }
@@ -99,14 +99,14 @@ TEST_CASE("replication client can suppress repeated server packet warning logs")
 TEST_CASE("replication client logs packet sender failures as errors") {
     std::ostringstream logs;
 
-    ecs::Registry registry;
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
-    kage::sync::ReplicationClientOptions options;
-    options.logging.level = kage::sync::LogLevel::Warning;
+    ashiato::sync::ReplicationClientOptions options;
+    options.logging.level = ashiato::sync::LogLevel::Warning;
     options.logging.logger = make_test_logger(logs);
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
-    client.set_packet_sender([](const ecs::BitBuffer&) {
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    client.set_packet_sender([](const ashiato::BitBuffer&) {
         throw std::runtime_error("send failed");
     });
 
@@ -117,56 +117,56 @@ TEST_CASE("replication client logs packet sender failures as errors") {
     REQUIRE(output.find("reason=send_failed") != std::string::npos);
     REQUIRE(output.find("warning event=server_packet_rejected") == std::string::npos);
 
-    const kage::sync::ReplicationClient::ObservabilityStats stats = client.observability_stats();
+    const ashiato::sync::ReplicationClient::ObservabilityStats stats = client.observability_stats();
     REQUIRE(stats.client_errors == 1);
     REQUIRE(stats.server_packet_warnings == 0);
 }
 
 TEST_CASE("replication client queued receive packets are processed during tick") {
-    ecs::Registry registry;
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, {}));
-    ecs::BitBuffer response;
-    response.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, {}));
+    ashiato::BitBuffer response;
+    response.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
     response.push_bits(1U, 1U);
     response.push_unsigned_bits(1U, 64U);
     client.receive_packet(response);
 
     REQUIRE(client.tick(registry, client.fixed_dt_seconds() * 0.5));
-    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Accepted);
+    REQUIRE(client.connection_state() == ashiato::sync::ReplicationClientConnectionState::Accepted);
     REQUIRE(client.local_time_seconds() == Catch::Approx(client.fixed_dt_seconds() * 0.5));
 }
 
 TEST_CASE("replication client rejects malformed connect responses") {
-    ecs::Registry registry;
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
-    kage::sync::ReplicationClientOptions options;
+    ashiato::sync::ReplicationClientOptions options;
     options.session.connect_token = "token";
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
-    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Connecting);
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    REQUIRE(client.connection_state() == ashiato::sync::ReplicationClientConnectionState::Connecting);
 
-    ecs::BitBuffer truncated_accept;
-    truncated_accept.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
+    ashiato::BitBuffer truncated_accept;
+    truncated_accept.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
     truncated_accept.push_bool(true);
     truncated_accept.push_bits(1, 8U);
     REQUIRE_FALSE(client.receive(registry, truncated_accept));
-    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Connecting);
+    REQUIRE(client.connection_state() == ashiato::sync::ReplicationClientConnectionState::Connecting);
 
-    ecs::BitBuffer truncated_reject;
-    truncated_reject.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
+    ashiato::BitBuffer truncated_reject;
+    truncated_reject.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
     truncated_reject.push_bool(false);
     truncated_reject.push_bits(5, 16U);
     REQUIRE_FALSE(client.receive(registry, truncated_reject));
-    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Connecting);
+    REQUIRE(client.connection_state() == ashiato::sync::ReplicationClientConnectionState::Connecting);
 
-    ecs::BitBuffer invalid_client_id;
-    invalid_client_id.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
+    ashiato::BitBuffer invalid_client_id;
+    invalid_client_id.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
     invalid_client_id.push_bool(true);
-    invalid_client_id.push_unsigned_bits(kage::sync::max_client_entity_network_id_client + 1U, 64U);
+    invalid_client_id.push_unsigned_bits(ashiato::sync::max_client_entity_network_id_client + 1U, 64U);
     REQUIRE_FALSE(client.receive(registry, invalid_client_id));
-    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Connecting);
+    REQUIRE(client.connection_state() == ashiato::sync::ReplicationClientConnectionState::Connecting);
 
     std::vector<std::uint8_t> fuzz_crash_packet{
         0xffU,
@@ -181,40 +181,40 @@ TEST_CASE("replication client rejects malformed connect responses") {
         0x05U,
         0x2dU,
     };
-    fuzz_crash_packet[0] = kage::sync::protocol::server_connect_response_message;
-    ecs::BitBuffer fuzz_crash;
+    fuzz_crash_packet[0] = ashiato::sync::protocol::server_connect_response_message;
+    ashiato::BitBuffer fuzz_crash;
     fuzz_crash.assign_bytes(std::move(fuzz_crash_packet), 11U * 8U);
     REQUIRE_FALSE(client.receive(registry, fuzz_crash));
-    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Connecting);
+    REQUIRE(client.connection_state() == ashiato::sync::ReplicationClientConnectionState::Connecting);
 }
 
 TEST_CASE("replication client stores rejected connect response errors") {
-    ecs::Registry registry;
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
-    kage::sync::ReplicationClientOptions options;
+    ashiato::sync::ReplicationClientOptions options;
     options.session.connect_token = "token";
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
 
-    ecs::BitBuffer rejected;
-    rejected.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
+    ashiato::BitBuffer rejected;
+    rejected.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
     rejected.push_bool(false);
-    kage::sync::protocol::write_string(rejected, "bad token");
+    ashiato::sync::protocol::write_string(rejected, "bad token");
 
     REQUIRE(client.receive(registry, rejected));
-    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Rejected);
+    REQUIRE(client.connection_state() == ashiato::sync::ReplicationClientConnectionState::Rejected);
     REQUIRE(client.connect_error() == "bad token");
 }
 
 TEST_CASE("replication client queued stale receive packets do not fail tick") {
-    ecs::Registry registry;
-    const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(registry);
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = ashiato_sync_tests::define_position_archetype(registry);
     REQUIRE(archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
-    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, {}));
-    const ecs::Entity server_entity{42};
-    const ecs::BitBuffer packet =
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, {}));
+    const ashiato::Entity server_entity{42};
+    const ashiato::BitBuffer packet =
         make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}});
     REQUIRE(receive_at_local_frame(client, registry, packet, 1));
     REQUIRE(client.drain_ack_packets().size() == 1);
@@ -226,18 +226,18 @@ TEST_CASE("replication client queued stale receive packets do not fail tick") {
 }
 
 TEST_CASE("replication client delays server update packet loss until gaps leave the receive window") {
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
-    const ecs::Entity server_entity{42};
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
+    const ashiato::Entity server_entity{42};
 
     REQUIRE(receive_at_local_frame(client, client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}, 2U, 1U), 1));
     REQUIRE(receive_at_local_frame(client, client_registry, make_position_packet(2, {{server_entity, Position{3.0f, 4.0f}}}, 2U, 3U), 2));
 
-    const kage::sync::ReplicationClientTimingStats stats = client.timing_stats();
+    const ashiato::sync::ReplicationClientTimingStats stats = client.timing_stats();
     REQUIRE(stats.server_update_packets_received == 2);
     REQUIRE(stats.server_update_packets_missing == 0);
     REQUIRE(stats.server_update_packets_reordered_or_duplicate == 0);
@@ -245,21 +245,21 @@ TEST_CASE("replication client delays server update packet loss until gaps leave 
 }
 
 TEST_CASE("replication client fills packet loss gaps from reordered server update packets") {
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
-    const ecs::Entity first_entity{42};
-    const ecs::Entity second_entity{43};
-    const ecs::Entity reordered_entity{44};
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
+    const ashiato::Entity first_entity{42};
+    const ashiato::Entity second_entity{43};
+    const ashiato::Entity reordered_entity{44};
 
     REQUIRE(receive_at_local_frame(client, client_registry, make_position_packet(1, {{first_entity, Position{1.0f, 2.0f}}}, 2U, 1U), 1));
     REQUIRE(receive_at_local_frame(client, client_registry, make_position_packet(3, {{second_entity, Position{3.0f, 4.0f}}}, 2U, 3U), 3));
     REQUIRE(receive_at_local_frame(client, client_registry, make_position_packet(4, {{reordered_entity, Position{2.0f, 3.0f}}}, 2U, 2U), 4));
 
-    const kage::sync::ReplicationClientTimingStats stats = client.timing_stats();
+    const ashiato::sync::ReplicationClientTimingStats stats = client.timing_stats();
     REQUIRE(stats.server_update_packets_received == 3);
     REQUIRE(stats.server_update_packets_missing == 0);
     REQUIRE(stats.server_update_packets_reordered_or_duplicate == 1);
@@ -267,19 +267,19 @@ TEST_CASE("replication client fills packet loss gaps from reordered server updat
 }
 
 TEST_CASE("replication client counts packet loss when gaps leave the receive window") {
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
-    const ecs::Entity server_entity{42};
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
+    const ashiato::Entity server_entity{42};
 
     REQUIRE(receive_at_local_frame(client, client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}}, 2U, 1U), 1));
     REQUIRE(receive_at_local_frame(client, client_registry, make_position_packet(3, {{server_entity, Position{3.0f, 4.0f}}}, 2U, 3U), 3));
     REQUIRE(receive_at_local_frame(client, client_registry, make_position_packet(66, {{server_entity, Position{6.0f, 6.0f}}}, 2U, 66U), 66));
 
-    const kage::sync::ReplicationClientTimingStats stats = client.timing_stats();
+    const ashiato::sync::ReplicationClientTimingStats stats = client.timing_stats();
     REQUIRE(stats.server_update_packets_received == 3);
     REQUIRE(stats.server_update_packets_missing == 1);
     REQUIRE(stats.server_update_packets_reordered_or_duplicate == 0);
@@ -287,19 +287,19 @@ TEST_CASE("replication client counts packet loss when gaps leave the receive win
 }
 
 TEST_CASE("replication client treats duplicate server update packet ids as duplicate without loss") {
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
-    const ecs::Entity first_entity{42};
-    const ecs::Entity duplicate_packet_id_entity{43};
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
+    const ashiato::Entity first_entity{42};
+    const ashiato::Entity duplicate_packet_id_entity{43};
 
     REQUIRE(receive_at_local_frame(client, client_registry, make_position_packet(1, {{first_entity, Position{1.0f, 2.0f}}}, 2U, 1U), 1));
     REQUIRE(receive_at_local_frame(client, client_registry, make_position_packet(2, {{duplicate_packet_id_entity, Position{1.0f, 2.0f}}}, 2U, 1U), 2));
 
-    const kage::sync::ReplicationClientTimingStats stats = client.timing_stats();
+    const ashiato::sync::ReplicationClientTimingStats stats = client.timing_stats();
     REQUIRE(stats.server_update_packets_received == 2);
     REQUIRE(stats.server_update_packets_missing == 0);
     REQUIRE(stats.server_update_packets_reordered_or_duplicate == 1);
@@ -307,21 +307,21 @@ TEST_CASE("replication client treats duplicate server update packet ids as dupli
 }
 
 TEST_CASE("replication client fills packet loss gaps from reordered wrapped packet ids") {
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
-    const ecs::Entity first_entity{42};
-    const ecs::Entity second_entity{43};
-    const ecs::Entity reordered_entity{44};
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
+    const ashiato::Entity first_entity{42};
+    const ashiato::Entity second_entity{43};
+    const ashiato::Entity reordered_entity{44};
 
     REQUIRE(receive_at_local_frame(client, client_registry, make_position_packet(1, {{first_entity, Position{1.0f, 2.0f}}}, 2U, 254U), 1));
     REQUIRE(receive_at_local_frame(client, client_registry, make_position_packet(2, {{second_entity, Position{3.0f, 4.0f}}}, 2U, 1U), 2));
     REQUIRE(receive_at_local_frame(client, client_registry, make_position_packet(3, {{reordered_entity, Position{2.0f, 3.0f}}}, 2U, 255U), 3));
 
-    const kage::sync::ReplicationClientTimingStats stats = client.timing_stats();
+    const ashiato::sync::ReplicationClientTimingStats stats = client.timing_stats();
     REQUIRE(stats.server_update_packets_received == 3);
     REQUIRE(stats.server_update_packets_missing == 0);
     REQUIRE(stats.server_update_packets_reordered_or_duplicate == 1);
@@ -329,23 +329,23 @@ TEST_CASE("replication client fills packet loss gaps from reordered wrapped pack
 }
 
 TEST_CASE("replication client does not undo confirmed loss for packets older than the receive window") {
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
-    const ecs::Entity first_entity{42};
-    const ecs::Entity second_entity{43};
-    const ecs::Entity far_entity{44};
-    const ecs::Entity late_entity{45};
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
+    const ashiato::Entity first_entity{42};
+    const ashiato::Entity second_entity{43};
+    const ashiato::Entity far_entity{44};
+    const ashiato::Entity late_entity{45};
 
     REQUIRE(receive_at_local_frame(client, client_registry, make_position_packet(1, {{first_entity, Position{1.0f, 2.0f}}}, 2U, 1U), 1));
     REQUIRE(receive_at_local_frame(client, client_registry, make_position_packet(3, {{second_entity, Position{3.0f, 4.0f}}}, 2U, 3U), 3));
     REQUIRE(receive_at_local_frame(client, client_registry, make_position_packet(66, {{far_entity, Position{6.0f, 6.0f}}}, 2U, 66U), 66));
     REQUIRE(receive_at_local_frame(client, client_registry, make_position_packet(67, {{late_entity, Position{2.0f, 3.0f}}}, 2U, 2U), 67));
 
-    const kage::sync::ReplicationClientTimingStats stats = client.timing_stats();
+    const ashiato::sync::ReplicationClientTimingStats stats = client.timing_stats();
     REQUIRE(stats.server_update_packets_received == 4);
     REQUIRE(stats.server_update_packets_missing == 1);
     REQUIRE(stats.server_update_packets_reordered_or_duplicate == 1);
@@ -353,50 +353,50 @@ TEST_CASE("replication client does not undo confirmed loss for packets older tha
 }
 
 TEST_CASE("client connect handshake ACKs accepted id until first update") {
-    ecs::Registry client_registry;
-    kage_sync_tests::define_position_archetype(client_registry);
+    ashiato::Registry client_registry;
+    ashiato_sync_tests::define_position_archetype(client_registry);
 
-    kage::sync::ReplicationClientOptions options;
+    ashiato::sync::ReplicationClientOptions options;
     options.session.connect_token = "token";
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, options));
 
-    std::vector<ecs::BitBuffer> packets = client.drain_packets();
+    std::vector<ashiato::BitBuffer> packets = client.drain_packets();
     REQUIRE(packets.size() == 1);
     REQUIRE(static_cast<std::uint8_t>(packets[0].read_bits(8U)) ==
-            kage::sync::protocol::client_connect_request_message);
+            ashiato::sync::protocol::client_connect_request_message);
     std::string token;
-    REQUIRE(kage::sync::protocol::read_string(packets[0], token));
+    REQUIRE(ashiato::sync::protocol::read_string(packets[0], token));
     REQUIRE(token == "token");
 
-    ecs::BitBuffer accepted;
-    accepted.push_bits(kage::sync::protocol::server_connect_response_message, 8U);
+    ashiato::BitBuffer accepted;
+    accepted.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
     accepted.push_bool(true);
     accepted.push_unsigned_bits(7, 64U);
     REQUIRE(client.receive(client_registry, accepted));
     REQUIRE(client.client_id() == 7);
-    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Accepted);
-    REQUIRE(client_registry.get<kage::sync::SyncSettings>().local_client == 7);
+    REQUIRE(client.connection_state() == ashiato::sync::ReplicationClientConnectionState::Accepted);
+    REQUIRE(client_registry.get<ashiato::sync::SyncSettings>().local_client == 7);
 
     packets = client.drain_packets();
     REQUIRE_FALSE(packets.empty());
     bool saw_connect_ack = false;
-    for (ecs::BitBuffer packet : packets) {
+    for (ashiato::BitBuffer packet : packets) {
         const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
-        if (message == kage::sync::protocol::client_connect_ack_message) {
+        if (message == ashiato::sync::protocol::client_connect_ack_message) {
             saw_connect_ack = true;
             REQUIRE(packet.read_unsigned_bits(64U) == 7);
         }
     }
     REQUIRE(saw_connect_ack);
 
-    const ecs::Entity server_entity{42};
+    const ashiato::Entity server_entity{42};
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
-    REQUIRE(client.connection_state() == kage::sync::ReplicationClientConnectionState::Ready);
+    REQUIRE(client.connection_state() == ashiato::sync::ReplicationClientConnectionState::Ready);
 
     REQUIRE(client.tick(client_registry, client.options().session.connect_resend_interval_seconds));
     packets = client.drain_packets();
-    for (ecs::BitBuffer packet : packets) {
+    for (ashiato::BitBuffer packet : packets) {
         REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) !=
-                kage::sync::protocol::client_connect_ack_message);
+                ashiato::sync::protocol::client_connect_ack_message);
     }
 }

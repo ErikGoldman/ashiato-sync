@@ -1,12 +1,12 @@
 #pragma once
 
-#include "kage/sync/server_frame_consumer.hpp"
+#include "ashiato/sync/server_frame_consumer.hpp"
 
 #include <cstdint>
 #include <functional>
 #include <memory>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 class ReplicationServer;
 
@@ -18,7 +18,7 @@ enum class ReplicationReplayFrameKind : std::uint32_t {
 struct ReplicationReplayFrame {
     SyncFrame frame = 0;
     ReplicationReplayFrameKind kind = ReplicationReplayFrameKind::Full;
-    ecs::BitBuffer payload;
+    ashiato::BitBuffer payload;
 };
 
 struct ReplicationReplayWriterOptions {
@@ -52,4 +52,4 @@ private:
     ServerRegistryDirtyFrameSubscription subscription_;
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

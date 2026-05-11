@@ -19,10 +19,10 @@
 namespace fps {
 namespace {
 
-ecs::Entity find_local_player(ecs::Registry& registry, kage::sync::ClientId client) {
-    ecs::Entity result;
-    registry.view<const kage::sync::NetworkOwner>().each(
-        [&result, client](ecs::Entity entity, const kage::sync::NetworkOwner& owner) {
+ashiato::Entity find_local_player(ashiato::Registry& registry, ashiato::sync::ClientId client) {
+    ashiato::Entity result;
+    registry.view<const ashiato::sync::NetworkOwner>().each(
+        [&result, client](ashiato::Entity entity, const ashiato::sync::NetworkOwner& owner) {
             if (!result && owner.client == client) {
                 result = entity;
             }
@@ -57,17 +57,17 @@ void draw_kill_cam_overlay() {
 }  // namespace
 
 struct ListenServerFrontend::Impl {
-    kage::sync::ClientId host_client = kage::sync::invalid_client_id;
+    ashiato::sync::ClientId host_client = ashiato::sync::invalid_client_id;
     std::string replay_host = "127.0.0.1";
     std::uint16_t replay_port = 0;
-    std::unique_ptr<kage::sync::FractionalTickSampler> display;
-    std::unique_ptr<kage::sync::FractionalTickSampler> death_cam_display;
+    std::unique_ptr<ashiato::sync::FractionalTickSampler> display;
+    std::unique_ptr<ashiato::sync::FractionalTickSampler> death_cam_display;
     FpsDeathCamClient death_cam;
     FpsInput current_input{};
     MouseLookState look;
     bool show_stats = true;
     bool was_local_dead = false;
-    kage::sync::SyncFrame captured_frame = 0;
+    ashiato::sync::SyncFrame captured_frame = 0;
     Sound shot_sound{};
     Sound hit_confirm_sound{};
     Sound took_damage_sound{};
@@ -77,20 +77,20 @@ struct ListenServerFrontend::Impl {
 
 ListenServerFrontend::ListenServerFrontend(
     const AppConfig& config,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSchema& schema,
-    kage::sync::ReplicationServer& server)
+    ashiato::sync::ReplicationServer& server)
     : impl_(std::make_unique<Impl>()) {
     impl_->host_client = server.add_local_client(registry);
-    if (impl_->host_client == kage::sync::invalid_client_id) {
+    if (impl_->host_client == ashiato::sync::invalid_client_id) {
         throw std::runtime_error("failed to allocate listen-server local client");
     }
     impl_->replay_port = config.replay_port;
     (void)spawn_character(registry, schema, Vector3{0.0f, 0.0f, -3.0f}, Color{90, 180, 255, 255}, impl_->host_client);
 
-    impl_->display = std::make_unique<kage::sync::FractionalTickSampler>(server);
+    impl_->display = std::make_unique<ashiato::sync::FractionalTickSampler>(server);
 
-    InitWindow(1280, 720, "kage-sync FPS listen server");
+    InitWindow(1280, 720, "ashiato-sync FPS listen server");
     InitAudioDevice();
     EnableCursor();
     SetTargetFPS(120);
@@ -116,19 +116,19 @@ ListenServerFrontend::~ListenServerFrontend() {
 ListenServerFrontend::ListenServerFrontend(ListenServerFrontend&&) noexcept = default;
 ListenServerFrontend& ListenServerFrontend::operator=(ListenServerFrontend&&) noexcept = default;
 
-kage::sync::ClientId ListenServerFrontend::host_client() const noexcept {
-    return impl_ != nullptr ? impl_->host_client : kage::sync::invalid_client_id;
+ashiato::sync::ClientId ListenServerFrontend::host_client() const noexcept {
+    return impl_ != nullptr ? impl_->host_client : ashiato::sync::invalid_client_id;
 }
 
 bool ListenServerFrontend::window_should_close() const {
     return WindowShouldClose();
 }
 
-void ListenServerFrontend::update_input(ecs::Registry& registry, kage::sync::ReplicationServer& server) {
+void ListenServerFrontend::update_input(ashiato::Registry& registry, ashiato::sync::ReplicationServer& server) {
     const double target = impl_->display != nullptr ? impl_->display->target_frame() : 0.0;
-    const kage::sync::SyncFrame target_frame =
+    const ashiato::sync::SyncFrame target_frame =
         target > 0.0 && std::isfinite(target)
-        ? static_cast<kage::sync::SyncFrame>(std::floor(target))
+        ? static_cast<ashiato::sync::SyncFrame>(std::floor(target))
         : 0U;
     impl_->current_input = read_player_input(impl_->current_input, impl_->look, target_frame);
     if (IsKeyPressed(KEY_SLASH)) {
@@ -137,17 +137,17 @@ void ListenServerFrontend::update_input(ecs::Registry& registry, kage::sync::Rep
     (void)server.set_local_input(registry, impl_->current_input);
 }
 
-void ListenServerFrontend::capture_display(ecs::Registry& registry, kage::sync::ReplicationServer& server) {
+void ListenServerFrontend::capture_display(ashiato::Registry& registry, ashiato::sync::ReplicationServer& server) {
     if (impl_->display != nullptr && impl_->captured_frame != server.frame()) {
         impl_->display->capture_server_frame(registry);
         impl_->captured_frame = server.frame();
     }
 }
 
-void ListenServerFrontend::update_effects(ecs::Registry& registry, float dt) {
+void ListenServerFrontend::update_effects(ashiato::Registry& registry, float dt) {
     fps::update_effects(registry, dt);
 
-    const ecs::Entity local_entity = find_local_player(registry, impl_->host_client);
+    const ashiato::Entity local_entity = find_local_player(registry, impl_->host_client);
     bool is_local_dead = false;
     if (local_entity && registry.alive(local_entity)) {
         if (const FpsCombatState* combat = registry.try_get<FpsCombatState>(local_entity)) {
@@ -164,24 +164,24 @@ void ListenServerFrontend::update_effects(ecs::Registry& registry, float dt) {
     }
 }
 
-void ListenServerFrontend::render(ecs::Registry& registry, kage::sync::ReplicationServer& server) {
-    const ecs::Entity replay_local_entity =
-        impl_->death_cam.active() ? find_local_player(impl_->death_cam.registry(), impl_->host_client) : ecs::Entity{};
-    const bool replay_ready = replay_local_entity != ecs::Entity{};
+void ListenServerFrontend::render(ashiato::Registry& registry, ashiato::sync::ReplicationServer& server) {
+    const ashiato::Entity replay_local_entity =
+        impl_->death_cam.active() ? find_local_player(impl_->death_cam.registry(), impl_->host_client) : ashiato::Entity{};
+    const bool replay_ready = replay_local_entity != ashiato::Entity{};
     if (replay_ready && impl_->death_cam_display == nullptr) {
-        impl_->death_cam_display = std::make_unique<kage::sync::FractionalTickSampler>(impl_->death_cam.client());
+        impl_->death_cam_display = std::make_unique<ashiato::sync::FractionalTickSampler>(impl_->death_cam.client());
     } else if (!replay_ready) {
         impl_->death_cam_display.reset();
     }
-    ecs::Registry& render_registry = replay_ready ? impl_->death_cam.registry() : registry;
-    kage::sync::FractionalTickSampler& render_display_source =
+    ashiato::Registry& render_registry = replay_ready ? impl_->death_cam.registry() : registry;
+    ashiato::sync::FractionalTickSampler& render_display_source =
         replay_ready ? *impl_->death_cam_display : *impl_->display;
-    const std::vector<kage::sync::FractionalTickSample>& render_display = render_display_source.entities(render_registry);
-    ecs::Entity local_entity = find_local_player(render_registry, impl_->host_client);
+    const std::vector<ashiato::sync::FractionalTickSample>& render_display = render_display_source.entities(render_registry);
+    ashiato::Entity local_entity = find_local_player(render_registry, impl_->host_client);
     if (replay_ready) {
-        ecs::Entity ecs_target;
+        ashiato::Entity ecs_target;
         render_registry.view<const FpsTransform>().with_tags<const FpsKillCamTarget>().each(
-            [&ecs_target](ecs::Entity entity, const FpsTransform&) {
+            [&ecs_target](ashiato::Entity entity, const FpsTransform&) {
                 if (!ecs_target) {
                     ecs_target = entity;
                 }
@@ -190,7 +190,7 @@ void ListenServerFrontend::render(ecs::Registry& registry, kage::sync::Replicati
         if (replay_target_player_id != 0U) {
             render_registry.view<const FpsUniquePlayerId, const FpsTransform>().each(
                 [&ecs_target, replay_target_player_id](
-                    ecs::Entity entity,
+                    ashiato::Entity entity,
                     const FpsUniquePlayerId& unique,
                     const FpsTransform&) {
                     if (unique.value == replay_target_player_id) {
@@ -213,7 +213,7 @@ void ListenServerFrontend::render(ecs::Registry& registry, kage::sync::Replicati
     if (local_entity && render_registry.alive(local_entity)) {
         FpsTransform sampled_transform{};
         const FpsTransform* transform = nullptr;
-        for (const kage::sync::FractionalTickSample& sample : render_display) {
+        for (const ashiato::sync::FractionalTickSample& sample : render_display) {
             if (sample.local_entity == local_entity && sample.try_get_sampled_value(render_registry, sampled_transform)) {
                 transform = &sampled_transform;
                 break;
@@ -244,7 +244,7 @@ void ListenServerFrontend::render(ecs::Registry& registry, kage::sync::Replicati
     ClearBackground(Color{20, 22, 26, 255});
     BeginMode3D(camera);
     draw_arena();
-    for (const kage::sync::FractionalTickSample& sample : render_display) {
+    for (const ashiato::sync::FractionalTickSample& sample : render_display) {
         FpsTransform transform{};
         if (!sample.try_get_sampled_value(render_registry, transform)) {
             continue;
@@ -273,14 +273,14 @@ void ListenServerFrontend::render(ecs::Registry& registry, kage::sync::Replicati
     }
     rlDisableDepthTest();
 
-    render_registry.view<FpsShotEffect>().each([this](ecs::Entity entity, FpsShotEffect& effect) {
+    render_registry.view<FpsShotEffect>().each([this](ashiato::Entity entity, FpsShotEffect& effect) {
         if (effect.sound_played == 0U) {
             PlaySound(impl_->shot_sound);
             effect.sound_played = 1;
         }
         (void)entity;
     });
-    render_registry.view<FpsHitEffect>().each([this, local_entity](ecs::Entity entity, FpsHitEffect& effect) {
+    render_registry.view<FpsHitEffect>().each([this, local_entity](ashiato::Entity entity, FpsHitEffect& effect) {
         if (effect.sound_played != 0U) {
             return;
         }

@@ -4,7 +4,7 @@
 #include <string>
 #include <typeinfo>
 
-namespace kage::sync::detail {
+namespace ashiato::sync::detail {
 
 inline bool remove_prefix(std::string& value, const char* prefix) {
     const std::size_t length = std::char_traits<char>::length(prefix);
@@ -55,4 +55,4 @@ std::string default_type_name() {
     return short_type_name(typeid(T).name());
 }
 
-}  // namespace kage::sync::detail
+}  // namespace ashiato::sync::detail

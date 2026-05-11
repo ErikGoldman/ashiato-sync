@@ -1,10 +1,10 @@
 #pragma once
 
-#include "kage/sync/client.hpp"
-#include "kage/sync/client_clock.hpp"
-#include "kage/sync/server.hpp"
+#include "ashiato/sync/client.hpp"
+#include "ashiato/sync/client_clock.hpp"
+#include "ashiato/sync/server.hpp"
 
-namespace kage::sync::detail {
+namespace ashiato::sync::detail {
 
 ReplicationClientOptions validate_client_options(
     ReplicationClientOptions options,
@@ -13,4 +13,4 @@ ReplicationClientOptions validate_client_options(
 ReplicationClientClockConfig validate_client_clock_config(ReplicationClientClockConfig config);
 ReplicationServerOptions validate_server_options(ReplicationServerOptions options);
 
-}  // namespace kage::sync::detail
+}  // namespace ashiato::sync::detail

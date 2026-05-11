@@ -2,8 +2,8 @@
 
 #include "client/state.hpp"
 
-#include "ecs/bit_buffer.hpp"
-#include "kage/sync/client.hpp"
+#include "ashiato/bit_buffer.hpp"
+#include "ashiato/sync/client.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -11,13 +11,13 @@
 #include <unordered_map>
 #include <vector>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 
 class ClientSessionTransport {
 public:
     std::unordered_map<std::uint32_t, PendingPing> pending_pings;
-    std::vector<ecs::BitBuffer> inbound_packets;
-    std::function<void(const ecs::BitBuffer&)> packet_sender;
+    std::vector<ashiato::BitBuffer> inbound_packets;
+    std::function<void(const ashiato::BitBuffer&)> packet_sender;
     std::string connect_error;
     ReplicationClientConnectionState connection_state = ReplicationClientConnectionState::Connecting;
     double connect_resend_accumulator_seconds = 0.0;
@@ -29,4 +29,4 @@ public:
     bool adaptive_ping_active = true;
 };
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail

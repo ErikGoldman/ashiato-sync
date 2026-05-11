@@ -28,10 +28,10 @@ Result:
 Command:
 
 ```sh
-./build-bench/kage_sync_benchmark --benchmark_filter='BM_(ClientReceiveSnap/1024/16|ClientPredictTickQuantize/1024/16|ServerTickSerializedFullBudget/16384/8|ServerProcessAckPacket/1024)$' --benchmark_min_time=0.1s
+./build-bench/ashiato_sync_benchmark --benchmark_filter='BM_(ClientReceiveSnap/1024/16|ClientPredictTickQuantize/1024/16|ServerTickSerializedFullBudget/16384/8|ServerProcessAckPacket/1024)$' --benchmark_min_time=0.1s
 ```
 
-Artifact: `build-bench/kage_sync_benchmark`
+Artifact: `build-bench/ashiato_sync_benchmark`
 
 Conclusion: accepted. Runtime remains in the same noise band as the pre-refactor
 focused baseline while avoiding pimpl's allocation and indirection costs. The
@@ -41,11 +41,11 @@ defined in public headers, though full ABI hiding would still require pimpl.
 Benchmark scenario unless noted:
 
 ```sh
-cmake --build build-bench --target run_kage_sync_ball_stress
+cmake --build build-bench --target run_ashiato_sync_ball_stress
 ```
 
 The `build-bench` configuration uses `RelWithDebInfo`,
-`KAGE_SYNC_BUILD_BENCHMARKS=ON`, and:
+`ASHIATO_SYNC_BUILD_BENCHMARKS=ON`, and:
 
 ```sh
 --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5
@@ -232,10 +232,10 @@ Result:
 Command:
 
 ```sh
-cmake --build build-bench --target run_kage_sync_ball_stress
+cmake --build build-bench --target run_ashiato_sync_ball_stress
 ```
 
-Artifact: `build-bench/kage_sync_ball_stress`
+Artifact: `build-bench/ashiato_sync_ball_stress`
 
 Conclusion: accepted. Removing the length field and direct-deserializing from
 the packet improves wall time by about 7.3% over Experiment 5 and about 14.7%
@@ -272,10 +272,10 @@ Result:
 Command:
 
 ```sh
-cmake --build build-bench --target run_kage_sync_ball_stress
+cmake --build build-bench --target run_ashiato_sync_ball_stress
 ```
 
-Artifact: `build-bench/kage_sync_ball_stress`
+Artifact: `build-bench/ashiato_sync_ball_stress`
 
 Conclusion: rejected. Packet counts, bytes, retained quantized frames, and update
 counts matched the accepted direct-deserialize baseline, so this did not change
@@ -310,10 +310,10 @@ Result:
 Command:
 
 ```sh
-cmake --build build-bench --target run_kage_sync_ball_stress
+cmake --build build-bench --target run_ashiato_sync_ball_stress
 ```
 
-Artifact: `build-bench/kage_sync_ball_stress`
+Artifact: `build-bench/ashiato_sync_ball_stress`
 
 Conclusion: accepted. Server replication time improved substantially and
 server-to-client traffic fell from `386720019` bytes to `243252485` bytes.
@@ -353,16 +353,16 @@ Result:
 Focused benchmark command:
 
 ```sh
-build-bench/kage_sync_benchmark --benchmark_filter='BM_ServerTickPacked(FullBudget|AckedDeltaShared|MtuLimited)|BM_ServerTickMutatingAckedDelta|BM_ServerTickOwnerAudienceMixed|BM_ServerTickArchetypeDiversity' --benchmark_min_time=0.05s
+build-bench/ashiato_sync_benchmark --benchmark_filter='BM_ServerTickPacked(FullBudget|AckedDeltaShared|MtuLimited)|BM_ServerTickMutatingAckedDelta|BM_ServerTickOwnerAudienceMixed|BM_ServerTickArchetypeDiversity' --benchmark_min_time=0.05s
 ```
 
 Stress command:
 
 ```sh
-cmake --build build-bench --target run_kage_sync_ball_stress
+cmake --build build-bench --target run_ashiato_sync_ball_stress
 ```
 
-Artifact: `build-bench/kage_sync_ball_stress`
+Artifact: `build-bench/ashiato_sync_ball_stress`
 
 Conclusion: accepted with precomputed eligibility. The direct-check variant
 reduced server replication but regressed wall time, matching the earlier lesson
@@ -426,10 +426,10 @@ Baseline immediately before these experiments:
 Command:
 
 ```sh
-cmake --build build-bench --target run_kage_sync_ball_stress
+cmake --build build-bench --target run_ashiato_sync_ball_stress
 ```
 
-Artifact: `build-bench/kage_sync_ball_stress`
+Artifact: `build-bench/ashiato_sync_ball_stress`
 
 Conclusion: keep only the client bulk bitset read. The persistent scratch
 variant did not help, likely because the retained vector capacity increased
@@ -478,7 +478,7 @@ Results:
 Focused server benchmark for the copy-clean-before-ECS-get variant:
 
 ```sh
-build-bench/kage_sync_benchmark --benchmark_filter='BM_ServerTickPackedAckedDeltaShared|BM_ServerTickMutatingAckedDelta' --benchmark_min_time=0.05s
+build-bench/ashiato_sync_benchmark --benchmark_filter='BM_ServerTickPackedAckedDeltaShared|BM_ServerTickMutatingAckedDelta' --benchmark_min_time=0.05s
 ```
 
 The focused server results regressed versus the earlier benchmark run in this
@@ -487,10 +487,10 @@ file, so the server-side variants were rejected.
 Stress command:
 
 ```sh
-build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --report text
+build-bench/ashiato_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --report text
 ```
 
-Artifact: `build-bench/kage_sync_ball_stress`
+Artifact: `build-bench/ashiato_sync_ball_stress`
 
 Conclusion: rejected the client indexed-baseline merge because the stored
 component index inflated every retained baseline and buffered frame enough to
@@ -551,10 +551,10 @@ Results:
 Command:
 
 ```sh
-build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --report text
+build-bench/ashiato_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --report text
 ```
 
-Artifact: `build-bench/kage_sync_ball_stress`
+Artifact: `build-bench/ashiato_sync_ball_stress`
 
 Conclusion: accepted. Inline/lazy quantized storage is the dominant win: the
 stress components all fit in 16 bytes, so retained quantized frames, client baseline
@@ -604,16 +604,16 @@ Results:
 Focused benchmark:
 
 ```sh
-build-bench/kage_sync_benchmark --benchmark_filter='BM_ClientReceiveBufferedInterpolation|BM_ServerTickPackedAckedDeltaShared|BM_ServerTickMutatingAckedDelta' --benchmark_min_time=0.05s
+build-bench/ashiato_sync_benchmark --benchmark_filter='BM_ClientReceiveBufferedInterpolation|BM_ServerTickPackedAckedDeltaShared|BM_ServerTickMutatingAckedDelta' --benchmark_min_time=0.05s
 ```
 
 Stress command:
 
 ```sh
-build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --report text
+build-bench/ashiato_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --report text
 ```
 
-Artifact: `build-bench/kage_sync_ball_stress`
+Artifact: `build-bench/ashiato_sync_ball_stress`
 
 Conclusion: accepted. Compared with Experiment 13's lazy-overflow retained
 component records, fixed archetype frame storage cuts RSS by roughly another
@@ -672,26 +672,26 @@ Stress results after each step:
 Stress command:
 
 ```sh
-build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --report text
+build-bench/ashiato_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --report text
 ```
 
-Stress artifact: `build-bench/kage_sync_ball_stress`
+Stress artifact: `build-bench/ashiato_sync_ball_stress`
 
 Focused benchmark command:
 
 ```sh
-build-bench/kage_sync_benchmark --benchmark_filter='BM_ClientReceiveBufferedInterpolation|BM_ClientDrainDuplicateHeavyAckPackets|BM_ServerTickStressScheduler|BM_ServerTickPackedAckedDeltaShared|BM_ServerTickMutatingAckedDelta|BM_BitBufferUnalignedReadUnsigned' --benchmark_min_time=0.05s
+build-bench/ashiato_sync_benchmark --benchmark_filter='BM_ClientReceiveBufferedInterpolation|BM_ClientDrainDuplicateHeavyAckPackets|BM_ServerTickStressScheduler|BM_ServerTickPackedAckedDeltaShared|BM_ServerTickMutatingAckedDelta|BM_BitBufferUnalignedReadUnsigned' --benchmark_min_time=0.05s
 ```
 
-Focused artifact: `build-bench/kage_sync_benchmark`
+Focused artifact: `build-bench/ashiato_sync_benchmark`
 
 Profile command:
 
 ```sh
-cmake --build build-bench-gprof --target run_kage_sync_ball_stress
+cmake --build build-bench-gprof --target run_ashiato_sync_ball_stress
 ```
 
-Profile artifact: `/tmp/kage_sync_ball_stress_gprof.txt`
+Profile artifact: `/tmp/ashiato_sync_ball_stress_gprof.txt`
 
 Profiled final-state stress result: `wall=18.123062`,
 `server_replication=8.897216`, `client_receive=7.355429`,
@@ -711,7 +711,7 @@ coalescing, and unaligned `BitBuffer` fast paths. The direct byte-span
 component ops regressed by themselves, but they enabled the buffered receive
 fast path and leave a useful hook for future component-direct work. The first
 ACK index attempt using an `unordered_map` regressed; changing the index to a
-direct table keyed by `ecs::Registry::entity_index` made the final cumulative
+direct table keyed by `ashiato::Registry::entity_index` made the final cumulative
 state much faster. The candidate merge scheduler improved wall time, but it
 changed packet/update counts slightly, so it should be treated as a scheduling
 policy change rather than a pure CPU optimization. The final cumulative state
@@ -760,18 +760,18 @@ delta_upserts=7332075 destroys=45716` and
 Stress command:
 
 ```sh
-build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --server-worker-threads N --report text
+build-bench/ashiato_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --server-worker-threads N --report text
 ```
 
-Stress artifact: `build-bench/kage_sync_ball_stress`
+Stress artifact: `build-bench/ashiato_sync_ball_stress`
 
 Focused benchmark command:
 
 ```sh
-build-bench/kage_sync_benchmark --benchmark_filter='BM_ServerTickStressScheduler' --benchmark_min_time=0.05s
+build-bench/ashiato_sync_benchmark --benchmark_filter='BM_ServerTickStressScheduler' --benchmark_min_time=0.05s
 ```
 
-Focused artifact: `build-bench/kage_sync_benchmark`
+Focused artifact: `build-bench/ashiato_sync_benchmark`
 
 Focused results:
 
@@ -782,10 +782,10 @@ Focused results:
 Profile command:
 
 ```sh
-cmake --build build-bench-gprof --target run_kage_sync_ball_stress
+cmake --build build-bench-gprof --target run_ashiato_sync_ball_stress
 ```
 
-Profile artifact: `/tmp/kage_sync_ball_stress_gprof.txt`
+Profile artifact: `/tmp/ashiato_sync_ball_stress_gprof.txt`
 
 Profiled 4-worker stress result: `wall=15.492355`,
 `server_replication=5.647791`, `client_receive=7.856186`,
@@ -807,7 +807,7 @@ Rationale: improve real single-client performance without parallelizing
 simulated clients. The client previously stored replicated entity state in an
 `unordered_map` keyed by full server entity value and scanned that map for
 buffered apply/display and snap-error blending. This experiment changed the
-client to direct sparse storage keyed by `ecs::Registry::entity_index`, added
+client to direct sparse storage keyed by `ashiato::Registry::entity_index`, added
 dense active/buffered/snap-error index lists, and changed per-entity baseline
 history to ring-style replacement.
 
@@ -834,10 +834,10 @@ Focused final:
 Focused command:
 
 ```sh
-build-bench/kage_sync_benchmark --benchmark_filter='BM_ClientReceiveSnap|BM_ClientReceiveBufferedInterpolation|BM_ClientReceiveMixedEntityModes|BM_ClientApplyBufferedInterpolation|BM_ClientSampleFractionalTick|BM_ClientTickBufferedAutoInterpolation|BM_ClientDrainDuplicateHeavyAckPackets' --benchmark_min_time=0.05s
+build-bench/ashiato_sync_benchmark --benchmark_filter='BM_ClientReceiveSnap|BM_ClientReceiveBufferedInterpolation|BM_ClientReceiveMixedEntityModes|BM_ClientApplyBufferedInterpolation|BM_ClientSampleFractionalTick|BM_ClientTickBufferedAutoInterpolation|BM_ClientDrainDuplicateHeavyAckPackets' --benchmark_min_time=0.05s
 ```
 
-Focused artifact: `build-bench/kage_sync_benchmark`
+Focused artifact: `build-bench/ashiato_sync_benchmark`
 
 Stress result:
 
@@ -854,18 +854,18 @@ Stress result:
 Stress command:
 
 ```sh
-build-bench/kage_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --report text
+build-bench/ashiato_sync_ball_stress --duration-seconds 30 --clients 4 --max-balls 4096 --spawn-interval-ms 5 --poison-min 1 --poison-max 8 --health-min 20 --health-max 80 --latency-ms 50 --jitter-ms 25 --loss-percent 1 --client-mode buffered-interpolation --interpolation-buffer-frames 2 --time-dilation-min 0.95 --time-dilation-max 1.05 --time-dilation-gain 0.05 --report text
 ```
 
-Stress artifact: `build-bench/kage_sync_ball_stress`
+Stress artifact: `build-bench/ashiato_sync_ball_stress`
 
 Profile command:
 
 ```sh
-cmake --build build-bench-gprof --target run_kage_sync_ball_stress
+cmake --build build-bench-gprof --target run_ashiato_sync_ball_stress
 ```
 
-Profile artifact: `/tmp/kage_sync_ball_stress_gprof.txt`
+Profile artifact: `/tmp/ashiato_sync_ball_stress_gprof.txt`
 
 Profiled final-state stress result: `wall=19.174335`,
 `server_replication=9.528776`, `client_receive=7.536991`,
@@ -890,17 +890,17 @@ current-frame requantization, and error blending.
 Profile build:
 
 ```sh
-cmake -S . -B build-bench-gprof -DCMAKE_BUILD_TYPE=RelWithDebInfo -DKAGE_SYNC_BUILD_BENCHMARKS=ON -DKAGE_SYNC_ENABLE_GPROF=ON -DBUILD_TESTING=OFF
-cmake --build build-bench-gprof --target kage_sync_prediction_stress -j2
+cmake -S . -B build-bench-gprof -DCMAKE_BUILD_TYPE=RelWithDebInfo -DASHIATO_SYNC_BUILD_BENCHMARKS=ON -DASHIATO_SYNC_ENABLE_GPROF=ON -DBUILD_TESTING=OFF
+cmake --build build-bench-gprof --target ashiato_sync_prediction_stress -j2
 ```
 
 Profile command:
 
 ```sh
-./kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+./ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
 ```
 
-Profile artifact: `/tmp/kage_sync_prediction_stress_gprof.txt`
+Profile artifact: `/tmp/ashiato_sync_prediction_stress_gprof.txt`
 
 Profiled result:
 
@@ -954,7 +954,7 @@ adds raw-byte `should_roll_back_bytes` and `compute_error_bytes` hooks to
 Baseline command:
 
 ```sh
-build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+build-bench/ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
 ```
 
 Baseline result:
@@ -990,7 +990,7 @@ valid bit per slot.
 Command:
 
 ```sh
-build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+build-bench/ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
 ```
 
 Result:
@@ -1015,8 +1015,8 @@ predictions only for those indices, and blends only that set.
 Commands:
 
 ```sh
-build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
-build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
+build-bench/ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+build-bench/ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
 ```
 
 Results:
@@ -1052,8 +1052,8 @@ the typed error equals zero in the same trait wrapper.
 Commands:
 
 ```sh
-build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
-build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
+build-bench/ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+build-bench/ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
 ```
 
 Results:
@@ -1084,20 +1084,20 @@ behavior from `only-affected` behavior.
 Profile build:
 
 ```sh
-cmake --build build-bench-gprof --target kage_sync_prediction_stress -j2
+cmake --build build-bench-gprof --target ashiato_sync_prediction_stress -j2
 ```
 
 Profile commands:
 
 ```sh
-./kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
-./kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
+./ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+./ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
 ```
 
 Profile artifacts:
 
-- `/tmp/kage_sync_prediction_stress_all_after_opt_gprof.txt`
-- `/tmp/kage_sync_prediction_stress_only_affected_after_opt_gprof.txt`
+- `/tmp/ashiato_sync_prediction_stress_all_after_opt_gprof.txt`
+- `/tmp/ashiato_sync_prediction_stress_only_affected_after_opt_gprof.txt`
 
 Profiled `all` result:
 
@@ -1196,8 +1196,8 @@ queued, plus a per-entity rollback-list index for O(1) removal.
 Baseline command:
 
 ```sh
-build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
-build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
+build-bench/ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+build-bench/ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
 ```
 
 Baseline result:
@@ -1232,8 +1232,8 @@ reused between rollbacks.
 Commands:
 
 ```sh
-build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
-build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
+build-bench/ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+build-bench/ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
 ```
 
 Results:
@@ -1260,8 +1260,8 @@ actually had a current prediction sample.
 Commands:
 
 ```sh
-build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
-build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
+build-bench/ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+build-bench/ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
 ```
 
 Results:
@@ -1289,8 +1289,8 @@ component-byte accessors and uses them in those hot prediction loops.
 Commands:
 
 ```sh
-build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
-build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
+build-bench/ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+build-bench/ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
 ```
 
 Results:
@@ -1318,8 +1318,8 @@ the dense rollback entity list instead of active entities.
 Commands:
 
 ```sh
-build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
-build-bench/kage_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
+build-bench/ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy all --report text
+build-bench/ashiato_sync_prediction_stress --entities 2048 --ticks 1800 --latency-frames 10 --misprediction-percent 5 --rollback-policy only-affected --report text
 ```
 
 Results:
@@ -1364,13 +1364,13 @@ Trace artifact:
 Benchmark command:
 
 ```sh
-/tmp/kage-sync-viewer-gprof-build/kage_sync_trace_viewer --trace-dir /tmp/kage-viewer-profile-trace-small --benchmark --benchmark-report <report.json> --benchmark-frames 120
+/tmp/ashiato-sync-viewer-gprof-build/ashiato_sync_trace_viewer --trace-dir /tmp/kage-viewer-profile-trace-small --benchmark --benchmark-report <report.json> --benchmark-frames 120
 ```
 
 Final gprof command:
 
 ```sh
-cmake --build /tmp/kage-sync-viewer-gprof-build --target run_kage_sync_trace_viewer_gprof
+cmake --build /tmp/ashiato-sync-viewer-gprof-build --target run_ashiato_sync_trace_viewer_gprof
 ```
 
 Final gprof artifact: `/tmp/kage_trace_viewer_target_gprof.txt`
@@ -1533,8 +1533,8 @@ misprediction, checker marks for starvation, and cross marks for removal.
 Commands:
 
 ```sh
-/tmp/kage-sync-viewer-build/kage_sync_trace_viewer --trace-dir /tmp/kage-viewer-profile-trace-small --benchmark --benchmark-report /tmp/kage_trace_viewer_style_pass.json --benchmark-frames 120
-/tmp/kage-sync-viewer-gprof-build/kage_sync_trace_viewer --trace-dir /tmp/kage-viewer-profile-trace-small --benchmark --benchmark-report /tmp/kage_trace_viewer_style_pass_gprof_build.json --benchmark-frames 120
+/tmp/ashiato-sync-viewer-build/ashiato_sync_trace_viewer --trace-dir /tmp/kage-viewer-profile-trace-small --benchmark --benchmark-report /tmp/kage_trace_viewer_style_pass.json --benchmark-frames 120
+/tmp/ashiato-sync-viewer-gprof-build/ashiato_sync_trace_viewer --trace-dir /tmp/kage-viewer-profile-trace-small --benchmark --benchmark-report /tmp/kage_trace_viewer_style_pass_gprof_build.json --benchmark-frames 120
 ```
 
 Normal build result:

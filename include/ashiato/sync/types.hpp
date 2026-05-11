@@ -1,10 +1,10 @@
 #pragma once
 
-#include "ecs/bit_buffer.hpp"
-#include "kage/sync/logging.hpp"
-#include "kage/sync/protocol.hpp"
+#include "ashiato/bit_buffer.hpp"
+#include "ashiato/sync/logging.hpp"
+#include "ashiato/sync/protocol.hpp"
 
-#include "ecs/ecs.hpp"
+#include "ashiato/ashiato.hpp"
 
 #include <algorithm>
 #include <array>
@@ -23,7 +23,7 @@
 #include <utility>
 #include <vector>
 
-namespace kage::sync {
+namespace ashiato::sync {
 
 namespace client_detail {
 class ClientCueRuntime;
@@ -33,7 +33,7 @@ using ClientId = std::uint64_t;
 using SyncFrame = std::uint32_t;
 using SyncCueTypeId = std::uint16_t;
 using ClientEntityNetworkId = std::uint64_t;
-using TransportFn = std::function<void(ClientId, const ecs::BitBuffer&)>;
+using TransportFn = std::function<void(ClientId, const ashiato::BitBuffer&)>;
 using ConnectHandlerFn = std::function<bool(const std::string&, ClientId&, std::string&)>;
 
 struct SyncSettings;
@@ -44,7 +44,7 @@ class ReplicationReplayStreamer;
 class ReplicationServer;
 
 struct ReplicationPriorityObject {
-    ecs::Entity entity;
+    ashiato::Entity entity;
 };
 
 struct ReplicationPriorityDecision {
@@ -120,7 +120,7 @@ enum class ReplicationRollbackPolicy {
     OnlyAffected
 };
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 struct TraceOptions {
     bool enabled = false;
     std::string directory;
@@ -156,13 +156,13 @@ struct SyncTraceStringBuilder {
 #endif
 
 struct ComponentReplication {
-    ecs::Entity component;
+    ashiato::Entity component;
     ReplicationAudience audience = ReplicationAudience::All;
     ComponentInterpolation interpolation = ComponentInterpolation::Step;
 };
 
 struct SyncTagReplication {
-    ecs::Entity tag;
+    ashiato::Entity tag;
     ReplicationAudience audience = ReplicationAudience::All;
 };
 
@@ -298,14 +298,14 @@ private:
 };
 
 struct EntityReference {
-    ecs::Entity entity;
+    ashiato::Entity entity;
     ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
 };
 
 struct EntityReferenceContext {
-    using ServerNetworkIdForEntityFn = std::uint32_t (*)(void*, ecs::Entity);
+    using ServerNetworkIdForEntityFn = std::uint32_t (*)(void*, ashiato::Entity);
     using ClientEntityNetworkIdForWireFn = ClientEntityNetworkId (*)(void*, std::uint32_t);
-    using ClientLocalEntityFn = ecs::Entity (*)(void*, ClientEntityNetworkId);
+    using ClientLocalEntityFn = ashiato::Entity (*)(void*, ClientEntityNetworkId);
 
     void* userContext = nullptr;
     std::size_t network_entity_id_tier0_bits = protocol::default_network_entity_id_tier0_bits;
@@ -313,7 +313,7 @@ struct EntityReferenceContext {
     ClientEntityNetworkIdForWireFn client_entity_network_id_for_wire = nullptr;
     ClientLocalEntityFn client_local_entity = nullptr;
 
-    std::uint32_t network_id_for_entity(ecs::Entity entity) const {
+    std::uint32_t network_id_for_entity(ashiato::Entity entity) const {
         if (!entity || server_network_id_for_entity == nullptr) {
             return 0U;
         }
@@ -327,17 +327,17 @@ struct EntityReferenceContext {
         return client_entity_network_id_for_wire(userContext, wire_network_id);
     }
 
-    ecs::Entity local_entity(ClientEntityNetworkId network_id) const {
+    ashiato::Entity local_entity(ClientEntityNetworkId network_id) const {
         if (network_id == invalid_client_entity_network_id || client_local_entity == nullptr) {
-            return ecs::Entity{};
+            return ashiato::Entity{};
         }
         return client_local_entity(userContext, network_id);
     }
 };
 
 inline bool write_entity_reference(
-    ecs::BitBuffer& out,
-    ecs::Entity entity,
+    ashiato::BitBuffer& out,
+    ashiato::Entity entity,
     const EntityReferenceContext& context) {
     const std::uint32_t network_id = context.network_id_for_entity(entity);
     out.push_bool(network_id != 0U);
@@ -349,14 +349,14 @@ inline bool write_entity_reference(
 }
 
 inline bool write_entity_reference(
-    ecs::BitBuffer& out,
+    ashiato::BitBuffer& out,
     const EntityReference& reference,
     const EntityReferenceContext& context) {
     return write_entity_reference(out, reference.entity, context);
 }
 
 inline bool read_entity_reference(
-    ecs::BitBuffer& in,
+    ashiato::BitBuffer& in,
     EntityReferenceContext& context,
     EntityReference& out) {
     detail::BitReader reader(in);
@@ -385,17 +385,17 @@ inline bool read_entity_reference(
 }
 
 struct SyncComponentOps {
-    using QuantizedBytes = kage::sync::QuantizedBytes;
+    using QuantizedBytes = ashiato::sync::QuantizedBytes;
     using InterpolateFn = bool (*)(const std::uint8_t*, const std::uint8_t*, float, std::uint8_t*);
     using ComputeErrorFn = bool (*)(const std::uint8_t*, const std::uint8_t*, QuantizedBytes&);
     using ApplyErrorFn = bool (*)(const std::uint8_t*, const QuantizedBytes&, QuantizedBytes&);
     using BlendOutErrorFn = bool (*)(const QuantizedBytes&, float, QuantizedBytes&);
     using ShouldRollBackFn = bool (*)(const std::uint8_t*, const std::uint8_t*);
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
     using TraceFn = void (*)(const std::uint8_t*, SyncTraceStringBuilder&);
 #endif
 
-    ecs::ComponentSerializationOps serialization;
+    ashiato::ComponentSerializationOps serialization;
     std::size_t error_size = 0;
     bool references_entities = false;
     InterpolateFn interpolate = nullptr;
@@ -403,19 +403,19 @@ struct SyncComponentOps {
     ApplyErrorFn apply_error = nullptr;
     BlendOutErrorFn blend_out_error = nullptr;
     ShouldRollBackFn should_roll_back = nullptr;
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
     TraceFn trace = nullptr;
 #endif
 };
 
 struct SyncCueOps {
-    using SerializeFn = void (*)(const void*, ecs::BitBuffer&, EntityReferenceContext*);
-    using DeserializeValueFn = std::shared_ptr<void> (*)(const ecs::BitBuffer&, EntityReferenceContext*);
-    using PlayFn = bool (*)(ecs::Registry&, ecs::Entity, const ecs::BitBuffer&, float, SyncFrame, EntityReferenceContext*);
-    using RollbackFn = bool (*)(ecs::Registry&, ecs::Entity, const ecs::BitBuffer&, EntityReferenceContext*);
-    using EqualsFn = bool (*)(const ecs::BitBuffer&, const ecs::BitBuffer&, EntityReferenceContext*);
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
-    using TraceFn = bool (*)(const ecs::BitBuffer&, SyncTraceStringBuilder&);
+    using SerializeFn = void (*)(const void*, ashiato::BitBuffer&, EntityReferenceContext*);
+    using DeserializeValueFn = std::shared_ptr<void> (*)(const ashiato::BitBuffer&, EntityReferenceContext*);
+    using PlayFn = bool (*)(ashiato::Registry&, ashiato::Entity, const ashiato::BitBuffer&, float, SyncFrame, EntityReferenceContext*);
+    using RollbackFn = bool (*)(ashiato::Registry&, ashiato::Entity, const ashiato::BitBuffer&, EntityReferenceContext*);
+    using EqualsFn = bool (*)(const ashiato::BitBuffer&, const ashiato::BitBuffer&, EntityReferenceContext*);
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
+    using TraceFn = bool (*)(const ashiato::BitBuffer&, SyncTraceStringBuilder&);
 #endif
 
     SerializeFn serialize = nullptr;
@@ -425,17 +425,17 @@ struct SyncCueOps {
     EqualsFn equals = nullptr;
     std::string name;
     bool references_entities = false;
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_COMPONENT_DATA)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
     TraceFn trace = nullptr;
 #endif
 };
 
 struct QueuedSyncCue {
-    ecs::Entity entity;
+    ashiato::Entity entity;
     SyncFrame frame = 0;
     SyncCueTypeId type = 0;
     float relevance_seconds = 0.0f;
-    ecs::BitBuffer payload;
+    ashiato::BitBuffer payload;
     std::shared_ptr<void> value;
     bool only_replicate_to_owner = false;
 };
@@ -457,7 +457,7 @@ public:
     bool emit(
         const SyncSettings& settings,
         const FrameInfo& frame,
-        ecs::Entity entity,
+        ashiato::Entity entity,
         const T& cue,
         float relevance_seconds,
         bool only_replicate_to_owner = false);
@@ -466,7 +466,7 @@ public:
     bool emit(
         const SyncSettings& settings,
         SyncFrame frame,
-        ecs::Entity entity,
+        ashiato::Entity entity,
         const T& cue,
         float relevance_seconds,
         bool only_replicate_to_owner = false);
@@ -539,7 +539,7 @@ struct SyncSettings {
 
     SyncRole role = SyncRole::Server;
     ClientId local_client = invalid_client_id;
-    ecs::Entity input_component;
+    ashiato::Entity input_component;
     std::vector<SyncArchetype> archetypes;
     std::unordered_map<std::uint64_t, SyncComponentOps> component_ops;
     std::vector<SyncCueOps> cue_ops;
@@ -615,25 +615,25 @@ struct ReplicationServerOptions {
     TransportFn transport;
     LoggingOptions logging;
     std::uint32_t max_fixed_steps_per_tick = 0;
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     TraceOptions trace;
 #endif
 };
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync
 
-namespace ecs {
-
-template <>
-struct is_singleton_component<kage::sync::SyncSettings> : std::true_type {};
+namespace ashiato {
 
 template <>
-struct is_singleton_component<kage::sync::FrameInfo> : std::true_type {};
+struct is_singleton_component<ashiato::sync::SyncSettings> : std::true_type {};
 
 template <>
-struct is_singleton_component<kage::sync::CueDispatcher> : std::true_type {};
+struct is_singleton_component<ashiato::sync::FrameInfo> : std::true_type {};
 
 template <>
-struct is_singleton_component<kage::sync::SyncAuthority> : std::true_type {};
+struct is_singleton_component<ashiato::sync::CueDispatcher> : std::true_type {};
 
-}  // namespace ecs
+template <>
+struct is_singleton_component<ashiato::sync::SyncAuthority> : std::true_type {};
+
+}  // namespace ashiato

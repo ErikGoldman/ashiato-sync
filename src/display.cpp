@@ -1,16 +1,16 @@
-#include "kage/sync/display.hpp"
+#include "ashiato/sync/display.hpp"
 
 #include "server/state.hpp"
 
 #include <algorithm>
 #include <cmath>
 
-namespace kage::sync {
+namespace ashiato::sync {
 namespace {
 
 const ReplicatedComponentUpdate* find_component(
     const std::vector<ReplicatedComponentUpdate>& components,
-    ecs::Entity component) {
+    ashiato::Entity component) {
     const auto found = std::find_if(
         components.begin(),
         components.end(),
@@ -50,7 +50,7 @@ double FractionalTickSampler::target_frame() const noexcept {
     return static_cast<double>(server_->frame_ - 1U) + std::clamp(alpha, 0.0, 1.0);
 }
 
-void FractionalTickSampler::capture_server_frame(ecs::Registry& registry) {
+void FractionalTickSampler::capture_server_frame(ashiato::Registry& registry) {
     if (source_ != Source::Server || server_ == nullptr) {
         return;
     }
@@ -103,7 +103,7 @@ void FractionalTickSampler::capture_server_frame(ecs::Registry& registry) {
     current_ = std::move(next);
 }
 
-void FractionalTickSampler::rebuild_from_client(const ecs::Registry& registry) {
+void FractionalTickSampler::rebuild_from_client(const ashiato::Registry& registry) {
     samples_.clear();
     if (client_ == nullptr) {
         return;
@@ -115,7 +115,7 @@ void FractionalTickSampler::rebuild_from_client(const ecs::Registry& registry) {
     }
 }
 
-void FractionalTickSampler::rebuild_from_server(const ecs::Registry& registry) {
+void FractionalTickSampler::rebuild_from_server(const ashiato::Registry& registry) {
     samples_.clear();
     if (!current_.valid) {
         return;
@@ -185,7 +185,7 @@ void FractionalTickSampler::rebuild_from_server(const ecs::Registry& registry) {
     }
 }
 
-const std::vector<FractionalTickSample>& FractionalTickSampler::entities(const ecs::Registry& registry) {
+const std::vector<FractionalTickSample>& FractionalTickSampler::entities(const ashiato::Registry& registry) {
     if (source_ == Source::Client) {
         rebuild_from_client(registry);
     } else {
@@ -194,4 +194,4 @@ const std::vector<FractionalTickSample>& FractionalTickSampler::entities(const e
     return samples_;
 }
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

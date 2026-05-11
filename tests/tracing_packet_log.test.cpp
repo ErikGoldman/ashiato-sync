@@ -2,7 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 
 #include <algorithm>
 #include <array>
@@ -13,16 +13,16 @@
 #include <utility>
 #include <vector>
 
-using namespace kage_sync_tests;
+using namespace ashiato_sync_tests;
 
 TEST_CASE("packet log tracing is opt-in and records client and server packet details") {
-    std::vector<kage::sync::SyncTraceEvent> gated_events;
-    kage::sync::SyncTracer gated_tracer;
-    gated_tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
-        [&](const kage::sync::SyncTraceEvent& event) { gated_events.push_back(event); }});
-    kage::sync::SyncTraceEvent gated_event;
-    gated_event.type = kage::sync::SyncTraceEventType::PacketLog;
-    gated_event.role = kage::sync::SyncTraceRole::Client;
+    std::vector<ashiato::sync::SyncTraceEvent> gated_events;
+    ashiato::sync::SyncTracer gated_tracer;
+    gated_tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { gated_events.push_back(event); }});
+    ashiato::sync::SyncTraceEvent gated_event;
+    gated_event.type = ashiato::sync::SyncTraceEventType::PacketLog;
+    gated_event.role = ashiato::sync::SyncTraceRole::Client;
     gated_event.data = "direction=out";
     gated_tracer.trace(gated_event);
     REQUIRE(gated_events.empty());
@@ -30,180 +30,180 @@ TEST_CASE("packet log tracing is opt-in and records client and server packet det
     gated_tracer.trace(gated_event);
     REQUIRE(gated_events.size() == 1);
 
-    ecs::Registry server_registry;
-    const kage::sync::SyncArchetypeId server_archetype = define_networked_archetype(server_registry);
-    const ecs::Entity server_entity = server_registry.create();
-    REQUIRE(server_registry.add<kage_sync_tests::NetworkedPosition>(
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = define_networked_archetype(server_registry);
+    const ashiato::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<ashiato_sync_tests::NetworkedPosition>(
         server_entity,
-        kage_sync_tests::NetworkedPosition{1.0f, 2.0f}) != nullptr);
+        ashiato_sync_tests::NetworkedPosition{1.0f, 2.0f}) != nullptr);
 
-    std::vector<ecs::BitBuffer> server_packets;
-    std::vector<kage::sync::SyncTraceEvent> server_events;
-    kage::sync::SyncTracer server_tracer;
+    std::vector<ashiato::BitBuffer> server_packets;
+    std::vector<ashiato::sync::SyncTraceEvent> server_events;
+    ashiato::sync::SyncTracer server_tracer;
     server_tracer.set_packet_logs_enabled(true);
-    server_tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
-        [&](const kage::sync::SyncTraceEvent& event) { server_events.push_back(event); }});
-    kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+    server_tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { server_events.push_back(event); }});
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
         server_packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     server.set_tracer(&server_tracer);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(server_packets.size() == 1);
-    REQUIRE(std::any_of(server_events.begin(), server_events.end(), [&](const kage::sync::SyncTraceEvent& event) {
-        return event.type == kage::sync::SyncTraceEventType::PacketLog &&
-            event.role == kage::sync::SyncTraceRole::Server &&
+    REQUIRE(std::any_of(server_events.begin(), server_events.end(), [&](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::PacketLog &&
+            event.role == ashiato::sync::SyncTraceRole::Server &&
             event.data.find("message=server_update") != std::string::npos &&
             event.data.find("sequence=1") != std::string::npos &&
             event.data.find("updated_server_entities=[" + std::to_string(server_entity.value) + "]") != std::string::npos;
     }));
 
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = define_networked_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = define_networked_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
-    std::vector<kage::sync::SyncTraceEvent> client_events;
-    kage::sync::SyncTracer client_tracer;
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
+    std::vector<ashiato::sync::SyncTraceEvent> client_events;
+    ashiato::sync::SyncTracer client_tracer;
     client_tracer.set_packet_logs_enabled(true);
-    client_tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
-        [&](const kage::sync::SyncTraceEvent& event) { client_events.push_back(event); }});
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
+    client_tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { client_events.push_back(event); }});
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
     client.set_tracer(&client_tracer);
     REQUIRE(client.receive(client_registry, server_packets[0]));
-    REQUIRE(std::any_of(client_events.begin(), client_events.end(), [](const kage::sync::SyncTraceEvent& event) {
-        return event.type == kage::sync::SyncTraceEventType::PacketLog &&
-            event.role == kage::sync::SyncTraceRole::Client &&
+    REQUIRE(std::any_of(client_events.begin(), client_events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::PacketLog &&
+            event.role == ashiato::sync::SyncTraceRole::Client &&
             event.data.find("message=server_update") != std::string::npos &&
             event.data.find("sequence=1") != std::string::npos;
     }));
-    std::vector<ecs::BitBuffer> ack_packets = client.drain_ack_packets();
+    std::vector<ashiato::BitBuffer> ack_packets = client.drain_ack_packets();
     REQUIRE(ack_packets.size() == 1);
-    REQUIRE(std::any_of(client_events.begin(), client_events.end(), [](const kage::sync::SyncTraceEvent& event) {
-        return event.type == kage::sync::SyncTraceEventType::PacketLog &&
-            event.role == kage::sync::SyncTraceRole::Client &&
+    REQUIRE(std::any_of(client_events.begin(), client_events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::PacketLog &&
+            event.role == ashiato::sync::SyncTraceRole::Client &&
             event.data.find("message=client_ack") != std::string::npos &&
             event.data.find("acks=[1]") != std::string::npos;
     }));
     REQUIRE(server.process_packet(server_registry, 1, ack_packets[0]));
-    REQUIRE(std::any_of(server_events.begin(), server_events.end(), [](const kage::sync::SyncTraceEvent& event) {
-        return event.type == kage::sync::SyncTraceEventType::PacketLog &&
-            event.role == kage::sync::SyncTraceRole::Server &&
+    REQUIRE(std::any_of(server_events.begin(), server_events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::PacketLog &&
+            event.role == ashiato::sync::SyncTraceRole::Server &&
             event.data.find("message=client_ack") != std::string::npos &&
             event.data.find("acks=[1]") != std::string::npos;
     }));
 }
 
 TEST_CASE("packet log tracing records ACK-only traffic as client ACK packets") {
-    ecs::Registry server_registry;
-    const kage::sync::SyncArchetypeId server_archetype = define_networked_archetype(server_registry);
-    const ecs::Entity server_entity = server_registry.create();
-    REQUIRE(server_registry.add<kage_sync_tests::NetworkedPosition>(
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = define_networked_archetype(server_registry);
+    const ashiato::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<ashiato_sync_tests::NetworkedPosition>(
         server_entity,
-        kage_sync_tests::NetworkedPosition{1.0f, 2.0f}) != nullptr);
+        ashiato_sync_tests::NetworkedPosition{1.0f, 2.0f}) != nullptr);
 
-    std::vector<ecs::BitBuffer> server_packets;
-    kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+    std::vector<ashiato::BitBuffer> server_packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
         server_packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(server_packets.size() == 1);
 
-    ecs::Registry client_registry;
-    const kage::sync::SyncArchetypeId client_archetype = define_networked_archetype(client_registry);
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = define_networked_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
-    REQUIRE(kage::sync::set_client_input_component<kage_sync_tests::NetworkedPosition>(client_registry));
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
+    REQUIRE(ashiato::sync::set_client_input_component<ashiato_sync_tests::NetworkedPosition>(client_registry));
 
-    std::vector<kage::sync::SyncTraceEvent> client_events;
-    kage::sync::SyncTracer client_tracer;
+    std::vector<ashiato::sync::SyncTraceEvent> client_events;
+    ashiato::sync::SyncTracer client_tracer;
     client_tracer.set_packet_logs_enabled(true);
-    client_tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
-        [&](const kage::sync::SyncTraceEvent& event) { client_events.push_back(event); }});
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
+    client_tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { client_events.push_back(event); }});
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
     client.set_tracer(&client_tracer);
     REQUIRE(client.receive(client_registry, server_packets[0]));
 
-    std::vector<ecs::BitBuffer> packets = client.drain_packets();
-    REQUIRE(std::any_of(packets.begin(), packets.end(), [](ecs::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_ack_message;
+    std::vector<ashiato::BitBuffer> packets = client.drain_packets();
+    REQUIRE(std::any_of(packets.begin(), packets.end(), [](ashiato::BitBuffer packet) {
+        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_ack_message;
     }));
-    REQUIRE(std::none_of(packets.begin(), packets.end(), [](ecs::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
+    REQUIRE(std::none_of(packets.begin(), packets.end(), [](ashiato::BitBuffer packet) {
+        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
     }));
-    REQUIRE(std::any_of(client_events.begin(), client_events.end(), [](const kage::sync::SyncTraceEvent& event) {
-        return event.type == kage::sync::SyncTraceEventType::PacketLog &&
-            event.role == kage::sync::SyncTraceRole::Client &&
+    REQUIRE(std::any_of(client_events.begin(), client_events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::PacketLog &&
+            event.role == ashiato::sync::SyncTraceRole::Client &&
             event.data.find("message=client_ack") != std::string::npos &&
             event.data.find("acks=[1]") != std::string::npos;
     }));
-    REQUIRE(std::none_of(client_events.begin(), client_events.end(), [](const kage::sync::SyncTraceEvent& event) {
-        return event.type == kage::sync::SyncTraceEventType::PacketLog &&
-            event.role == kage::sync::SyncTraceRole::Client &&
+    REQUIRE(std::none_of(client_events.begin(), client_events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::PacketLog &&
+            event.role == ashiato::sync::SyncTraceRole::Client &&
             event.data.find("message=client_input") != std::string::npos;
     }));
 }
 
 TEST_CASE("packet log tracing records cue summaries and cue payload data") {
-    ecs::Registry server_registry;
-    const kage::sync::SyncArchetypeId server_archetype =
-        kage_sync_tests::define_position_archetype(server_registry);
-    kage::sync::register_sync_cue<kage_sync_tests::TestCue>(server_registry);
-    const ecs::Entity server_entity = server_registry.create();
-    REQUIRE(server_registry.add<kage_sync_tests::Position>(
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype =
+        ashiato_sync_tests::define_position_archetype(server_registry);
+    ashiato::sync::register_sync_cue<ashiato_sync_tests::TestCue>(server_registry);
+    const ashiato::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<ashiato_sync_tests::Position>(
         server_entity,
-        kage_sync_tests::Position{1.0f, 2.0f}) != nullptr);
+        ashiato_sync_tests::Position{1.0f, 2.0f}) != nullptr);
 
-    std::vector<ecs::BitBuffer> packets;
-    std::vector<kage::sync::SyncTraceEvent> server_events;
-    kage::sync::SyncTracer server_tracer;
+    std::vector<ashiato::BitBuffer> packets;
+    std::vector<ashiato::sync::SyncTraceEvent> server_events;
+    ashiato::sync::SyncTracer server_tracer;
     server_tracer.set_packet_logs_enabled(true);
     server_tracer.set_frame_data_enabled(true);
-    server_tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
-        [&](const kage::sync::SyncTraceEvent& event) { server_events.push_back(event); }});
-    kage::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+    server_tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { server_events.push_back(event); }});
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_registry, server_options);
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
     server.set_tracer(&server_tracer);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-    REQUIRE(kage_sync_tests::emit_test_cue(server_registry, server_entity, 1, kage_sync_tests::TestCue{7}, 1.0f));
+    REQUIRE(ashiato_sync_tests::emit_test_cue(server_registry, server_entity, 1, ashiato_sync_tests::TestCue{7}, 1.0f));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
-    REQUIRE(std::any_of(server_events.begin(), server_events.end(), [](const kage::sync::SyncTraceEvent& event) {
-        return event.type == kage::sync::SyncTraceEventType::PacketLog &&
-            event.role == kage::sync::SyncTraceRole::Server &&
+    REQUIRE(std::any_of(server_events.begin(), server_events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::PacketLog &&
+            event.role == ashiato::sync::SyncTraceRole::Server &&
             event.data.find("message=server_update") != std::string::npos &&
             event.data.find("cues=[{") != std::string::npos &&
             event.data.find("type=0") != std::string::npos &&
             event.data.find("data=id=7") != std::string::npos;
     }));
 
-    ecs::Registry client_registry;
-    REQUIRE(kage_sync_tests::define_position_archetype(client_registry) == server_archetype);
-    client_registry.register_component<kage_sync_tests::CuePlayback>("CuePlayback");
-    kage::sync::register_sync_cue<kage_sync_tests::TestCue>(client_registry);
-    kage_sync_tests::configure_test_client_registry(client_registry, 1);
-    std::vector<kage::sync::SyncTraceEvent> client_events;
-    kage::sync::SyncTracer client_tracer;
+    ashiato::Registry client_registry;
+    REQUIRE(ashiato_sync_tests::define_position_archetype(client_registry) == server_archetype);
+    client_registry.register_component<ashiato_sync_tests::CuePlayback>("CuePlayback");
+    ashiato::sync::register_sync_cue<ashiato_sync_tests::TestCue>(client_registry);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
+    std::vector<ashiato::sync::SyncTraceEvent> client_events;
+    ashiato::sync::SyncTracer client_tracer;
     client_tracer.set_packet_logs_enabled(true);
     client_tracer.set_frame_data_enabled(true);
-    client_tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
-        [&](const kage::sync::SyncTraceEvent& event) { client_events.push_back(event); }});
-    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
+    client_tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { client_events.push_back(event); }});
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
     client.set_tracer(&client_tracer);
     REQUIRE(client.receive(client_registry, packets[0]));
-    REQUIRE(std::any_of(client_events.begin(), client_events.end(), [](const kage::sync::SyncTraceEvent& event) {
-        return event.type == kage::sync::SyncTraceEventType::PacketLog &&
-            event.role == kage::sync::SyncTraceRole::Client &&
+    REQUIRE(std::any_of(client_events.begin(), client_events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::PacketLog &&
+            event.role == ashiato::sync::SyncTraceRole::Client &&
             event.data.find("message=server_update") != std::string::npos &&
             event.data.find("cues=[{") != std::string::npos &&
             event.data.find("type=0") != std::string::npos &&

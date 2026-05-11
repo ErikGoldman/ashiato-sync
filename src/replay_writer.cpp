@@ -1,9 +1,9 @@
-#include "kage/sync/replay_writer.hpp"
+#include "ashiato/sync/replay_writer.hpp"
 
 #include "detail/frame_data.hpp"
 
-#include "kage/sync/components.hpp"
-#include "kage/sync/server.hpp"
+#include "ashiato/sync/components.hpp"
+#include "ashiato/sync/server.hpp"
 
 #include "server/dirty_slots.hpp"
 
@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-namespace kage::sync {
+namespace ashiato::sync {
 namespace {
 
 constexpr std::uint32_t replay_id_for_slot(std::uint32_t slot) noexcept {
@@ -26,7 +26,7 @@ struct ReplayReferenceContextData {
     ReplicationServer* server = nullptr;
 };
 
-std::uint32_t replay_network_id_for_entity(void* userContext, ecs::Entity entity) {
+std::uint32_t replay_network_id_for_entity(void* userContext, ashiato::Entity entity) {
     auto& data = *static_cast<ReplayReferenceContextData*>(userContext);
     if (data.server == nullptr) {
         return 0U;
@@ -38,7 +38,7 @@ std::uint32_t replay_network_id_for_entity(void* userContext, ecs::Entity entity
     return replay_id_for_slot(slot);
 }
 
-std::uint64_t replay_tag_mask(const ecs::Registry& registry, const SyncArchetype& archetype, ecs::Entity entity) {
+std::uint64_t replay_tag_mask(const ashiato::Registry& registry, const SyncArchetype& archetype, ashiato::Entity entity) {
     std::uint64_t mask = 0;
     for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
         if (registry.has(entity, archetype.tags[tag_index].tag)) {
@@ -49,9 +49,9 @@ std::uint64_t replay_tag_mask(const ecs::Registry& registry, const SyncArchetype
 }
 
 bool quantize_replay_entity(
-    const ecs::Registry& registry,
+    const ashiato::Registry& registry,
     const SyncArchetype& archetype,
-    ecs::Entity entity,
+    ashiato::Entity entity,
     QuantizedFrameData& out) {
     if (!detail::init_frame_data(archetype, out)) {
         return false;
@@ -85,14 +85,14 @@ void append_cue_entries(
     const SyncSettings& settings,
     ReplicationServer& server,
     EntityReferenceContext& reference_context,
-    std::vector<ecs::BitBuffer>& out) {
+    std::vector<ashiato::BitBuffer>& out) {
     const std::size_t count = std::min<std::size_t>(cues.size, std::numeric_limits<std::uint16_t>::max());
     for (std::size_t index = 0; index < count; ++index) {
         const QueuedSyncCue& cue = cues.data[index];
         if (cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].serialize == nullptr) {
             continue;
         }
-        ecs::BitBuffer payload = cue.payload;
+        ashiato::BitBuffer payload = cue.payload;
         if (settings.cue_ops[cue.type].references_entities) {
             if (!cue.value) {
                 continue;
@@ -101,7 +101,7 @@ void append_cue_entries(
             settings.cue_ops[cue.type].serialize(cue.value.get(), payload, &reference_context);
         }
         const std::uint32_t slot = server.replicated_slot_for_entity(cue.entity);
-        ecs::BitBuffer entry;
+        ashiato::BitBuffer entry;
         entry.push_bits(
             slot == invalid_replay_slot ? 0 : replay_id_for_slot(slot),
             32U);
@@ -118,7 +118,7 @@ void append_cue_entries(
     }
 }
 
-void write_cue_entries(const std::vector<ecs::BitBuffer>& cues, ecs::BitBuffer& out) {
+void write_cue_entries(const std::vector<ashiato::BitBuffer>& cues, ashiato::BitBuffer& out) {
     const std::size_t count = std::min<std::size_t>(cues.size(), std::numeric_limits<std::uint16_t>::max());
     out.push_bool(count != 0U);
     if (count == 0U) {
@@ -137,7 +137,7 @@ struct ReplicationReplayWriter::State {
     std::vector<std::uint32_t> slots;
     std::vector<std::uint32_t> pending_slots;
     std::vector<ServerDestroyedReplicatedSlot> pending_destroyed_slots;
-    std::vector<ecs::BitBuffer> pending_cues;
+    std::vector<ashiato::BitBuffer> pending_cues;
     QuantizedFrameData scratch;
     bool has_written = false;
     SyncFrame last_full_frame = 0;
@@ -245,7 +245,7 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
         state_->slots = state_->pending_slots;
     }
 
-    ecs::BitBuffer payload;
+    ashiato::BitBuffer payload;
     const std::size_t record_count_offset = payload.bit_size();
     payload.push_bits(0, 16U);
     std::uint16_t record_count = 0;
@@ -290,7 +290,7 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
             continue;
         }
 
-        const ecs::Entity entity = server.replicated_slot_entity(slot);
+        const ashiato::Entity entity = server.replicated_slot_entity(slot);
         const SyncArchetypeId archetype_id = server.replicated_slot_archetype(slot);
         if (archetype_id.value >= settings.archetypes.size()) {
             continue;
@@ -320,8 +320,8 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
             if (current == nullptr) {
                 continue;
             }
-            ecs::BitBuffer component_payload;
-            ecs::ComponentSerializationContext serialization_context{ops.references_entities ? &reference_context : nullptr};
+            ashiato::BitBuffer component_payload;
+            ashiato::ComponentSerializationContext serialization_context{ops.references_entities ? &reference_context : nullptr};
             ops.serialization.serialize(
                 nullptr,
                 current,
@@ -357,4 +357,4 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
     }
 }
 
-}  // namespace kage::sync
+}  // namespace ashiato::sync

@@ -6,13 +6,13 @@
 #include "client/store/frame_ring_store.hpp"
 #include "client/runtime/prediction_runtime.hpp"
 
-#include "kage/sync/client.hpp"
-#include "kage/sync/tracing.hpp"
+#include "ashiato/sync/client.hpp"
+#include "ashiato/sync/tracing.hpp"
 
 #include <algorithm>
 #include <cmath>
 
-namespace kage::sync::client_detail {
+namespace ashiato::sync::client_detail {
 
 void ClientCueRuntime::erase_for_entity(std::uint32_t entity_index) {
     store_.erase_for_entity(entity_index);
@@ -27,12 +27,12 @@ void ClientCueRuntime::prune_confirmed(SyncFrame server_frame) {
 }
 
 void ClientCueRuntime::clear_current_packet_cue_summaries() {
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     store_.current_packet_cue_summaries.clear();
 #endif
 }
 
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
 const std::vector<std::string>& ClientCueRuntime::current_packet_cue_summaries() const noexcept {
     return store_.current_packet_cue_summaries;
 }
@@ -40,7 +40,7 @@ const std::vector<std::string>& ClientCueRuntime::current_packet_cue_summaries()
 
 bool ClientCueRuntime::play(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     std::uint32_t entity_index,
     EntityState& state,
@@ -66,7 +66,7 @@ bool ClientCueRuntime::play(
     if (!settings.cue_ops[cue.type].play(registry, state.identity.local, cue.payload, late_seconds, cue.frame, references)) {
         return false;
     }
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     client.trace_cue_event(
         SyncTraceEventType::CuePlayed,
         settings,
@@ -112,7 +112,7 @@ void ClientCueRuntime::confirm_played(
     EntityPlayedCue& played,
     const EntityCue& cue,
     const char* cue_source) {
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     const bool newly_confirmed = !played.confirmed;
 #else
     (void)client;
@@ -122,7 +122,7 @@ void ClientCueRuntime::confirm_played(
 #endif
     played.confirmed = true;
     played.expire_frame = expire_frame(client, cue);
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     if (newly_confirmed) {
         client.trace_cue_event(SyncTraceEventType::CueConfirmed, settings, state, played, nullptr, cue_source);
     }
@@ -131,12 +131,12 @@ void ClientCueRuntime::confirm_played(
 
 bool ClientCueRuntime::rollback_played(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
     const EntityPlayedCue& cue,
     const char* rollback_reason) {
-#ifndef KAGE_SYNC_ENABLE_TRACING
+#ifndef ASHIATO_SYNC_ENABLE_TRACING
     (void)rollback_reason;
 #endif
     if (cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].rollback == nullptr) {
@@ -148,7 +148,7 @@ bool ClientCueRuntime::rollback_played(
     EntityReferenceContext reference_context = make_reference_context(client);
     EntityReferenceContext* references = settings.cue_ops[cue.type].references_entities ? &reference_context : nullptr;
     const bool rolled_back = settings.cue_ops[cue.type].rollback(registry, state.identity.local, cue.payload, references);
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
     if (rolled_back) {
         client.trace_cue_event(SyncTraceEventType::CueRolledBack, settings, state, cue, rollback_reason, "local_prediction");
     }
@@ -158,7 +158,7 @@ bool ClientCueRuntime::rollback_played(
 
 void ClientCueRuntime::play_snap(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
     const std::vector<EntityCue>& cues) {
@@ -180,7 +180,7 @@ void ClientCueRuntime::play_snap(
 
 void ClientCueRuntime::reconcile_authoritative_predicted(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     std::uint32_t entity_index,
     EntityState& state,
@@ -223,7 +223,7 @@ void ClientCueRuntime::reconcile_authoritative_predicted(
 
 void ClientCueRuntime::drain_emitted_prediction(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     SyncFrame frame,
     bool play_cues) {
@@ -241,7 +241,7 @@ void ClientCueRuntime::drain_emitted_prediction(
         cue.type = emitted.type;
         cue.relevance_seconds = emitted.relevance_seconds;
         cue.payload = emitted.payload;
-#ifdef KAGE_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
         client.trace_cue_event(SyncTraceEventType::CueEmitted, settings, *state, cue, nullptr, "local_prediction");
 #endif
 
@@ -268,7 +268,7 @@ void ClientCueRuntime::drain_emitted_prediction(
 
 bool ClientCueRuntime::finish_resimulation(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings) {
     bool all_valid = true;
     for (auto cue = store_.played.begin(); cue != store_.played.end();) {
@@ -289,7 +289,7 @@ bool ClientCueRuntime::finish_resimulation(
 
 void ClientCueRuntime::play_buffered_for_frame(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     std::uint32_t entity_index,
     EntityState& state,
@@ -328,7 +328,7 @@ void ClientCueRuntime::discard_applied_buffered(ReplicationClient& client, SyncF
 
 void ClientCueRuntime::store_authoritative_buffered(
     ReplicationClient& client,
-    ecs::Registry& registry,
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     std::uint32_t entity_index,
     EntityState& state,
@@ -361,4 +361,4 @@ void ClientCueRuntime::store_authoritative_buffered(
     }
 }
 
-}  // namespace kage::sync::client_detail
+}  // namespace ashiato::sync::client_detail
