@@ -38,7 +38,7 @@ TEST_CASE("sync tracing records server send client receive and apply events") {
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     std::vector<kage::sync::SyncTraceEvent> server_events;
     kage::sync::SyncTracer server_tracer;
     server_tracer.set_frame_data_enabled(true);
@@ -58,8 +58,8 @@ TEST_CASE("sync tracing records server send client receive and apply events") {
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = define_networked_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
-    kage::sync::ReplicationClient client;
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
     std::vector<kage::sync::SyncTraceEvent> client_events;
     kage::sync::SyncTracer client_tracer;
     client_tracer.set_frame_data_enabled(true);
@@ -90,7 +90,7 @@ TEST_CASE("cue tracing records lifecycle events and uses frame data gating") {
         server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
             packets.push_back(packet);
         };
-        kage::sync::ReplicationServer server(server_options);
+        kage::sync::ReplicationServer server(server_registry, server_options);
         std::vector<kage::sync::SyncTraceEvent> server_events;
         kage::sync::SyncTracer server_tracer;
         server_tracer.set_frame_data_enabled(frame_data_enabled);
@@ -112,13 +112,13 @@ TEST_CASE("cue tracing records lifecycle events and uses frame data gating") {
         REQUIRE(client_archetype == server_archetype);
         client_registry.register_component<kage_sync_tests::CuePlayback>("CuePlayback");
         REQUIRE(kage::sync::register_sync_cue<kage_sync_tests::TestCue>(client_registry) == cue_type);
-        kage::sync::configure_client(client_registry, 1);
+        kage_sync_tests::configure_test_client_registry(client_registry, 1);
         std::vector<kage::sync::SyncTraceEvent> client_events;
         kage::sync::SyncTracer client_tracer;
         client_tracer.set_frame_data_enabled(frame_data_enabled);
         client_tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
             [&](const kage::sync::SyncTraceEvent& event) { client_events.push_back(event); }});
-        kage::sync::ReplicationClient client;
+        kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
         client.set_tracer(&client_tracer);
 
         REQUIRE(client.receive(client_registry, packets[0]));
@@ -178,7 +178,7 @@ TEST_CASE("server transport traces job-emitted cues at authoritative snapshot fr
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     std::vector<kage::sync::SyncTraceEvent> server_events;
     kage::sync::SyncTracer server_tracer;
     server_tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
@@ -224,7 +224,7 @@ TEST_CASE("client tracing records clock skew timing decisions") {
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
@@ -233,7 +233,7 @@ TEST_CASE("client tracing records clock skew timing decisions") {
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = define_networked_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
     REQUIRE(kage::sync::set_client_input_component<kage_sync_tests::NetworkedPosition>(client_registry));
 
     std::vector<kage::sync::SyncTraceEvent> client_events;
@@ -242,11 +242,11 @@ TEST_CASE("client tracing records clock skew timing decisions") {
         [&](const kage::sync::SyncTraceEvent& event) { client_events.push_back(event); }});
 
     kage::sync::ReplicationClientOptions options;
-    options.input_buffer_capacity_frames = 32;
-    kage::sync::ReplicationClient client(options);
+    options.prediction.input_buffer_capacity_frames = 32;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
     client.set_tracer(&client_tracer);
     REQUIRE(client.set_input(client_registry, kage_sync_tests::NetworkedPosition{3.0f, 4.0f}));
-    REQUIRE(client.receive(client_registry, packets[0], 8));
+    REQUIRE(receive_at_local_frame(client, client_registry, packets[0], 8));
 
     const auto event = std::find_if(client_events.begin(), client_events.end(), [](const kage::sync::SyncTraceEvent& trace) {
         return trace.type == kage::sync::SyncTraceEventType::ClockSkew &&
@@ -263,7 +263,7 @@ TEST_CASE("client input tracing records input components every input tick") {
     ecs::Registry registry;
     const ecs::Entity input_component =
         kage::sync::register_sync_component<kage_sync_tests::NetworkedPosition>(registry, "NetworkedPosition");
-    kage::sync::configure_client(registry, 1);
+    kage_sync_tests::configure_test_client_registry(registry, 1);
     REQUIRE(kage::sync::set_client_input_component<kage_sync_tests::NetworkedPosition>(registry));
 
     const ecs::Entity owned = registry.create();
@@ -275,10 +275,10 @@ TEST_CASE("client input tracing records input components every input tick") {
     tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
         [&](const kage::sync::SyncTraceEvent& event) { events.push_back(event); }});
 
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, {}));
     client.set_tracer(&tracer);
     REQUIRE(client.set_input(registry, kage_sync_tests::NetworkedPosition{5.0f, 6.0f}));
-    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
 
     const auto input_event = std::find_if(events.begin(), events.end(), [&](const kage::sync::SyncTraceEvent& event) {
         return event.type == kage::sync::SyncTraceEventType::FrameComponent &&
@@ -295,7 +295,7 @@ TEST_CASE("client input tracing records input components every input tick") {
 TEST_CASE("packet log tracing records client input baseline and server received input range") {
     ecs::Registry client_registry;
     kage::sync::register_sync_component<kage_sync_tests::NetworkedPosition>(client_registry, "NetworkedPosition");
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
     REQUIRE(kage::sync::set_client_input_component<kage_sync_tests::NetworkedPosition>(client_registry));
     const ecs::Entity client_owned = client_registry.create();
     REQUIRE(kage::sync::set_owner(client_registry, client_owned, 1));
@@ -305,10 +305,10 @@ TEST_CASE("packet log tracing records client input baseline and server received 
     client_tracer.set_packet_logs_enabled(true);
     client_tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
         [&](const kage::sync::SyncTraceEvent& event) { client_events.push_back(event); }});
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
     client.set_tracer(&client_tracer);
     REQUIRE(client.set_input(client_registry, kage_sync_tests::NetworkedPosition{5.0f, 6.0f}));
-    REQUIRE(client.tick(client_registry, client.options().fixed_dt_seconds));
+    REQUIRE(client.tick(client_registry, client.fixed_dt_seconds()));
     std::vector<ecs::BitBuffer> input_packets = client.drain_packets();
     auto input_packet = std::find_if(input_packets.begin(), input_packets.end(), [](ecs::BitBuffer packet) {
         return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
@@ -323,7 +323,7 @@ TEST_CASE("packet log tracing records client input baseline and server received 
 
     ecs::Registry server_registry;
     kage::sync::register_sync_component<kage_sync_tests::NetworkedPosition>(server_registry, "NetworkedPosition");
-    kage::sync::configure_server(server_registry);
+    kage_sync_tests::configure_test_server_registry(server_registry);
     REQUIRE(kage::sync::set_client_input_component<kage_sync_tests::NetworkedPosition>(server_registry));
     const ecs::Entity server_owned = server_registry.create();
     REQUIRE(kage::sync::set_owner(server_registry, server_owned, 1));
@@ -335,7 +335,7 @@ TEST_CASE("packet log tracing records client input baseline and server received 
         [&](const kage::sync::SyncTraceEvent& event) { server_events.push_back(event); }});
     kage::sync::ReplicationServerOptions server_options;
     server_options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     server.set_tracer(&server_tracer);
     REQUIRE(server.add_client(1));
     REQUIRE(server.process_packet(server_registry, 1, *input_packet));
@@ -353,7 +353,7 @@ TEST_CASE("server input tracing records input components and stale input starvat
     ecs::Registry server_registry;
     const ecs::Entity server_input_component =
         kage::sync::register_sync_component<kage_sync_tests::NetworkedPosition>(server_registry, "NetworkedPosition");
-    kage::sync::configure_server(server_registry);
+    kage_sync_tests::configure_test_server_registry(server_registry);
     REQUIRE(kage::sync::set_client_input_component<kage_sync_tests::NetworkedPosition>(server_registry));
 
     const ecs::Entity owned = server_registry.create();
@@ -367,18 +367,18 @@ TEST_CASE("server input tracing records input components and stale input starvat
 
     kage::sync::ReplicationServerOptions server_options;
     server_options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     server.set_tracer(&server_tracer);
     REQUIRE(server.add_client(1));
 
     ecs::Registry client_registry;
     kage::sync::register_sync_component<kage_sync_tests::NetworkedPosition>(client_registry, "NetworkedPosition");
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
     REQUIRE(kage::sync::set_client_input_component<kage_sync_tests::NetworkedPosition>(client_registry));
 
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
     REQUIRE(client.set_input(client_registry, kage_sync_tests::NetworkedPosition{5.0f, 6.0f}));
-    REQUIRE(client.tick(client_registry, client.options().fixed_dt_seconds));
+    REQUIRE(client.tick(client_registry, client.fixed_dt_seconds()));
     std::vector<ecs::BitBuffer> input_packets = client.drain_packets();
     auto input_packet = std::find_if(input_packets.begin(), input_packets.end(), [](ecs::BitBuffer packet) {
         return static_cast<std::uint8_t>(packet.read_bits(8U)) == kage::sync::protocol::client_input_message;
@@ -437,7 +437,7 @@ TEST_CASE("server input tracing records starvation before any input arrives") {
     ecs::Registry server_registry;
     const ecs::Entity server_input_component =
         kage::sync::register_sync_component<kage_sync_tests::NetworkedPosition>(server_registry, "NetworkedPosition");
-    kage::sync::configure_server(server_registry);
+    kage_sync_tests::configure_test_server_registry(server_registry);
     REQUIRE(kage::sync::set_client_input_component<kage_sync_tests::NetworkedPosition>(server_registry));
 
     const ecs::Entity owned = server_registry.create();
@@ -451,7 +451,7 @@ TEST_CASE("server input tracing records starvation before any input arrives") {
 
     kage::sync::ReplicationServerOptions server_options;
     server_options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     server.set_tracer(&server_tracer);
     REQUIRE(server.add_client(1));
 
@@ -473,7 +473,7 @@ TEST_CASE("token client bootstraps input packets that server traces after first 
     const kage::sync::SyncArchetypeId server_archetype = define_networked_archetype(server_registry);
     const ecs::Entity server_input_component =
         server_registry.component<kage_sync_tests::NetworkedPosition>();
-    kage::sync::configure_server(server_registry);
+    kage_sync_tests::configure_test_server_registry(server_registry);
     REQUIRE(kage::sync::set_client_input_component<kage_sync_tests::NetworkedPosition>(server_registry));
 
     const ecs::Entity owned = server_registry.create();
@@ -497,18 +497,18 @@ TEST_CASE("token client bootstraps input packets that server traces after first 
     server_options.connect_handler = [](const std::string&, kage::sync::ClientId&, std::string&) {
         return true;
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     server.set_tracer(&server_tracer);
 
     ecs::Registry client_registry;
     define_networked_archetype(client_registry);
     kage::sync::register_sync_component<kage::sync::NetworkOwner>(client_registry, "kage.sync.NetworkOwner");
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
     REQUIRE(kage::sync::set_client_input_component<kage_sync_tests::NetworkedPosition>(client_registry));
 
     kage::sync::ReplicationClientOptions client_options;
-    client_options.connect_token = "token";
-    kage::sync::ReplicationClient client(client_options);
+    client_options.session.connect_token = "token";
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, client_options));
     REQUIRE(client.set_input(client_registry, kage_sync_tests::NetworkedPosition{5.0f, 6.0f}));
 
     std::vector<ecs::BitBuffer> client_packets = client.drain_packets();

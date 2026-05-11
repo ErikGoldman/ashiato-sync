@@ -1,6 +1,7 @@
 #pragma once
 
 #include "kage/sync/sync.hpp"
+#include "test_setup.hpp"
 
 #include <cstdint>
 

@@ -47,7 +47,7 @@ TEST_CASE("packet log tracing is opt-in and records client and server packet det
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         server_packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     server.set_tracer(&server_tracer);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
@@ -64,13 +64,13 @@ TEST_CASE("packet log tracing is opt-in and records client and server packet det
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = define_networked_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
     std::vector<kage::sync::SyncTraceEvent> client_events;
     kage::sync::SyncTracer client_tracer;
     client_tracer.set_packet_logs_enabled(true);
     client_tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
         [&](const kage::sync::SyncTraceEvent& event) { client_events.push_back(event); }});
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
     client.set_tracer(&client_tracer);
     REQUIRE(client.receive(client_registry, server_packets[0]));
     REQUIRE(std::any_of(client_events.begin(), client_events.end(), [](const kage::sync::SyncTraceEvent& event) {
@@ -109,7 +109,7 @@ TEST_CASE("packet log tracing records ACK-only traffic as client ACK packets") {
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         server_packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
@@ -118,7 +118,7 @@ TEST_CASE("packet log tracing records ACK-only traffic as client ACK packets") {
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = define_networked_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
     REQUIRE(kage::sync::set_client_input_component<kage_sync_tests::NetworkedPosition>(client_registry));
 
     std::vector<kage::sync::SyncTraceEvent> client_events;
@@ -126,7 +126,7 @@ TEST_CASE("packet log tracing records ACK-only traffic as client ACK packets") {
     client_tracer.set_packet_logs_enabled(true);
     client_tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
         [&](const kage::sync::SyncTraceEvent& event) { client_events.push_back(event); }});
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
     client.set_tracer(&client_tracer);
     REQUIRE(client.receive(client_registry, server_packets[0]));
 
@@ -171,7 +171,7 @@ TEST_CASE("packet log tracing records cue summaries and cue payload data") {
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     server.set_tracer(&server_tracer);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
@@ -191,14 +191,14 @@ TEST_CASE("packet log tracing records cue summaries and cue payload data") {
     REQUIRE(kage_sync_tests::define_position_archetype(client_registry) == server_archetype);
     client_registry.register_component<kage_sync_tests::CuePlayback>("CuePlayback");
     kage::sync::register_sync_cue<kage_sync_tests::TestCue>(client_registry);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
     std::vector<kage::sync::SyncTraceEvent> client_events;
     kage::sync::SyncTracer client_tracer;
     client_tracer.set_packet_logs_enabled(true);
     client_tracer.set_frame_data_enabled(true);
     client_tracer.set_callbacks(kage::sync::SyncTraceCallbacks{
         [&](const kage::sync::SyncTraceEvent& event) { client_events.push_back(event); }});
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
     client.set_tracer(&client_tracer);
     REQUIRE(client.receive(client_registry, packets[0]));
     REQUIRE(std::any_of(client_events.begin(), client_events.end(), [](const kage::sync::SyncTraceEvent& event) {

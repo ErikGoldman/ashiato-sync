@@ -29,7 +29,7 @@ constexpr std::uint32_t replay_frame_version = 3U;
 constexpr std::uint8_t replay_done_message = 200U;
 constexpr std::uint8_t replay_target_message = 201U;
 constexpr kage::sync::SyncFrame replay_sample_stride_frames = 4U;
-constexpr kage::sync::SyncFrame replay_interpolation_buffer_frames = replay_sample_stride_frames * 2U;
+constexpr kage::sync::SyncFrame replay_buffered_frame_lag = replay_sample_stride_frames * 2U;
 constexpr kage::sync::SyncFrame replay_frames_for_seconds(float seconds) {
     return static_cast<kage::sync::SyncFrame>(seconds / fixed_dt + 0.5f);
 }
@@ -389,13 +389,12 @@ void FpsDeathCamClient::start(const std::string& host, std::uint16_t replay_port
     (void)define_schema(*registry_);
 
     kage::sync::ReplicationClientOptions options;
-    options.connect_token = replay_token(client_id);
-    options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
-    options.fixed_dt_seconds = fixed_dt;
-    options.interpolation_buffer_frames = replay_interpolation_buffer_frames;
-    options.interpolation_buffer_capacity_frames = 64;
-    options.auto_interpolation_buffer_frames = false;
-    client_ = std::make_unique<kage::sync::ReplicationClient>(options);
+    options.session.connect_token = replay_token(client_id);
+    options.entities.default_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    options.clock.fixed_dt_seconds = fixed_dt;
+    options.buffered.buffered_frame_lag = replay_buffered_frame_lag;
+    options.buffered.auto_buffered_frame_lag = false;
+    client_ = std::make_unique<kage::sync::ReplicationClient>(*registry_, options);
     client_->set_packet_sender([this](const ecs::BitBuffer& packet) {
         send_packet(socket_, server_address_, packet);
     });

@@ -1,0 +1,55 @@
+#pragma once
+
+#include "client/state.hpp"
+#include "client/store/frame_ring_store.hpp"
+
+#include "ecs/ecs.hpp"
+#include "kage/sync/client_clock.hpp"
+
+#include <cstddef>
+#include <cstdint>
+
+namespace kage::sync {
+
+class ReplicationClient;
+
+namespace client_detail {
+
+class ClientBufferedRuntime {
+public:
+    explicit ClientBufferedRuntime(std::size_t frame_capacity = 64);
+
+    ClientFrameRingStore& frames() noexcept {
+        return buffered_frames_;
+    }
+
+    const ClientFrameRingStore& frames() const noexcept {
+        return buffered_frames_;
+    }
+
+    bool has_applied_frame() const noexcept {
+        return has_applied_buffered_frame_;
+    }
+
+    SyncFrame last_applied_frame() const noexcept {
+        return last_applied_buffered_frame_;
+    }
+
+    void reset_entity(std::uint32_t entity_index) noexcept;
+    void ensure_entity(std::uint32_t entity_index);
+    void clear_entity(std::uint32_t entity_index) noexcept;
+
+    bool apply_frames(
+        ReplicationClient& client,
+        ecs::Registry& registry,
+        const ReplicationClientClock::FrameRange& frames);
+    bool apply_frame(ReplicationClient& client, ecs::Registry& registry, SyncFrame buffered_frame);
+
+private:
+    ClientFrameRingStore buffered_frames_;
+    SyncFrame last_applied_buffered_frame_ = 0;
+    bool has_applied_buffered_frame_ = false;
+};
+
+}  // namespace client_detail
+}  // namespace kage::sync

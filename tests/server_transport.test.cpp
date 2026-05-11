@@ -31,9 +31,9 @@ void run_server_tick(kage::sync::ReplicationServer& server, ecs::Registry& regis
 
 TEST_CASE("replication server rejects malformed ACK packets") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
 
-    kage::sync::ReplicationServer server;
+    kage::sync::ReplicationServer server(registry);
     REQUIRE(server.add_client(1));
 
     ecs::BitBuffer empty;
@@ -56,9 +56,9 @@ TEST_CASE("replication server rejects malformed ACK packets") {
 
 TEST_CASE("replication server rejects malformed connect ack and input packets") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
 
-    kage::sync::ReplicationServer server;
+    kage::sync::ReplicationServer server(registry);
 
     ecs::BitBuffer malformed_connect;
     malformed_connect.push_bits(kage::sync::protocol::client_connect_request_message, 8U);
@@ -99,7 +99,7 @@ TEST_CASE("replication server respects per-client bandwidth limits") {
         REQUIRE(client == 1);
         payloads.push_back(payload);
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     for (const ecs::Entity entity : entities) {
         REQUIRE(start_sync(registry, entity, archetype));
@@ -142,7 +142,7 @@ TEST_CASE("replication server dynamic bandwidth charges transport overhead") {
     options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
 
     run_server_tick(server, registry);
@@ -168,7 +168,7 @@ TEST_CASE("replication server dynamic bandwidth sends when charged packet fits")
     options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
 
     run_server_tick(server, registry);
@@ -200,8 +200,8 @@ TEST_CASE("shared dynamic bandwidth budget splits replay and live before redistr
     options.bandwidth.max_burst_bytes = 98;
     options.bandwidth.transport_overhead_bytes_per_packet = 28;
 
-    kage::sync::ReplicationServer replay_server(options);
-    kage::sync::ReplicationServer live_server(options);
+    kage::sync::ReplicationServer replay_server(replay_registry, options);
+    kage::sync::ReplicationServer live_server(live_registry, options);
     replay_server.set_transport([&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         replay_payloads.push_back(payload);
     });
@@ -231,7 +231,6 @@ TEST_CASE("shared dynamic bandwidth budget splits replay and live before redistr
 
 TEST_CASE("live replication uses shared bandwidth when replay has nothing to send") {
     ecs::Registry replay_registry;
-    kage::sync::configure_server(replay_registry);
     (void)define_networked_position_archetype(replay_registry);
 
     ecs::Registry live_registry;
@@ -250,8 +249,8 @@ TEST_CASE("live replication uses shared bandwidth when replay has nothing to sen
     options.bandwidth.max_burst_bytes = 49;
     options.bandwidth.transport_overhead_bytes_per_packet = 28;
 
-    kage::sync::ReplicationServer replay_server(options);
-    kage::sync::ReplicationServer live_server(options);
+    kage::sync::ReplicationServer replay_server(replay_registry, options);
+    kage::sync::ReplicationServer live_server(live_registry, options);
     replay_server.set_transport([&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         replay_payloads.push_back(payload);
     });
@@ -277,7 +276,6 @@ TEST_CASE("live replication uses shared bandwidth when replay has nothing to sen
 
 TEST_CASE("detaching replay participant releases queued live bandwidth flush") {
     ecs::Registry replay_registry;
-    kage::sync::configure_server(replay_registry);
     (void)define_networked_position_archetype(replay_registry);
 
     ecs::Registry live_registry;
@@ -295,8 +293,8 @@ TEST_CASE("detaching replay participant releases queued live bandwidth flush") {
     options.bandwidth.max_burst_bytes = 49;
     options.bandwidth.transport_overhead_bytes_per_packet = 28;
 
-    kage::sync::ReplicationServer replay_server(options);
-    kage::sync::ReplicationServer live_server(options);
+    kage::sync::ReplicationServer replay_server(replay_registry, options);
+    kage::sync::ReplicationServer live_server(live_registry, options);
     replay_server.set_transport([](kage::sync::ClientId, const ecs::BitBuffer&) {});
     live_server.set_transport([&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         live_payloads.push_back(payload);
@@ -314,16 +312,18 @@ TEST_CASE("detaching replay participant releases queued live bandwidth flush") {
     run_server_tick(live_server, live_registry);
     REQUIRE(live_payloads.empty());
 
-    REQUIRE(replay_server.remove_client(1));
+    REQUIRE(replay_server.remove_client(replay_registry, 1));
     REQUIRE(live_payloads.size() == 1);
 }
 
 TEST_CASE("client bandwidth share options are tunable after joining a shared budget") {
+    ecs::Registry live_registry;
+    ecs::Registry replay_registry;
     kage::sync::ReplicationServerOptions options;
     options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
 
-    kage::sync::ReplicationServer live_server(options);
-    kage::sync::ReplicationServer replay_server(options);
+    kage::sync::ReplicationServer live_server(live_registry, options);
+    kage::sync::ReplicationServer replay_server(replay_registry, options);
     REQUIRE(live_server.add_client(1));
     REQUIRE(replay_server.add_client(1));
     REQUIRE(replay_server.set_client_bandwidth_budget(
@@ -362,7 +362,7 @@ TEST_CASE("replication server prioritizes pending destroys over creates when ban
     options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
 
     run_server_tick(server, registry);
@@ -408,7 +408,7 @@ TEST_CASE("replication server parallel path prioritizes pending destroys over cr
     options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         payloads.emplace_back(client, payload);
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
 
@@ -456,7 +456,7 @@ TEST_CASE("replication server parallel path applies bandwidth limits independent
     options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         packets.emplace_back(client, payload);
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
 
@@ -493,7 +493,7 @@ TEST_CASE("replication server parallel path batches records when budget allows")
     options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         packets.emplace_back(client, payload);
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
 
@@ -522,7 +522,7 @@ TEST_CASE("replication server rotates budget-limited sends by priority") {
     options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     for (const ecs::Entity entity : entities) {
         REQUIRE(start_sync(registry, entity, archetype));
@@ -556,7 +556,7 @@ TEST_CASE("replication server keeps per-client dirty queues independent") {
     options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         payloads.push_back({client, payload});
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, first, archetype));
     REQUIRE(start_sync(registry, second, archetype));
@@ -588,7 +588,7 @@ TEST_CASE("replication server skips destroyed and externally unmarked entities")
     options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, destroyed, archetype));
     REQUIRE(start_sync(registry, unmarked, archetype));
@@ -621,7 +621,7 @@ TEST_CASE("replication server sends nothing when bandwidth cannot cover a serial
     options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer&) {
         ++sends;
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, entity, archetype));
 
@@ -644,7 +644,7 @@ TEST_CASE("replication server parallel path releases quantized frames for unsent
     options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& payload) {
         packets.emplace_back(client, payload);
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
 
@@ -674,7 +674,7 @@ TEST_CASE("replication server serializes full and delta component payloads throu
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, entity, archetype));
 
@@ -704,7 +704,7 @@ TEST_CASE("replication server serializes full and delta component payloads throu
     REQUIRE(fields.y == 10);
 }
 
-TEST_CASE("replication server sends a full update after archetype replacement") {
+TEST_CASE("replication server rejects archetype replacement while syncing") {
     ecs::Registry registry;
     const ecs::Entity position_component =
         kage::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
@@ -731,7 +731,7 @@ TEST_CASE("replication server sends a full update after archetype replacement") 
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, entity, position_archetype));
 
@@ -743,13 +743,7 @@ TEST_CASE("replication server sends a full update after archetype replacement") 
     REQUIRE(server.acknowledge_entity(1, entity, update.frame));
 
     REQUIRE(start_sync(registry, entity, actor_archetype));
-    server.tick(registry, server.options().fixed_dt_seconds);
-
-    update = read_server_update(payloads.back(), 3U);
-    REQUIRE(update.entities.size() == 1);
-    REQUIRE(update.entities[0].full);
-    REQUIRE(update.entities[0].archetype == actor_archetype);
-    REQUIRE(update.entities[0].components.size() == 2);
+    REQUIRE_THROWS_AS(server.tick(registry, server.options().fixed_dt_seconds), std::logic_error);
 }
 
 TEST_CASE("replication server applies bandwidth limits to actual serialized byte counts") {
@@ -772,7 +766,7 @@ TEST_CASE("replication server applies bandwidth limits to actual serialized byte
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, first, archetype));
     REQUIRE(start_sync(registry, second, archetype));
@@ -818,7 +812,7 @@ TEST_CASE("replication server filters owner-only serialized components") {
         sends.push_back({client, payload.byte_size()});
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(registry, entity, archetype));
@@ -857,7 +851,7 @@ TEST_CASE("replication server serializes compact synced tag masks per client") {
         payloads.push_back({client, payload});
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(registry, entity, archetype));
@@ -952,7 +946,7 @@ TEST_CASE("replication server applies sphere priorities and component LOD masks"
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     server.tick(registry, server.options().fixed_dt_seconds);
 
@@ -986,7 +980,7 @@ TEST_CASE("replication server packs entity records up to the configured mtu") {
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, first, archetype));
     REQUIRE(start_sync(registry, second, archetype));
@@ -1020,7 +1014,7 @@ TEST_CASE("replication server splits packed updates at the mtu boundary") {
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, first, archetype));
     REQUIRE(start_sync(registry, second, archetype));

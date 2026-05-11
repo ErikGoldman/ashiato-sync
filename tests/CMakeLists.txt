@@ -8,9 +8,10 @@ add_executable(kage_sync_tests
     client_clock.test.cpp
     client_cues.test.cpp
     client_display.test.cpp
+    client_frame_ring_store.test.cpp
     client_frame_data.test.cpp
     client_input.test.cpp
-    client_packet_window.test.cpp
+    client_timing_stats.test.cpp
     client_prediction.test.cpp
     client_receive.test.cpp
     client_timing.test.cpp

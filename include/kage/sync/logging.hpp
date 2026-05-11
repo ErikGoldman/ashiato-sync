@@ -27,7 +27,7 @@ enum class LogFormat {
 struct LoggingOptions {
     LogLevel level = LogLevel::Off;
     LogFormat format = LogFormat::Text;
-    std::uint32_t max_warning_logs_per_peer = 64;
+    std::uint32_t max_warning_logs_per_source = 64;
     std::shared_ptr<spdlog::logger> logger;
 };
 

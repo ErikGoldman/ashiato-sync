@@ -2,6 +2,11 @@
 
 #include "kage/sync/client.hpp"
 
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <vector>
+
 namespace kage::sync::client_detail {
 
 struct EntityCue {
@@ -12,11 +17,13 @@ struct EntityCue {
 };
 
 struct EntityPlayedCue {
+    std::uint32_t entity_index = std::numeric_limits<std::uint32_t>::max();
     SyncFrame frame = 0;
+    SyncFrame expire_frame = 0;
     SyncCueTypeId type = 0;
     ecs::BitBuffer payload;
     bool confirmed = false;
-    bool seen_in_resim = false;
+    std::uint32_t seen_resim_generation = 0;
 };
 
 struct EntityFrameBaseline {
@@ -34,37 +41,47 @@ struct EntityBufferedFrame {
     SyncFrame frame = 0;
     bool valid = false;
     bool entity_present = false;
-    SyncArchetypeId archetype;
     QuantizedFrameData baseline;
-    std::vector<EntityCue> cues;
 };
 
 struct EntityState {
-    ecs::Entity local;
-    SyncArchetypeId archetype;
-    ReplicationClientMode mode = ReplicationClientMode::Snap;
-    SyncFrame frame = 0;
-    bool entity_present = true;
-    bool mode_selected = false;
-    QuantizedFrameData baseline;
-    std::vector<EntityFrameBaseline> history;
-    std::size_t history_next = 0;
+    struct Identity {
+        ecs::Entity local;
+        ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
+        std::uint32_t wire_network_id = 0;
+        SyncArchetypeId archetype;
+    } identity;
 
-    std::vector<EntityBufferedFrame> buffered_frames;
-    std::vector<EntityBufferedFrame> predicted_frames;
-    std::vector<EntityPlayedCue> played_cues;
-    std::vector<EntityCue> received_cues;
-    std::vector<EntityCue> pending_predicted_cues;
-    std::uint64_t applied_present_mask = 0;
-    std::vector<EntityComponentError> snap_errors;
-    ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
-    std::uint32_t wire_network_id = 0;
-    std::size_t active_index = std::numeric_limits<std::size_t>::max();
-    std::size_t buffered_index = std::numeric_limits<std::size_t>::max();
-    std::size_t snap_error_index = std::numeric_limits<std::size_t>::max();
-    std::size_t prediction_rollback_index = std::numeric_limits<std::size_t>::max();
-    bool prediction_rollback_pending = false;
-    SyncFrame prediction_rollback_frame = 0;
+    struct Replication {
+        SyncFrame frame = 0;
+        bool entity_present = true;
+        QuantizedFrameData baseline;
+        std::vector<EntityFrameBaseline> history;
+        std::size_t history_next = 0;
+        std::uint64_t applied_present_mask = 0;
+    } replication;
+
+    struct Mode {
+        ReplicationClientMode current = ReplicationClientMode::Snap;
+        bool selected = false;
+    } mode;
+
+    struct VisualCorrection {
+        std::vector<EntityComponentError> snap_errors;
+    } visual;
+
+    struct Memberships {
+        std::size_t active_index = std::numeric_limits<std::size_t>::max();
+        std::size_t buffered_index = std::numeric_limits<std::size_t>::max();
+        std::size_t snap_error_index = std::numeric_limits<std::size_t>::max();
+        std::size_t predicted_index = std::numeric_limits<std::size_t>::max();
+        std::size_t prediction_rollback_index = std::numeric_limits<std::size_t>::max();
+    } memberships;
+
+    struct Prediction {
+        bool rollback_pending = false;
+        SyncFrame rollback_frame = 0;
+    } prediction;
 };
 
 struct OriginalPredictionCapture {
@@ -85,8 +102,7 @@ struct InputFrame {
 };
 
 struct PendingPing {
-    SyncFrame frame = 0;
-    std::uint16_t subframe = 0;
+    double local_send_time_seconds = 0.0;
 };
 
 }  // namespace kage::sync::client_detail

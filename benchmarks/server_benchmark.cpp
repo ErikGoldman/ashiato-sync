@@ -444,11 +444,11 @@ void BM_ServerProcessAckPacket(benchmark::State& state) {
 
         ecs::Registry client_registry;
         define_client_delta_schema(client_registry, false);
-        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-            1200,
-            kage::sync::ReplicationClientMode::Snap,
-            2,
-            64});
+        kage::sync::ReplicationClient client(client_registry, kage::sync::ReplicationClientOptions{
+        kage::sync::ReplicationClientNetworkOptions{1200},
+        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::Snap},
+        kage::sync::ReplicationClientBufferedOptions{2,
+            64}});
         for (const auto& packet : sent) {
             benchmark::DoNotOptimize(client.receive(client_registry, packet.second));
         }
@@ -561,11 +561,12 @@ void BM_ServerTickMutatingAckedDelta(benchmark::State& state) {
     clients.reserve(static_cast<std::size_t>(client_count));
     for (int client_index = 0; client_index < client_count; ++client_index) {
         define_client_delta_schema(client_registries[static_cast<std::size_t>(client_index)], false);
-        clients.emplace_back(kage::sync::ReplicationClientOptions{
-            1200,
-            kage::sync::ReplicationClientMode::Snap,
-            2,
-            64});
+        clients.emplace_back(
+            client_registries[static_cast<std::size_t>(client_index)],
+            kage::sync::ReplicationClientOptions{
+                kage::sync::ReplicationClientNetworkOptions{1200},
+                kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::Snap},
+                kage::sync::ReplicationClientBufferedOptions{2, 64}});
     }
 
     std::uint64_t consumed = 0;
@@ -846,10 +847,10 @@ void BM_ServerProcessInputPacket(benchmark::State& state) {
     kage::sync::set_client_input_component<DeltaPosition>(client_registry);
     const ecs::Entity client_owned = client_registry.create();
     kage::sync::set_owner(client_registry, client_owned, 1);
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry);
     for (int frame = 0; frame < frame_count; ++frame) {
         client.set_input(client_registry, DeltaPosition{frame, frame + 1});
-        client.tick(client_registry, client.options().fixed_dt_seconds);
+        client.tick(client_registry, client.fixed_dt_seconds());
     }
     std::vector<ecs::BitBuffer> packets = client.drain_packets();
     auto input_packet = std::find_if(packets.begin(), packets.end(), [](ecs::BitBuffer packet) {
@@ -895,9 +896,9 @@ void BM_ServerTickInputUpsert(benchmark::State& state) {
     kage::sync::set_client_input_component<DeltaPosition>(client_registry);
     const ecs::Entity client_owned = client_registry.create();
     kage::sync::set_owner(client_registry, client_owned, 1);
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry);
     client.set_input(client_registry, DeltaPosition{10, 20});
-    client.tick(client_registry, client.options().fixed_dt_seconds);
+    client.tick(client_registry, client.fixed_dt_seconds());
     std::vector<ecs::BitBuffer> packets = client.drain_packets();
 
     kage::sync::ReplicationServerOptions server_options;

@@ -89,11 +89,10 @@ Balls-specific flags:
 
 - `--client-mode snap|buffered-interpolation|predict`: client replication mode.
 - `--entities N`: initial target ball count.
-- `--auto-interpolation-buffer on|off`: enable or disable adaptive interpolation
-  buffer depth.
-- `--time-dilation-min N`: minimum playback time dilation.
-- `--time-dilation-max N`: maximum playback time dilation.
-- `--time-dilation-gain N`: gain used when correcting interpolation buffer error.
+- `--auto-buffered-frame-lag on|off`: enable or disable adaptive buffered frame lag.
+- `--buffered-time-dilation-min N`: minimum buffered time dilation.
+- `--buffered-time-dilation-max N`: maximum buffered time dilation.
+- `--buffered-time-dilation-gain N`: gain used when correcting buffered playback error.
 
 Runtime controls:
 

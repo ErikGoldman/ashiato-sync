@@ -3,6 +3,7 @@
 #include "detail/frame_data.hpp"
 
 #include "kage/sync/components.hpp"
+#include "kage/sync/detail/bit_reader.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -119,15 +120,22 @@ bool apply_components(
     ecs::Entity entity,
     const SyncArchetype& archetype,
     std::uint64_t present_mask,
-    ecs::BitBuffer& payload,
+    detail::BitReader& payload,
     EntityReferenceContext& references,
     ReplicationReplayStreamSession& session) {
-    const auto component_count = static_cast<std::uint16_t>(payload.read_bits(16U));
+    std::uint16_t component_count = 0;
+    if (!payload.read_bits(16U, component_count)) {
+        return false;
+    }
     for (std::uint16_t component = 0; component < component_count; ++component) {
-        const auto component_index = static_cast<std::uint16_t>(payload.read_bits(16U));
-        const auto component_bits = static_cast<std::uint16_t>(payload.read_bits(16U));
+        std::uint16_t component_index = 0;
+        std::uint16_t component_bits = 0;
         ecs::BitBuffer component_payload;
-        payload.read_buffer_bits(component_payload, component_bits);
+        if (!payload.read_bits(16U, component_index) ||
+            !payload.read_bits(16U, component_bits) ||
+            !payload.read_buffer_bits(component_payload, component_bits)) {
+            return false;
+        }
         if (component_index >= archetype.components.size() ||
             component_index >= archetype.component_ops.size()) {
             continue;
@@ -322,13 +330,21 @@ bool ReplicationReplayStreamer::apply_frame(
     try {
         const SyncSettings& settings = registry.get<SyncSettings>();
         ecs::BitBuffer payload = frame.payload;
+        detail::BitReader reader(payload);
         EntityReferenceContext references = make_reference_context(session);
         std::unordered_set<std::uint32_t> full_replay_ids;
 
-        const auto record_count = static_cast<std::uint16_t>(payload.read_bits(16U));
+        std::uint16_t record_count = 0;
+        if (!reader.read_bits(16U, record_count)) {
+            return false;
+        }
         for (std::uint16_t record = 0; record < record_count; ++record) {
-            const bool destroy = payload.read_bool();
-            const auto replay_id = static_cast<std::uint32_t>(payload.read_bits(32U));
+            bool destroy = false;
+            std::uint32_t replay_id = 0;
+            if (!reader.read_bits(1U, destroy) ||
+                !reader.read_bits(32U, replay_id)) {
+                return false;
+            }
             if (destroy) {
                 destroy_replay_entity(session, registry, replay_id);
                 continue;
@@ -337,9 +353,14 @@ bool ReplicationReplayStreamer::apply_frame(
                 full_replay_ids.insert(replay_id);
             }
 
-            const auto archetype_value = static_cast<std::uint32_t>(payload.read_bits(32U));
-            const auto tag_mask = payload.read_unsigned_bits(64U);
-            const auto present_mask = payload.read_unsigned_bits(64U);
+            std::uint32_t archetype_value = 0;
+            std::uint64_t tag_mask = 0;
+            std::uint64_t present_mask = 0;
+            if (!reader.read_bits(32U, archetype_value) ||
+                !reader.read_bits(64U, tag_mask) ||
+                !reader.read_bits(64U, present_mask)) {
+                return false;
+            }
             if (archetype_value >= settings.archetypes.size()) {
                 return false;
             }
@@ -355,7 +376,7 @@ bool ReplicationReplayStreamer::apply_frame(
                 registry.add<Replicated>(entity, Replicated{archetype_id});
             }
             apply_tags(registry, entity, archetype, tag_mask);
-            if (!apply_components(registry, entity, archetype, present_mask, payload, references, session)) {
+            if (!apply_components(registry, entity, archetype, present_mask, reader, references, session)) {
                 return false;
             }
         }
@@ -384,21 +405,36 @@ bool ReplicationReplayStreamer::apply_cues(
     ecs::BitBuffer& payload,
     EntityReferenceContext& references,
     ReplicationReplayStreamSession& session) const {
-    if (!payload.read_bool()) {
+    detail::BitReader reader(payload);
+    bool has_cues = false;
+    if (!reader.read_bits(1U, has_cues)) {
+        return false;
+    }
+    if (!has_cues) {
         return true;
     }
-    const auto cue_count = static_cast<std::uint16_t>(payload.read_bits(16U));
+    std::uint16_t cue_count = 0;
+    if (!reader.read_bits(16U, cue_count)) {
+        return false;
+    }
     CueDispatcher& dispatcher = registry.write<CueDispatcher>();
     for (std::uint16_t cue_index = 0; cue_index < cue_count; ++cue_index) {
-        const auto owner_replay_id = static_cast<std::uint32_t>(payload.read_bits(32U));
-        const auto frame = static_cast<SyncFrame>(payload.read_bits(32U));
-        const auto type = static_cast<SyncCueTypeId>(payload.read_bits(16U));
+        std::uint32_t owner_replay_id = 0;
+        SyncFrame frame = 0;
+        SyncCueTypeId type = 0;
         float relevance_seconds = 0.0f;
-        payload.read_bytes(reinterpret_cast<char*>(&relevance_seconds), sizeof(relevance_seconds));
-        const bool only_replicate_to_owner = payload.read_bool();
-        const auto cue_bits = static_cast<std::uint16_t>(payload.read_bits(16U));
+        bool only_replicate_to_owner = false;
+        std::uint16_t cue_bits = 0;
         ecs::BitBuffer cue_payload;
-        payload.read_buffer_bits(cue_payload, cue_bits);
+        if (!reader.read_bits(32U, owner_replay_id) ||
+            !reader.read_bits(32U, frame) ||
+            !reader.read_bits(16U, type) ||
+            !reader.read_bytes(reinterpret_cast<char*>(&relevance_seconds), sizeof(relevance_seconds)) ||
+            !reader.read_bits(1U, only_replicate_to_owner) ||
+            !reader.read_bits(16U, cue_bits) ||
+            !reader.read_buffer_bits(cue_payload, cue_bits)) {
+            return false;
+        }
 
         const auto& entities = ReplicationReplayStreamSessionAccess::entities(session);
         const auto found_owner = entities.find(owner_replay_id);

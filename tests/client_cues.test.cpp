@@ -23,7 +23,7 @@ TEST_CASE("replicated snap cues play once with late time and stop resending afte
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     REQUIRE(kage_sync_tests::emit_test_cue(server_registry, server_entity, 1, TestCue{7}, 1.0f));
@@ -35,10 +35,10 @@ TEST_CASE("replicated snap cues play once with late time and stop resending afte
     REQUIRE(client_archetype == server_archetype);
     client_registry.register_component<CuePlayback>("CuePlayback");
     kage::sync::register_sync_cue<TestCue>(client_registry);
-    kage::sync::configure_client(client_registry, 1);
-    kage::sync::ReplicationClient client;
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
 
-    REQUIRE(client.receive(client_registry, packets[0], 10));
+    REQUIRE(receive_at_local_frame(client, client_registry, packets[0], 10));
     const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(client_registry.contains<CuePlayback>(local));
     REQUIRE(client_registry.get<CuePlayback>(local).plays == 1);
@@ -49,7 +49,7 @@ TEST_CASE("replicated snap cues play once with late time and stop resending afte
     packets.clear();
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE_FALSE(packets.empty());
-    REQUIRE(client.receive(client_registry, packets.back(), 11));
+    REQUIRE(receive_at_local_frame(client, client_registry, packets.back(), 11));
     REQUIRE(client_registry.get<CuePlayback>(local).plays == 1);
 
     std::vector<ecs::BitBuffer> acks = client.drain_ack_packets();
@@ -60,6 +60,91 @@ TEST_CASE("replicated snap cues play once with late time and stop resending afte
     packets.clear();
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.empty());
+}
+
+TEST_CASE("buffered cues play once when their target frame applies") {
+    ecs::Registry server_registry;
+    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
+    kage::sync::register_sync_cue<TestCue>(server_registry);
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
+
+    std::vector<ecs::BitBuffer> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    kage::sync::ReplicationServer server(server_registry, server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+    REQUIRE(kage_sync_tests::emit_test_cue(server_registry, server_entity, 1, TestCue{21}, 1.0f));
+    server.tick(server_registry, server.options().fixed_dt_seconds);
+    REQUIRE(packets.size() == 1);
+
+    ecs::Registry client_registry;
+    REQUIRE(kage_sync_tests::define_position_archetype(client_registry) == server_archetype);
+    client_registry.register_component<CuePlayback>("CuePlayback");
+    kage::sync::register_sync_cue<TestCue>(client_registry);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.entities.default_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    options.buffered.buffered_frame_lag = 1;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
+
+    REQUIRE(client.receive(client_registry, packets[0]));
+    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
+    REQUIRE_FALSE(local);
+
+    REQUIRE(client.apply_frame(client_registry, 1));
+    const ecs::Entity applied = client.local_entity(first_allocated_client_entity_network_id(1));
+    REQUIRE(applied);
+    REQUIRE(client_registry.get<CuePlayback>(applied).plays == 1);
+    REQUIRE(client_registry.get<CuePlayback>(applied).last_id == 21);
+
+    REQUIRE(client.apply_frame(client_registry, 1));
+    REQUIRE(client_registry.get<CuePlayback>(applied).plays == 1);
+}
+
+TEST_CASE("late buffered cues for already applied frames play immediately") {
+    ecs::Registry server_registry;
+    const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
+    kage::sync::register_sync_cue<TestCue>(server_registry);
+    const ecs::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
+
+    std::vector<ecs::BitBuffer> packets;
+    kage::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    kage::sync::ReplicationServer server(server_registry, server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+    REQUIRE(kage_sync_tests::emit_test_cue(server_registry, server_entity, 1, TestCue{22}, 1.0f));
+    server.tick(server_registry, server.options().fixed_dt_seconds);
+    REQUIRE(packets.size() == 1);
+
+    ecs::Registry client_registry;
+    REQUIRE(kage_sync_tests::define_position_archetype(client_registry) == server_archetype);
+    client_registry.register_component<CuePlayback>("CuePlayback");
+    kage::sync::register_sync_cue<TestCue>(client_registry);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+
+    kage::sync::ReplicationClientOptions options;
+    options.entities.default_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    options.buffered.buffered_frame_lag = 1;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
+
+    REQUIRE(client.apply_frame(client_registry, 1));
+    REQUIRE(client.receive(client_registry, packets[0]));
+    const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
+    REQUIRE(local);
+    REQUIRE(client_registry.get<CuePlayback>(local).plays == 1);
+    REQUIRE(client_registry.get<CuePlayback>(local).last_id == 22);
+
+    REQUIRE(client.apply_frame(client_registry, 1));
+    REQUIRE(client_registry.get<CuePlayback>(local).plays == 1);
 }
 
 TEST_CASE("owner-only cues replicate only to the cue owner") {
@@ -75,7 +160,7 @@ TEST_CASE("owner-only cues replicate only to the cue owner") {
     server_options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
         packets.push_back({client, packet});
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
@@ -86,16 +171,16 @@ TEST_CASE("owner-only cues replicate only to the cue owner") {
     REQUIRE(kage_sync_tests::define_position_archetype(owner_registry) == server_archetype);
     owner_registry.register_component<CuePlayback>("CuePlayback");
     kage::sync::register_sync_cue<TestCue>(owner_registry);
-    kage::sync::configure_client(owner_registry, 1);
+    kage_sync_tests::configure_test_client_registry(owner_registry, 1);
 
     ecs::Registry other_registry;
     REQUIRE(kage_sync_tests::define_position_archetype(other_registry) == server_archetype);
     other_registry.register_component<CuePlayback>("CuePlayback");
     kage::sync::register_sync_cue<TestCue>(other_registry);
-    kage::sync::configure_client(other_registry, 2);
+    kage_sync_tests::configure_test_client_registry(other_registry, 2);
 
-    kage::sync::ReplicationClient owner_client;
-    kage::sync::ReplicationClient other_client;
+    kage::sync::ReplicationClient owner_client(owner_registry, kage_sync_tests::make_test_client_options(owner_registry, {}));
+    kage::sync::ReplicationClient other_client(other_registry, kage_sync_tests::make_test_client_options(other_registry, {}));
     REQUIRE(owner_client.receive(owner_registry, packet_for(packets, 1)));
     REQUIRE(other_client.receive(other_registry, packet_for(packets, 2)));
 
@@ -118,7 +203,7 @@ TEST_CASE("default cues still replicate to all clients") {
     server_options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
         packets.push_back({client, packet});
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
@@ -129,16 +214,16 @@ TEST_CASE("default cues still replicate to all clients") {
     REQUIRE(kage_sync_tests::define_position_archetype(first_registry) == server_archetype);
     first_registry.register_component<CuePlayback>("CuePlayback");
     kage::sync::register_sync_cue<TestCue>(first_registry);
-    kage::sync::configure_client(first_registry, 1);
+    kage_sync_tests::configure_test_client_registry(first_registry, 1);
 
     ecs::Registry second_registry;
     REQUIRE(kage_sync_tests::define_position_archetype(second_registry) == server_archetype);
     second_registry.register_component<CuePlayback>("CuePlayback");
     kage::sync::register_sync_cue<TestCue>(second_registry);
-    kage::sync::configure_client(second_registry, 2);
+    kage_sync_tests::configure_test_client_registry(second_registry, 2);
 
-    kage::sync::ReplicationClient first_client;
-    kage::sync::ReplicationClient second_client;
+    kage::sync::ReplicationClient first_client(first_registry, kage_sync_tests::make_test_client_options(first_registry, {}));
+    kage::sync::ReplicationClient second_client(second_registry, kage_sync_tests::make_test_client_options(second_registry, {}));
     REQUIRE(first_client.receive(first_registry, packet_for(packets, 1)));
     REQUIRE(second_client.receive(second_registry, packet_for(packets, 2)));
 
@@ -161,7 +246,7 @@ TEST_CASE("cue entity references resolve to client-local entities") {
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, target, server_archetype));
     REQUIRE(start_sync(server_registry, source, server_archetype));
@@ -179,11 +264,11 @@ TEST_CASE("cue entity references resolve to client-local entities") {
     REQUIRE(kage_sync_tests::define_position_archetype(client_registry) == server_archetype);
     client_registry.register_component<CuePlayback>("CuePlayback");
     kage::sync::register_sync_cue<ReferenceCue>(client_registry);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
     kage::sync::ClientEntityNetworkId target_network_id = kage::sync::invalid_client_entity_network_id;
     kage::sync::ClientEntityNetworkId source_network_id = kage::sync::invalid_client_entity_network_id;
     kage::sync::ReplicationClientOptions client_options;
-    client_options.entity_mode_selector = [&](const kage::sync::ReplicatedEntityUpdateView& update) {
+    client_options.entities.mode_selector = [&](const kage::sync::ReplicatedEntityUpdateView& update) {
         Position position{};
         if (update.try_get(client_registry, position) && position.x == 1.0f) {
             target_network_id = update.client_entity_network_id;
@@ -192,7 +277,7 @@ TEST_CASE("cue entity references resolve to client-local entities") {
         }
         return kage::sync::ReplicationClientMode::Snap;
     };
-    kage::sync::ReplicationClient client(client_options);
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, client_options));
     REQUIRE(client.receive(client_registry, packets[0]));
 
     const ecs::Entity local_source = client.local_entity(source_network_id);
@@ -234,7 +319,7 @@ TEST_CASE("entity references serialize as client-local network ids") {
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
@@ -252,14 +337,14 @@ TEST_CASE("entity references serialize as client-local network ids") {
                 client_registry,
                 "ReferenceActor",
                 {{client_reference, kage::sync::ReplicationAudience::All}}) == reference_archetype);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
     kage::sync::ClientEntityNetworkId target_network_id =
         kage::sync::invalid_client_entity_network_id;
     kage::sync::ClientEntityNetworkId source_network_id =
         kage::sync::invalid_client_entity_network_id;
     kage::sync::ReplicationClientOptions options;
-    options.entity_mode_selector = [&](const kage::sync::ReplicatedEntityUpdateView& update) {
+    options.entities.mode_selector = [&](const kage::sync::ReplicatedEntityUpdateView& update) {
         if (update.archetype == position_archetype) {
             target_network_id = update.client_entity_network_id;
         } else if (update.archetype == reference_archetype) {
@@ -267,7 +352,7 @@ TEST_CASE("entity references serialize as client-local network ids") {
         }
         return kage::sync::ReplicationClientMode::Snap;
     };
-    kage::sync::ReplicationClient client(options);
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
     REQUIRE(client.receive(client_registry, packets[0]));
 
     const ecs::Entity local_target = client.local_entity(target_network_id);
@@ -313,7 +398,7 @@ TEST_CASE("entity references remain resolvable when the referenced entity arrive
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
@@ -331,14 +416,14 @@ TEST_CASE("entity references remain resolvable when the referenced entity arrive
                 client_registry,
                 "ReferenceActor",
                 {{client_reference, kage::sync::ReplicationAudience::All}}) == reference_archetype);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
     kage::sync::ClientEntityNetworkId target_network_id =
         kage::sync::invalid_client_entity_network_id;
     kage::sync::ClientEntityNetworkId source_network_id =
         kage::sync::invalid_client_entity_network_id;
     kage::sync::ReplicationClientOptions options;
-    options.entity_mode_selector = [&](const kage::sync::ReplicatedEntityUpdateView& update) {
+    options.entities.mode_selector = [&](const kage::sync::ReplicatedEntityUpdateView& update) {
         if (update.archetype == position_archetype) {
             target_network_id = update.client_entity_network_id;
         } else if (update.archetype == reference_archetype) {
@@ -346,7 +431,7 @@ TEST_CASE("entity references remain resolvable when the referenced entity arrive
         }
         return kage::sync::ReplicationClientMode::Snap;
     };
-    kage::sync::ReplicationClient client(options);
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
     REQUIRE(client.receive(client_registry, packets[0]));
 
     const ecs::Entity local_target = client.local_entity(target_network_id);
@@ -367,7 +452,8 @@ TEST_CASE("entity references remain resolvable when the referenced entity arrive
 }
 
 TEST_CASE("resolve entity reference preserves pending references") {
-    kage::sync::ReplicationClient client;
+    ecs::Registry client_registry;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
 
     kage::sync::EntityReference invalid;
     invalid.entity = ecs::Entity{77};
@@ -389,14 +475,14 @@ TEST_CASE("resolve entity reference clears destroyed and reused network ids") {
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
     kage::sync::register_sync_component<NetworkedPosition>(client_registry, "NetworkedPosition");
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
     REQUIRE(kage::sync::set_client_input_component<NetworkedPosition>(client_registry));
 
     const ecs::Entity server_entity{42};
     const std::uint32_t wire_id = test_network_id(server_entity);
     const kage::sync::ClientEntityNetworkId first_id = test_client_entity_network_id(1, wire_id, 1U);
     const kage::sync::ClientEntityNetworkId second_id = test_client_entity_network_id(1, wire_id, 2U);
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
     const ecs::Entity first_local = client.local_entity(first_id);

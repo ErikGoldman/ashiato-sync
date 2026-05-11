@@ -71,7 +71,7 @@ loss. Use `--entities N` to set the initial ball target. In the example,
 Up/Down adjust the target by 8, Shift+Up/Down by 1, PageUp/PageDown by 32, and
 Home/End jump to the maximum/minimum target.
 Use `--time-dilation-min`, `--time-dilation-max`, and
-`--time-dilation-gain` to control how quickly the client playback accumulator
+`--time-dilation-gain` to control how quickly the client buffered accumulator
 converges when the desired buffer changes.
 
 The FPS example uses the same examples option and runs as separate UDP server
@@ -236,12 +236,12 @@ fixed-step catch-up work; `0` keeps the default unlimited behavior.
 - Set `ReplicationClientOptions::fixed_dt_seconds`, call
   `ReplicationClient::tick(registry, dt_seconds)` once per app frame, and pass
   server packets to the normal `receive(registry, packet)` overload. The client
-  owns receive/playback frame counters, records continuous receive delay from
+  owns receive/buffered frame counters, records continuous receive delay from
   server update frames, applies fixed buffered frames, runs prediction
   rollback/resimulation and ECS jobs for predicted entities, and adjusts
-  playback with `timing_stats().time_dilation`. Set
+  buffered timeline with `timing_stats().time_dilation`. Set
   `ReplicationClientOptions::max_fixed_steps_per_tick` to cap and drop
-  excessive receive/playback/input catch-up work; `0` leaves it unlimited.
+  excessive receive/buffered/predicted catch-up work; `0` leaves it unlimited.
   Disable
   `auto_interpolation_buffer_frames` for a fixed manual buffer. Fast auto timing
   recovery is enabled by default; tune it with
@@ -250,9 +250,8 @@ fixed-step catch-up work; `0` keeps the default unlimited behavior.
   and interpolation to the measured targets; smaller changes keep using time
   dilation to nudge toward the target. Adaptive ping sampling is also enabled by
   default, using `adaptive_ping_interval_seconds` until latency stabilizes and
-  again after latency jumps. Explicit-frame
-  `receive`, `apply_frame`, and `predict_tick` overloads remain available for
-  tests and advanced integrations.
+  again after latency jumps. Explicit-frame `receive` and `apply_frame`
+  overloads remain available for tests and advanced integrations.
 - Predicted replicated components must define
   `SyncComponentTraits<T>::should_roll_back(const Quantized&, const Quantized&)`.
   The client throws if a predicted archetype includes a replicated component
@@ -263,7 +262,7 @@ fixed-step catch-up work; `0` keeps the default unlimited behavior.
   otherwise buffered receive rejects the update without ACKing it. Components
   left as `Step` hold the previous value until the received frame.
 - Mark component entities with `set_fractional_tick_sampled` when render code
-  should sample them at fractional playback frames without mutating the ECS, then
+  should sample them at fractional buffered frames without mutating the ECS, then
   render `client.fractional_tick_frame(registry).entities`. The fractional tick
   frame contains snap and buffered entities in one list. Predicted entities lag
   sampled components one fixed tick behind simulation and sample between

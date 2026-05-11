@@ -319,7 +319,6 @@ struct RecordedReplay {
 
 RecordedReplay build_recorded_replay() {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
     const kage::sync::SyncArchetypeId archetype = define_replay_schema(registry);
     register_replay_jobs(registry);
 
@@ -328,7 +327,7 @@ RecordedReplay build_recorded_replay() {
 
     kage::sync::ReplicationServerOptions server_options;
     server_options.fixed_dt_seconds = fixed_dt;
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(registry, server_options);
 
     RecordedReplay recorded{
         kage::sync::ReplicationReplayStreamer({128, preroll_frames, tail_frames}),
@@ -412,7 +411,6 @@ struct ReplayNetworkHarness {
 
     void begin(const sockaddr_in& sender) {
         client_address = sender;
-        kage::sync::configure_server(registry);
         (void)define_replay_schema(registry);
 
         kage::sync::ReplicationServerOptions options;
@@ -428,7 +426,7 @@ struct ReplayNetworkHarness {
         options.transport = [this](kage::sync::ClientId, const ecs::BitBuffer& packet) {
             send_packet(socket, client_address, packet);
         };
-        server = std::make_unique<kage::sync::ReplicationServer>(options);
+        server = std::make_unique<kage::sync::ReplicationServer>(registry, options);
         REQUIRE(streamer.begin_session(death_frame, registry, *server, session));
         started = true;
     }
@@ -531,17 +529,16 @@ TEST_CASE("network replay smoke streams correct movement and cue frames") {
     const sockaddr_in replay_server_address = loopback_address(harness.port);
 
     ecs::Registry client_registry;
-    kage::sync::configure_client(client_registry, replay_client_id);
     (void)define_replay_schema(client_registry);
 
     kage::sync::ReplicationClientOptions client_options;
-    client_options.connect_token = "killcam";
-    client_options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
-    client_options.fixed_dt_seconds = fixed_dt;
-    client_options.auto_interpolation_buffer_frames = false;
-    client_options.interpolation_buffer_frames = 2;
-    client_options.interpolation_buffer_capacity_frames = 64;
-    kage::sync::ReplicationClient client(client_options);
+    client_options.session.local_client = replay_client_id;
+    client_options.session.connect_token = "killcam";
+    client_options.entities.default_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    client_options.clock.fixed_dt_seconds = fixed_dt;
+    client_options.buffered.auto_buffered_frame_lag = false;
+    client_options.buffered.buffered_frame_lag = 2;
+    kage::sync::ReplicationClient client(client_registry, client_options);
     client.set_packet_sender([client_socket, replay_server_address](const ecs::BitBuffer& packet) {
         send_packet(client_socket, replay_server_address, packet);
     });

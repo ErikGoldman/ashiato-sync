@@ -1,4 +1,5 @@
 #include "kage/sync/server.hpp"
+#include "test_setup.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <spdlog/logger.h>
@@ -21,10 +22,11 @@ std::shared_ptr<spdlog::logger> make_test_logger(std::ostringstream& out) {
 TEST_CASE("replication server logs malformed client packets as warnings") {
     std::ostringstream logs;
 
+    ecs::Registry registry;
     kage::sync::ReplicationServerOptions options;
     options.logging.level = kage::sync::LogLevel::Warning;
     options.logging.logger = make_test_logger(logs);
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
 
     ecs::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::client_ack_message, 8U);
@@ -46,22 +48,21 @@ TEST_CASE("replication server logs malformed client packets as warnings") {
 TEST_CASE("replication server logs server callback failures as errors") {
     std::ostringstream logs;
 
+    ecs::Registry registry;
+    kage_sync_tests::configure_test_server_registry(registry);
+
     kage::sync::ReplicationServerOptions options;
     options.logging.level = kage::sync::LogLevel::Warning;
     options.logging.logger = make_test_logger(logs);
     options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {
         throw std::runtime_error("send failed");
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
-
-    ecs::Registry registry;
-    kage::sync::configure_server(registry);
 
     ecs::BitBuffer ping;
     ping.push_bits(kage::sync::protocol::client_ping_message, 8U);
     ping.push_bits(7, 32U);
-    ping.push_bits(0, 32U);
 
     REQUIRE_FALSE(server.process_packet(registry, 1, ping));
 
@@ -78,11 +79,12 @@ TEST_CASE("replication server logs server callback failures as errors") {
 TEST_CASE("replication server can suppress repeated per-peer warning logs") {
     std::ostringstream logs;
 
+    ecs::Registry registry;
     kage::sync::ReplicationServerOptions options;
     options.logging.level = kage::sync::LogLevel::Warning;
-    options.logging.max_warning_logs_per_peer = 1;
+    options.logging.max_warning_logs_per_source = 1;
     options.logging.logger = make_test_logger(logs);
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
 
     ecs::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::client_ack_message, 8U);
@@ -104,10 +106,11 @@ TEST_CASE("replication server can suppress repeated per-peer warning logs") {
 TEST_CASE("replication server records connection lifecycle observability") {
     std::ostringstream logs;
 
+    ecs::Registry registry;
     kage::sync::ReplicationServerOptions options;
     options.logging.level = kage::sync::LogLevel::Info;
     options.logging.logger = make_test_logger(logs);
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
 
     REQUIRE(server.add_client(7));
 

@@ -27,7 +27,7 @@ struct SmokeClient {
     kage::sync::ClientId peer = kage::sync::invalid_client_id;
     kage::sync::ReplicationClientMode mode = kage::sync::ReplicationClientMode::Snap;
     ecs::Registry registry;
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client{registry};
 };
 
 struct LifecycleEntity {
@@ -105,7 +105,7 @@ TEST_CASE("three clients connect with prediction snap and buffered interpolation
     server_options.transport = [&](kage::sync::ClientId peer, const ecs::BitBuffer& packet) {
         REQUIRE(downstream.enqueue(peer, packet, now_seconds));
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
 
     std::array<SmokeClient, 3> clients;
     auto setup_client = [&](std::size_t index,
@@ -114,13 +114,12 @@ TEST_CASE("three clients connect with prediction snap and buffered interpolation
                             const char* token,
                             kage::sync::ReplicationClientMode mode) {
         kage::sync::ReplicationClientOptions options;
-        options.connect_token = token;
-        options.default_entity_mode = mode;
-        options.auto_interpolation_buffer_frames = false;
-        options.interpolation_buffer_frames = 2;
-        options.interpolation_buffer_capacity_frames = 8;
-        options.auto_prediction_lead_frames = false;
-        options.prediction_lead_frames = 2;
+        options.session.connect_token = token;
+        options.entities.default_mode = mode;
+        options.buffered.auto_buffered_frame_lag = false;
+        options.buffered.buffered_frame_lag = 2;
+        options.prediction.auto_lead_frames = false;
+        options.prediction.lead_frames = 2;
 
         SmokeClient& smoke = clients[index];
         smoke.id = id;
@@ -128,7 +127,7 @@ TEST_CASE("three clients connect with prediction snap and buffered interpolation
         smoke.mode = mode;
         const kage::sync::SyncArchetypeId client_archetype = define_predicted_archetype(smoke.registry);
         REQUIRE(client_archetype == server_archetype);
-        smoke.client = kage::sync::ReplicationClient(options);
+        smoke.client = kage::sync::ReplicationClient(smoke.registry, options);
         if (mode == kage::sync::ReplicationClientMode::Predict) {
             smoke.client.simulation_job<PredictedPosition>(smoke.registry, 0).each(
                 [](ecs::Entity, PredictedPosition& position) {
@@ -149,7 +148,7 @@ TEST_CASE("three clients connect with prediction snap and buffered interpolation
     constexpr int max_ticks = 180;
     for (int tick = 0; tick < max_ticks; ++tick) {
         for (SmokeClient& smoke : clients) {
-            REQUIRE(smoke.client.tick(smoke.registry, smoke.client.options().fixed_dt_seconds));
+            REQUIRE(smoke.client.tick(smoke.registry, smoke.client.fixed_dt_seconds()));
         }
         upstream.deliver_ready(now_seconds, [&](kage::sync::ClientId peer, const ecs::BitBuffer& packet) {
             server.receive_packet(peer, packet);
@@ -163,7 +162,7 @@ TEST_CASE("three clients connect with prediction snap and buffered interpolation
             });
             REQUIRE(found != clients.end());
             if (packet_message(packet) == kage::sync::protocol::server_update_message) {
-                REQUIRE(found->client.receive(found->registry, packet, server_frame));
+                REQUIRE(receive_at_local_frame(found->client, found->registry, packet, server_frame));
             } else {
                 REQUIRE(found->client.receive(found->registry, packet));
             }
@@ -205,7 +204,7 @@ TEST_CASE("three clients connect with prediction snap and buffered interpolation
     const ecs::Entity predicted_local =
         clients[0].client.local_entity(first_allocated_client_entity_network_id(clients[0].id));
     REQUIRE(clients[0].registry.get<PredictedPosition>(predicted_local).x ==
-            Catch::Approx(static_cast<float>(clients[0].client.input_frame())));
+            Catch::Approx(static_cast<float>(clients[0].client.predicted_frame())));
 
     const ecs::Entity snap_local =
         clients[1].client.local_entity(first_allocated_client_entity_network_id(clients[1].id));
@@ -236,7 +235,7 @@ TEST_CASE("lifecycle churn stays bounded while switching buffered and predicted 
 
     ecs::Registry server_registry;
     const kage::sync::SyncArchetypeId server_archetype = define_predicted_archetype(server_registry);
-    kage::sync::configure_server(server_registry);
+    kage_sync_tests::configure_test_server_registry(server_registry);
 
     std::mt19937 rng(1701);
     std::uniform_int_distribution<int> lifetime_ticks(90, 240);
@@ -290,11 +289,11 @@ TEST_CASE("lifecycle churn stays bounded while switching buffered and predicted 
     server_options.transport = [&](kage::sync::ClientId peer, const ecs::BitBuffer& packet) {
         REQUIRE(downstream.enqueue(peer, packet, now_seconds));
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
 
     ecs::Registry client_registry;
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
     const kage::sync::SyncArchetypeId client_archetype = define_sampled_predicted_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
 
@@ -302,23 +301,21 @@ TEST_CASE("lifecycle churn stays bounded while switching buffered and predicted 
     known_entities.reserve(target_entities * 2U);
     kage::sync::ReplicationClientMode client_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
     kage::sync::ReplicationClientOptions client_options;
-    client_options.fixed_dt_seconds = tick_dt;
-    client_options.default_entity_mode = client_mode;
-    client_options.auto_interpolation_buffer_frames = false;
-    client_options.interpolation_buffer_frames = 3;
-    client_options.interpolation_buffer_capacity_frames = 128;
-    client_options.auto_prediction_lead_frames = false;
-    client_options.prediction_lead_frames = 3;
-    client_options.prediction_buffer_capacity_frames = 128;
-    client_options.rollback_policy = kage::sync::ReplicationRollbackPolicy::OnlyAffected;
-    client_options.entity_mode_selector = [&](const kage::sync::ReplicatedEntityUpdateView& update) {
+    client_options.clock.fixed_dt_seconds = tick_dt;
+    client_options.entities.default_mode = client_mode;
+    client_options.buffered.auto_buffered_frame_lag = false;
+    client_options.buffered.buffered_frame_lag = 3;
+    client_options.prediction.auto_lead_frames = false;
+    client_options.prediction.lead_frames = 3;
+    client_options.prediction.rollback_policy = kage::sync::ReplicationRollbackPolicy::OnlyAffected;
+    client_options.entities.mode_selector = [&](const kage::sync::ReplicatedEntityUpdateView& update) {
         if (std::find(known_entities.begin(), known_entities.end(), update.client_entity_network_id) ==
             known_entities.end()) {
             known_entities.push_back(update.client_entity_network_id);
         }
         return client_mode;
     };
-    kage::sync::ReplicationClient client(client_options);
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, client_options));
     client.simulation_job<PredictedPosition>(client_registry, 0).each(
         [](ecs::Entity, PredictedPosition& position) {
             position.x += 0.05f;

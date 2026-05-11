@@ -42,7 +42,7 @@ TEST_CASE("replication server tracks clients and replicated component changes") 
 
     kage::sync::ReplicationServerOptions server_options;
     server_options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(registry, server_options);
 
     REQUIRE(server.add_client(7));
     REQUIRE_FALSE(server.add_client(7));
@@ -67,36 +67,43 @@ TEST_CASE("replication server tracks clients and replicated component changes") 
     REQUIRE_FALSE(registry.contains<kage::sync::Replicated>(entity));
     REQUIRE_FALSE(registry.remove<kage::sync::Replicated>(entity));
 
-    REQUIRE(server.remove_client(7));
+    REQUIRE(server.remove_client(registry, 7));
     REQUIRE_FALSE(server.has_client(7));
 }
 
 TEST_CASE("replication server allocates one local client and skips remote id collisions") {
+    ecs::Registry registry;
     kage::sync::ReplicationServerOptions options;
     options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
 
     REQUIRE(server.add_client(1));
-    const kage::sync::ClientId local = server.add_local_client();
+    const kage::sync::ClientId local = server.add_local_client(registry);
     REQUIRE(local == 2);
     REQUIRE(server.local_client() == local);
+    REQUIRE(registry.get<kage::sync::SyncSettings>().local_client == local);
     REQUIRE(server.is_local_client(local));
     REQUIRE_FALSE(server.is_local_client(1));
     REQUIRE(server.has_client(local));
     REQUIRE(server.client_count() == 2);
-    REQUIRE(server.add_local_client() == kage::sync::invalid_client_id);
+    REQUIRE(server.add_local_client(registry) == kage::sync::invalid_client_id);
+    REQUIRE(registry.get<kage::sync::SyncSettings>().local_client == local);
+    REQUIRE(server.remove_client(registry, local));
+    REQUIRE(server.local_client() == kage::sync::invalid_client_id);
+    REQUIRE(registry.get<kage::sync::SyncSettings>().local_client == kage::sync::invalid_client_id);
 }
 
 TEST_CASE("local-only replication server tick does not require transport and ignores idle timeout") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
 
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 1.0;
     options.idle_client_timeout_seconds = 1.0;
-    kage::sync::ReplicationServer server(options);
-    const kage::sync::ClientId local = server.add_local_client();
+    kage::sync::ReplicationServer server(registry, options);
+    const kage::sync::ClientId local = server.add_local_client(registry);
     REQUIRE(local != kage::sync::invalid_client_id);
+    REQUIRE(registry.get<kage::sync::SyncSettings>().local_client == local);
 
     server.tick(registry, server.options().fixed_dt_seconds);
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -107,13 +114,13 @@ TEST_CASE("local-only replication server tick does not require transport and ign
 
 TEST_CASE("replication server disconnects clients after configured idle timeout") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
 
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 1.0;
     options.idle_client_timeout_seconds = 2.0;
     options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
 
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -124,13 +131,13 @@ TEST_CASE("replication server disconnects clients after configured idle timeout"
 
 TEST_CASE("replication server idle timeout uses elapsed tick dt") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
 
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 1.0;
     options.idle_client_timeout_seconds = 0.25;
     options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
 
     REQUIRE(server.tick(registry, 0.125));
@@ -144,13 +151,13 @@ TEST_CASE("replication server idle timeout uses elapsed tick dt") {
 
 TEST_CASE("replication server resets idle timeout when a client sends packets") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
 
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 1.0;
     options.idle_client_timeout_seconds = 2.0;
     options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
 
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -169,9 +176,9 @@ TEST_CASE("replication server resets idle timeout when a client sends packets") 
 
 TEST_CASE("replication server tick requires a transport callback") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
 
-    kage::sync::ReplicationServer server;
+    kage::sync::ReplicationServer server(registry);
     REQUIRE(server.add_client(1));
 
     REQUIRE_THROWS_AS(server.tick(registry, server.options().fixed_dt_seconds), std::logic_error);
@@ -179,7 +186,7 @@ TEST_CASE("replication server tick requires a transport callback") {
 
 TEST_CASE("replication server continuous tick owns the fixed-step accumulator") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
 
     struct TickCounter {
         int frames = 0;
@@ -194,7 +201,7 @@ TEST_CASE("replication server continuous tick owns the fixed-step accumulator") 
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 0.25;
     options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
 
     REQUIRE(server.tick(registry, 0.125));
     REQUIRE(registry.get<TickCounter>(counter).frames == 0);
@@ -211,7 +218,6 @@ TEST_CASE("replication server continuous tick owns the fixed-step accumulator") 
 
 TEST_CASE("replication server caps and drops continuous tick backlog when configured") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
 
     struct TickCounter {
         int frames = 0;
@@ -227,7 +233,7 @@ TEST_CASE("replication server caps and drops continuous tick backlog when config
     options.fixed_dt_seconds = 0.25;
     options.max_fixed_steps_per_tick = 2;
     options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
 
     REQUIRE(server.tick(registry, 5.5 * server.options().fixed_dt_seconds));
     REQUIRE(registry.get<TickCounter>(counter).frames == 2);
@@ -244,13 +250,13 @@ TEST_CASE("replication server caps and drops continuous tick backlog when config
 
 TEST_CASE("replication server frame consumer receives once per completed fixed step") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
 
     std::vector<kage::sync::SyncFrame> frames;
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 0.25;
     options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     TestFrameConsumer consumer([&frames, &server](const kage::sync::ServerRegistryDirtyFrame& frame) {
         REQUIRE(frame.registry.get<kage::sync::SyncSettings>().role == kage::sync::SyncRole::Server);
         REQUIRE(frame.cues.empty());
@@ -276,7 +282,7 @@ TEST_CASE("replication server frame consumer receives once per completed fixed s
 
 TEST_CASE("replication server frame consumer receives cues drained for the frame") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
     const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
     const kage::sync::SyncCueTypeId cue_type = kage::sync::register_sync_cue<TestCue>(registry);
     const ecs::Entity entity = registry.create();
@@ -296,7 +302,7 @@ TEST_CASE("replication server frame consumer receives cues drained for the frame
     kage::sync::ReplicationServerOptions options;
     options.fixed_dt_seconds = 0.25;
     options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     TestFrameConsumer consumer([&seen](const kage::sync::ServerRegistryDirtyFrame& frame) {
         for (const kage::sync::QueuedSyncCue& cue : frame.cues) {
             ecs::BitBuffer payload = cue.payload;
@@ -325,14 +331,14 @@ TEST_CASE("replication server frame consumer receives cues drained for the frame
 
 TEST_CASE("replication server dirty frame exposes destroyed replicated slots after server bookkeeping") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
     const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
     const ecs::Entity entity = registry.create();
     registry.add<Position>(entity, Position{1.0f, 2.0f});
     REQUIRE(start_sync(registry, entity, archetype));
 
     std::vector<kage::sync::ServerDestroyedReplicatedSlot> destroyed;
-    kage::sync::ReplicationServer server;
+    kage::sync::ReplicationServer server(registry);
     TestFrameConsumer consumer([&](const kage::sync::ServerRegistryDirtyFrame& frame) {
         destroyed.assign(frame.destroyed_slots.begin(), frame.destroyed_slots.end());
     });
@@ -351,13 +357,13 @@ TEST_CASE("replication server dirty frame exposes destroyed replicated slots aft
 
 TEST_CASE("replication server frame consumers share one dirty frame") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
     (void)define_position_archetype(registry);
 
     const ecs::Entity entity = registry.create();
     registry.add<Position>(entity, Position{1.0f, 2.0f});
 
-    kage::sync::ReplicationServer server;
+    kage::sync::ReplicationServer server(registry);
     std::vector<int> first_subscriber_counts;
     std::vector<int> second_subscriber_counts;
     TestFrameConsumer first_consumer([&](const kage::sync::ServerRegistryDirtyFrame& frame) {
@@ -388,12 +394,12 @@ TEST_CASE("replication server frame consumers share one dirty frame") {
 
 TEST_CASE("replication server frame consumer subscription detaches") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
 
     int frames = 0;
     kage::sync::ReplicationServerOptions options;
     options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     TestFrameConsumer consumer([&frames](const kage::sync::ServerRegistryDirtyFrame&) {
         ++frames;
     });
@@ -416,12 +422,12 @@ TEST_CASE("replication server frame consumer subscription detaches") {
 
 TEST_CASE("replication server frame consumer can detach while receiving a frame") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
 
     int frames = 0;
     kage::sync::ReplicationServerOptions options;
     options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     kage::sync::ServerRegistryDirtyFrameSubscription* active_subscription = nullptr;
     TestFrameConsumer consumer([&](const kage::sync::ServerRegistryDirtyFrame&) {
         ++frames;
@@ -440,7 +446,7 @@ TEST_CASE("replication server frame consumer can detach while receiving a frame"
 
 TEST_CASE("replication server flushes client replication once after fixed-step catch-up") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
     const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
     const ecs::Entity entity = registry.create();
     registry.add<Position>(entity, Position{1.0f, 2.0f});
@@ -457,7 +463,7 @@ TEST_CASE("replication server flushes client replication once after fixed-step c
         REQUIRE(client == 1);
         payloads.push_back(payload);
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
 
     REQUIRE(server.tick(registry, server.options().fixed_dt_seconds * 3.0));
@@ -471,7 +477,7 @@ TEST_CASE("replication server flushes client replication once after fixed-step c
 
 TEST_CASE("listen server plays queued cues locally") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
     const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
     registry.register_component<CuePlayback>("CuePlayback");
     (void)kage::sync::register_sync_cue<TestCue>(registry);
@@ -480,8 +486,8 @@ TEST_CASE("listen server plays queued cues locally") {
     registry.add<Position>(entity, Position{1.0f, 2.0f});
     REQUIRE(start_sync(registry, entity, archetype));
 
-    kage::sync::ReplicationServer server;
-    REQUIRE(server.add_local_client() != kage::sync::invalid_client_id);
+    kage::sync::ReplicationServer server(registry);
+    REQUIRE(server.add_local_client(registry) != kage::sync::invalid_client_id);
     REQUIRE(kage_sync_tests::emit_test_cue(registry, entity, kage::sync::SyncFrame{1}, TestCue{77}, 0.5f));
 
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -493,7 +499,7 @@ TEST_CASE("listen server plays queued cues locally") {
 
 TEST_CASE("listen server resolves entity references while playing queued cues locally") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
     const kage::sync::SyncArchetypeId archetype = define_position_archetype(registry);
     registry.register_component<CuePlayback>("CuePlayback");
     (void)kage::sync::register_sync_cue<ReferenceCue>(registry);
@@ -506,8 +512,8 @@ TEST_CASE("listen server resolves entity references while playing queued cues lo
     registry.add<Position>(target, Position{3.0f, 4.0f});
     REQUIRE(start_sync(registry, target, archetype));
 
-    kage::sync::ReplicationServer server;
-    const kage::sync::ClientId local = server.add_local_client();
+    kage::sync::ReplicationServer server(registry);
+    const kage::sync::ClientId local = server.add_local_client(registry);
     REQUIRE(local != kage::sync::invalid_client_id);
     REQUIRE(kage_sync_tests::emit_test_cue(
         registry,
@@ -527,11 +533,11 @@ TEST_CASE("listen server resolves entity references while playing queued cues lo
 
 TEST_CASE("replication server frame advances once per completed fixed tick") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
 
     kage::sync::ReplicationServerOptions options;
     options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.frame() == 0);
 
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -543,7 +549,7 @@ TEST_CASE("replication server frame advances once per completed fixed tick") {
 
 TEST_CASE("replication server queued receive packets are processed after clock advancement") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
 
     std::vector<ecs::BitBuffer> sent;
     kage::sync::ReplicationServerOptions options;
@@ -551,14 +557,12 @@ TEST_CASE("replication server queued receive packets are processed after clock a
     options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         sent.push_back(packet);
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
 
     ecs::BitBuffer ping;
     ping.push_bits(kage::sync::protocol::client_ping_message, 8U);
     ping.push_bits(7U, 32U);
-    ping.push_bits(3U, 32U);
-    ping.push_bits(0U, kage::sync::protocol::frame_subframe_bits);
     server.receive_packet(1, ping);
 
     REQUIRE(server.tick(registry, 0.5));
@@ -566,9 +570,12 @@ TEST_CASE("replication server queued receive packets are processed after clock a
     ecs::BitBuffer pong = sent[0];
     REQUIRE(static_cast<std::uint8_t>(pong.read_bits(8U)) == kage::sync::protocol::server_pong_message);
     REQUIRE(static_cast<std::uint32_t>(pong.read_bits(32U)) == 7U);
-    REQUIRE(static_cast<kage::sync::SyncFrame>(pong.read_bits(32U)) == 3U);
-    REQUIRE(static_cast<std::uint16_t>(pong.read_bits(kage::sync::protocol::frame_subframe_bits)) == 0U);
     REQUIRE(static_cast<kage::sync::SyncFrame>(pong.read_bits(32U)) == 0U);
-    const auto server_subframe = static_cast<std::uint16_t>(pong.read_bits(kage::sync::protocol::frame_subframe_bits));
-    REQUIRE(server_subframe == kage::sync::protocol::frame_subframe_scale / 2U);
+    const auto server_receive_subframe =
+        static_cast<std::uint16_t>(pong.read_bits(kage::sync::protocol::frame_subframe_bits));
+    REQUIRE(server_receive_subframe == kage::sync::protocol::frame_subframe_scale / 2U);
+    REQUIRE(static_cast<kage::sync::SyncFrame>(pong.read_bits(32U)) == 0U);
+    const auto server_send_subframe =
+        static_cast<std::uint16_t>(pong.read_bits(kage::sync::protocol::frame_subframe_bits));
+    REQUIRE(server_send_subframe == kage::sync::protocol::frame_subframe_scale / 2U);
 }

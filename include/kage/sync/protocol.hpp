@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ecs/bit_buffer.hpp"
+#include "kage/sync/detail/bit_reader.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -32,7 +33,7 @@ inline constexpr std::size_t client_ack_header_bits = 8U + 16U;
 inline constexpr std::size_t client_connect_ack_bits = 8U + 64U;
 inline constexpr std::size_t frame_subframe_bits = 16U;
 inline constexpr std::uint32_t frame_subframe_scale = std::uint32_t{1} << frame_subframe_bits;
-inline constexpr std::size_t client_ping_bits = 8U + 32U + 32U + frame_subframe_bits;
+inline constexpr std::size_t client_ping_bits = 8U + 32U;
 inline constexpr std::size_t server_pong_bits = 8U + 32U + 32U + frame_subframe_bits + 32U + frame_subframe_bits;
 inline constexpr std::size_t baseline_frame_delta_bits = KAGE_SYNC_BASELINE_FRAME_DELTA_BITS;
 
@@ -143,20 +144,42 @@ inline void write_network_entity_id(
 }
 
 inline bool read_network_entity_id(
-    ecs::BitBuffer& in,
+    detail::BitReader& in,
     std::uint32_t& network_id,
     std::size_t tier0_bits = default_network_entity_id_tier0_bits) {
-    network_id = static_cast<std::uint32_t>(in.read_bits(tier0_bits));
-    if (!in.read_bool()) {
+    bool has_tier1 = false;
+    if (!in.read_bits(tier0_bits, network_id) ||
+        !in.read_bits(1U, has_tier1)) {
+        return false;
+    }
+    if (!has_tier1) {
         return true;
     }
 
-    network_id |=
-        static_cast<std::uint32_t>(in.read_bits(network_entity_id_tier1_bits - tier0_bits)) << tier0_bits;
-    if (in.read_bool()) {
-        network_id |= static_cast<std::uint32_t>(in.read_bits(9U)) << network_entity_id_tier1_bits;
+    std::uint32_t tier = 0;
+    bool has_tier2 = false;
+    if (!in.read_bits(network_entity_id_tier1_bits - tier0_bits, tier) ||
+        !in.read_bits(1U, has_tier2)) {
+        return false;
     }
+    network_id |= tier << tier0_bits;
+    if (!has_tier2) {
+        return true;
+    }
+
+    if (!in.read_bits(9U, tier)) {
+        return false;
+    }
+    network_id |= tier << network_entity_id_tier1_bits;
     return true;
+}
+
+inline bool read_network_entity_id(
+    ecs::BitBuffer& in,
+    std::uint32_t& network_id,
+    std::size_t tier0_bits = default_network_entity_id_tier0_bits) {
+    detail::BitReader reader(in);
+    return read_network_entity_id(reader, network_id, tier0_bits);
 }
 
 inline void write_string(ecs::BitBuffer& out, const std::string& value) {
@@ -168,16 +191,15 @@ inline void write_string(ecs::BitBuffer& out, const std::string& value) {
 }
 
 inline bool read_string(ecs::BitBuffer& in, std::string& value) {
-    if (in.remaining_bits() < 16U) {
-        return false;
-    }
-    const auto length = static_cast<std::uint16_t>(in.read_bits(16U));
-    if (in.remaining_bits() < static_cast<std::size_t>(length) * 8U) {
+    detail::BitReader reader(in);
+    std::uint16_t length = 0;
+    if (!reader.read_bits(16U, length)) {
         return false;
     }
     value.resize(length);
-    if (length != 0U) {
-        in.read_bytes(value.data(), length);
+    if (!reader.read_bytes(value.data(), length)) {
+        value.clear();
+        return false;
     }
     return true;
 }
@@ -193,19 +215,29 @@ inline void write_baseline_frame(ecs::BitBuffer& out, std::uint32_t current_fram
     }
 }
 
-inline bool read_baseline_frame(ecs::BitBuffer& in, std::uint32_t current_frame, std::uint32_t& baseline_frame) {
-    const bool uses_delta = in.read_bool();
+inline bool read_baseline_frame(detail::BitReader& in, std::uint32_t current_frame, std::uint32_t& baseline_frame) {
+    bool uses_delta = false;
+    if (!in.read_bits(1U, uses_delta)) {
+        return false;
+    }
     if (!uses_delta) {
-        baseline_frame = static_cast<std::uint32_t>(in.read_bits(32U));
-        return true;
+        return in.read_bits(32U, baseline_frame);
     }
 
-    const auto delta = static_cast<std::uint32_t>(in.read_bits(baseline_frame_delta_bits));
+    std::uint32_t delta = 0;
+    if (!in.read_bits(baseline_frame_delta_bits, delta)) {
+        return false;
+    }
     if (delta > current_frame) {
         return false;
     }
     baseline_frame = current_frame - delta;
     return true;
+}
+
+inline bool read_baseline_frame(ecs::BitBuffer& in, std::uint32_t current_frame, std::uint32_t& baseline_frame) {
+    detail::BitReader reader(in);
+    return read_baseline_frame(reader, current_frame, baseline_frame);
 }
 
 }  // namespace kage::sync::protocol

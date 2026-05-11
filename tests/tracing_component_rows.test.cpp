@@ -210,7 +210,7 @@ TEST_CASE("ktrace reader starts a new run for a later conflict that resimulates"
         static_cast<std::uint32_t>(kage::sync::KTraceCellState::Mispredicted)) != 0U);
 }
 
-TEST_CASE("client frame component tracing records once per fixed receive frame") {
+TEST_CASE("client frame component tracing records once per fixed local frame") {
     ecs::Registry server_registry;
     const kage::sync::SyncArchetypeId server_archetype = define_networked_archetype(server_registry);
     const ecs::Entity server_entity = server_registry.create();
@@ -223,7 +223,7 @@ TEST_CASE("client frame component tracing records once per fixed receive frame")
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
@@ -232,8 +232,8 @@ TEST_CASE("client frame component tracing records once per fixed receive frame")
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = define_networked_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
-    kage::sync::ReplicationClient client;
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
     std::vector<kage::sync::SyncTraceEvent> client_events;
     kage::sync::SyncTracer client_tracer;
     client_tracer.set_frame_data_enabled(true);
@@ -244,7 +244,7 @@ TEST_CASE("client frame component tracing records once per fixed receive frame")
     REQUIRE(client.receive(client_registry, packets[0]));
     client_events.clear();
 
-    const double substep = client.options().fixed_dt_seconds * 0.25;
+    const double substep = client.fixed_dt_seconds() * 0.25;
     REQUIRE(client.tick(client_registry, substep));
     REQUIRE(client.tick(client_registry, substep));
     REQUIRE(client.tick(client_registry, substep));
@@ -269,7 +269,7 @@ TEST_CASE("client frame component tracing records once per fixed receive frame")
         return event.type == kage::sync::SyncTraceEventType::FrameComponent && event.frame == 2;
     }) == 1);
 
-    REQUIRE(client.tick(client_registry, client.options().fixed_dt_seconds * 2.0));
+    REQUIRE(client.tick(client_registry, client.fixed_dt_seconds() * 2.0));
     REQUIRE(std::count_if(client_events.begin(), client_events.end(), [](const kage::sync::SyncTraceEvent& event) {
         return event.type == kage::sync::SyncTraceEventType::FrameComponent && event.frame == 3;
     }) == 1);
@@ -291,7 +291,7 @@ TEST_CASE("predicted client frame component tracing records predicted mode once"
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
@@ -300,10 +300,10 @@ TEST_CASE("predicted client frame component tracing records predicted mode once"
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = define_predicted_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
     kage::sync::ReplicationClientOptions client_options;
-    client_options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
-    kage::sync::ReplicationClient client(client_options);
+    client_options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, client_options));
     client.simulation_job<kage_sync_tests::PredictedPosition>(client_registry, 0).each(
         [](ecs::Entity, kage_sync_tests::PredictedPosition& position) {
             position.x += 1.0f;
@@ -327,7 +327,7 @@ TEST_CASE("predicted client frame component tracing records predicted mode once"
     }));
     REQUIRE_FALSE(has_event(client_events, kage::sync::SyncTraceEventType::ComponentApplied));
     client_events.clear();
-    REQUIRE(client.tick(client_registry, client.options().fixed_dt_seconds));
+    REQUIRE(client.tick(client_registry, client.fixed_dt_seconds()));
 
     REQUIRE(std::count_if(client_events.begin(), client_events.end(), [](const kage::sync::SyncTraceEvent& event) {
         return event.type == kage::sync::SyncTraceEventType::FrameComponent &&

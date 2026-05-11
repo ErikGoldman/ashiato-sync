@@ -81,7 +81,7 @@ ListenServerFrontend::ListenServerFrontend(
     const SyncSchema& schema,
     kage::sync::ReplicationServer& server)
     : impl_(std::make_unique<Impl>()) {
-    impl_->host_client = server.add_local_client();
+    impl_->host_client = server.add_local_client(registry);
     if (impl_->host_client == kage::sync::invalid_client_id) {
         throw std::runtime_error("failed to allocate listen-server local client");
     }

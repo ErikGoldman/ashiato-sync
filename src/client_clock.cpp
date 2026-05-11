@@ -65,10 +65,10 @@ FixedStepAdvance consume_fixed_steps(
 
 ReplicationClientClock::ReplicationClientClock(ReplicationClientClockConfig config)
     : config_(detail::validate_client_clock_config(config)),
-      interpolation_buffer_frames_(config.interpolation_buffer_frames) {
-    stats_.desired_interpolation_buffer_frames = config_.interpolation_buffer_frames;
-    stats_.target_interpolation_buffer_frames = config_.interpolation_buffer_frames;
-    stats_.current_interpolation_buffer_frames = config_.interpolation_buffer_frames;
+      buffered_frame_lag_(config.buffered_frame_lag) {
+    stats_.desired_buffered_frame_lag = config_.buffered_frame_lag;
+    stats_.target_buffered_frame_lag = config_.buffered_frame_lag;
+    stats_.current_buffered_frame_lag = config_.buffered_frame_lag;
     stats_.desired_prediction_lead_frames = config_.prediction_lead_frames;
     stats_.target_prediction_lead_frames = config_.prediction_lead_frames;
     stats_.current_prediction_lead_frames = config_.prediction_lead_frames;
@@ -76,37 +76,37 @@ ReplicationClientClock::ReplicationClientClock(ReplicationClientClockConfig conf
 
 ReplicationClientClock::AdvanceResult ReplicationClientClock::advance(double dt_seconds) noexcept {
     AdvanceResult result;
-    result.receive = advance_receive(dt_seconds);
-    const AdvanceResult playback_input = advance_playback_input(dt_seconds);
-    result.playback = playback_input.playback;
-    result.input = playback_input.input;
+    advance_local_time(dt_seconds);
+    const AdvanceResult client_frames = advance_client_frame_numbers(dt_seconds);
+    result.buffered = client_frames.buffered;
+    result.predicted = client_frames.predicted;
     return result;
 }
 
-ReplicationClientClock::FrameRange ReplicationClientClock::advance_receive(double dt_seconds) noexcept {
-    FrameRange result;
+void ReplicationClientClock::advance_local_time(double dt_seconds) noexcept {
     if (dt_seconds < 0.0 || !std::isfinite(dt_seconds)) {
-        return result;
+        return;
     }
-
-    const SyncFrame previous_receive_frame = receive_frame_;
-    const FixedStepAdvance advance = consume_fixed_steps(
-        receive_accumulator_seconds_,
-        dt_seconds,
-        config_.fixed_dt_seconds,
-        config_.max_fixed_steps_per_tick);
-    receive_frame_ += advance.steps;
-    stats_.dropped_receive_frames += advance.dropped_steps;
-    if (receive_frame_ != previous_receive_frame) {
-        result.first = previous_receive_frame + 1U;
-        result.last = receive_frame_;
-    }
-
+    local_time_seconds_ += dt_seconds;
     display_accumulator_seconds_ += dt_seconds;
-    return result;
 }
 
-ReplicationClientClock::AdvanceResult ReplicationClientClock::advance_playback_input(double dt_seconds) noexcept {
+double ReplicationClientClock::estimated_server_time_seconds() const noexcept {
+    return local_time_seconds_ + server_time_offset_seconds_;
+}
+
+double ReplicationClientClock::estimated_server_frame() const noexcept {
+    return estimated_server_time_seconds() / config_.fixed_dt_seconds;
+}
+
+double ReplicationClientClock::buffered_frame_for_estimated_server_frame(double estimated_server_frame) const noexcept {
+    if (!std::isfinite(estimated_server_frame)) {
+        return 0.0;
+    }
+    return std::max(0.0, estimated_server_frame - static_cast<double>(buffered_frame_lag_));
+}
+
+ReplicationClientClock::AdvanceResult ReplicationClientClock::advance_client_frame_numbers(double dt_seconds) noexcept {
     AdvanceResult result;
     if (dt_seconds < 0.0 || !std::isfinite(dt_seconds)) {
         return result;
@@ -116,64 +116,61 @@ ReplicationClientClock::AdvanceResult ReplicationClientClock::advance_playback_i
         return result;
     }
 
-    const SyncFrame previous_playback_frame = playback_frame_;
-    const FixedStepAdvance playback_advance = consume_fixed_steps(
-        playback_accumulator_seconds_,
-        dt_seconds * static_cast<double>(stats_.time_dilation),
-        config_.fixed_dt_seconds,
-        config_.max_fixed_steps_per_tick);
-    playback_frame_ += playback_advance.steps;
-    stats_.dropped_playback_frames += playback_advance.dropped_steps;
-    if (playback_frame_ != previous_playback_frame) {
-        result.playback.first = previous_playback_frame + 1U;
-        result.playback.last = playback_frame_;
+    const SyncFrame previous_buffered_frame = buffered_frame_;
+    const double continuous_buffered_frame = buffered_frame_for_estimated_server_frame(estimated_server_frame());
+    const auto next_buffered_frame = static_cast<SyncFrame>(std::floor(continuous_buffered_frame));
+    buffered_frame_ = next_buffered_frame;
+    buffered_accumulator_seconds_ =
+        (continuous_buffered_frame - static_cast<double>(buffered_frame_)) * config_.fixed_dt_seconds;
+    if (buffered_frame_ > previous_buffered_frame) {
+        result.buffered.first = previous_buffered_frame + 1U;
+        result.buffered.last = buffered_frame_;
     }
 
-    const SyncFrame previous_input_frame = input_frame_;
-    const FixedStepAdvance input_advance = consume_fixed_steps(
-        input_accumulator_seconds_,
-        dt_seconds * static_cast<double>(stats_.prediction_time_dilation),
+    const SyncFrame previous_predicted_frame = predicted_frame_;
+    const FixedStepAdvance predicted_advance = consume_fixed_steps(
+        predicted_accumulator_seconds_,
+        dt_seconds * static_cast<double>(stats_.predicted_time_dilation),
         config_.fixed_dt_seconds,
         config_.max_fixed_steps_per_tick);
-    input_frame_ += input_advance.steps;
-    stats_.dropped_input_frames += input_advance.dropped_steps;
-    if (input_frame_ != previous_input_frame) {
-        result.input.first = previous_input_frame + 1U;
-        result.input.last = input_frame_;
+    predicted_frame_ += predicted_advance.steps;
+    stats_.dropped_input_frames += predicted_advance.dropped_steps;
+    if (predicted_frame_ != previous_predicted_frame) {
+        result.predicted.first = previous_predicted_frame + 1U;
+        result.predicted.last = predicted_frame_;
     }
     return result;
 }
 
-void ReplicationClientClock::advance_receive_frame_to(SyncFrame receive_frame) noexcept {
-    if (receive_frame > receive_frame_) {
-        receive_frame_ = receive_frame;
-        receive_accumulator_seconds_ = 0.0;
+void ReplicationClientClock::advance_predicted_frame_to(SyncFrame predicted_frame) noexcept {
+    if (predicted_frame > predicted_frame_) {
+        predicted_frame_ = predicted_frame;
+        predicted_accumulator_seconds_ = 0.0;
     }
 }
 
-void ReplicationClientClock::advance_input_frame_to(SyncFrame input_frame) noexcept {
-    if (input_frame > input_frame_) {
-        input_frame_ = input_frame;
-        input_accumulator_seconds_ = 0.0;
-    }
-}
-
-bool ReplicationClientClock::bootstrap_from_server_update(
+bool ReplicationClientClock::maybe_bootstrap_from_first_server_update(
     SyncFrame server_frame,
     bool seed_prediction_lead,
     bool complete_warmup) noexcept {
     if (bootstrapped_) {
         return false;
     }
-    playback_frame_ = server_frame;
-    input_frame_ = seed_prediction_lead ? server_frame + config_.prediction_lead_frames : server_frame;
-    playback_accumulator_seconds_ = 0.0;
-    input_accumulator_seconds_ = 0.0;
+    if (!has_time_sync_sample_) {
+        server_time_offset_seconds_ =
+            static_cast<double>(server_frame) * config_.fixed_dt_seconds - local_time_seconds_;
+    }
+    const double continuous_buffered_frame = buffered_frame_for_estimated_server_frame(estimated_server_frame());
+    buffered_frame_ = static_cast<SyncFrame>(std::floor(continuous_buffered_frame));
+    predicted_frame_ = seed_prediction_lead ? server_frame + config_.prediction_lead_frames : server_frame;
+    buffered_accumulator_seconds_ =
+        (continuous_buffered_frame - static_cast<double>(buffered_frame_)) * config_.fixed_dt_seconds;
+    predicted_accumulator_seconds_ = 0.0;
     display_accumulator_seconds_ = 0.0;
-    display_target_frame_ = static_cast<double>(server_frame) - static_cast<double>(interpolation_buffer_frames_);
+    display_target_frame_ = continuous_buffered_frame;
     has_display_target_frame_ = true;
-    stats_.current_prediction_lead_frames = seed_prediction_lead && input_frame_ >= server_frame
-        ? input_frame_ - server_frame
+    stats_.current_prediction_lead_frames = seed_prediction_lead && predicted_frame_ >= server_frame
+        ? predicted_frame_ - server_frame
         : config_.prediction_lead_frames;
     if (complete_warmup || !seed_prediction_lead) {
         warmup_samples_ = config_.auto_timing_warmup_samples;
@@ -182,18 +179,37 @@ bool ReplicationClientClock::bootstrap_from_server_update(
     return true;
 }
 
-void ReplicationClientClock::record_pong(SyncFrame send_frame, SyncFrame receive_frame) noexcept {
-    if (receive_frame < send_frame) {
+void ReplicationClientClock::record_time_sync_sample(
+    double client_send_time_seconds,
+    double server_receive_time_seconds,
+    double server_send_time_seconds,
+    double client_receive_time_seconds) noexcept {
+    if (!std::isfinite(client_send_time_seconds) ||
+        !std::isfinite(server_receive_time_seconds) ||
+        !std::isfinite(server_send_time_seconds) ||
+        !std::isfinite(client_receive_time_seconds) ||
+        client_receive_time_seconds < client_send_time_seconds ||
+        server_send_time_seconds < server_receive_time_seconds) {
         return;
     }
-    record_ping_sample(static_cast<float>(receive_frame - send_frame) * 0.5f);
-}
-
-void ReplicationClientClock::record_continuous_pong(double send_frame, double receive_frame) noexcept {
-    if (!std::isfinite(send_frame) || !std::isfinite(receive_frame) || receive_frame < send_frame) {
+    const double round_trip_seconds =
+        (client_receive_time_seconds - client_send_time_seconds) -
+        (server_send_time_seconds - server_receive_time_seconds);
+    if (round_trip_seconds < 0.0) {
         return;
     }
-    record_ping_sample(static_cast<float>((receive_frame - send_frame) * 0.5));
+    const double sample_offset_seconds =
+        ((server_receive_time_seconds - client_send_time_seconds) +
+         (server_send_time_seconds - client_receive_time_seconds)) *
+        0.5;
+    if (!has_time_sync_sample_) {
+        server_time_offset_seconds_ = sample_offset_seconds;
+        has_time_sync_sample_ = true;
+    } else {
+        const double smoothing = static_cast<double>(config_.auto_buffered_frame_lag_smoothing);
+        server_time_offset_seconds_ += (sample_offset_seconds - server_time_offset_seconds_) * smoothing;
+    }
+    record_ping_sample(static_cast<float>(round_trip_seconds * 0.5 / config_.fixed_dt_seconds));
 }
 
 SyncFrame ReplicationClientClock::record_server_update(
@@ -202,16 +218,16 @@ SyncFrame ReplicationClientClock::record_server_update(
     SyncFrame last_recorded_input_frame) noexcept {
     return record_server_update(
         server_frame,
-        static_cast<double>(receive_frame_),
-        static_cast<double>(playback_frame_),
+        estimated_server_frame(),
+        continuous_buffered_frame(),
         static_cast<double>(last_recorded_input_frame),
         has_buffered_entities);
 }
 
 SyncFrame ReplicationClientClock::record_server_update(
     SyncFrame server_frame,
-    SyncFrame observed_receive_frame,
-    SyncFrame observed_playback_frame,
+    SyncFrame observed_server_frame,
+    SyncFrame observed_buffered_frame,
     bool has_buffered_entities,
     SyncFrame last_recorded_input_frame) noexcept {
     if (!bootstrapped_) {
@@ -219,49 +235,46 @@ SyncFrame ReplicationClientClock::record_server_update(
     }
     return record_server_update(
         server_frame,
-        static_cast<double>(observed_receive_frame),
-        static_cast<double>(observed_playback_frame),
+        static_cast<double>(observed_server_frame),
+        static_cast<double>(observed_buffered_frame),
         static_cast<double>(last_recorded_input_frame),
         has_buffered_entities);
 }
 
 SyncFrame ReplicationClientClock::record_server_update(
     SyncFrame server_frame,
-    double observed_receive_frame,
-    double observed_playback_frame,
-    double observed_input_frame,
+    double observed_server_frame,
+    double observed_buffered_frame,
+    double observed_predicted_frame,
     bool has_buffered_entities) noexcept {
     return record_server_update(
         server_frame,
-        observed_receive_frame,
-        observed_playback_frame,
-        observed_input_frame,
+        observed_server_frame,
+        observed_buffered_frame,
+        observed_predicted_frame,
         has_buffered_entities,
-        rounded_frame_count(observed_input_frame));
+        rounded_frame_count(observed_predicted_frame));
 }
 
 SyncFrame ReplicationClientClock::record_server_update(
     SyncFrame server_frame,
-    double observed_receive_frame,
-    double observed_playback_frame,
-    double observed_input_frame,
+    double observed_server_frame,
+    double observed_buffered_frame,
+    double observed_predicted_frame,
     bool has_buffered_entities,
     SyncFrame last_recorded_input_frame) noexcept {
     if (!bootstrapped_ ||
-        !std::isfinite(observed_receive_frame) ||
-        !std::isfinite(observed_playback_frame) ||
-        !std::isfinite(observed_input_frame)) {
+        !std::isfinite(observed_server_frame) ||
+        !std::isfinite(observed_buffered_frame) ||
+        !std::isfinite(observed_predicted_frame)) {
         return 0;
     }
-    const SyncFrame observed_receive_whole = observed_receive_frame > 0.0
-        ? static_cast<SyncFrame>(std::floor(observed_receive_frame))
-        : 0U;
-    const SyncFrame observed_downstream = observed_downstream_frames(server_frame, observed_receive_whole);
-    record_interpolation_timing(server_frame, observed_receive_frame, observed_playback_frame, has_buffered_entities);
-    record_prediction_timing(server_frame, observed_downstream, observed_input_frame, last_recorded_input_frame);
+    const double observed_downstream = observed_downstream_frames(server_frame, observed_server_frame);
+    record_buffered_timing(server_frame, observed_server_frame, observed_buffered_frame, has_buffered_entities);
+    record_prediction_timing(server_frame, observed_downstream, observed_predicted_frame, last_recorded_input_frame);
     if (!config_.auto_timing_fast_recovery ||
         !config_.auto_prediction_lead_frames ||
-        observed_downstream == 0U) {
+        observed_downstream <= 0.0) {
         return 0;
     }
     const SyncFrame target = prediction_target_from_observed(observed_downstream);
@@ -269,63 +282,51 @@ SyncFrame ReplicationClientClock::record_server_update(
     const SyncFrame available_lead = last_recorded_input_frame >= server_frame
         ? last_recorded_input_frame - server_frame
         : 0U;
-    if (observed_downstream < min_gap ||
+    if (observed_downstream < static_cast<double>(min_gap) ||
         target <= available_lead) {
         return 0;
     }
     return server_frame + target;
 }
 
-void ReplicationClientClock::record_prediction_lead(SyncFrame server_frame, SyncFrame input_frame) noexcept {
-    const SyncFrame measured = input_frame >= server_frame ? input_frame - server_frame : 0U;
+void ReplicationClientClock::record_prediction_lead(SyncFrame server_frame, SyncFrame predicted_frame) noexcept {
+    const SyncFrame measured = predicted_frame >= server_frame ? predicted_frame - server_frame : 0U;
     stats_.measured_prediction_lead_frames = static_cast<float>(measured);
     stats_.current_prediction_lead_frames = measured;
     const SyncFrame target = config_.auto_prediction_lead_frames
         ? stats_.target_prediction_lead_frames
         : config_.prediction_lead_frames;
     if (!config_.auto_prediction_lead_frames || warmup_samples_ < config_.auto_timing_warmup_samples) {
-        stats_.prediction_time_dilation = measured == target ? 1.0f : stats_.prediction_time_dilation;
+        stats_.predicted_time_dilation = measured == target ? 1.0f : stats_.predicted_time_dilation;
         return;
     }
     const float error = static_cast<float>(target) - static_cast<float>(measured);
-    const float unclamped = 1.0f + error * config_.auto_prediction_time_dilation_gain;
-    stats_.prediction_time_dilation = std::min(
-        config_.auto_prediction_time_dilation_max,
-        std::max(config_.auto_prediction_time_dilation_min, unclamped));
+    const float unclamped = 1.0f + error * config_.auto_predicted_time_dilation_gain;
+    stats_.predicted_time_dilation = std::min(
+        config_.auto_predicted_time_dilation_max,
+        std::max(config_.auto_predicted_time_dilation_min, unclamped));
 }
 
-bool ReplicationClientClock::set_interpolation_buffer_frames(SyncFrame frames) noexcept {
-    if (frames >= config_.interpolation_buffer_capacity_frames) {
+bool ReplicationClientClock::set_buffered_frame_lag(SyncFrame frames) noexcept {
+    if (frames >= config_.buffered_frame_lag_capacity) {
         return false;
     }
-    config_.interpolation_buffer_frames = frames;
-    interpolation_buffer_frames_ = frames;
-    stats_.desired_interpolation_buffer_frames = frames;
-    stats_.target_interpolation_buffer_frames = frames;
-    stats_.current_interpolation_buffer_frames = frames;
-    stats_.time_dilation = 1.0f;
+    config_.buffered_frame_lag = frames;
+    buffered_frame_lag_ = frames;
+    stats_.desired_buffered_frame_lag = frames;
+    stats_.target_buffered_frame_lag = frames;
+    stats_.current_buffered_frame_lag = frames;
+    stats_.buffered_time_dilation = 1.0f;
     return true;
 }
 
 void ReplicationClientClock::update_display_target(double dt_seconds) noexcept {
+    (void)dt_seconds;
     if (!bootstrapped_) {
         return;
     }
-    const double playback_frame =
-        static_cast<double>(playback_frame_) + playback_accumulator_seconds_ / config_.fixed_dt_seconds;
-    const double desired = playback_frame - static_cast<double>(interpolation_buffer_frames_);
-    if (!has_display_target_frame_ || desired < 0.0) {
-        display_target_frame_ = desired;
-        has_display_target_frame_ = true;
-        return;
-    }
-    if (desired <= display_target_frame_) {
-        return;
-    }
-
-    const double max_advance_frames =
-        dt_seconds / config_.fixed_dt_seconds * static_cast<double>(config_.auto_interpolation_time_dilation_max);
-    display_target_frame_ = std::min(desired, display_target_frame_ + max_advance_frames);
+    display_target_frame_ = continuous_buffered_frame();
+    has_display_target_frame_ = true;
 }
 
 double ReplicationClientClock::consume_display_accumulator_seconds() noexcept {
@@ -339,7 +340,7 @@ void ReplicationClientClock::record_ping_sample(float sample) noexcept {
         stats_.latency_frames = sample;
         stats_.jitter_frames = 0.0f;
     } else {
-        const float smoothing = config_.auto_interpolation_smoothing;
+        const float smoothing = config_.auto_buffered_frame_lag_smoothing;
         const float previous_latency = stats_.latency_frames;
         stats_.latency_frames += (sample - stats_.latency_frames) * smoothing;
         const float deviation = std::fabs(sample - previous_latency);
@@ -356,11 +357,11 @@ void ReplicationClientClock::record_ping_sample(float sample) noexcept {
 
 void ReplicationClientClock::compute_auto_targets() noexcept {
     const float wanted = stats_.latency_frames +
-        config_.auto_interpolation_jitter_multiplier * stats_.jitter_frames;
-    const SyncFrame target = clamp_interpolation_target(
+        config_.auto_buffered_frame_lag_jitter_multiplier * stats_.jitter_frames;
+    const SyncFrame target = clamp_buffered_lag_target(
         static_cast<SyncFrame>(std::ceil(std::max(0.0f, wanted))));
-    stats_.desired_interpolation_buffer_frames = target;
-    stats_.target_interpolation_buffer_frames = target;
+    stats_.desired_buffered_frame_lag = target;
+    stats_.target_buffered_frame_lag = target;
 
     const float prediction_wanted = 2.0f * (
         stats_.latency_frames + config_.auto_prediction_jitter_multiplier * stats_.jitter_frames) +
@@ -371,10 +372,12 @@ void ReplicationClientClock::compute_auto_targets() noexcept {
     stats_.target_prediction_lead_frames = prediction_target;
 }
 
-SyncFrame ReplicationClientClock::observed_downstream_frames(
+double ReplicationClientClock::observed_downstream_frames(
     SyncFrame server_frame,
-    SyncFrame observed_receive_frame) const noexcept {
-    return observed_receive_frame > server_frame ? observed_receive_frame - server_frame : 0U;
+    double observed_server_frame) const noexcept {
+    return observed_server_frame > static_cast<double>(server_frame)
+        ? observed_server_frame - static_cast<double>(server_frame)
+        : 0.0;
 }
 
 SyncFrame ReplicationClientClock::fast_recovery_step(SyncFrame current, SyncFrame target) const noexcept {
@@ -391,73 +394,74 @@ SyncFrame ReplicationClientClock::fast_recovery_step(SyncFrame current, SyncFram
     return target;
 }
 
-SyncFrame ReplicationClientClock::prediction_target_from_observed(SyncFrame observed_downstream) const noexcept {
+SyncFrame ReplicationClientClock::prediction_target_from_observed(double observed_downstream) const noexcept {
     const float ping_upstream = warmup_samples_ >= config_.auto_timing_warmup_samples
         ? stats_.latency_frames + config_.auto_prediction_jitter_multiplier * stats_.jitter_frames
         : static_cast<float>(config_.prediction_lead_frames);
-    const float upstream = std::max(static_cast<float>(observed_downstream), ping_upstream);
-    const float wanted = static_cast<float>(observed_downstream) + upstream +
+    const float downstream = static_cast<float>(std::max(0.0, observed_downstream));
+    const float upstream = std::max(downstream, ping_upstream);
+    const float wanted = downstream + upstream +
         static_cast<float>(config_.auto_prediction_safety_frames);
     return clamp_prediction_target(static_cast<SyncFrame>(std::ceil(std::max(0.0f, wanted))));
 }
 
-void ReplicationClientClock::record_interpolation_timing(
+void ReplicationClientClock::record_buffered_timing(
     SyncFrame server_frame,
-    double observed_receive_frame,
-    double observed_playback_frame,
+    double observed_server_frame,
+    double observed_buffered_frame,
     bool has_buffered_entities) noexcept {
-    const SyncFrame observed_receive_whole = observed_receive_frame > 0.0
-        ? static_cast<SyncFrame>(std::floor(observed_receive_frame))
-        : 0U;
-    const SyncFrame observed_downstream = observed_downstream_frames(server_frame, observed_receive_whole);
-    if (config_.auto_interpolation_buffer_frames) {
-        SyncFrame target = stats_.desired_interpolation_buffer_frames;
-        if (config_.auto_timing_fast_recovery && observed_downstream != 0U) {
-            target = std::max(target, clamp_interpolation_target(observed_downstream));
-        } else if (warmup_samples_ >= config_.auto_timing_warmup_samples && observed_downstream != 0U) {
-            target = std::max(stats_.target_interpolation_buffer_frames, clamp_interpolation_target(observed_downstream));
+    const double observed_downstream = observed_downstream_frames(server_frame, observed_server_frame);
+    if (config_.auto_buffered_frame_lag) {
+        SyncFrame target = stats_.desired_buffered_frame_lag;
+        if (config_.auto_timing_fast_recovery && observed_downstream > 0.0) {
+            target = std::max(target, clamp_buffered_lag_target(rounded_frame_count(observed_downstream)));
+        } else if (warmup_samples_ >= config_.auto_timing_warmup_samples && observed_downstream > 0.0) {
+            target = std::max(
+                stats_.target_buffered_frame_lag,
+                clamp_buffered_lag_target(rounded_frame_count(observed_downstream)));
         }
-        stats_.target_interpolation_buffer_frames = target;
+        stats_.target_buffered_frame_lag = target;
     }
-    const SyncFrame target = stats_.target_interpolation_buffer_frames;
-    const SyncFrame current = interpolation_buffer_frames_;
-    const double applied_frame = std::max(0.0, observed_playback_frame - static_cast<double>(current));
-    const float measured = static_cast<float>(std::max(0.0, static_cast<double>(server_frame) - applied_frame));
-    stats_.measured_interpolation_buffer_frames = measured;
+    const SyncFrame target = stats_.target_buffered_frame_lag;
+    const SyncFrame current = buffered_frame_lag_;
+    const float measured = static_cast<float>(
+        std::max(0.0, static_cast<double>(server_frame) - observed_buffered_frame));
+    stats_.measured_buffered_frame_lag = measured;
 
     if (has_buffered_entities &&
-        config_.auto_interpolation_buffer_frames &&
+        config_.auto_buffered_frame_lag &&
         (warmup_samples_ >= config_.auto_timing_warmup_samples ||
-         (config_.auto_timing_fast_recovery && observed_downstream != 0U))) {
+         (config_.auto_timing_fast_recovery && observed_downstream > 0.0))) {
         const float error = measured - static_cast<float>(target);
-        stats_.time_dilation = dilation_from_error(
+        stats_.buffered_time_dilation = dilation_from_error(
             error,
-            config_.auto_interpolation_time_dilation_gain,
-            config_.auto_interpolation_time_dilation_min,
-            config_.auto_interpolation_time_dilation_max);
+            config_.auto_buffered_time_dilation_gain,
+            config_.auto_buffered_time_dilation_min,
+            config_.auto_buffered_time_dilation_max);
 
         const SyncFrame min_gap = config_.auto_timing_fast_recovery_min_frame_gap;
         const bool large_fast_recovery_gap = config_.auto_timing_fast_recovery &&
             ((current < target && target - current >= min_gap) ||
              (current > target && current - target >= min_gap));
-        if (current < target && (large_fast_recovery_gap || measured >= static_cast<float>(current))) {
-            interpolation_buffer_frames_ = fast_recovery_step(current, target);
+        if (current < target &&
+            (large_fast_recovery_gap || observed_downstream > 0.0 || measured >= static_cast<float>(current))) {
+            buffered_frame_lag_ = fast_recovery_step(current, target);
         } else if (current > target && (large_fast_recovery_gap || measured <= static_cast<float>(current))) {
-            interpolation_buffer_frames_ = fast_recovery_step(current, target);
+            buffered_frame_lag_ = fast_recovery_step(current, target);
         }
-        stats_.current_interpolation_buffer_frames = interpolation_buffer_frames_;
+        stats_.current_buffered_frame_lag = buffered_frame_lag_;
     } else {
-        stats_.current_interpolation_buffer_frames = interpolation_buffer_frames_;
-        stats_.time_dilation = 1.0f;
+        stats_.current_buffered_frame_lag = buffered_frame_lag_;
+        stats_.buffered_time_dilation = 1.0f;
     }
 }
 
 void ReplicationClientClock::record_prediction_timing(
     SyncFrame server_frame,
-    SyncFrame observed_downstream,
-    double observed_input_frame,
+    double observed_downstream,
+    double observed_predicted_frame,
     SyncFrame last_recorded_input_frame) noexcept {
-    const double measured_double = std::max(0.0, observed_input_frame - static_cast<double>(server_frame));
+    const double measured_double = std::max(0.0, observed_predicted_frame - static_cast<double>(server_frame));
     const float measured = static_cast<float>(measured_double);
     const SyncFrame available_lead = last_recorded_input_frame >= server_frame
         ? last_recorded_input_frame - server_frame
@@ -466,7 +470,7 @@ void ReplicationClientClock::record_prediction_timing(
     stats_.current_prediction_lead_frames = std::max(rounded_frame_count(measured_double), available_lead);
     if (config_.auto_prediction_lead_frames &&
         config_.auto_timing_fast_recovery) {
-        const SyncFrame observed_target = observed_downstream != 0U
+        const SyncFrame observed_target = observed_downstream > 0.0
             ? prediction_target_from_observed(observed_downstream)
             : stats_.desired_prediction_lead_frames;
         stats_.target_prediction_lead_frames = std::max(stats_.desired_prediction_lead_frames, observed_target);
@@ -475,26 +479,26 @@ void ReplicationClientClock::record_prediction_timing(
         ? stats_.target_prediction_lead_frames
         : config_.prediction_lead_frames;
     if (warmup_samples_ < config_.auto_timing_warmup_samples) {
-        stats_.prediction_time_dilation = 1.0f;
+        stats_.predicted_time_dilation = 1.0f;
         return;
     }
     if (config_.auto_prediction_lead_frames) {
         const float error = static_cast<float>(target) - static_cast<float>(measured);
-        stats_.prediction_time_dilation = dilation_from_error(
+        stats_.predicted_time_dilation = dilation_from_error(
             error,
-            config_.auto_prediction_time_dilation_gain,
-            config_.auto_prediction_time_dilation_min,
-            config_.auto_prediction_time_dilation_max);
+            config_.auto_predicted_time_dilation_gain,
+            config_.auto_predicted_time_dilation_min,
+            config_.auto_predicted_time_dilation_max);
     } else {
         stats_.desired_prediction_lead_frames = config_.prediction_lead_frames;
         stats_.target_prediction_lead_frames = config_.prediction_lead_frames;
-        stats_.prediction_time_dilation = 1.0f;
+        stats_.predicted_time_dilation = 1.0f;
     }
 }
 
-SyncFrame ReplicationClientClock::clamp_interpolation_target(SyncFrame frames) const noexcept {
-    const SyncFrame min_frames = config_.auto_interpolation_min_frames;
-    const SyncFrame max_frames = static_cast<SyncFrame>(config_.interpolation_buffer_capacity_frames - 1U);
+SyncFrame ReplicationClientClock::clamp_buffered_lag_target(SyncFrame frames) const noexcept {
+    const SyncFrame min_frames = config_.auto_buffered_frame_lag_min;
+    const SyncFrame max_frames = static_cast<SyncFrame>(config_.buffered_frame_lag_capacity - 1U);
     return std::min(max_frames, std::max(min_frames, frames));
 }
 

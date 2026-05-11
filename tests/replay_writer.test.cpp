@@ -37,7 +37,7 @@ std::uint16_t skip_replay_records(ecs::BitBuffer& payload) {
 
 TEST_CASE("replication replay writer records full and dirty replicated state") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
     const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(registry);
 
     const ecs::Entity entity = registry.create();
@@ -49,7 +49,7 @@ TEST_CASE("replication replay writer records full and dirty replicated state") {
         frames.push_back(frame);
     }});
 
-    kage::sync::ReplicationServer server;
+    kage::sync::ReplicationServer server(registry);
     writer.attach(server);
 
     REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
@@ -80,7 +80,7 @@ TEST_CASE("replication replay writer records full and dirty replicated state") {
 
 TEST_CASE("replication replay writer records destroyed replicated slots") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
     const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(registry);
 
     const ecs::Entity entity = registry.create();
@@ -92,7 +92,7 @@ TEST_CASE("replication replay writer records destroyed replicated slots") {
         frames.push_back(frame);
     }});
 
-    kage::sync::ReplicationServer server;
+    kage::sync::ReplicationServer server(registry);
     writer.attach(server);
     REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
     frames.clear();
@@ -110,7 +110,7 @@ TEST_CASE("replication replay writer records destroyed replicated slots") {
 
 TEST_CASE("replication replay writer records queued cues in the replay payload") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
     const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(registry);
     const kage::sync::SyncCueTypeId cue_type = kage::sync::register_sync_cue<kage_sync_tests::TestCue>(registry);
 
@@ -123,7 +123,7 @@ TEST_CASE("replication replay writer records queued cues in the replay payload")
         frames.push_back(frame);
     }});
 
-    kage::sync::ReplicationServer server;
+    kage::sync::ReplicationServer server(registry);
     writer.attach(server);
 
     REQUIRE(kage_sync_tests::emit_test_cue(

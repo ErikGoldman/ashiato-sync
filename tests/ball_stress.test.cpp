@@ -49,7 +49,7 @@ stress::ServerBall make_ball(
 
 TEST_CASE("ball stress bounce adds poison in configured range") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
     const stress::SyncSchema schema = stress::define_schema(registry);
     stress::StressConfig config = test_config();
     std::mt19937 rng(7);
@@ -79,7 +79,7 @@ TEST_CASE("ball stress bounce adds poison in configured range") {
 
 TEST_CASE("ball stress spawn randomly assigns synced tags") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
     const stress::SyncSchema schema = stress::define_schema(registry);
     stress::StressConfig config = test_config();
     config.max_balls = 32;
@@ -103,7 +103,7 @@ TEST_CASE("ball stress spawn randomly assigns synced tags") {
 
 TEST_CASE("ball stress schema syncs multiple tags to clients") {
     ecs::Registry server_registry;
-    kage::sync::configure_server(server_registry);
+    kage_sync_tests::configure_test_server_registry(server_registry);
     const stress::SyncSchema server_schema = stress::define_schema(server_registry);
     const ecs::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<stress::BallPosition>(
@@ -122,17 +122,17 @@ TEST_CASE("ball stress schema syncs multiple tags to clients") {
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
 
     ecs::Registry client_registry;
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
     const stress::SyncSchema client_schema = stress::define_schema(client_registry);
     REQUIRE(client_schema.ball == server_schema.ball);
 
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
     REQUIRE(client.receive(client_registry, packets[0]));
 
     const ecs::Entity local = client.local_entity(kage_sync_tests::first_allocated_client_entity_network_id(1));
@@ -143,7 +143,7 @@ TEST_CASE("ball stress schema syncs multiple tags to clients") {
 
 TEST_CASE("ball stress poison ticks health and removes component") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
     const stress::SyncSchema schema = stress::define_schema(registry);
     stress::StressConfig config = test_config();
     std::mt19937 rng(9);
@@ -172,7 +172,7 @@ TEST_CASE("ball stress poison ticks health and removes component") {
 
 TEST_CASE("ball stress despawns balls at zero health") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
     const stress::SyncSchema schema = stress::define_schema(registry);
     stress::StressConfig config = test_config();
     std::mt19937 rng(11);
@@ -200,7 +200,7 @@ TEST_CASE("ball stress despawns balls at zero health") {
 
 TEST_CASE("ball stress spawn cap is respected") {
     ecs::Registry registry;
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
     const stress::SyncSchema schema = stress::define_schema(registry);
     stress::StressConfig config = test_config();
     config.max_balls = 3;
@@ -439,15 +439,15 @@ TEST_CASE("ball stress directional jitter overrides shared jitter") {
 
 TEST_CASE("ball stress validates time dilation config") {
     stress::StressConfig config = test_config();
-    config.time_dilation_min = 0.0;
+    config.buffered_time_dilation_min = 0.0;
     REQUIRE_THROWS_AS(stress::run_stress(config), std::invalid_argument);
 
     config = test_config();
-    config.time_dilation_max = 0.5;
+    config.buffered_time_dilation_max = 0.5;
     REQUIRE_THROWS_AS(stress::run_stress(config), std::invalid_argument);
 
     config = test_config();
-    config.time_dilation_gain = -0.1;
+    config.buffered_time_dilation_gain = -0.1;
     REQUIRE_THROWS_AS(stress::run_stress(config), std::invalid_argument);
 }
 
@@ -507,8 +507,7 @@ TEST_CASE("ball stress wire diagnostics are opt-in report fields") {
 TEST_CASE("ball stress runs with buffered interpolation clients") {
     stress::StressConfig config = test_config();
     config.client_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
-    config.interpolation_buffer_frames = 2;
-    config.interpolation_buffer_capacity_frames = 8;
+    config.buffered_frame_lag = 2;
 
     const stress::StressReport report = stress::run_stress(config);
 
@@ -516,9 +515,9 @@ TEST_CASE("ball stress runs with buffered interpolation clients") {
     REQUIRE(report.memory.client_pending_acks == 0);
     REQUIRE(report.server_to_clients.server_update_packets >= 1);
     REQUIRE(report.client_timing.sample_count >= 1);
-    REQUIRE(report.client_timing.max_current_interpolation_buffer_frames < config.interpolation_buffer_capacity_frames);
-    REQUIRE(report.client_timing.average_time_dilation >= config.time_dilation_min);
-    REQUIRE(report.client_timing.average_time_dilation <= config.time_dilation_max);
+    REQUIRE(report.client_timing.max_current_buffered_frame_lag < kage::sync::ReplicationClient::buffered_frame_capacity);
+    REQUIRE(report.client_timing.average_buffered_time_dilation >= config.buffered_time_dilation_min);
+    REQUIRE(report.client_timing.average_buffered_time_dilation <= config.buffered_time_dilation_max);
 }
 
 TEST_CASE("ball stress buffered clients report accumulator timing under jitter") {
@@ -530,19 +529,18 @@ TEST_CASE("ball stress buffered clients report accumulator timing under jitter")
     config.max_balls = 64;
     config.latency_ms = 50.0;
     config.jitter_ms = 25.0;
-    config.interpolation_buffer_frames = 1;
-    config.interpolation_buffer_capacity_frames = 16;
-    config.time_dilation_min = 0.50;
-    config.time_dilation_max = 1.50;
-    config.time_dilation_gain = 0.50;
+    config.buffered_frame_lag = 1;
+    config.buffered_time_dilation_min = 0.50;
+    config.buffered_time_dilation_max = 1.50;
+    config.buffered_time_dilation_gain = 0.50;
 
     const stress::StressReport report = stress::run_stress(config);
 
     REQUIRE(report.client_timing.sample_count > 0);
-    REQUIRE(report.client_timing.max_desired_interpolation_buffer_frames > 0);
-    REQUIRE(report.client_timing.max_current_interpolation_buffer_frames < config.interpolation_buffer_capacity_frames);
-    REQUIRE(report.client_timing.average_time_dilation >= config.time_dilation_min);
-    REQUIRE(report.client_timing.average_time_dilation <= config.time_dilation_max);
-    REQUIRE(report.client_timing.average_measured_interpolation_buffer_frames >= 0.0);
+    REQUIRE(report.client_timing.max_desired_buffered_frame_lag > 0);
+    REQUIRE(report.client_timing.max_current_buffered_frame_lag < kage::sync::ReplicationClient::buffered_frame_capacity);
+    REQUIRE(report.client_timing.average_buffered_time_dilation >= config.buffered_time_dilation_min);
+    REQUIRE(report.client_timing.average_buffered_time_dilation <= config.buffered_time_dilation_max);
+    REQUIRE(report.client_timing.average_measured_buffered_frame_lag >= 0.0);
     REQUIRE(report.client_timing.average_jitter_frames >= 0.0);
 }

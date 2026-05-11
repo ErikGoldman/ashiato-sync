@@ -1,10 +1,12 @@
 #pragma once
 
 #include "test_components.hpp"
+#include "test_setup.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -89,13 +91,58 @@ inline ClientInputPacket read_client_input_header(ecs::BitBuffer packet) {
     return input;
 }
 
-inline bool record_ping_sample(
-    kage::sync::ReplicationClient& client,
+template <typename Client>
+bool receive_at_local_frame(
+    Client& client,
     ecs::Registry& registry,
-    kage::sync::SyncFrame receive_frame) {
+    ecs::BitBuffer packet,
+    kage::sync::SyncFrame local_frame) {
+    const double target_time = static_cast<double>(local_frame) * client.fixed_dt_seconds();
+    while (client.local_time_seconds() < target_time) {
+        REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    }
+    return client.receive(registry, std::move(packet));
+}
+
+template <typename Client>
+void tick_client_fixed_frames(
+    Client& client,
+    ecs::Registry& registry,
+    kage::sync::SyncFrame frame_count) {
+    for (kage::sync::SyncFrame frame = 0; frame < frame_count; ++frame) {
+        REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    }
+}
+
+template <typename Client>
+bool apply_estimated_server_frame(
+    Client& client,
+    ecs::Registry& registry,
+    kage::sync::SyncFrame estimated_server_frame) {
+    const kage::sync::SyncFrame lag = client.current_buffered_frame_lag();
+    return client.apply_frame(registry, estimated_server_frame > lag ? estimated_server_frame - lag : 0U);
+}
+
+template <typename Client>
+bool sample_estimated_server_frame(
+    Client& client,
+    const ecs::Registry& registry,
+    double estimated_server_frame,
+    kage::sync::FractionalTickSampleBuffer& out) {
+    return client.sample_fractional_tick_frame(
+        registry,
+        std::max(0.0, estimated_server_frame - static_cast<double>(client.current_buffered_frame_lag())),
+        out);
+}
+
+template <typename Client>
+bool record_ping_sample(
+    Client& client,
+    ecs::Registry& registry,
+    kage::sync::SyncFrame local_frame) {
     std::vector<ecs::BitBuffer> packets = client.drain_packets();
     if (packets.empty()) {
-        REQUIRE(client.tick(registry, client.options().ping_interval_seconds));
+        REQUIRE(client.tick(registry, client.options().session.ping_interval_seconds));
         packets = client.drain_packets();
     }
     for (ecs::BitBuffer packet : packets) {
@@ -107,12 +154,17 @@ inline bool record_ping_sample(
             continue;
         }
         const auto sequence = static_cast<std::uint32_t>(packet.read_bits(32U));
-        const auto send_frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
+        const auto send_frame = static_cast<kage::sync::SyncFrame>(
+            std::floor(client.local_time_seconds() / client.fixed_dt_seconds()));
         ecs::BitBuffer pong;
         pong.push_bits(kage::sync::protocol::server_pong_message, 8U);
         pong.push_bits(sequence, 32U);
-        pong.push_bits(send_frame, 32U);
-        return client.receive(registry, pong, receive_frame);
+        const auto server_frame = static_cast<kage::sync::SyncFrame>((send_frame + local_frame) / 2U);
+        pong.push_bits(server_frame, 32U);
+        pong.push_bits(0U, kage::sync::protocol::frame_subframe_bits);
+        pong.push_bits(server_frame, 32U);
+        pong.push_bits(0U, kage::sync::protocol::frame_subframe_bits);
+        return receive_at_local_frame(client, registry, std::move(pong), local_frame);
     }
     return false;
 }
@@ -127,16 +179,16 @@ inline bool read_ping_packet(ecs::BitBuffer packet, PingPacket& out) {
         return false;
     }
     const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
-    if (message != kage::sync::protocol::client_ping_message || packet.remaining_bits() < 64U) {
+    if (message != kage::sync::protocol::client_ping_message || packet.remaining_bits() < 32U) {
         return false;
     }
     out.sequence = static_cast<std::uint32_t>(packet.read_bits(32U));
-    out.send_frame = static_cast<kage::sync::SyncFrame>(packet.read_bits(32U));
     return true;
 }
 
-inline bool drain_ping(
-    kage::sync::ReplicationClient& client,
+template <typename Client>
+bool drain_ping(
+    Client& client,
     ecs::Registry& registry,
     double dt_seconds,
     PingPacket& out) {
@@ -145,22 +197,29 @@ inline bool drain_ping(
     }
     for (ecs::BitBuffer packet : client.drain_packets()) {
         if (read_ping_packet(packet, out)) {
+            out.send_frame = static_cast<kage::sync::SyncFrame>(
+                std::floor(client.local_time_seconds() / client.fixed_dt_seconds()));
             return true;
         }
     }
     return false;
 }
 
-inline bool receive_pong(
-    kage::sync::ReplicationClient& client,
+template <typename Client>
+bool receive_pong(
+    Client& client,
     ecs::Registry& registry,
     const PingPacket& ping,
-    kage::sync::SyncFrame receive_frame) {
+    kage::sync::SyncFrame local_frame) {
     ecs::BitBuffer pong;
     pong.push_bits(kage::sync::protocol::server_pong_message, 8U);
     pong.push_bits(ping.sequence, 32U);
-    pong.push_bits(ping.send_frame, 32U);
-    return client.receive(registry, pong, receive_frame);
+    const auto server_frame = static_cast<kage::sync::SyncFrame>((ping.send_frame + local_frame) / 2U);
+    pong.push_bits(server_frame, 32U);
+    pong.push_bits(0U, kage::sync::protocol::frame_subframe_bits);
+    pong.push_bits(server_frame, 32U);
+    pong.push_bits(0U, kage::sync::protocol::frame_subframe_bits);
+    return receive_at_local_frame(client, registry, std::move(pong), local_frame);
 }
 
 inline ClientUpdatePacket read_update(ecs::BitBuffer packet, std::size_t sync_slot_count = 2U) {
@@ -267,12 +326,13 @@ inline ecs::BitBuffer make_position_packet(
     kage::sync::SyncFrame frame,
     const std::vector<std::pair<ecs::Entity, Position>>& records,
     std::size_t sync_slot_count = 2U,
-    std::uint32_t packet_id = 0U) {
+    std::uint32_t packet_id = 0U,
+    kage::sync::SyncFrame input_ack_frame = 0U) {
     ecs::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
     packet.push_bits(frame, 32U);
     packet.push_bits(packet_id == 0U ? frame : packet_id, kage::sync::protocol::server_packet_id_bits);
-    packet.push_bits(0, 32U);
+    packet.push_bits(input_ack_frame, 32U);
     packet.push_bits(static_cast<std::uint16_t>(records.size()), 16U);
     for (const auto& record : records) {
         packet.push_bool(false);

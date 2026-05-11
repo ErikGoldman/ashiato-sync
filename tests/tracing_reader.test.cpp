@@ -48,11 +48,12 @@ TEST_CASE("replication server owns configured trace writer lifecycle") {
     const std::string directory = "/tmp/kage_sync_owned_trace_writer_test";
     std::filesystem::remove_all(directory);
 
+    ecs::Registry registry;
     kage::sync::ReplicationServerOptions options;
     options.trace.enabled = true;
     options.trace.directory = directory;
     options.trace.flush_threshold_bytes = 1;
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     server.flush_trace();
     server.close_trace();

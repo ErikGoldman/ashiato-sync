@@ -25,6 +25,10 @@
 
 namespace kage::sync {
 
+namespace client_detail {
+class ClientCueRuntime;
+}  // namespace client_detail
+
 using ClientId = std::uint64_t;
 using SyncFrame = std::uint32_t;
 using SyncCueTypeId = std::uint16_t;
@@ -355,17 +359,18 @@ inline bool read_entity_reference(
     ecs::BitBuffer& in,
     EntityReferenceContext& context,
     EntityReference& out) {
-    if (in.remaining_bits() < 1U) {
+    detail::BitReader reader(in);
+    bool has_reference = false;
+    if (!reader.read_bits(1U, has_reference)) {
         return false;
     }
-    const bool has_reference = in.read_bool();
     if (!has_reference) {
         out = EntityReference{};
         return true;
     }
 
     std::uint32_t wire_network_id = 0;
-    if (!protocol::read_network_entity_id(in, wire_network_id, context.network_entity_id_tier0_bits) ||
+    if (!protocol::read_network_entity_id(reader, wire_network_id, context.network_entity_id_tier0_bits) ||
         wire_network_id == 0U) {
         return false;
     }
@@ -467,6 +472,7 @@ public:
         bool only_replicate_to_owner = false);
 
 private:
+    friend class client_detail::ClientCueRuntime;
     friend class ReplicationClient;
     friend class ReplicationReplayStreamer;
     friend class ReplicationServer;

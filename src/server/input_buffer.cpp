@@ -1,5 +1,7 @@
 #include "server/input_buffer.hpp"
 
+#include "kage/sync/detail/bit_reader.hpp"
+
 #include <algorithm>
 
 namespace kage::sync::server_detail {
@@ -38,18 +40,21 @@ bool ServerInputBuffer::process_packet_payload(
     if (trace != nullptr) {
         *trace = {};
     }
-    if (packet.remaining_bits() < 49U) {
+    detail::BitReader reader(packet);
+    SyncFrame baseline_frame = 0;
+    std::uint16_t input_count = 0;
+    bool first_input_full = false;
+    if (!reader.read_bits(32U, baseline_frame) ||
+        !reader.read_bits(16U, input_count) ||
+        !reader.read_bits(1U, first_input_full)) {
         return false;
     }
-    const auto baseline_frame = static_cast<SyncFrame>(packet.read_bits(32U));
-    const auto input_count = static_cast<std::uint16_t>(packet.read_bits(16U));
-    const bool first_input_full = packet.read_bool();
     SyncFrame first_input_frame = input_count == 0U ? 0U : baseline_frame + 1U;
     if (first_input_full) {
-        if (packet.remaining_bits() < 32U) {
+        SyncFrame explicit_first_input_frame = 0;
+        if (!reader.read_bits(32U, explicit_first_input_frame)) {
             return false;
         }
-        const auto explicit_first_input_frame = static_cast<SyncFrame>(packet.read_bits(32U));
         if (input_count != 0U) {
             first_input_frame = explicit_first_input_frame;
         }
@@ -93,7 +98,7 @@ bool ServerInputBuffer::process_packet_payload(
     for (std::uint16_t index = 0; index < input_count; ++index) {
         const SyncFrame frame = first_input_frame + static_cast<SyncFrame>(index);
         const std::uint8_t* previous_bytes = index == 0U && first_input_full ? nullptr : previous.data();
-        if (!ops.serialization.deserialize(packet, previous_bytes, decoded.data(), nullptr)) {
+        if (!ops.serialization.deserialize(reader.raw(), previous_bytes, decoded.data(), nullptr)) {
             return false;
         }
         if (trace != nullptr) {

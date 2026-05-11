@@ -47,7 +47,7 @@ TEST_CASE("replication client applies full updates and queues ACKs") {
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
@@ -56,9 +56,9 @@ TEST_CASE("replication client applies full updates and queues ACKs") {
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
     REQUIRE(client.receive(client_registry, packets[0]));
 
     const ecs::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
@@ -87,7 +87,7 @@ TEST_CASE("replication client exposes server timing estimates after updates") {
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
@@ -96,17 +96,17 @@ TEST_CASE("replication client exposes server timing estimates after updates") {
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
     REQUIRE(client.estimated_server_frame() == 0.0);
     REQUIRE(client.continuous_prediction_frames_ahead() == 0.0);
-    REQUIRE(client.continuous_interpolation_frames_behind() == 0.0);
+    REQUIRE(client.continuous_buffered_frames_behind() == 0.0);
 
-    REQUIRE(client.receive(client_registry, packets[0], 10, 7));
-    REQUIRE(client.estimated_server_frame() == Catch::Approx(1.0));
+    REQUIRE(receive_at_local_frame(client, client_registry, packets[0], 10));
+    REQUIRE(client.estimated_server_frame() == Catch::Approx(10.0));
     REQUIRE(std::isfinite(client.continuous_prediction_frames_ahead()));
-    REQUIRE(std::isfinite(client.continuous_interpolation_frames_behind()));
+    REQUIRE(std::isfinite(client.continuous_buffered_frames_behind()));
 }
 
 TEST_CASE("replication client decodes ACKed delta updates") {
@@ -125,7 +125,7 @@ TEST_CASE("replication client decodes ACKed delta updates") {
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
 
@@ -137,9 +137,9 @@ TEST_CASE("replication client decodes ACKed delta updates") {
         "NetworkedActor",
         {{client_position, kage::sync::ReplicationAudience::All}});
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(client.receive(client_registry, packets.back()));
     for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
@@ -172,7 +172,7 @@ TEST_CASE("replication client decodes deltas against the encoded baseline frame"
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
 
@@ -184,9 +184,9 @@ TEST_CASE("replication client decodes deltas against the encoded baseline frame"
         "NetworkedActor",
         {{client_position, kage::sync::ReplicationAudience::All}});
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(client.receive(client_registry, packets.back()));
     for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
@@ -212,11 +212,11 @@ TEST_CASE("replication client reports missing prediction rollback traits for def
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
     kage::sync::ReplicationClientOptions options;
-    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
-    kage::sync::ReplicationClient client(options);
+    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
 
     const ecs::Entity server_entity{42};
     try {
@@ -231,14 +231,14 @@ TEST_CASE("replication client reports missing prediction rollback traits for sel
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
     kage::sync::ReplicationClientOptions options;
-    options.default_entity_mode = kage::sync::ReplicationClientMode::Snap;
-    options.entity_mode_selector = [](const kage::sync::ReplicatedEntityUpdateView&) {
+    options.entities.default_mode = kage::sync::ReplicationClientMode::Snap;
+    options.entities.mode_selector = [](const kage::sync::ReplicatedEntityUpdateView&) {
         return kage::sync::ReplicationClientMode::Predict;
     };
-    kage::sync::ReplicationClient client(options);
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
 
     const ecs::Entity server_entity{42};
     try {
@@ -269,7 +269,7 @@ TEST_CASE("replication client decodes mixed-baseline deltas in one packet") {
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, first, server_archetype));
     REQUIRE(start_sync(server_registry, second, server_archetype));
@@ -282,19 +282,19 @@ TEST_CASE("replication client decodes mixed-baseline deltas in one packet") {
         "NetworkedActor",
         {{client_position, kage::sync::ReplicationAudience::All}});
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 1);
     const UpdatePacket full_update = read_update(packets.back());
     REQUIRE(full_update.records.size() == 2);
-    std::uint32_t first_network_id = 0;
-    std::uint32_t second_network_id = 0;
-    first_network_id = full_update.records[0].network_id;
-    second_network_id = full_update.records[1].network_id;
-    REQUIRE(first_network_id != 0);
-    REQUIRE(second_network_id != 0);
+    std::uint32_t first_wire_network_id = 0;
+    std::uint32_t second_wire_network_id = 0;
+    first_wire_network_id = full_update.records[0].network_id;
+    second_wire_network_id = full_update.records[1].network_id;
+    REQUIRE(first_wire_network_id != 0);
+    REQUIRE(second_wire_network_id != 0);
     REQUIRE(client.receive(client_registry, packets.back()));
     for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
         REQUIRE(server.process_packet(server_registry, 1, ack));
@@ -325,9 +325,9 @@ TEST_CASE("replication client decodes mixed-baseline deltas in one packet") {
     for (const UpdateRecord& record : frame84.records) {
         REQUIRE_FALSE(record.destroy);
         REQUIRE_FALSE(record.full);
-        if (record.network_id == first_network_id) {
+        if (record.network_id == first_wire_network_id) {
             saw_first_from_83 = record.baseline_frame == frame83.frame;
-        } else if (record.network_id == second_network_id) {
+        } else if (record.network_id == second_wire_network_id) {
             saw_second_from_full = record.baseline_frame == full_update.frame;
         }
     }
@@ -335,8 +335,8 @@ TEST_CASE("replication client decodes mixed-baseline deltas in one packet") {
     REQUIRE(saw_second_from_full);
 
     REQUIRE(client.receive(client_registry, packets.back()));
-    const ecs::Entity first_local = client.local_entity(test_client_entity_network_id(1, first_network_id));
-    const ecs::Entity second_local = client.local_entity(test_client_entity_network_id(1, second_network_id));
+    const ecs::Entity first_local = client.local_entity(test_client_entity_network_id(1, first_wire_network_id));
+    const ecs::Entity second_local = client.local_entity(test_client_entity_network_id(1, second_wire_network_id));
     REQUIRE(client_registry.get<NetworkedPosition>(first_local).x == 3.0f);
     REQUIRE(client_registry.get<NetworkedPosition>(first_local).y == 3.0f);
     REQUIRE(client_registry.get<NetworkedPosition>(second_local).x == 12.0f);
@@ -352,7 +352,7 @@ TEST_CASE("replication client rejects invalid deltas without ACKing") {
         "NetworkedActor",
         {{position, kage::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
-    kage::sync::configure_client(registry, 1);
+    kage_sync_tests::configure_test_client_registry(registry, 1);
 
     ecs::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::server_update_message, 8U);
@@ -370,7 +370,7 @@ TEST_CASE("replication client rejects invalid deltas without ACKing") {
     packet.push_bits(10, 8U);
     packet.push_bits(10, 8U);
 
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, {}));
     REQUIRE_FALSE(client.receive(registry, packet));
     REQUIRE(client.pending_ack_count() == 0);
     REQUIRE(client.drain_ack_packets().empty());
@@ -380,8 +380,8 @@ TEST_CASE("replication client rejects malformed update packets without ACKing") 
     ecs::Registry registry;
     const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(registry);
     REQUIRE(archetype.value == 0);
-    kage::sync::configure_client(registry, 1);
-    kage::sync::ReplicationClient client;
+    kage_sync_tests::configure_test_client_registry(registry, 1);
+    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, {}));
 
     ecs::BitBuffer empty;
     REQUIRE_FALSE(client.receive(registry, empty));
@@ -415,7 +415,7 @@ TEST_CASE("replication client rejects malformed entity records without ACKing") 
     ecs::Registry registry;
     const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(registry);
     REQUIRE(archetype.value == 0);
-    kage::sync::configure_client(registry, 1);
+    kage_sync_tests::configure_test_client_registry(registry, 1);
 
     auto make_update_prefix = [](std::uint16_t record_count = 1) {
         ecs::BitBuffer packet;
@@ -434,7 +434,7 @@ TEST_CASE("replication client rejects malformed entity records without ACKing") 
         packet.push_bool(true);
         packet.push_bits(0, 32U);
 
-        kage::sync::ReplicationClient client;
+        kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, {}));
         REQUIRE_FALSE(client.receive(registry, packet));
         REQUIRE(client.pending_ack_count() == 0);
     }
@@ -449,7 +449,7 @@ TEST_CASE("replication client rejects malformed entity records without ACKing") 
         packet.push_bits(1, 16U);
         packet.push_bits(2, kage::sync::protocol::bits_for_range(2U));
 
-        kage::sync::ReplicationClient client;
+        kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, {}));
         REQUIRE_FALSE(client.receive(registry, packet));
         REQUIRE(client.pending_ack_count() == 0);
     }
@@ -465,7 +465,7 @@ TEST_CASE("replication client rejects malformed entity records without ACKing") 
         packet.push_bits(1, kage::sync::protocol::bits_for_range(2U));
         packet.push_bits(1, 8U);
 
-        kage::sync::ReplicationClient client;
+        kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, {}));
         REQUIRE_FALSE(client.receive(registry, packet));
         REQUIRE(client.pending_ack_count() == 0);
     }
@@ -482,15 +482,15 @@ TEST_CASE("replication client applies destroy records and ACKs tombstones") {
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
 
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
-    kage::sync::ReplicationClient client;
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
 
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(client.receive(client_registry, packets.back()));
@@ -519,7 +519,8 @@ TEST_CASE("replication client applies destroy records and ACKs tombstones") {
 }
 
 TEST_CASE("replication client packs ACKs within the configured MTU") {
-    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{16});
+    ecs::Registry client_registry;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, kage::sync::ReplicationClientOptions{kage::sync::ReplicationClientNetworkOptions{16}}));
     ecs::Registry server_registry;
     const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
 
@@ -537,14 +538,13 @@ TEST_CASE("replication client packs ACKs within the configured MTU") {
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     server.tick(server_registry, server.options().fixed_dt_seconds);
 
-    ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
     for (const ecs::BitBuffer& packet : packets) {
         REQUIRE(client.receive(client_registry, packet));
@@ -559,7 +559,8 @@ TEST_CASE("replication client packs ACKs within the configured MTU") {
 }
 
 TEST_CASE("replication client retains ACKs that cannot fit the configured MTU") {
-    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{3});
+    ecs::Registry client_registry;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, kage::sync::ReplicationClientOptions{kage::sync::ReplicationClientNetworkOptions{3}}));
     ecs::Registry server_registry;
     const kage::sync::SyncArchetypeId server_archetype = kage_sync_tests::define_position_archetype(server_registry);
     const ecs::Entity server_entity = server_registry.create();
@@ -570,15 +571,14 @@ TEST_CASE("replication client retains ACKs that cannot fit the configured MTU") 
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
 
-    ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
     REQUIRE(client.receive(client_registry, packets.back()));
     REQUIRE(client.pending_ack_count() == 1);
@@ -597,7 +597,7 @@ TEST_CASE("replication client rejects duplicate full updates without ACKing agai
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
@@ -605,9 +605,9 @@ TEST_CASE("replication client rejects duplicate full updates without ACKing agai
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
     REQUIRE(client.receive(client_registry, packets.back()));
     REQUIRE(client.drain_ack_packets().size() == 1);
     REQUIRE_FALSE(client.receive(client_registry, packets.back()));
@@ -631,7 +631,7 @@ TEST_CASE("replication clients recover independently when one misses ACK process
     server_options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
         packets.push_back({client, packet});
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
@@ -644,7 +644,7 @@ TEST_CASE("replication clients recover independently when one misses ACK process
         "NetworkedActor",
         {{client_one_position, kage::sync::ReplicationAudience::All}});
     REQUIRE(client_one_archetype == server_archetype);
-    kage::sync::configure_client(client_one_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_one_registry, 1);
 
     ecs::Registry client_two_registry;
     const ecs::Entity client_two_position =
@@ -654,10 +654,10 @@ TEST_CASE("replication clients recover independently when one misses ACK process
         "NetworkedActor",
         {{client_two_position, kage::sync::ReplicationAudience::All}});
     REQUIRE(client_two_archetype == server_archetype);
-    kage::sync::configure_client(client_two_registry, 2);
+    kage_sync_tests::configure_test_client_registry(client_two_registry, 2);
 
-    kage::sync::ReplicationClient client_one;
-    kage::sync::ReplicationClient client_two;
+    kage::sync::ReplicationClient client_one(client_one_registry, kage_sync_tests::make_test_client_options(client_one_registry, {}));
+    kage::sync::ReplicationClient client_two(client_two_registry, kage_sync_tests::make_test_client_options(client_two_registry, {}));
 
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 2);
@@ -716,7 +716,7 @@ TEST_CASE("replication clients ACK destroy records independently") {
     server_options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
         packets.push_back({client, packet});
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
@@ -725,16 +725,16 @@ TEST_CASE("replication clients ACK destroy records independently") {
     const kage::sync::SyncArchetypeId client_one_archetype =
         kage_sync_tests::define_position_archetype(client_one_registry);
     REQUIRE(client_one_archetype == server_archetype);
-    kage::sync::configure_client(client_one_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_one_registry, 1);
 
     ecs::Registry client_two_registry;
     const kage::sync::SyncArchetypeId client_two_archetype =
         kage_sync_tests::define_position_archetype(client_two_registry);
     REQUIRE(client_two_archetype == server_archetype);
-    kage::sync::configure_client(client_two_registry, 2);
+    kage_sync_tests::configure_test_client_registry(client_two_registry, 2);
 
-    kage::sync::ReplicationClient client_one;
-    kage::sync::ReplicationClient client_two;
+    kage::sync::ReplicationClient client_one(client_one_registry, kage_sync_tests::make_test_client_options(client_one_registry, {}));
+    kage::sync::ReplicationClient client_two(client_two_registry, kage_sync_tests::make_test_client_options(client_two_registry, {}));
 
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 2);
@@ -801,7 +801,7 @@ TEST_CASE("replication client reconciles components when owner visibility change
     server_options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
         packets.push_back({client, packet});
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
@@ -818,7 +818,7 @@ TEST_CASE("replication client reconciles components when owner visibility change
             {client_one_health, kage::sync::ReplicationAudience::Owner},
         });
     REQUIRE(client_one_archetype == server_archetype);
-    kage::sync::configure_client(client_one_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_one_registry, 1);
 
     ecs::Registry client_two_registry;
     const ecs::Entity client_two_position =
@@ -832,10 +832,10 @@ TEST_CASE("replication client reconciles components when owner visibility change
             {client_two_health, kage::sync::ReplicationAudience::Owner},
         });
     REQUIRE(client_two_archetype == server_archetype);
-    kage::sync::configure_client(client_two_registry, 2);
+    kage_sync_tests::configure_test_client_registry(client_two_registry, 2);
 
-    kage::sync::ReplicationClient client_one;
-    kage::sync::ReplicationClient client_two;
+    kage::sync::ReplicationClient client_one(client_one_registry, kage_sync_tests::make_test_client_options(client_one_registry, {}));
+    kage::sync::ReplicationClient client_two(client_two_registry, kage_sync_tests::make_test_client_options(client_two_registry, {}));
 
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.size() == 2);
@@ -900,7 +900,7 @@ TEST_CASE("replication client applies synced tags and owner-filtered tag visibil
     server_options.transport = [&](kage::sync::ClientId client, const ecs::BitBuffer& packet) {
         packets.push_back({client, packet});
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
@@ -918,7 +918,7 @@ TEST_CASE("replication client applies synced tags and owner-filtered tag visibil
                      {owner_secret, kage::sync::ReplicationAudience::Owner}},
                     {{owner_position, kage::sync::ReplicationAudience::All}},
                 }) == server_archetype);
-    kage::sync::configure_client(owner_registry, 1);
+    kage_sync_tests::configure_test_client_registry(owner_registry, 1);
 
     ecs::Registry non_owner_registry;
     const ecs::Entity non_owner_visible = non_owner_registry.register_component<Visible>("Visible");
@@ -933,10 +933,10 @@ TEST_CASE("replication client applies synced tags and owner-filtered tag visibil
                      {non_owner_secret, kage::sync::ReplicationAudience::Owner}},
                     {{non_owner_position, kage::sync::ReplicationAudience::All}},
                 }) == server_archetype);
-    kage::sync::configure_client(non_owner_registry, 2);
+    kage_sync_tests::configure_test_client_registry(non_owner_registry, 2);
 
-    kage::sync::ReplicationClient owner_client;
-    kage::sync::ReplicationClient non_owner_client;
+    kage::sync::ReplicationClient owner_client(owner_registry, kage_sync_tests::make_test_client_options(owner_registry, {}));
+    kage::sync::ReplicationClient non_owner_client(non_owner_registry, kage_sync_tests::make_test_client_options(non_owner_registry, {}));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(owner_client.receive(owner_registry, packet_for(packets, 1)));
     REQUIRE(non_owner_client.receive(non_owner_registry, packet_for(packets, 2)));
@@ -977,20 +977,19 @@ TEST_CASE("buffered interpolation rejects stale duplicate packets without ACKing
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
 
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-        1200,
-        kage::sync::ReplicationClientMode::BufferedInterpolation,
-        1,
-        8});
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, kage::sync::ReplicationClientOptions{
+        kage::sync::ReplicationClientNetworkOptions{1200},
+        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::BufferedInterpolation},
+        kage::sync::ReplicationClientBufferedOptions{1}}));
 
     server.tick(server_registry, server.options().fixed_dt_seconds);
     const ecs::BitBuffer full_packet = packets.back();
@@ -1027,14 +1026,14 @@ TEST_CASE("replication client rejects stale full after destroy and accepts reuse
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
 
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
-    kage::sync::ReplicationClient client;
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
 
     auto process_client_acks = [&]() {
         for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
@@ -1049,7 +1048,7 @@ TEST_CASE("replication client rejects stale full after destroy and accepts reuse
     const ecs::BitBuffer first_full = packets.back();
     const UpdatePacket first_update = read_update(first_full);
     REQUIRE(first_update.records.size() == 1);
-    const std::uint32_t reused_network_id = first_update.records[0].network_id;
+    const std::uint32_t reused_wire_network_id = first_update.records[0].network_id;
     REQUIRE(client.receive(client_registry, first_full));
     process_client_acks();
 
@@ -1069,40 +1068,40 @@ TEST_CASE("replication client rejects stale full after destroy and accepts reuse
     server.tick(server_registry, server.options().fixed_dt_seconds);
     const UpdatePacket second_update = read_update(packets.back());
     REQUIRE(second_update.records.size() == 1);
-    REQUIRE(second_update.records[0].network_id == reused_network_id);
+    REQUIRE(second_update.records[0].network_id == reused_wire_network_id);
     REQUIRE(client.receive(client_registry, packets.back()));
-    REQUIRE(client.local_entity(test_client_entity_network_id(1, reused_network_id, 2U)));
+    REQUIRE(client.local_entity(test_client_entity_network_id(1, reused_wire_network_id, 2U)));
 }
 
 TEST_CASE("replication client rejects stale client entity network ids after wire id reuse") {
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
     const ecs::Entity server_entity{42};
     const std::uint32_t wire_id = test_network_id(server_entity);
     const kage::sync::ClientEntityNetworkId first_id = test_client_entity_network_id(1, wire_id, 1U);
     const kage::sync::ClientEntityNetworkId second_id = test_client_entity_network_id(1, wire_id, 2U);
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{5.0f, 6.0f}}})));
     const ecs::Entity first_local = client.local_entity(first_id);
     REQUIRE(first_local);
     REQUIRE(client_registry.alive(first_local));
-    REQUIRE(client.is_alive_network_id(first_id));
+    REQUIRE(client.is_alive_client_entity_network_id(first_id));
     REQUIRE(client.drain_ack_packets().size() == 1);
 
     REQUIRE(client.receive(client_registry, make_destroy_packet(2, server_entity)));
     REQUIRE_FALSE(client_registry.alive(first_local));
-    REQUIRE_FALSE(client.is_alive_network_id(first_id));
+    REQUIRE_FALSE(client.is_alive_client_entity_network_id(first_id));
     REQUIRE(client.drain_ack_packets().size() == 1);
 
     REQUIRE(client.receive(client_registry, make_position_packet(3, {{server_entity, Position{1.0f, 2.0f}}})));
     const ecs::Entity second_local = client.local_entity(second_id);
     REQUIRE(second_local);
     REQUIRE(second_local != first_local);
-    REQUIRE(client.is_alive_network_id(second_id));
+    REQUIRE(client.is_alive_client_entity_network_id(second_id));
     REQUIRE_FALSE(client.local_entity(first_id));
 }
 
@@ -1110,13 +1109,13 @@ TEST_CASE("replication client does not advance implicit versions twice for destr
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
     const ecs::Entity server_entity{42};
     const std::uint32_t wire_id = test_network_id(server_entity);
     const kage::sync::ClientEntityNetworkId second_id = test_client_entity_network_id(1, wire_id, 2U);
     const kage::sync::ClientEntityNetworkId third_id = test_client_entity_network_id(1, wire_id, 3U);
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
     REQUIRE(client.drain_ack_packets().size() == 1);
@@ -1144,9 +1143,9 @@ TEST_CASE("replication client evicts destroy tombstones by deterministic age") {
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
     constexpr std::uint32_t first_wire_id = 2U;
     constexpr std::uint16_t first_packet_destroy_count =
         static_cast<std::uint16_t>(client_destroy_tombstone_capacity - 1U);

@@ -133,6 +133,25 @@ struct SyncSchema {
     ecs::Entity bounced;
 };
 
+inline void configure_stress_server_registry(ecs::Registry& registry) {
+    register_components(registry);
+    SyncSettings& settings = registry.write<SyncSettings>();
+    settings.role = SyncRole::Server;
+    settings.local_client = invalid_client_id;
+    registry.write<SyncAuthority>().authoritative = true;
+}
+
+inline void configure_stress_client_registry(ecs::Registry& registry, ClientId client) {
+    if (client == invalid_client_id || client > max_client_entity_network_id_client) {
+        throw std::invalid_argument("client id cannot fit in client entity network ids");
+    }
+    register_components(registry);
+    SyncSettings& settings = registry.write<SyncSettings>();
+    settings.role = SyncRole::Client;
+    settings.local_client = client;
+    registry.write<SyncAuthority>().authoritative = false;
+}
+
 struct StressConfig {
     double duration_seconds = 10.0;
     std::uint32_t clients = 4;
@@ -157,11 +176,10 @@ struct StressConfig {
     double server_to_client_loss_percent = -1.0;
     double client_to_server_loss_percent = -1.0;
     ReplicationClientMode client_mode = ReplicationClientMode::Snap;
-    SyncFrame interpolation_buffer_frames = 2;
-    std::size_t interpolation_buffer_capacity_frames = 64;
-    double time_dilation_min = 0.95;
-    double time_dilation_max = 1.05;
-    double time_dilation_gain = 0.05;
+    SyncFrame buffered_frame_lag = 2;
+    double buffered_time_dilation_min = 0.95;
+    double buffered_time_dilation_max = 1.05;
+    double buffered_time_dilation_gain = 0.05;
     double ping_interval_seconds = 3.0;
     bool wire_diagnostics = false;
     bool json = false;
@@ -285,11 +303,11 @@ struct ClientTimingSummary {
     std::uint64_t sample_count = 0;
     double average_latency_frames = 0.0;
     double average_jitter_frames = 0.0;
-    double average_measured_interpolation_buffer_frames = 0.0;
-    double average_time_dilation = 0.0;
-    SyncFrame max_desired_interpolation_buffer_frames = 0;
-    SyncFrame max_target_interpolation_buffer_frames = 0;
-    SyncFrame max_current_interpolation_buffer_frames = 0;
+    double average_measured_buffered_frame_lag = 0.0;
+    double average_buffered_time_dilation = 0.0;
+    SyncFrame max_desired_buffered_frame_lag = 0;
+    SyncFrame max_target_buffered_frame_lag = 0;
+    SyncFrame max_current_buffered_frame_lag = 0;
     std::uint64_t server_update_packets_received = 0;
     std::uint64_t server_update_packets_missing = 0;
     std::uint64_t server_update_packets_reordered_or_duplicate = 0;
@@ -851,21 +869,17 @@ inline void validate_config(const StressConfig& config) {
         config.client_to_server_jitter_ms < 0.0) {
         throw std::invalid_argument("latency and jitter values must be non-negative");
     }
-    if (config.interpolation_buffer_capacity_frames == 0 ||
-        (config.interpolation_buffer_capacity_frames & (config.interpolation_buffer_capacity_frames - 1U)) != 0U) {
-        throw std::invalid_argument("--interpolation-buffer-capacity-frames must be a nonzero power of two");
+    if (config.buffered_frame_lag >= ReplicationClient::buffered_frame_capacity) {
+        throw std::invalid_argument("--buffered-frame-lag must be smaller than capacity");
     }
-    if (config.interpolation_buffer_frames >= config.interpolation_buffer_capacity_frames) {
-        throw std::invalid_argument("--interpolation-buffer-frames must be smaller than capacity");
+    if (config.buffered_time_dilation_min <= 0.0 || config.buffered_time_dilation_min > 1.0) {
+        throw std::invalid_argument("--buffered-time-dilation-min must be in the range (0, 1]");
     }
-    if (config.time_dilation_min <= 0.0 || config.time_dilation_min > 1.0) {
-        throw std::invalid_argument("--time-dilation-min must be in the range (0, 1]");
+    if (config.buffered_time_dilation_max < 1.0) {
+        throw std::invalid_argument("--buffered-time-dilation-max must be at least 1");
     }
-    if (config.time_dilation_max < 1.0) {
-        throw std::invalid_argument("--time-dilation-max must be at least 1");
-    }
-    if (config.time_dilation_gain < 0.0) {
-        throw std::invalid_argument("--time-dilation-gain must be non-negative");
+    if (config.buffered_time_dilation_gain < 0.0) {
+        throw std::invalid_argument("--buffered-time-dilation-gain must be non-negative");
     }
     if (config.ping_interval_seconds <= 0.0) {
         throw std::invalid_argument("--ping-interval-seconds must be positive");
@@ -1113,12 +1127,12 @@ inline StressReport run_stress(const StressConfig& input_config) {
     report.memory.rss_peak_bytes = report.memory.rss_start_bytes;
 
     ecs::Registry server_registry;
-    configure_server(server_registry);
+    configure_stress_server_registry(server_registry);
     const SyncSchema server_schema = define_schema(server_registry);
 
     std::vector<ecs::Registry> client_registries(config.clients);
     for (std::uint32_t client_index = 0; client_index < config.clients; ++client_index) {
-        configure_client(client_registries[client_index], static_cast<ClientId>(client_index + 1U));
+        configure_stress_client_registry(client_registries[client_index], static_cast<ClientId>(client_index + 1U));
         define_schema(
             client_registries[client_index],
             config.client_mode == ReplicationClientMode::BufferedInterpolation);
@@ -1151,7 +1165,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
             static_cast<double>(report.ticks) / config.tick_rate,
             config.wire_diagnostics);
     };
-    ReplicationServer server(server_options);
+    ReplicationServer server(server_registry, server_options);
     for (std::uint32_t client_index = 0; client_index < config.clients; ++client_index) {
         server.add_client(static_cast<ClientId>(client_index + 1U));
     }
@@ -1160,20 +1174,19 @@ inline StressReport run_stress(const StressConfig& input_config) {
     clients.reserve(config.clients);
     for (std::uint32_t client_index = 0; client_index < config.clients; ++client_index) {
         ReplicationClientOptions client_options;
-        client_options.mtu_bytes = config.mtu;
-        client_options.default_entity_mode = config.client_mode;
-        client_options.interpolation_buffer_frames = config.interpolation_buffer_frames;
-        client_options.interpolation_buffer_capacity_frames = config.interpolation_buffer_capacity_frames;
-        client_options.auto_interpolation_buffer_frames = true;
-        client_options.auto_interpolation_min_frames = 1;
-        client_options.auto_interpolation_jitter_multiplier = 2.0f;
-        client_options.auto_interpolation_smoothing = 0.1f;
-        client_options.auto_interpolation_time_dilation_min = static_cast<float>(config.time_dilation_min);
-        client_options.auto_interpolation_time_dilation_max = static_cast<float>(config.time_dilation_max);
-        client_options.auto_interpolation_time_dilation_gain = static_cast<float>(config.time_dilation_gain);
-        client_options.fixed_dt_seconds = 1.0 / config.tick_rate;
-        client_options.ping_interval_seconds = config.ping_interval_seconds;
-        clients.emplace_back(std::move(client_options));
+        client_options.network.mtu_bytes = config.mtu;
+        client_options.entities.default_mode = config.client_mode;
+        client_options.buffered.buffered_frame_lag = config.buffered_frame_lag;
+        client_options.buffered.auto_buffered_frame_lag = true;
+        client_options.buffered.auto_buffered_frame_lag_min = 1;
+        client_options.buffered.auto_buffered_frame_lag_jitter_multiplier = 2.0f;
+        client_options.buffered.auto_buffered_frame_lag_smoothing = 0.1f;
+        client_options.buffered.auto_buffered_time_dilation_min = static_cast<float>(config.buffered_time_dilation_min);
+        client_options.buffered.auto_buffered_time_dilation_max = static_cast<float>(config.buffered_time_dilation_max);
+        client_options.buffered.auto_buffered_time_dilation_gain = static_cast<float>(config.buffered_time_dilation_gain);
+        client_options.clock.fixed_dt_seconds = 1.0 / config.tick_rate;
+        client_options.session.ping_interval_seconds = config.ping_interval_seconds;
+        clients.emplace_back(client_registries[client_index], std::move(client_options));
     }
 
     std::vector<ServerBall> balls;
@@ -1195,16 +1208,12 @@ inline StressReport run_stress(const StressConfig& input_config) {
             deliver_ready(server_to_clients, report.server_to_clients, now, [&](ClientId client_id, const ecs::BitBuffer& packet) {
                 const std::size_t index = static_cast<std::size_t>(client_id - 1U);
                 if (index < clients.size()) {
-                    clients[index].receive(
-                        client_registries[index],
-                        packet,
-                        static_cast<SyncFrame>(tick),
-                        client_frames[index]);
+                    clients[index].receive(client_registries[index], packet);
                 }
             });
             if (config.client_mode == ReplicationClientMode::BufferedInterpolation) {
                 for (std::size_t index = 0; index < clients.size(); ++index) {
-                    client_accumulators[index] += dt * clients[index].timing_stats().time_dilation;
+                    client_accumulators[index] += dt * clients[index].timing_stats().buffered_time_dilation;
                     while (client_accumulators[index] >= dt) {
                         client_accumulators[index] -= dt;
                         ++client_frames[index];
@@ -1286,18 +1295,18 @@ inline StressReport run_stress(const StressConfig& input_config) {
         report.client_timing.sample_count += timing.sample_count;
         report.client_timing.average_latency_frames += timing.latency_frames;
         report.client_timing.average_jitter_frames += timing.jitter_frames;
-        report.client_timing.average_measured_interpolation_buffer_frames +=
-            timing.measured_interpolation_buffer_frames;
-        report.client_timing.average_time_dilation += timing.time_dilation;
-        report.client_timing.max_desired_interpolation_buffer_frames = std::max(
-            report.client_timing.max_desired_interpolation_buffer_frames,
-            timing.desired_interpolation_buffer_frames);
-        report.client_timing.max_target_interpolation_buffer_frames = std::max(
-            report.client_timing.max_target_interpolation_buffer_frames,
-            timing.target_interpolation_buffer_frames);
-        report.client_timing.max_current_interpolation_buffer_frames = std::max(
-            report.client_timing.max_current_interpolation_buffer_frames,
-            timing.current_interpolation_buffer_frames);
+        report.client_timing.average_measured_buffered_frame_lag +=
+            timing.measured_buffered_frame_lag;
+        report.client_timing.average_buffered_time_dilation += timing.buffered_time_dilation;
+        report.client_timing.max_desired_buffered_frame_lag = std::max(
+            report.client_timing.max_desired_buffered_frame_lag,
+            timing.desired_buffered_frame_lag);
+        report.client_timing.max_target_buffered_frame_lag = std::max(
+            report.client_timing.max_target_buffered_frame_lag,
+            timing.target_buffered_frame_lag);
+        report.client_timing.max_current_buffered_frame_lag = std::max(
+            report.client_timing.max_current_buffered_frame_lag,
+            timing.current_buffered_frame_lag);
         report.client_timing.server_update_packets_received += timing.server_update_packets_received;
         report.client_timing.server_update_packets_missing += timing.server_update_packets_missing;
         report.client_timing.server_update_packets_reordered_or_duplicate +=
@@ -1306,8 +1315,8 @@ inline StressReport run_stress(const StressConfig& input_config) {
     if (!clients.empty()) {
         report.client_timing.average_latency_frames /= static_cast<double>(clients.size());
         report.client_timing.average_jitter_frames /= static_cast<double>(clients.size());
-        report.client_timing.average_measured_interpolation_buffer_frames /= static_cast<double>(clients.size());
-        report.client_timing.average_time_dilation /= static_cast<double>(clients.size());
+        report.client_timing.average_measured_buffered_frame_lag /= static_cast<double>(clients.size());
+        report.client_timing.average_buffered_time_dilation /= static_cast<double>(clients.size());
     }
     const std::uint64_t server_update_packet_total =
         report.client_timing.server_update_packets_received +
@@ -1396,8 +1405,7 @@ inline void write_report_text(std::ostream& out, const StressReport& report) {
         << " live_balls=" << report.live_balls << " spawned=" << report.spawned
         << " despawned=" << report.despawned << '\n';
     out << "client_mode=" << client_mode_name(report.config.client_mode)
-        << " interpolation_buffer_frames=" << report.config.interpolation_buffer_frames
-        << " interpolation_buffer_capacity_frames=" << report.config.interpolation_buffer_capacity_frames
+        << " buffered_frame_lag=" << report.config.buffered_frame_lag
         << " ping_interval_seconds=" << report.config.ping_interval_seconds
         << " wire_diagnostics=" << (report.config.wire_diagnostics ? "true" : "false") << '\n';
     out << "network latency_ms=" << report.config.latency_ms
@@ -1409,13 +1417,13 @@ inline void write_report_text(std::ostream& out, const StressReport& report) {
     out << "client_timing samples=" << report.client_timing.sample_count
         << " average_latency_frames=" << report.client_timing.average_latency_frames
         << " average_jitter_frames=" << report.client_timing.average_jitter_frames
-        << " average_measured_buffer_frames="
-        << report.client_timing.average_measured_interpolation_buffer_frames
-        << " average_time_dilation=" << report.client_timing.average_time_dilation
-        << " desired_interpolation_buffer_frames="
-        << report.client_timing.max_desired_interpolation_buffer_frames
-        << " target_interpolation_buffer_frames=" << report.client_timing.max_target_interpolation_buffer_frames
-        << " current_interpolation_buffer_frames=" << report.client_timing.max_current_interpolation_buffer_frames
+        << " average_measured_buffered_frame_lag="
+        << report.client_timing.average_measured_buffered_frame_lag
+        << " average_buffered_time_dilation=" << report.client_timing.average_buffered_time_dilation
+        << " desired_buffered_frame_lag="
+        << report.client_timing.max_desired_buffered_frame_lag
+        << " target_buffered_frame_lag=" << report.client_timing.max_target_buffered_frame_lag
+        << " current_buffered_frame_lag=" << report.client_timing.max_current_buffered_frame_lag
         << " server_update_packets_received=" << report.client_timing.server_update_packets_received
         << " server_update_packets_missing=" << report.client_timing.server_update_packets_missing
         << " server_update_packets_reordered_or_duplicate="
@@ -1527,9 +1535,7 @@ inline void write_report_json(std::ostream& out, const StressReport& report) {
     out << "\"ticks\":" << report.ticks << ",";
     out << "\"clients\":" << report.config.clients << ",";
     out << "\"client_mode\":\"" << client_mode_name(report.config.client_mode) << "\",";
-    out << "\"interpolation_buffer_frames\":" << report.config.interpolation_buffer_frames << ",";
-    out << "\"interpolation_buffer_capacity_frames\":"
-        << report.config.interpolation_buffer_capacity_frames << ",";
+    out << "\"buffered_frame_lag\":" << report.config.buffered_frame_lag << ",";
     out << "\"ping_interval_seconds\":" << report.config.ping_interval_seconds << ",";
     out << "\"wire_diagnostics\":" << (report.config.wire_diagnostics ? "true" : "false") << ",";
     out << "\"network\":{\"latency_ms\":" << report.config.latency_ms
@@ -1541,15 +1547,15 @@ inline void write_report_json(std::ostream& out, const StressReport& report) {
     out << "\"client_timing\":{\"sample_count\":" << report.client_timing.sample_count
         << ",\"average_latency_frames\":" << report.client_timing.average_latency_frames
         << ",\"average_jitter_frames\":" << report.client_timing.average_jitter_frames
-        << ",\"average_measured_interpolation_buffer_frames\":"
-        << report.client_timing.average_measured_interpolation_buffer_frames
-        << ",\"average_time_dilation\":" << report.client_timing.average_time_dilation
-        << ",\"desired_interpolation_buffer_frames\":"
-        << report.client_timing.max_desired_interpolation_buffer_frames
-        << ",\"target_interpolation_buffer_frames\":"
-        << report.client_timing.max_target_interpolation_buffer_frames
-        << ",\"current_interpolation_buffer_frames\":"
-        << report.client_timing.max_current_interpolation_buffer_frames
+        << ",\"average_measured_buffered_frame_lag\":"
+        << report.client_timing.average_measured_buffered_frame_lag
+        << ",\"average_buffered_time_dilation\":" << report.client_timing.average_buffered_time_dilation
+        << ",\"desired_buffered_frame_lag\":"
+        << report.client_timing.max_desired_buffered_frame_lag
+        << ",\"target_buffered_frame_lag\":"
+        << report.client_timing.max_target_buffered_frame_lag
+        << ",\"current_buffered_frame_lag\":"
+        << report.client_timing.max_current_buffered_frame_lag
         << ",\"server_update_packets_received\":"
         << report.client_timing.server_update_packets_received
         << ",\"server_update_packets_missing\":"
@@ -1692,16 +1698,14 @@ inline StressConfig parse_args(int argc, char** argv) {
             config.client_to_server_loss_percent = parse_double(arg, require_value());
         } else if (arg == "--client-mode") {
             config.client_mode = parse_client_mode(require_value());
-        } else if (arg == "--interpolation-buffer-frames") {
-            config.interpolation_buffer_frames = static_cast<SyncFrame>(parse_u64(arg, require_value()));
-        } else if (arg == "--interpolation-buffer-capacity-frames") {
-            config.interpolation_buffer_capacity_frames = static_cast<std::size_t>(parse_u64(arg, require_value()));
-        } else if (arg == "--time-dilation-min") {
-            config.time_dilation_min = parse_double(arg, require_value());
-        } else if (arg == "--time-dilation-max") {
-            config.time_dilation_max = parse_double(arg, require_value());
-        } else if (arg == "--time-dilation-gain") {
-            config.time_dilation_gain = parse_double(arg, require_value());
+        } else if (arg == "--buffered-frame-lag") {
+            config.buffered_frame_lag = static_cast<SyncFrame>(parse_u64(arg, require_value()));
+        } else if (arg == "--buffered-time-dilation-min") {
+            config.buffered_time_dilation_min = parse_double(arg, require_value());
+        } else if (arg == "--buffered-time-dilation-max") {
+            config.buffered_time_dilation_max = parse_double(arg, require_value());
+        } else if (arg == "--buffered-time-dilation-gain") {
+            config.buffered_time_dilation_gain = parse_double(arg, require_value());
         } else if (arg == "--ping-interval-seconds") {
             config.ping_interval_seconds = parse_double(arg, require_value());
         } else if (arg == "--wire-diagnostics") {
@@ -1742,9 +1746,9 @@ inline void write_usage(std::ostream& out) {
         << "  --server-to-client-jitter-ms N --client-to-server-jitter-ms N\n"
         << "  --server-to-client-loss-percent N --client-to-server-loss-percent N\n"
         << "  --client-mode snap|buffered-interpolation\n"
-        << "  --interpolation-buffer-frames N\n"
-        << "  --interpolation-buffer-capacity-frames N\n"
-        << "  --time-dilation-min N --time-dilation-max N --time-dilation-gain N\n"
+        << "  --buffered-frame-lag N\n"
+        << "  --buffered-frame-lag-capacity N\n"
+        << "  --buffered-time-dilation-min N --buffered-time-dilation-max N --buffered-time-dilation-gain N\n"
         << "  --ping-interval-seconds N\n"
         << "  --wire-diagnostics\n"
         << "  --report text|json\n";

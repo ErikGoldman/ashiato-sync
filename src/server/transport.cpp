@@ -67,8 +67,8 @@ void ReplicationServer::send_connect_response(ClientState& client) {
 void ReplicationServer::send_pong(
     ClientId peer,
     std::uint32_t sequence,
-    SyncFrame send_frame,
-    std::uint16_t send_subframe) {
+    SyncFrame server_receive_frame,
+    std::uint16_t server_receive_subframe) {
     if (!options_.transport) {
         return;
     }
@@ -81,8 +81,8 @@ void ReplicationServer::send_pong(
     packet.reserve_bytes(options_.mtu_bytes);
     packet.push_bits(protocol::server_pong_message, 8U);
     packet.push_bits(sequence, 32U);
-    packet.push_bits(send_frame, 32U);
-    packet.push_bits(send_subframe, protocol::frame_subframe_bits);
+    packet.push_bits(server_receive_frame, 32U);
+    packet.push_bits(server_receive_subframe, protocol::frame_subframe_bits);
     packet.push_bits(frame_, 32U);
     packet.push_bits(server_subframe, protocol::frame_subframe_bits);
     try {

@@ -72,70 +72,80 @@ void validate_protocol_descriptor(const protocol::Descriptor& descriptor) {
 
 void validate_client_timing_options(
     double fixed_dt_seconds,
-    std::size_t interpolation_buffer_capacity_frames,
-    SyncFrame interpolation_buffer_frames,
-    SyncFrame auto_interpolation_min_frames,
-    float auto_interpolation_jitter_multiplier,
-    float auto_interpolation_smoothing,
-    float auto_interpolation_time_dilation_min,
-    float auto_interpolation_time_dilation_max,
-    float auto_interpolation_time_dilation_gain,
+    std::size_t buffered_frame_lag_capacity,
+    std::size_t prediction_frame_capacity,
+    SyncFrame buffered_frame_lag,
+    SyncFrame auto_buffered_frame_lag_min,
+    float auto_buffered_frame_lag_jitter_multiplier,
+    float auto_buffered_frame_lag_smoothing,
+    float auto_buffered_time_dilation_min,
+    float auto_buffered_time_dilation_max,
+    float auto_buffered_time_dilation_gain,
     std::size_t input_buffer_capacity_frames,
     SyncFrame prediction_lead_frames,
     SyncFrame auto_prediction_min_frames,
     float auto_prediction_jitter_multiplier,
-    float auto_prediction_time_dilation_min,
-    float auto_prediction_time_dilation_max,
-    float auto_prediction_time_dilation_gain,
+    float auto_predicted_time_dilation_min,
+    float auto_predicted_time_dilation_max,
+    float auto_predicted_time_dilation_gain,
     SyncFrame auto_timing_fast_recovery_min_frame_gap) {
     require_finite_positive(fixed_dt_seconds, "fixed dt seconds must be finite and positive");
-    if (!is_power_of_two(interpolation_buffer_capacity_frames)) {
-        throw std::invalid_argument("interpolation buffer capacity must be a nonzero power of two");
+    if (!is_power_of_two(buffered_frame_lag_capacity)) {
+        throw std::invalid_argument("buffered frame lag capacity must be a nonzero power of two");
+    }
+    if (!is_power_of_two(prediction_frame_capacity)) {
+        throw std::invalid_argument("prediction frame capacity must be a nonzero power of two");
     }
     if (!is_power_of_two(input_buffer_capacity_frames)) {
         throw std::invalid_argument("input buffer capacity must be a nonzero power of two");
     }
-    if (interpolation_buffer_frames >= interpolation_buffer_capacity_frames) {
-        throw std::invalid_argument("interpolation buffer amount must be smaller than capacity");
+    if (buffered_frame_lag >= buffered_frame_lag_capacity) {
+        throw std::invalid_argument("buffered frame lag amount must be smaller than capacity");
     }
-    if (auto_interpolation_min_frames >= interpolation_buffer_capacity_frames) {
-        throw std::invalid_argument("auto interpolation buffer minimum must be smaller than capacity");
+    if (auto_buffered_frame_lag_min >= buffered_frame_lag_capacity) {
+        throw std::invalid_argument("auto buffered frame lag minimum must be smaller than capacity");
     }
     require_finite_non_negative(
-        auto_interpolation_jitter_multiplier,
-        "auto interpolation jitter multiplier must be finite and non-negative");
-    if (auto_interpolation_smoothing <= 0.0f ||
-        auto_interpolation_smoothing > 1.0f ||
-        !std::isfinite(auto_interpolation_smoothing)) {
-        throw std::invalid_argument("auto interpolation smoothing must be finite and in the range (0, 1]");
+        auto_buffered_frame_lag_jitter_multiplier,
+        "auto buffered frame lag jitter multiplier must be finite and non-negative");
+    if (auto_buffered_frame_lag_smoothing <= 0.0f ||
+        auto_buffered_frame_lag_smoothing > 1.0f ||
+        !std::isfinite(auto_buffered_frame_lag_smoothing)) {
+        throw std::invalid_argument("auto buffered frame lag smoothing must be finite and in the range (0, 1]");
     }
     require_finite_unit_min(
-        auto_interpolation_time_dilation_min,
-        "auto interpolation time dilation minimum must be finite and in the range (0, 1]");
+        auto_buffered_time_dilation_min,
+        "auto buffered time dilation minimum must be finite and in the range (0, 1]");
     require_finite_at_least_one(
-        auto_interpolation_time_dilation_max,
-        "auto interpolation time dilation maximum must be finite and at least 1");
+        auto_buffered_time_dilation_max,
+        "auto buffered time dilation maximum must be finite and at least 1");
     require_finite_non_negative(
-        auto_interpolation_time_dilation_gain,
-        "auto interpolation time dilation gain must be finite and non-negative");
+        auto_buffered_time_dilation_gain,
+        "auto buffered time dilation gain must be finite and non-negative");
     if (prediction_lead_frames >= input_buffer_capacity_frames) {
         throw std::invalid_argument("prediction lead frames must be smaller than input buffer capacity");
     }
     if (auto_prediction_min_frames >= input_buffer_capacity_frames) {
         throw std::invalid_argument("auto prediction lead minimum must be smaller than input buffer capacity");
     }
+    if (prediction_lead_frames >= prediction_frame_capacity) {
+        throw std::invalid_argument("prediction lead frames must be smaller than prediction frame capacity");
+    }
+    if (auto_prediction_min_frames >= prediction_frame_capacity) {
+        throw std::invalid_argument("auto prediction lead minimum must be smaller than prediction frame capacity");
+    }
     require_finite_non_negative(
         auto_prediction_jitter_multiplier,
         "auto prediction jitter multiplier must be finite and non-negative");
     require_finite_unit_min(
-        auto_prediction_time_dilation_min,
-        "auto prediction time dilation minimum must be finite and in the range (0, 1]");
+        auto_predicted_time_dilation_min,
+        "auto predicted time dilation minimum must be finite and in the range (0, 1]");
     require_finite_at_least_one(
-        auto_prediction_time_dilation_max,
-        "auto prediction time dilation maximum must be finite and at least 1");
+        auto_predicted_time_dilation_max,
+        "auto predicted time dilation maximum must be finite and at least 1");
     require_finite_non_negative(
-        auto_prediction_time_dilation_gain,
-        "auto prediction time dilation gain must be finite and non-negative");
+        auto_predicted_time_dilation_gain,
+        "auto predicted time dilation gain must be finite and non-negative");
     if (auto_timing_fast_recovery_min_frame_gap == 0U) {
         throw std::invalid_argument("auto timing fast recovery min frame gap must be greater than zero");
     }
@@ -143,45 +153,50 @@ void validate_client_timing_options(
 
 }  // namespace
 
-ReplicationClientOptions validate_client_options(ReplicationClientOptions options) {
-    require_positive_bytes(options.mtu_bytes, "MTU bytes must be greater than zero");
-    validate_protocol_descriptor(options.protocol);
-    if (!is_power_of_two(options.prediction_buffer_capacity_frames)) {
-        throw std::invalid_argument("prediction buffer capacity must be a nonzero power of two");
-    }
+ReplicationClientOptions validate_client_options(
+    ReplicationClientOptions options,
+    std::size_t buffered_frame_capacity,
+    std::size_t prediction_frame_capacity) {
+    require_positive_bytes(options.network.mtu_bytes, "MTU bytes must be greater than zero");
+    validate_protocol_descriptor(options.network.protocol);
     validate_client_timing_options(
-        options.fixed_dt_seconds,
-        options.interpolation_buffer_capacity_frames,
-        options.interpolation_buffer_frames,
-        options.auto_interpolation_min_frames,
-        options.auto_interpolation_jitter_multiplier,
-        options.auto_interpolation_smoothing,
-        options.auto_interpolation_time_dilation_min,
-        options.auto_interpolation_time_dilation_max,
-        options.auto_interpolation_time_dilation_gain,
-        options.input_buffer_capacity_frames,
-        options.prediction_lead_frames,
-        options.auto_prediction_min_frames,
-        options.auto_prediction_jitter_multiplier,
-        options.auto_prediction_time_dilation_min,
-        options.auto_prediction_time_dilation_max,
-        options.auto_prediction_time_dilation_gain,
-        options.auto_timing_fast_recovery_min_frame_gap);
+        options.clock.fixed_dt_seconds,
+        buffered_frame_capacity,
+        prediction_frame_capacity,
+        options.buffered.buffered_frame_lag,
+        options.buffered.auto_buffered_frame_lag_min,
+        options.buffered.auto_buffered_frame_lag_jitter_multiplier,
+        options.buffered.auto_buffered_frame_lag_smoothing,
+        options.buffered.auto_buffered_time_dilation_min,
+        options.buffered.auto_buffered_time_dilation_max,
+        options.buffered.auto_buffered_time_dilation_gain,
+        options.prediction.input_buffer_capacity_frames,
+        options.prediction.lead_frames,
+        options.prediction.auto_min_frames,
+        options.prediction.auto_jitter_multiplier,
+        options.prediction.auto_predicted_time_dilation_min,
+        options.prediction.auto_predicted_time_dilation_max,
+        options.prediction.auto_predicted_time_dilation_gain,
+        options.clock.auto_timing_fast_recovery_min_frame_gap);
     require_finite_positive(
-        options.connect_resend_interval_seconds,
+        options.session.connect_resend_interval_seconds,
         "connect resend interval seconds must be finite and positive");
-    require_finite_positive(options.ping_interval_seconds, "ping interval seconds must be finite and positive");
+    if (options.session.local_client != invalid_client_id &&
+        options.session.local_client > max_client_entity_network_id_client) {
+        throw std::invalid_argument("client id exceeds ClientEntityNetworkId client field");
+    }
+    require_finite_positive(options.session.ping_interval_seconds, "ping interval seconds must be finite and positive");
     require_finite_positive(
-        options.adaptive_ping_interval_seconds,
+        options.session.adaptive_ping_interval_seconds,
         "adaptive ping interval seconds must be finite and positive");
-    if (options.adaptive_ping_stable_samples == 0U) {
+    if (options.session.adaptive_ping_stable_samples == 0U) {
         throw std::invalid_argument("adaptive ping stable samples must be greater than zero");
     }
     require_finite_non_negative(
-        options.adaptive_ping_stable_threshold_frames,
+        options.session.adaptive_ping_stable_threshold_frames,
         "adaptive ping stable threshold frames must be finite and non-negative");
     require_finite_non_negative(
-        options.adaptive_ping_jump_threshold_frames,
+        options.session.adaptive_ping_jump_threshold_frames,
         "adaptive ping jump threshold frames must be finite and non-negative");
     return options;
 }
@@ -189,21 +204,22 @@ ReplicationClientOptions validate_client_options(ReplicationClientOptions option
 ReplicationClientClockConfig validate_client_clock_config(ReplicationClientClockConfig config) {
     validate_client_timing_options(
         config.fixed_dt_seconds,
-        config.interpolation_buffer_capacity_frames,
-        config.interpolation_buffer_frames,
-        config.auto_interpolation_min_frames,
-        config.auto_interpolation_jitter_multiplier,
-        config.auto_interpolation_smoothing,
-        config.auto_interpolation_time_dilation_min,
-        config.auto_interpolation_time_dilation_max,
-        config.auto_interpolation_time_dilation_gain,
+        config.buffered_frame_lag_capacity,
+        config.input_buffer_capacity_frames,
+        config.buffered_frame_lag,
+        config.auto_buffered_frame_lag_min,
+        config.auto_buffered_frame_lag_jitter_multiplier,
+        config.auto_buffered_frame_lag_smoothing,
+        config.auto_buffered_time_dilation_min,
+        config.auto_buffered_time_dilation_max,
+        config.auto_buffered_time_dilation_gain,
         config.input_buffer_capacity_frames,
         config.prediction_lead_frames,
         config.auto_prediction_min_frames,
         config.auto_prediction_jitter_multiplier,
-        config.auto_prediction_time_dilation_min,
-        config.auto_prediction_time_dilation_max,
-        config.auto_prediction_time_dilation_gain,
+        config.auto_predicted_time_dilation_min,
+        config.auto_predicted_time_dilation_max,
+        config.auto_predicted_time_dilation_gain,
         config.auto_timing_fast_recovery_min_frame_gap);
     return config;
 }

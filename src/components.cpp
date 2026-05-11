@@ -141,27 +141,6 @@ bool is_fractional_tick_sampled(const ecs::Registry& registry, ecs::Entity compo
     return registry.has<FractionalTickSampled>(component);
 }
 
-void configure_server(ecs::Registry& registry) {
-    register_components(registry);
-
-    SyncSettings& settings = registry.write<SyncSettings>();
-    settings.role = SyncRole::Server;
-    settings.local_client = invalid_client_id;
-    registry.write<SyncAuthority>().authoritative = true;
-}
-
-void configure_client(ecs::Registry& registry, ClientId local_client) {
-    register_components(registry);
-    if (local_client > max_client_entity_network_id_client) {
-        throw std::invalid_argument("client id exceeds ClientEntityNetworkId client field");
-    }
-
-    SyncSettings& settings = registry.write<SyncSettings>();
-    settings.role = SyncRole::Client;
-    settings.local_client = local_client;
-    registry.write<SyncAuthority>().authoritative = false;
-}
-
 SyncArchetypeId define_archetype(ecs::Registry& registry, SyncArchetypeDesc desc) {
     register_components(registry);
 

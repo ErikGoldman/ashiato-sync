@@ -27,18 +27,18 @@ ecs::Entity single_replayed_entity(ecs::Registry& registry) {
 
 TEST_CASE("replication replay streamer restores full replicated state") {
     ecs::Registry source;
-    kage::sync::configure_server(source);
+    kage_sync_tests::configure_test_server_registry(source);
     const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(source);
     const ecs::Entity entity = source.create();
     source.add<kage_sync_tests::Position>(entity, kage_sync_tests::Position{1.0f, 2.0f});
     REQUIRE(kage_sync_tests::start_sync(source, entity, archetype));
 
-    kage::sync::ReplicationServer source_server;
+    kage::sync::ReplicationServer source_server(source);
     std::vector<kage::sync::ReplicationReplayFrame> frames = record_frames(source, source_server);
     REQUIRE(frames.size() == 1U);
 
     ecs::Registry playback;
-    kage::sync::configure_server(playback);
+    kage_sync_tests::configure_test_server_registry(playback);
     (void)kage_sync_tests::define_position_archetype(playback);
 
     kage::sync::ReplicationReplayStreamer streamer;
@@ -54,7 +54,7 @@ TEST_CASE("replication replay streamer restores full replicated state") {
 
 TEST_CASE("replication replay streamer applies deltas and destroys") {
     ecs::Registry source;
-    kage::sync::configure_server(source);
+    kage_sync_tests::configure_test_server_registry(source);
     const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(source);
     const ecs::Entity entity = source.create();
     source.add<kage_sync_tests::Position>(entity, kage_sync_tests::Position{1.0f, 2.0f});
@@ -64,7 +64,7 @@ TEST_CASE("replication replay streamer applies deltas and destroys") {
     kage::sync::ReplicationReplayWriter writer({60, [&](kage::sync::ReplicationReplayFrame frame) {
         frames.push_back(std::move(frame));
     }});
-    kage::sync::ReplicationServer source_server;
+    kage::sync::ReplicationServer source_server(source);
     writer.attach(source_server);
     REQUIRE(source_server.tick(source, source_server.options().fixed_dt_seconds));
     source.write<kage_sync_tests::Position>(entity).x = 5.0f;
@@ -75,7 +75,7 @@ TEST_CASE("replication replay streamer applies deltas and destroys") {
     REQUIRE(frames.size() == 3U);
 
     ecs::Registry playback;
-    kage::sync::configure_server(playback);
+    kage_sync_tests::configure_test_server_registry(playback);
     (void)kage_sync_tests::define_position_archetype(playback);
 
     kage::sync::ReplicationReplayStreamer streamer;
@@ -93,7 +93,7 @@ TEST_CASE("replication replay streamer applies deltas and destroys") {
 
 TEST_CASE("replication replay streamer restores reference cues") {
     ecs::Registry source;
-    kage::sync::configure_server(source);
+    kage_sync_tests::configure_test_server_registry(source);
     const ecs::Entity position_component =
         kage::sync::register_sync_component<kage_sync_tests::Position>(source, "Position");
     const kage::sync::SyncArchetypeId archetype = kage::sync::define_archetype(
@@ -113,7 +113,7 @@ TEST_CASE("replication replay streamer restores reference cues") {
     kage::sync::ReplicationReplayWriter writer({60, [&](kage::sync::ReplicationReplayFrame frame) {
         frames.push_back(std::move(frame));
     }});
-    kage::sync::ReplicationServer source_server;
+    kage::sync::ReplicationServer source_server(source);
     writer.attach(source_server);
     REQUIRE(kage_sync_tests::emit_test_cue(
         source,
@@ -126,7 +126,7 @@ TEST_CASE("replication replay streamer restores reference cues") {
     REQUIRE(frames.size() == 1U);
 
     ecs::Registry playback;
-    kage::sync::configure_server(playback);
+    kage_sync_tests::configure_test_server_registry(playback);
     playback.register_component<kage_sync_tests::CuePlayback>("CuePlayback");
     const ecs::Entity playback_position =
         kage::sync::register_sync_component<kage_sync_tests::Position>(playback, "Position");
@@ -140,8 +140,8 @@ TEST_CASE("replication replay streamer restores reference cues") {
     kage::sync::ReplicationReplayStreamSession session;
     REQUIRE(streamer.apply_frame(frames[0], playback, session));
 
-    kage::sync::ReplicationServer playback_server;
-    REQUIRE(playback_server.add_local_client() != kage::sync::invalid_client_id);
+    kage::sync::ReplicationServer playback_server(playback);
+    REQUIRE(playback_server.add_local_client(playback) != kage::sync::invalid_client_id);
     REQUIRE(playback_server.advance_frame_without_simulating(playback, frames[0].frame));
 
     bool played = false;
@@ -154,7 +154,7 @@ TEST_CASE("replication replay streamer restores reference cues") {
 
 TEST_CASE("replication replay streamer preserves cue frames when replay frames are flushed at a lower rate") {
     ecs::Registry source;
-    kage::sync::configure_server(source);
+    kage_sync_tests::configure_test_server_registry(source);
     const kage::sync::SyncArchetypeId archetype = kage_sync_tests::define_position_archetype(source);
     (void)kage::sync::register_sync_cue<kage_sync_tests::TestCue>(source);
 
@@ -168,7 +168,7 @@ TEST_CASE("replication replay streamer preserves cue frames when replay frames a
         replay_frames.push_back(std::move(frame));
     }, 3});
 
-    kage::sync::ReplicationServer source_server;
+    kage::sync::ReplicationServer source_server(source);
     writer.attach(source_server);
     REQUIRE(source_server.tick(source, source_server.options().fixed_dt_seconds));
     REQUIRE(replay_frames.size() == 1U);
@@ -195,13 +195,13 @@ TEST_CASE("replication replay streamer preserves cue frames when replay frames a
     replay_frames.clear();
 
     ecs::Registry playback;
-    kage::sync::configure_server(playback);
+    kage_sync_tests::configure_test_server_registry(playback);
     playback.register_component<kage_sync_tests::CuePlayback>("CuePlayback");
     (void)kage_sync_tests::define_position_archetype(playback);
     (void)kage::sync::register_sync_cue<kage_sync_tests::TestCue>(playback);
 
-    kage::sync::ReplicationServer playback_server;
-    REQUIRE(playback_server.add_local_client() != kage::sync::invalid_client_id);
+    kage::sync::ReplicationServer playback_server(playback);
+    REQUIRE(playback_server.add_local_client(playback) != kage::sync::invalid_client_id);
 
     kage::sync::ReplicationReplayStreamSession session;
     REQUIRE(streamer.begin_session(3U, playback, playback_server, session));

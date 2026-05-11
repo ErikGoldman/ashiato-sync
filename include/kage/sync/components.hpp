@@ -23,9 +23,6 @@ bool is_fractional_tick_sampled(const ecs::Registry& registry) {
     return is_fractional_tick_sampled(registry, registry.component<T>());
 }
 
-void configure_server(ecs::Registry& registry);
-void configure_client(ecs::Registry& registry, ClientId local_client);
-
 SyncArchetypeId define_archetype(ecs::Registry& registry, SyncArchetypeDesc desc);
 SyncArchetypeId define_archetype(
     ecs::Registry& registry,

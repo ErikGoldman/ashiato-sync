@@ -1,11 +1,24 @@
 add_library(kage_sync
     client.cpp
-    client/ack_queue.cpp
-    client/input_buffer.cpp
-    client/packet_window.cpp
+    client/entity.cpp
+    client/runtime/buffered_runtime.cpp
+    client/runtime/cue_runtime.cpp
+    client/runtime/display_sampler.cpp
+    client/runtime/prediction_runtime.cpp
+    client/runtime/update_runtime.cpp
+    client/store/ack_queue.cpp
+    client/store/cue_store.cpp
+    client/store/entity_store.cpp
+    client/store/frame_ring_store.cpp
+    client/input.cpp
+    client/store/input_buffer.cpp
+    client/timing_stats.cpp
+    client/tracing.cpp
+    client/transport.cpp
     client_clock.cpp
     components.cpp
     detail/frame_data.cpp
+    detail/logging.cpp
     detail/options_validation.cpp
     display.cpp
     server.cpp

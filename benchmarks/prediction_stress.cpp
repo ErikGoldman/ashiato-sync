@@ -467,11 +467,10 @@ Report run(const Config& config) {
     server.add_client(1);
 
     ReplicationClientOptions client_options;
-    client_options.default_entity_mode = ReplicationClientMode::Predict;
-    client_options.rollback_policy = config.rollback_policy;
-    client_options.fixed_dt_seconds = 1.0 / 60.0;
-    client_options.prediction_buffer_capacity_frames = 256;
-    ReplicationClient client(client_options);
+    client_options.entities.default_mode = ReplicationClientMode::Predict;
+    client_options.prediction.rollback_policy = config.rollback_policy;
+    client_options.clock.fixed_dt_seconds = 1.0 / 60.0;
+    ReplicationClient client(client_registry, client_options);
     register_prediction_jobs(client_registry, client);
 
     std::mt19937 rng(config.seed);

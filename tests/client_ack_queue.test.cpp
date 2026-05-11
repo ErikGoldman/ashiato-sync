@@ -1,4 +1,4 @@
-#include "client/ack_queue.hpp"
+#include "client/store/ack_queue.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 

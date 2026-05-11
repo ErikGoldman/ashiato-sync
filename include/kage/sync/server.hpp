@@ -64,7 +64,7 @@ public:
         std::uint64_t fixed_step_overflow_events = 0;
     };
 
-    explicit ReplicationServer(ReplicationServerOptions options = {});
+    explicit ReplicationServer(ecs::Registry& registry, ReplicationServerOptions options = {});
     ~ReplicationServer();
     ReplicationServer(const ReplicationServer& other) = delete;
     ReplicationServer& operator=(const ReplicationServer& other) = delete;
@@ -89,12 +89,12 @@ public:
 #endif
 
     bool add_client(ClientId client);
-    ClientId add_local_client();
+    ClientId add_local_client(ecs::Registry& registry);
     ClientId local_client() const noexcept {
         return local_client_;
     }
     bool is_local_client(ClientId client) const noexcept;
-    bool remove_client(ClientId client);
+    bool remove_client(ecs::Registry& registry, ClientId client);
     bool has_client(ClientId client) const;
     std::size_t client_count() const noexcept;
     std::vector<ClientId> client_ids() const;
@@ -255,7 +255,8 @@ private:
     static bool archetype_is_same_frame_cacheable(const SyncArchetype& archetype);
     void advance_client_idle_timers(double dt_seconds);
     void resend_pending_connect_responses(double dt_seconds);
-    void disconnect_timed_out_clients();
+    void disconnect_timed_out_clients(ecs::Registry& registry);
+    void set_local_client_id(ecs::Registry& registry, ClientId client) noexcept;
     std::uint32_t find_or_create_quantized_frame(
         const ecs::Registry& registry,
         const SyncSettings& settings,
@@ -312,8 +313,8 @@ private:
     void send_pong(
         ClientId peer,
         std::uint32_t sequence,
-        SyncFrame send_frame,
-        std::uint16_t send_subframe);
+        SyncFrame server_receive_frame,
+        std::uint16_t server_receive_subframe);
 #ifdef KAGE_SYNC_ENABLE_TRACING
     void trace_frame_components(const ecs::Registry& registry, const SyncSettings& settings);
     void trace_input_component(
@@ -393,8 +394,8 @@ class ReplicationServerT : public ReplicationServer {
 public:
     static constexpr std::size_t network_entity_id_tier0_bits = NetworkEntityIdTier0Bits;
 
-    explicit ReplicationServerT(ReplicationServerOptions options = {})
-        : ReplicationServer(configure(std::move(options))) {}
+    explicit ReplicationServerT(ecs::Registry& registry, ReplicationServerOptions options = {})
+        : ReplicationServer(registry, configure(std::move(options))) {}
 
 private:
     static ReplicationServerOptions configure(ReplicationServerOptions options) {

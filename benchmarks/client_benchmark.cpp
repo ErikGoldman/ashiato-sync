@@ -19,11 +19,11 @@ void BM_ClientReceiveSnap(benchmark::State& state) {
         state.PauseTiming();
         ecs::Registry registry;
         define_client_delta_schema(registry, false);
-        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-            1200,
-            kage::sync::ReplicationClientMode::Snap,
-            2,
-            64});
+        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
+        kage::sync::ReplicationClientNetworkOptions{1200},
+        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::Snap},
+        kage::sync::ReplicationClientBufferedOptions{2,
+            64}});
         state.ResumeTiming();
 
         for (const ecs::BitBuffer& packet : packets) {
@@ -43,11 +43,11 @@ void BM_ClientReceiveBufferedInterpolation(benchmark::State& state) {
         state.PauseTiming();
         ecs::Registry registry;
         define_client_delta_schema(registry, true);
-        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-            1200,
-            kage::sync::ReplicationClientMode::BufferedInterpolation,
-            2,
-            64});
+        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
+        kage::sync::ReplicationClientNetworkOptions{1200},
+        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::BufferedInterpolation},
+        kage::sync::ReplicationClientBufferedOptions{2,
+            64}});
         state.ResumeTiming();
 
         for (const ecs::BitBuffer& packet : packets) {
@@ -68,10 +68,9 @@ void BM_ClientReceivePredict(benchmark::State& state) {
         ecs::Registry registry;
         define_client_delta_schema(registry, false);
         kage::sync::ReplicationClientOptions options;
-        options.mtu_bytes = 1200;
-        options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
-        options.prediction_buffer_capacity_frames = 64;
-        kage::sync::ReplicationClient client(options);
+        options.network.mtu_bytes = 1200;
+        options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
+        kage::sync::ReplicationClient client(registry, options);
         state.ResumeTiming();
 
         for (const ecs::BitBuffer& packet : packets) {
@@ -92,16 +91,15 @@ void BM_ClientReceiveMixedEntityModes(benchmark::State& state) {
         ecs::Registry registry;
         define_client_delta_schema(registry, true);
         kage::sync::ReplicationClientOptions options;
-        options.mtu_bytes = 1200;
-        options.default_entity_mode = kage::sync::ReplicationClientMode::Snap;
-        options.interpolation_buffer_frames = 2;
-        options.interpolation_buffer_capacity_frames = 64;
-        options.entity_mode_selector = [](const kage::sync::ReplicatedEntityUpdateView& update) {
+        options.network.mtu_bytes = 1200;
+        options.entities.default_mode = kage::sync::ReplicationClientMode::Snap;
+        options.buffered.buffered_frame_lag = 2;
+        options.entities.mode_selector = [](const kage::sync::ReplicatedEntityUpdateView& update) {
             return (kage::sync::client_entity_network_id_wire_id(update.client_entity_network_id) & 1U) == 0U
                 ? kage::sync::ReplicationClientMode::BufferedInterpolation
                 : kage::sync::ReplicationClientMode::Snap;
         };
-        kage::sync::ReplicationClient client(std::move(options));
+        kage::sync::ReplicationClient client(registry, std::move(options));
         state.ResumeTiming();
 
         for (const ecs::BitBuffer& packet : packets) {
@@ -121,11 +119,11 @@ void BM_ClientApplyBufferedInterpolation(benchmark::State& state) {
         state.PauseTiming();
         ecs::Registry registry;
         define_client_delta_schema(registry, true);
-        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-            1200,
-            kage::sync::ReplicationClientMode::BufferedInterpolation,
-            2,
-            64});
+        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
+        kage::sync::ReplicationClientNetworkOptions{1200},
+        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::BufferedInterpolation},
+        kage::sync::ReplicationClientBufferedOptions{2,
+            64}});
         for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
@@ -149,8 +147,8 @@ void BM_ClientPredictTickQuantize(benchmark::State& state) {
         ecs::Registry registry;
         define_client_delta_schema(registry, false);
         kage::sync::ReplicationClientOptions options;
-        options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
-        kage::sync::ReplicationClient client(options);
+        options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
+        kage::sync::ReplicationClient client(registry, options);
         for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
@@ -158,7 +156,7 @@ void BM_ClientPredictTickQuantize(benchmark::State& state) {
 
         for (int frame = 2; frame < frame_count + 2; ++frame) {
             (void)frame;
-            benchmark::DoNotOptimize(client.tick(registry, client.options().fixed_dt_seconds));
+            benchmark::DoNotOptimize(client.tick(registry, client.fixed_dt_seconds()));
         }
     }
 
@@ -175,11 +173,11 @@ void BM_ClientSampleFractionalTick(benchmark::State& state) {
         ecs::Registry registry;
         define_client_delta_schema(registry, true);
         kage::sync::set_fractional_tick_sampled<DeltaPosition>(registry);
-        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-            1200,
-            kage::sync::ReplicationClientMode::BufferedInterpolation,
-            2,
-            64});
+        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
+        kage::sync::ReplicationClientNetworkOptions{1200},
+        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::BufferedInterpolation},
+        kage::sync::ReplicationClientBufferedOptions{2,
+            64}});
         for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
@@ -209,11 +207,11 @@ void BM_ClientSampleFractionalTickLargePayload(benchmark::State& state) {
         ecs::Registry registry;
         define_client_large_payload_schema(registry);
         kage::sync::set_fractional_tick_sampled<LargePayload>(registry);
-        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-            1200,
-            kage::sync::ReplicationClientMode::BufferedInterpolation,
-            2,
-            64});
+        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
+        kage::sync::ReplicationClientNetworkOptions{1200},
+        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::BufferedInterpolation},
+        kage::sync::ReplicationClientBufferedOptions{2,
+            64}});
         for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
@@ -242,11 +240,11 @@ void BM_ClientDrainAckPackets(benchmark::State& state) {
         state.PauseTiming();
         ecs::Registry registry;
         define_client_delta_schema(registry, false);
-        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-            1200,
-            kage::sync::ReplicationClientMode::Snap,
-            2,
-            64});
+        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
+        kage::sync::ReplicationClientNetworkOptions{1200},
+        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::Snap},
+        kage::sync::ReplicationClientBufferedOptions{2,
+            64}});
         for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
@@ -270,11 +268,11 @@ void BM_ClientDrainDuplicateHeavyAckPackets(benchmark::State& state) {
         state.PauseTiming();
         ecs::Registry registry;
         define_client_delta_schema(registry, false);
-        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-            1200,
-            kage::sync::ReplicationClientMode::Snap,
-            2,
-            64});
+        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
+        kage::sync::ReplicationClientNetworkOptions{1200},
+        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::Snap},
+        kage::sync::ReplicationClientBufferedOptions{2,
+            64}});
         for (const ecs::BitBuffer& packet : packets) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
@@ -299,11 +297,11 @@ void BM_ClientReceiveDestroySnap(benchmark::State& state) {
         state.PauseTiming();
         ecs::Registry registry;
         define_client_delta_schema(registry, false);
-        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-            1200,
-            kage::sync::ReplicationClientMode::Snap,
-            2,
-            64});
+        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
+        kage::sync::ReplicationClientNetworkOptions{1200},
+        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::Snap},
+        kage::sync::ReplicationClientBufferedOptions{2,
+            64}});
         for (const ecs::BitBuffer& packet : packets.initial) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
@@ -325,11 +323,11 @@ void BM_ClientReceiveDestroyBuffered(benchmark::State& state) {
         state.PauseTiming();
         ecs::Registry registry;
         define_client_delta_schema(registry, true);
-        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-            1200,
-            kage::sync::ReplicationClientMode::BufferedInterpolation,
-            2,
-            64});
+        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
+        kage::sync::ReplicationClientNetworkOptions{1200},
+        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::BufferedInterpolation},
+        kage::sync::ReplicationClientBufferedOptions{2,
+            64}});
         for (const ecs::BitBuffer& packet : packets.initial) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
@@ -351,11 +349,11 @@ void BM_ClientReceiveSpawnDestroyChurn(benchmark::State& state) {
         state.PauseTiming();
         ecs::Registry registry;
         define_client_delta_schema(registry, false);
-        kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-            1200,
-            kage::sync::ReplicationClientMode::Snap,
-            2,
-            64});
+        kage::sync::ReplicationClient client(registry, kage::sync::ReplicationClientOptions{
+        kage::sync::ReplicationClientNetworkOptions{1200},
+        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::Snap},
+        kage::sync::ReplicationClientBufferedOptions{2,
+            64}});
         for (const ecs::BitBuffer& packet : packets.initial) {
             benchmark::DoNotOptimize(client.receive(registry, packet));
         }
@@ -382,21 +380,16 @@ void BM_ClientTickBufferedAutoInterpolation(benchmark::State& state) {
         ecs::Registry registry;
         define_client_delta_schema(registry, true);
         kage::sync::ReplicationClientOptions options;
-        options.mtu_bytes = 1200;
-        options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
-        options.interpolation_buffer_frames = 2;
-        options.interpolation_buffer_capacity_frames = 64;
-        options.auto_interpolation_buffer_frames = true;
-        options.fixed_dt_seconds = 1.0 / 60.0;
-        kage::sync::ReplicationClient client(options);
+        options.network.mtu_bytes = 1200;
+        options.entities.default_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+        options.buffered.buffered_frame_lag = 2;
+        options.buffered.auto_buffered_frame_lag = true;
+        options.clock.fixed_dt_seconds = 1.0 / 60.0;
+        kage::sync::ReplicationClient client(registry, options);
         state.ResumeTiming();
 
         for (std::size_t packet_index = 0; packet_index < packets.size(); ++packet_index) {
-            benchmark::DoNotOptimize(client.receive(
-                registry,
-                packets[packet_index],
-                static_cast<kage::sync::SyncFrame>(packet_index + 3U),
-                static_cast<kage::sync::SyncFrame>(packet_index)));
+            benchmark::DoNotOptimize(client.receive(registry, packets[packet_index]));
             benchmark::DoNotOptimize(client.tick(registry, 1.0 / 60.0));
         }
     }
@@ -415,16 +408,15 @@ void BM_ClientTickCappedLargeDelta(benchmark::State& state) {
         ecs::Registry registry;
         define_client_delta_schema(registry, true);
         kage::sync::ReplicationClientOptions options;
-        options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
-        options.interpolation_buffer_capacity_frames = 64;
-        options.max_fixed_steps_per_tick = static_cast<std::uint32_t>(cap_frames);
+        options.entities.default_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+        options.clock.max_fixed_steps_per_tick = static_cast<std::uint32_t>(cap_frames);
         kage::sync::ReplicationClient client(options);
         benchmark::DoNotOptimize(client.receive(registry, packets.front()));
         state.ResumeTiming();
 
         benchmark::DoNotOptimize(client.tick(
             registry,
-            static_cast<double>(backlog_frames) * client.options().fixed_dt_seconds));
+            static_cast<double>(backlog_frames) * client.options().clock.fixed_dt_seconds));
     }
 
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(cap_frames));
@@ -441,12 +433,12 @@ void BM_ClientInputRecordAndDrain(benchmark::State& state) {
         kage::sync::set_client_input_component<DeltaPosition>(registry);
         const ecs::Entity owned = registry.create();
         kage::sync::set_owner(registry, owned, 1);
-        kage::sync::ReplicationClient client;
+        kage::sync::ReplicationClient client(registry);
         state.ResumeTiming();
 
         for (int frame = 0; frame < frame_count; ++frame) {
             benchmark::DoNotOptimize(client.set_input(registry, DeltaPosition{frame, frame + 1}));
-            benchmark::DoNotOptimize(client.tick(registry, client.options().fixed_dt_seconds));
+            benchmark::DoNotOptimize(client.tick(registry, client.fixed_dt_seconds()));
         }
         std::vector<ecs::BitBuffer> packets = client.drain_packets();
         benchmark::DoNotOptimize(packets.size());

@@ -27,7 +27,7 @@ TEST_CASE("fractional tick sampling samples fractional frames without mutating E
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
 
@@ -40,13 +40,12 @@ TEST_CASE("fractional tick sampling samples fractional frames without mutating E
         "SmoothActor",
         {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}});
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-        1200,
-        kage::sync::ReplicationClientMode::BufferedInterpolation,
-        1,
-        8});
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, kage::sync::ReplicationClientOptions{
+        kage::sync::ReplicationClientNetworkOptions{1200},
+        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::BufferedInterpolation},
+        kage::sync::ReplicationClientBufferedOptions{1}}));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(client.receive(client_registry, packets.back()));
     for (const ecs::BitBuffer& ack : client.drain_ack_packets()) {
@@ -62,13 +61,13 @@ TEST_CASE("fractional tick sampling samples fractional frames without mutating E
         test_client_entity_network_id(1, update.records[0].network_id);
     REQUIRE(client.receive(client_registry, packets.back()));
 
-    REQUIRE(client.apply_frame(client_registry, 2));
+    REQUIRE(apply_estimated_server_frame(client, client_registry, 2));
     const ecs::Entity local = client.local_entity(client_entity_network_id);
     REQUIRE(local);
     REQUIRE(client_registry.get<SmoothPosition>(local).x == 0.0f);
 
     kage::sync::FractionalTickSampleBuffer display;
-    REQUIRE(client.sample_fractional_tick_frame(client_registry, 2.5, display));
+    REQUIRE(sample_estimated_server_frame(client, client_registry, 2.5, display));
     REQUIRE(display.entities.size() == 1);
     REQUIRE(display.entities[0].client_entity_network_id == client_entity_network_id);
     REQUIRE(display.entities[0].local_entity == local);
@@ -92,20 +91,19 @@ TEST_CASE("fractional tick sampling returns floor samples when the next frame is
         "SmoothActor",
         {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}});
     REQUIRE(client_archetype.value == 0);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-        1200,
-        kage::sync::ReplicationClientMode::BufferedInterpolation,
-        1,
-        8});
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, kage::sync::ReplicationClientOptions{
+        kage::sync::ReplicationClientNetworkOptions{1200},
+        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::BufferedInterpolation},
+        kage::sync::ReplicationClientBufferedOptions{1}}));
     const ecs::Entity server_entity{42};
     REQUIRE(client.receive(
         client_registry,
         make_position_packet(1, {{server_entity, Position{7.0f, 3.0f}}})));
 
     kage::sync::FractionalTickSampleBuffer display;
-    REQUIRE(client.sample_fractional_tick_frame(client_registry, 2.75, display));
+    REQUIRE(sample_estimated_server_frame(client, client_registry, 2.75, display));
     REQUIRE(display.entities.size() == 1);
 
     SmoothPosition sampled;
@@ -123,20 +121,19 @@ TEST_CASE("fractional tick sampling omits untagged components from samples") {
         "SmoothActor",
         {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}});
     REQUIRE(client_archetype.value == 0);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-        1200,
-        kage::sync::ReplicationClientMode::BufferedInterpolation,
-        1,
-        8});
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, kage::sync::ReplicationClientOptions{
+        kage::sync::ReplicationClientNetworkOptions{1200},
+        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::BufferedInterpolation},
+        kage::sync::ReplicationClientBufferedOptions{1}}));
     const ecs::Entity server_entity{42};
     REQUIRE(client.receive(
         client_registry,
         make_position_packet(1, {{server_entity, Position{7.0f, 3.0f}}})));
 
     kage::sync::FractionalTickSampleBuffer display;
-    REQUIRE(client.sample_fractional_tick_frame(client_registry, 2.0, display));
+    REQUIRE(sample_estimated_server_frame(client, client_registry, 2.0, display));
     REQUIRE(display.entities.empty());
 }
 
@@ -168,7 +165,7 @@ TEST_CASE("fractional tick samples throw for non-sampled components instead of f
     server_options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& packet) {
         packets.push_back(packet);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
@@ -180,18 +177,17 @@ TEST_CASE("fractional tick samples throw for non-sampled components instead of f
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = define_actor(client_registry, true);
     REQUIRE(client_archetype == server_archetype);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-        1200,
-        kage::sync::ReplicationClientMode::BufferedInterpolation,
-        1,
-        8});
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, kage::sync::ReplicationClientOptions{
+        kage::sync::ReplicationClientNetworkOptions{1200},
+        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::BufferedInterpolation},
+        kage::sync::ReplicationClientBufferedOptions{1}}));
     REQUIRE(client.receive(client_registry, packets[0]));
     REQUIRE(client.receive(client_registry, packets[1]));
 
     kage::sync::FractionalTickSampleBuffer display;
-    REQUIRE(client.sample_fractional_tick_frame(client_registry, 2.5, display));
+    REQUIRE(sample_estimated_server_frame(client, client_registry, 2.5, display));
     REQUIRE(display.entities.size() == 1);
 
     SmoothPosition sampled_position;
@@ -200,7 +196,7 @@ TEST_CASE("fractional tick samples throw for non-sampled components instead of f
     REQUIRE(sampled_position.x == Catch::Approx(5.0f));
     REQUIRE_THROWS_AS(display.entities[0].try_get_sampled_value(client_registry, sampled_health), std::logic_error);
 
-    REQUIRE(client.sample_fractional_tick_frame(client_registry, 3.0, display));
+    REQUIRE(sample_estimated_server_frame(client, client_registry, 3.0, display));
     REQUIRE(display.entities.size() == 1);
     REQUIRE_THROWS_AS(display.entities[0].try_get_sampled_value(client_registry, sampled_health), std::logic_error);
 }
@@ -215,13 +211,12 @@ TEST_CASE("fractional tick sampling steps entity destroy at the floor frame") {
         "SmoothActor",
         {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}});
     REQUIRE(client_archetype.value == 0);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
-    kage::sync::ReplicationClient client(kage::sync::ReplicationClientOptions{
-        1200,
-        kage::sync::ReplicationClientMode::BufferedInterpolation,
-        1,
-        8});
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, kage::sync::ReplicationClientOptions{
+        kage::sync::ReplicationClientNetworkOptions{1200},
+        kage::sync::ReplicationClientEntityOptions{kage::sync::ReplicationClientMode::BufferedInterpolation},
+        kage::sync::ReplicationClientBufferedOptions{1}}));
     const ecs::Entity server_entity{42};
     REQUIRE(client.receive(
         client_registry,
@@ -229,10 +224,10 @@ TEST_CASE("fractional tick sampling steps entity destroy at the floor frame") {
     REQUIRE(client.receive(client_registry, make_destroy_packet(2, server_entity)));
 
     kage::sync::FractionalTickSampleBuffer display;
-    REQUIRE(client.sample_fractional_tick_frame(client_registry, 2.5, display));
+    REQUIRE(sample_estimated_server_frame(client, client_registry, 2.5, display));
     REQUIRE(display.entities.size() == 1);
 
-    REQUIRE(client.sample_fractional_tick_frame(client_registry, 3.0, display));
+    REQUIRE(sample_estimated_server_frame(client, client_registry, 3.0, display));
     REQUIRE(display.entities.empty());
 }
 
@@ -246,14 +241,13 @@ TEST_CASE("client-owned fractional tick frame holds instead of rewinding when bu
                 "SmoothActor",
                 {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}})
         .value == 0);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
     kage::sync::ReplicationClientOptions options;
-    options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
-    options.interpolation_buffer_frames = 1;
-    options.interpolation_buffer_capacity_frames = 8;
-    options.fixed_dt_seconds = 1.0;
-    kage::sync::ReplicationClient client(options);
+    options.entities.default_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    options.buffered.buffered_frame_lag = 1;
+    options.clock.fixed_dt_seconds = 1.0;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
     const ecs::Entity server_entity{42};
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{10.0f, 0.0f}}})));
@@ -265,14 +259,14 @@ TEST_CASE("client-owned fractional tick frame holds instead of rewinding when bu
     REQUIRE(before.entities.size() == 1);
     SmoothPosition sampled;
     REQUIRE(before.entities[0].try_get_sampled_value(client_registry, sampled));
-    REQUIRE(sampled.x == Catch::Approx(21.5f));
+    REQUIRE(sampled.x == Catch::Approx(20.0f));
 
-    REQUIRE(client.set_interpolation_buffer_frames(3));
+    REQUIRE(client.set_buffered_frame_lag(3));
     REQUIRE(client.tick(client_registry, 1.0 / 120.0));
     const kage::sync::FractionalTickSampleBuffer& after = client.fractional_tick_frame(client_registry);
     REQUIRE(after.entities.size() == 1);
     REQUIRE(after.entities[0].try_get_sampled_value(client_registry, sampled));
-    REQUIRE(sampled.x == Catch::Approx(21.5f));
+    REQUIRE(sampled.x == Catch::Approx(20.0f));
 }
 
 TEST_CASE("client-owned fractional tick frame returns the previous valid sample when target data is missing") {
@@ -285,14 +279,13 @@ TEST_CASE("client-owned fractional tick frame returns the previous valid sample 
                 "SmoothActor",
                 {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}})
         .value == 0);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
     kage::sync::ReplicationClientOptions options;
-    options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
-    options.interpolation_buffer_frames = 1;
-    options.interpolation_buffer_capacity_frames = 8;
-    options.fixed_dt_seconds = 1.0;
-    kage::sync::ReplicationClient client(options);
+    options.entities.default_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    options.buffered.buffered_frame_lag = 1;
+    options.clock.fixed_dt_seconds = 1.0;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
     const ecs::Entity server_entity{42};
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{10.0f, 0.0f}}})));
@@ -320,20 +313,19 @@ TEST_CASE("fractional tick sampling freezes buffered entities from latest state 
                 "SmoothActor",
                 {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}})
         .value == 0);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
     kage::sync::ReplicationClientOptions options;
-    options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
-    options.interpolation_buffer_frames = 1;
-    options.interpolation_buffer_capacity_frames = 8;
-    options.fixed_dt_seconds = 1.0;
-    kage::sync::ReplicationClient client(options);
+    options.entities.default_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    options.buffered.buffered_frame_lag = 1;
+    options.clock.fixed_dt_seconds = 1.0;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
     const ecs::Entity server_entity{42};
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{10.0f, 0.0f}}})));
 
     kage::sync::FractionalTickSampleBuffer display;
-    REQUIRE(client.sample_fractional_tick_frame(client_registry, 10.0, display));
+    REQUIRE(sample_estimated_server_frame(client, client_registry, 10.0, display));
     REQUIRE(display.entities.size() == 1);
     REQUIRE(display.entities[0].client_entity_network_id == test_client_entity_network_id(1, server_entity));
     REQUIRE(display.entities[0].frame == 1);
@@ -355,14 +347,13 @@ TEST_CASE("client-owned fractional tick frame does not freeze destroyed buffered
                 "SmoothActor",
                 {{client_position, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}})
         .value == 0);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
     kage::sync::ReplicationClientOptions options;
-    options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
-    options.interpolation_buffer_frames = 1;
-    options.interpolation_buffer_capacity_frames = 8;
-    options.fixed_dt_seconds = 1.0;
-    kage::sync::ReplicationClient client(options);
+    options.entities.default_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    options.buffered.buffered_frame_lag = 1;
+    options.clock.fixed_dt_seconds = 1.0;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
     const ecs::Entity server_entity{42};
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{10.0f, 0.0f}}})));
@@ -388,20 +379,19 @@ TEST_CASE("client-owned fractional tick frame exposes snap and buffered entities
                     {health, kage::sync::ReplicationAudience::All},
                 })
         .value == 0);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
     kage::sync::ReplicationClientOptions options;
-    options.default_entity_mode = kage::sync::ReplicationClientMode::Snap;
-    options.interpolation_buffer_frames = 1;
-    options.interpolation_buffer_capacity_frames = 8;
-    options.fixed_dt_seconds = 1.0;
-    options.entity_mode_selector = [](const kage::sync::ReplicatedEntityUpdateView& update) {
+    options.entities.default_mode = kage::sync::ReplicationClientMode::Snap;
+    options.buffered.buffered_frame_lag = 1;
+    options.clock.fixed_dt_seconds = 1.0;
+    options.entities.mode_selector = [](const kage::sync::ReplicatedEntityUpdateView& update) {
         return kage::sync::client_entity_network_id_wire_id(update.client_entity_network_id) ==
                 test_network_id(ecs::Entity{42})
             ? kage::sync::ReplicationClientMode::BufferedInterpolation
             : kage::sync::ReplicationClientMode::Snap;
     };
-    kage::sync::ReplicationClient client(options);
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{ecs::Entity{42}, Position{10.0f, 0.0f}}}, 3U)));
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{ecs::Entity{43}, Position{20.0f, 0.0f}}}, 3U)));
@@ -435,14 +425,13 @@ TEST_CASE("client-owned fractional tick frame keeps previous entities while comm
                 "SmoothActor",
                 {{smooth, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}})
         .value == 0);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
     kage::sync::ReplicationClientOptions options;
-    options.default_entity_mode = kage::sync::ReplicationClientMode::Snap;
-    options.interpolation_buffer_frames = 1;
-    options.interpolation_buffer_capacity_frames = 8;
-    options.fixed_dt_seconds = 1.0;
-    kage::sync::ReplicationClient client(options);
+    options.entities.default_mode = kage::sync::ReplicationClientMode::Snap;
+    options.buffered.buffered_frame_lag = 1;
+    options.clock.fixed_dt_seconds = 1.0;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
 
     const ecs::Entity existing{42};
     const ecs::Entity incoming{43};
@@ -487,12 +476,12 @@ TEST_CASE("snap fractional tick error blending uses tick dt without mutating ECS
                 "SmoothActor",
                 {{smooth, kage::sync::ReplicationAudience::All}})
         .value == 0);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
     kage::sync::ReplicationClientOptions options;
-    options.default_entity_mode = kage::sync::ReplicationClientMode::Snap;
-    options.fixed_dt_seconds = 1.0;
-    kage::sync::ReplicationClient client(options);
+    options.entities.default_mode = kage::sync::ReplicationClientMode::Snap;
+    options.clock.fixed_dt_seconds = 1.0;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
     const ecs::Entity server_entity{42};
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{0.0f, 0.0f}}})));
@@ -531,12 +520,12 @@ TEST_CASE("snap fractional tick error blending clears after the accumulated tick
                 "SmoothActor",
                 {{smooth, kage::sync::ReplicationAudience::All}})
         .value == 0);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
     kage::sync::ReplicationClientOptions options;
-    options.default_entity_mode = kage::sync::ReplicationClientMode::Snap;
-    options.fixed_dt_seconds = 1.0;
-    kage::sync::ReplicationClient client(options);
+    options.entities.default_mode = kage::sync::ReplicationClientMode::Snap;
+    options.clock.fixed_dt_seconds = 1.0;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
     const ecs::Entity server_entity{42};
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{0.0f, 0.0f}}})));
@@ -554,12 +543,12 @@ TEST_CASE("fractional tick samples throw for unmarked snap components") {
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = kage_sync_tests::define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == 0);
-    kage::sync::configure_client(client_registry, 1);
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
 
     kage::sync::ReplicationClientOptions options;
-    options.default_entity_mode = kage::sync::ReplicationClientMode::Snap;
-    options.fixed_dt_seconds = 1.0;
-    kage::sync::ReplicationClient client(options);
+    options.entities.default_mode = kage::sync::ReplicationClientMode::Snap;
+    options.clock.fixed_dt_seconds = 1.0;
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, options));
     const ecs::Entity server_entity{42};
 
     REQUIRE(client.receive(client_registry, make_position_packet(1, {{server_entity, Position{0.0f, 0.0f}}})));
@@ -581,11 +570,11 @@ TEST_CASE("predicted client error blends fractional-tick-sampled resim correctio
         "PredictedActor",
         {{position_component, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}});
     REQUIRE(archetype.value == 0);
-    kage::sync::configure_client(registry, 1);
+    kage_sync_tests::configure_test_client_registry(registry, 1);
     REQUIRE(kage::sync::set_fractional_tick_sampled<PredictedPosition>(registry));
     kage::sync::ReplicationClientOptions options;
-    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
-    kage::sync::ReplicationClient client(options);
+    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
+    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
     client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
         position.x += 1.0f;
     });
@@ -593,11 +582,11 @@ TEST_CASE("predicted client error blends fractional-tick-sampled resim correctio
     const ecs::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
     const ecs::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
-    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
     REQUIRE(registry.get<PredictedPosition>(local).x == 1.0f);
 
     REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
-    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
     REQUIRE(registry.get<PredictedPosition>(local).x == 3.0f);
 
     const kage::sync::FractionalTickSampleBuffer& display = client.fractional_tick_frame(registry);
@@ -616,20 +605,20 @@ TEST_CASE("predicted client fractional tick samples prediction history between f
         "PredictedActor",
         {{position_component, kage::sync::ReplicationAudience::All, kage::sync::ComponentInterpolation::Interpolate}});
     REQUIRE(archetype.value == 0);
-    kage::sync::configure_client(registry, 1);
+    kage_sync_tests::configure_test_client_registry(registry, 1);
     REQUIRE(kage::sync::set_fractional_tick_sampled<PredictedPosition>(registry));
     kage::sync::ReplicationClientOptions options;
-    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
-    kage::sync::ReplicationClient client(options);
+    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
+    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
     client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
         position.x += 1.0f;
     });
 
     const ecs::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
-    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
-    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds));
-    REQUIRE(client.tick(registry, client.options().fixed_dt_seconds * 0.5));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds() * 0.5));
 
     const kage::sync::FractionalTickSampleBuffer& display = client.fractional_tick_frame(registry);
     REQUIRE(display.entities.size() == 1);
@@ -651,19 +640,20 @@ TEST_CASE("predicted client fractional tick sample lags one fixed tick at tick b
         "PredictedActor",
         {{position_component, kage::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
-    kage::sync::configure_client(registry, 1);
+    kage_sync_tests::configure_test_client_registry(registry, 1);
     REQUIRE(kage::sync::set_fractional_tick_sampled<PredictedPosition>(registry));
     kage::sync::ReplicationClientOptions options;
-    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
-    kage::sync::ReplicationClient client(options);
+    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
+    options.prediction.auto_lead_frames = false;
+    options.prediction.lead_frames = 0;
+    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
     client.simulation_job<PredictedPosition>(registry, 0).each([](ecs::Entity, PredictedPosition& position) {
         position.x += 1.0f;
     });
 
     const ecs::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
-    REQUIRE(client.predict_tick(registry, 2));
-    REQUIRE(client.predict_tick(registry, 3));
+    tick_client_fixed_frames(client, registry, 2);
 
     const kage::sync::FractionalTickSampleBuffer& display = client.fractional_tick_frame(registry);
     REQUIRE(display.entities.size() == 1);
@@ -683,11 +673,11 @@ TEST_CASE("predicted client fractional tick sample emits during single-sample wa
         "PredictedActor",
         {{position_component, kage::sync::ReplicationAudience::All}});
     REQUIRE(archetype.value == 0);
-    kage::sync::configure_client(registry, 1);
+    kage_sync_tests::configure_test_client_registry(registry, 1);
     REQUIRE(kage::sync::set_fractional_tick_sampled<PredictedPosition>(registry));
     kage::sync::ReplicationClientOptions options;
-    options.default_entity_mode = kage::sync::ReplicationClientMode::Predict;
-    kage::sync::ReplicationClient client(options);
+    options.entities.default_mode = kage::sync::ReplicationClientMode::Predict;
+    kage::sync::ReplicationClient client(registry, kage_sync_tests::make_test_client_options(registry, options));
 
     const ecs::Entity server_entity = registry.create();
     REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{4.0f, 0.0f})));

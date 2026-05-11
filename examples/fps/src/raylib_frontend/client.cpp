@@ -59,17 +59,16 @@ void run_client(const AppConfig& config) {
     kage::sync::configure_client(registry, 1);
 
     kage::sync::ReplicationClientOptions client_options;
-    client_options.connect_token = "fps";
-    client_options.default_entity_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
-    client_options.fixed_dt_seconds = fixed_dt;
-    client_options.rollback_policy = kage::sync::ReplicationRollbackPolicy::OnlyAffected;
-    client_options.interpolation_buffer_frames = 2;
-    client_options.interpolation_buffer_capacity_frames = 64;
-    client_options.entity_mode_selector = FpsEntityModeSelector{&registry};
+    client_options.session.connect_token = "fps";
+    client_options.entities.default_mode = kage::sync::ReplicationClientMode::BufferedInterpolation;
+    client_options.clock.fixed_dt_seconds = fixed_dt;
+    client_options.prediction.rollback_policy = kage::sync::ReplicationRollbackPolicy::OnlyAffected;
+    client_options.buffered.buffered_frame_lag = 2;
+    client_options.entities.mode_selector = FpsEntityModeSelector{&registry};
 #ifdef KAGE_SYNC_ENABLE_TRACING
     client_options.trace = make_trace_options(config);
 #endif
-    kage::sync::ReplicationClient client(client_options);
+    kage::sync::ReplicationClient client(registry, client_options);
     register_game_jobs(registry, client);
     kage::sync::FractionalTickSampler client_display(client);
     std::unique_ptr<kage::sync::FractionalTickSampler> death_cam_display;
@@ -449,9 +448,9 @@ void run_client(const AppConfig& config) {
                 DrawText(
                     TextFormat(
                         "interp delay current %.2f  target %u  desired %u",
-                        client.continuous_interpolation_frames_behind(),
-                        timing.target_interpolation_buffer_frames,
-                        timing.desired_interpolation_buffer_frames),
+                        client.continuous_buffered_frames_behind(),
+                        timing.target_buffered_frame_lag,
+                        timing.desired_buffered_frame_lag),
                     stats_x + 12,
                     100,
                     14,
@@ -468,8 +467,8 @@ void run_client(const AppConfig& config) {
                 DrawText(
                     TextFormat(
                         "buffer current %u  capacity %zu",
-                        client.current_interpolation_buffer_frames(),
-                        client.options().interpolation_buffer_capacity_frames),
+                        client.current_buffered_frame_lag(),
+                        kage::sync::ReplicationClient::buffered_frame_capacity),
                     stats_x + 12,
                     144,
                     14,
@@ -480,7 +479,7 @@ void run_client(const AppConfig& config) {
                         client.continuous_prediction_frames_ahead(),
                         timing.target_prediction_lead_frames,
                         timing.measured_prediction_lead_frames,
-                        timing.prediction_time_dilation),
+                        timing.predicted_time_dilation),
                     stats_x + 12,
                     164,
                     14,

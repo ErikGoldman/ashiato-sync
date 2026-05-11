@@ -2,6 +2,7 @@
 
 #include "kage/sync/client_clock.hpp"
 #include "kage/sync/components.hpp"
+#include "kage/sync/logging.hpp"
 
 #include <array>
 #include <cstddef>
@@ -22,12 +23,26 @@ class KTraceDirectoryWriter;
 class FractionalTickSampler;
 enum class SyncTraceEventType : std::uint8_t;
 
+namespace detail {
+class BitReader;
+struct FrameDataView;
+}  // namespace detail
+
 namespace client_detail {
 class ClientAckQueue;
+class ClientBufferedRuntime;
+class ClientCueRuntime;
+class ClientEntityStore;
+class ClientPredictionRuntime;
+class ClientSessionTransport;
+class ClientTimingStatsCalculator;
+class ClientDisplaySampler;
+class ClientUpdateRuntime;
 struct EntityState;
 struct EntityCue;
 struct EntityPlayedCue;
 struct EntityBufferedFrame;
+struct EntityFrameView;
 struct OriginalPredictionCapture;
 struct WireNetworkIdState;
 struct InputFrame;
@@ -58,6 +73,7 @@ struct ReplicatedEntityUpdateView {
 
 private:
     friend class ReplicationClient;
+    friend class client_detail::ClientUpdateRuntime;
 
     const std::vector<ReplicatedComponentUpdate>* components = nullptr;
 };
@@ -79,6 +95,7 @@ struct FractionalTickSample {
 private:
     friend class ReplicationClient;
     friend class FractionalTickSampler;
+    friend class client_detail::ClientDisplaySampler;
 
     std::vector<ReplicatedComponentUpdate> components_;
 };
@@ -129,44 +146,67 @@ private:
     ClientStatus status_;
 };
 
-struct ReplicationClientOptions {
+struct ReplicationClientNetworkOptions {
     std::size_t mtu_bytes = 1200;
-    ReplicationClientMode default_entity_mode = ReplicationClientMode::Snap;
-    SyncFrame interpolation_buffer_frames = 2;
-    std::size_t interpolation_buffer_capacity_frames = 64;
-    bool auto_interpolation_buffer_frames = true;
-    SyncFrame auto_interpolation_min_frames = 2;
-    float auto_interpolation_jitter_multiplier = 2.0f;
-    float auto_interpolation_smoothing = 0.1f;
-    float auto_interpolation_time_dilation_min = 0.95f;
-    float auto_interpolation_time_dilation_max = 1.05f;
-    float auto_interpolation_time_dilation_gain = 0.05f;
-    EntityModeSelector entity_mode_selector;
-    double fixed_dt_seconds = 1.0 / 60.0;
     protocol::Descriptor protocol = protocol::default_descriptor;
+};
+
+struct ReplicationClientEntityOptions {
+    ReplicationClientMode default_mode = ReplicationClientMode::Snap;
+    EntityModeSelector mode_selector;
+};
+
+struct ReplicationClientBufferedOptions {
+    SyncFrame buffered_frame_lag = 2;
+    bool auto_buffered_frame_lag = true;
+    SyncFrame auto_buffered_frame_lag_min = 2;
+    float auto_buffered_frame_lag_jitter_multiplier = 2.0f;
+    float auto_buffered_frame_lag_smoothing = 0.1f;
+    float auto_buffered_time_dilation_min = 0.95f;
+    float auto_buffered_time_dilation_max = 1.05f;
+    float auto_buffered_time_dilation_gain = 0.05f;
+};
+
+struct ReplicationClientPredictionOptions {
+    ReplicationRollbackPolicy rollback_policy = ReplicationRollbackPolicy::All;
+    std::size_t input_buffer_capacity_frames = 64;
+    bool auto_lead_frames = true;
+    SyncFrame lead_frames = 2;
+    SyncFrame auto_min_frames = 1;
+    SyncFrame auto_safety_frames = 1;
+    float auto_jitter_multiplier = 2.0f;
+    float auto_predicted_time_dilation_min = 0.95f;
+    float auto_predicted_time_dilation_max = 1.10f;
+    float auto_predicted_time_dilation_gain = 0.05f;
+};
+
+struct ReplicationClientSessionOptions {
+    ClientId local_client = invalid_client_id;
     std::string connect_token;
     double connect_resend_interval_seconds = 0.25;
     double ping_interval_seconds = 3.0;
-    ReplicationRollbackPolicy rollback_policy = ReplicationRollbackPolicy::All;
-    std::size_t prediction_buffer_capacity_frames = 64;
-    std::size_t input_buffer_capacity_frames = 64;
-    bool auto_prediction_lead_frames = true;
-    SyncFrame prediction_lead_frames = 2;
-    SyncFrame auto_prediction_min_frames = 1;
-    SyncFrame auto_prediction_safety_frames = 1;
-    float auto_prediction_jitter_multiplier = 2.0f;
-    float auto_prediction_time_dilation_min = 0.95f;
-    float auto_prediction_time_dilation_max = 1.10f;
-    float auto_prediction_time_dilation_gain = 0.05f;
-    std::uint32_t auto_timing_warmup_samples = 3;
-    bool auto_timing_fast_recovery = true;
-    SyncFrame auto_timing_fast_recovery_min_frame_gap = 4;
-    bool adaptive_ping_interval = true;
     double adaptive_ping_interval_seconds = 0.25;
     std::uint32_t adaptive_ping_stable_samples = 4;
     float adaptive_ping_stable_threshold_frames = 0.5f;
     float adaptive_ping_jump_threshold_frames = 3.0f;
+};
+
+struct ReplicationClientClockOptions {
+    double fixed_dt_seconds = 1.0 / 60.0;
+    std::uint32_t auto_timing_warmup_samples = 3;
+    bool auto_timing_fast_recovery = true;
+    SyncFrame auto_timing_fast_recovery_min_frame_gap = 4;
     std::uint32_t max_fixed_steps_per_tick = 0;
+};
+
+struct ReplicationClientOptions {
+    ReplicationClientNetworkOptions network;
+    ReplicationClientEntityOptions entities;
+    ReplicationClientBufferedOptions buffered;
+    ReplicationClientPredictionOptions prediction;
+    ReplicationClientSessionOptions session;
+    ReplicationClientClockOptions clock;
+    LoggingOptions logging;
 #ifdef KAGE_SYNC_ENABLE_TRACING
     TraceOptions trace;
 #endif
@@ -236,7 +276,7 @@ private:
 
 namespace detail {
 
-template <typename JobBuilder, bool AddNoResimTag>
+template <typename JobBuilder, bool IsCosmeticJob>
 class ClientJobBuilder {
 public:
     ClientJobBuilder(ecs::Registry& registry, JobBuilder builder, std::vector<ecs::Entity>& jobs)
@@ -260,7 +300,7 @@ public:
     template <typename Fn>
     ecs::Entity each(Fn&& fn) {
         const ecs::Entity job = builder_.each(std::forward<Fn>(fn));
-        if constexpr (AddNoResimTag) {
+        if constexpr (IsCosmeticJob) {
             registry_->template add<NoResim>(job);
         }
         jobs_->push_back(job);
@@ -269,7 +309,7 @@ public:
 
     template <typename... AccessComponents>
     auto access_other_entities() const {
-        return ClientJobBuilder<decltype(builder_.template access_other_entities<AccessComponents...>()), AddNoResimTag>(
+        return ClientJobBuilder<decltype(builder_.template access_other_entities<AccessComponents...>()), IsCosmeticJob>(
             *registry_,
             builder_.template access_other_entities<AccessComponents...>(),
             *jobs_);
@@ -277,7 +317,7 @@ public:
 
     template <typename... OptionalComponents>
     auto optional() const {
-        return ClientJobBuilder<decltype(builder_.template optional<OptionalComponents...>()), AddNoResimTag>(
+        return ClientJobBuilder<decltype(builder_.template optional<OptionalComponents...>()), IsCosmeticJob>(
             *registry_,
             builder_.template optional<OptionalComponents...>(),
             *jobs_);
@@ -285,7 +325,7 @@ public:
 
     template <typename... StructuralComponents>
     auto structural() const {
-        return ClientJobBuilder<decltype(builder_.template structural<StructuralComponents...>()), AddNoResimTag>(
+        return ClientJobBuilder<decltype(builder_.template structural<StructuralComponents...>()), IsCosmeticJob>(
             *registry_,
             builder_.template structural<StructuralComponents...>(),
             *jobs_);
@@ -293,7 +333,7 @@ public:
 
     template <typename... Tags>
     auto with_tags() const {
-        return ClientJobBuilder<decltype(builder_.template with_tags<Tags...>()), AddNoResimTag>(
+        return ClientJobBuilder<decltype(builder_.template with_tags<Tags...>()), IsCosmeticJob>(
             *registry_,
             builder_.template with_tags<Tags...>(),
             *jobs_);
@@ -301,7 +341,7 @@ public:
 
     template <typename... Tags>
     auto without_tags() const {
-        return ClientJobBuilder<decltype(builder_.template without_tags<Tags...>()), AddNoResimTag>(
+        return ClientJobBuilder<decltype(builder_.template without_tags<Tags...>()), IsCosmeticJob>(
             *registry_,
             builder_.template without_tags<Tags...>(),
             *jobs_);
@@ -337,7 +377,18 @@ private:
 
 class ReplicationClient {
 public:
-    explicit ReplicationClient(ReplicationClientOptions options = {});
+    struct ObservabilityStats {
+        std::uint64_t server_packet_warnings = 0;
+        std::uint64_t suppressed_server_packet_warnings = 0;
+        std::uint64_t client_errors = 0;
+        std::uint64_t client_connects_accepted = 0;
+        std::uint64_t client_connects_rejected = 0;
+    };
+
+    static constexpr std::size_t buffered_frame_capacity = 64;
+    static constexpr std::size_t prediction_frame_capacity = 64;
+
+    explicit ReplicationClient(ecs::Registry& registry, ReplicationClientOptions options = {});
     ~ReplicationClient();
     ReplicationClient(const ReplicationClient& other) = delete;
     ReplicationClient& operator=(const ReplicationClient& other) = delete;
@@ -347,6 +398,14 @@ public:
     const ReplicationClientOptions& options() const noexcept {
         return options_;
     }
+    double fixed_dt_seconds() const noexcept {
+        return fixed_dt_seconds_;
+    }
+    void set_logger(std::shared_ptr<spdlog::logger> logger);
+    void set_log_level(LogLevel level);
+    LogLevel log_level() const noexcept {
+        return options_.logging.level;
+    }
 #ifdef KAGE_SYNC_ENABLE_TRACING
     void set_tracer(SyncTracer* tracer) noexcept;
     void set_trace_options(TraceOptions options);
@@ -355,14 +414,16 @@ public:
 #endif
 
     bool set_default_entity_mode(ReplicationClientMode mode) noexcept;
-    void set_entity_mode(ecs::Registry& registry, ClientEntityNetworkId network_id, ReplicationClientMode mode);
-    bool has_entity(ClientEntityNetworkId network_id) const noexcept;
-    ReplicationClientMode entity_mode(ClientEntityNetworkId network_id) const noexcept;
-    bool set_interpolation_buffer_frames(SyncFrame frames) noexcept;
-    SyncFrame current_interpolation_buffer_frames() const noexcept;
+    void set_entity_mode(
+        ecs::Registry& registry,
+        ClientEntityNetworkId client_entity_network_id,
+        ReplicationClientMode mode);
+    bool has_entity(ClientEntityNetworkId client_entity_network_id) const noexcept;
+    ReplicationClientMode entity_mode(ClientEntityNetworkId client_entity_network_id) const noexcept;
+    bool set_buffered_frame_lag(SyncFrame frames) noexcept;
+    SyncFrame current_buffered_frame_lag() const noexcept;
     template <typename T>
     bool set_input(ecs::Registry& registry, const T& input) {
-        register_components(registry);
         const ecs::Entity component = registry.template component<T>();
         const SyncSettings& settings = registry.template get<SyncSettings>();
         if (settings.input_component != component) {
@@ -370,87 +431,65 @@ public:
         }
         return set_input_bytes(registry, component, &input);
     }
-    bool tick(ecs::Registry& registry, double dt_seconds);
+    bool tick(ecs::Registry& registry, double dt_seconds, ecs::RunJobsOptions prediction_options = {});
     void set_packet_sender(std::function<void(const ecs::BitBuffer&)> sender);
     void receive_packet(ecs::BitBuffer packet);
     bool receive(ecs::Registry& registry, ecs::BitBuffer packet);
-    bool receive(ecs::Registry& registry, ecs::BitBuffer packet, SyncFrame client_frame);
-    bool receive(
-        ecs::Registry& registry,
-        ecs::BitBuffer packet,
-        SyncFrame receive_frame,
-        SyncFrame playback_frame);
-    bool tick(ecs::Registry& registry, double dt_seconds, ecs::RunJobsOptions prediction_options);
-    bool predict_tick(ecs::Registry& registry, SyncFrame frame, ecs::RunJobsOptions options = {});
     template <typename... Components>
     auto cosmetic_job(ecs::Registry& registry, int order) {
-        register_components(registry);
         auto builder = registry.template job<Components...>(order);
         return detail::ClientJobBuilder<decltype(builder), true>(registry, std::move(builder), cosmetic_jobs_);
     }
     template <typename... Components>
     auto simulation_job(ecs::Registry& registry, int order) {
-        register_components(registry);
         auto builder = registry.template job<Components...>(order).template without_tags<const NoSimulate>();
         return detail::ClientJobBuilder<decltype(builder), false>(registry, std::move(builder), simulation_jobs_);
     }
-    bool apply_frame(ecs::Registry& registry, SyncFrame client_frame);
-    bool sample_fractional_tick_target_frame(
-        const ecs::Registry& registry,
-        double target_frame,
-        FractionalTickSampleBuffer& out) const;
+    bool apply_frame(ecs::Registry& registry, SyncFrame buffered_frame);
     bool sample_fractional_tick_frame(
         const ecs::Registry& registry,
-        double client_frame,
+        double target_frame,
         FractionalTickSampleBuffer& out) const;
     const FractionalTickSampleBuffer& fractional_tick_frame(const ecs::Registry& registry);
     std::vector<ecs::BitBuffer> drain_packets();
     std::vector<ecs::BitBuffer> drain_ack_packets();
     std::size_t pending_ack_count() const noexcept;
-    bool is_alive_network_id(ClientEntityNetworkId network_id) const noexcept;
-    ecs::Entity local_entity(ClientEntityNetworkId network_id) const;
+    bool is_alive_client_entity_network_id(ClientEntityNetworkId client_entity_network_id) const noexcept;
+    ecs::Entity local_entity(ClientEntityNetworkId client_entity_network_id) const;
     EntityReferenceStatus resolve_entity_reference(EntityReference& reference) const noexcept;
     ClientId client_id() const noexcept {
         return client_id_;
     }
-    ReplicationClientConnectionState connection_state() const noexcept {
-        return connection_state_;
+    ReplicationClientConnectionState connection_state() const noexcept;
+    const std::string& connect_error() const noexcept;
+    double local_time_seconds() const noexcept {
+        return clock_.local_time_seconds();
     }
-    const std::string& connect_error() const noexcept {
-        return connect_error_;
+    SyncFrame buffered_frame() const noexcept {
+        return clock_.buffered_frame();
     }
-    SyncFrame receive_frame() const noexcept {
-        return clock_.receive_frame();
+    double continuous_buffered_frame() const noexcept {
+        return clock_.continuous_buffered_frame();
     }
-    double continuous_receive_frame() const noexcept {
-        return clock_.continuous_receive_frame();
+    SyncFrame predicted_frame() const noexcept {
+        return clock_.predicted_frame();
     }
-    SyncFrame playback_frame() const noexcept {
-        return clock_.playback_frame();
-    }
-    double continuous_playback_frame() const noexcept {
-        return clock_.continuous_playback_frame();
-    }
-    SyncFrame input_frame() const noexcept {
-        return clock_.input_frame();
-    }
-    double continuous_input_frame() const noexcept {
-        return clock_.continuous_input_frame();
+    double continuous_predicted_frame() const noexcept {
+        return clock_.continuous_predicted_frame();
     }
     double fractional_tick_target_frame() const noexcept {
         return clock_.display_target_frame();
     }
-    bool has_applied_buffered_frame() const noexcept {
-        return has_applied_buffered_frame_;
-    }
-    SyncFrame last_applied_buffered_frame() const noexcept {
-        return last_applied_buffered_frame_;
-    }
+    bool has_applied_buffered_frame() const noexcept;
+    SyncFrame last_applied_buffered_frame() const noexcept;
     double estimated_server_frame() const noexcept;
     double continuous_prediction_frames_ahead() const noexcept;
-    double continuous_interpolation_frames_behind() const noexcept;
+    double continuous_buffered_frames_behind() const noexcept;
     const ReplicationClientTimingStats& timing_stats() const noexcept {
         return clock_.stats();
+    }
+    ObservabilityStats observability_stats() const noexcept {
+        return observability_stats_;
     }
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     const ReplicationClientInterpolationDiagnostics& interpolation_diagnostics() const noexcept {
@@ -461,8 +500,20 @@ public:
     }
 #endif
 
+protected:
+    struct FrameHistoryCapacities {
+        std::size_t buffered = buffered_frame_capacity;
+        std::size_t predicted = prediction_frame_capacity;
+    };
+
+    ReplicationClient(ecs::Registry& registry, ReplicationClientOptions options, FrameHistoryCapacities capacities);
+
 private:
-    using ComponentBaseline = ReplicatedComponentUpdate;
+    friend class client_detail::ClientBufferedRuntime;
+    friend class client_detail::ClientCueRuntime;
+    friend class client_detail::ClientPredictionRuntime;
+    friend class client_detail::ClientUpdateRuntime;
+
     static constexpr std::size_t invalid_ack_index = std::numeric_limits<std::size_t>::max();
     static constexpr std::uint32_t invalid_entity_index = std::numeric_limits<std::uint32_t>::max();
 
@@ -471,80 +522,65 @@ private:
     using EntityPlayedCue = client_detail::EntityPlayedCue;
     using EntityBufferedFrame = client_detail::EntityBufferedFrame;
     using OriginalPredictionCapture = client_detail::OriginalPredictionCapture;
+    struct RegistryFrameApplyInfo;
+    struct ReceiveContext {
+        double local_time_seconds = 0.0;
+        double estimated_server_time_seconds = 0.0;
+        double estimated_server_frame = 0.0;
+        SyncFrame buffered_frame = 0;
+        double continuous_buffered_frame = 0.0;
+        double continuous_predicted_frame = 0.0;
+    };
 
-    EntityState* find_entity_state(ClientEntityNetworkId network_id) noexcept;
-    const EntityState* find_entity_state(ClientEntityNetworkId network_id) const noexcept;
-    EntityState* find_entity_state(std::uint32_t network_id) noexcept;
-    const EntityState* find_entity_state(std::uint32_t network_id) const noexcept;
+    EntityState* find_entity_state(ClientEntityNetworkId client_entity_network_id) noexcept;
+    const EntityState* find_entity_state(ClientEntityNetworkId client_entity_network_id) const noexcept;
+    EntityState* find_entity_state_by_wire_id(std::uint32_t wire_network_id) noexcept;
+    const EntityState* find_entity_state_by_wire_id(std::uint32_t wire_network_id) const noexcept;
     EntityState* find_entity_state_for_local(ecs::Entity local) noexcept;
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    void register_local_entity_index(const EntityState& state);
+    void unregister_local_entity_index(const EntityState& state);
+#endif
     EntityState* ensure_entity_state(
         ecs::Registry& registry,
-        ClientEntityNetworkId network_id,
+        ClientEntityNetworkId client_entity_network_id,
         std::uint32_t wire_network_id);
     void erase_entity_state(ecs::Registry& registry, std::uint32_t entity_index, bool destroy_local);
-    void set_buffered_membership(std::uint32_t entity_index, bool active);
-    void set_snap_error_membership(std::uint32_t entity_index, bool active);
-    void set_prediction_rollback_membership(std::uint32_t entity_index, bool active);
     void sync_entity_memberships(EntityState& state);
     bool destroy_tombstone_blocks(std::uint32_t wire_network_id, SyncFrame frame) const;
     void record_destroy_tombstone(std::uint32_t wire_network_id, SyncFrame frame);
-    void compact_destroy_tombstone_ages();
     const QuantizedFrameData* find_baseline(const EntityState& state, SyncFrame frame) const noexcept;
-    bool apply_update(
-        ecs::Registry& registry,
-        ecs::BitBuffer& packet,
-        std::uint32_t packet_id,
-        SyncFrame frame,
-        std::uint16_t record_count);
-    bool apply_upsert(
-        ecs::Registry& registry,
-        const SyncSettings& settings,
-        SyncFrame frame,
-        std::uint32_t network_id,
-        ecs::BitBuffer& packet);
-    bool read_cues(ecs::BitBuffer& packet, std::vector<EntityCue>& out);
-    bool play_cue(
-        ecs::Registry& registry,
-        const SyncSettings& settings,
-        EntityState& state,
-        const EntityCue& cue,
-        float late_seconds,
-        bool confirmed);
-    bool rollback_played_cue(
-        ecs::Registry& registry,
-        const SyncSettings& settings,
-        EntityState& state,
-        const EntityPlayedCue& cue,
-        const char* rollback_reason);
-    void play_snap_cues(
-        ecs::Registry& registry,
-        const SyncSettings& settings,
-        EntityState& state,
-        const std::vector<EntityCue>& cues);
-    void store_buffered_cues(EntityState& state, SyncFrame frame, const std::vector<EntityCue>& cues);
-    void reconcile_authoritative_predicted_cues(
-        ecs::Registry& registry,
-        const SyncSettings& settings,
-        EntityState& state,
-        const std::vector<EntityCue>& cues,
-        SyncFrame frame);
-    void drain_emitted_prediction_cues(
-        ecs::Registry& registry,
-        const SyncSettings& settings,
-        SyncFrame frame,
-        bool play);
-    void begin_cue_resimulation();
-    bool finish_cue_resimulation(ecs::Registry& registry, const SyncSettings& settings);
-    bool apply_destroy(ecs::Registry& registry, SyncFrame frame, std::uint32_t network_id);
-    bool apply_buffered_upsert(
-        ecs::Registry& registry,
-        const SyncSettings& settings,
-        SyncFrame frame,
-        ClientEntityNetworkId network_id,
-        SyncArchetypeId archetype,
-        QuantizedFrameData& decoded);
-    bool apply_buffered_destroy(ecs::Registry& registry, SyncFrame frame, ClientEntityNetworkId network_id);
     bool validate_buffered_archetype(const SyncSettings& settings, SyncArchetypeId archetype) const;
+    bool ensure_local_entity(ecs::Registry& registry, EntityState& state);
+    std::uint64_t registry_tag_mask(
+        const ecs::Registry& registry,
+        ecs::Entity entity,
+        const SyncArchetype& archetype) const;
+    void trace_applied_tag_delta(
+        const SyncArchetype& archetype,
+        const EntityState& state,
+        SyncFrame frame,
+        std::uint64_t previous_tag_mask,
+        std::uint64_t next_tag_mask);
+    bool apply_registry_tags(
+        ecs::Registry& registry,
+        const SyncArchetype& archetype,
+        EntityState& state,
+        SyncFrame frame,
+        std::uint64_t tag_mask,
+        bool verify_tag_apply);
+    bool remove_missing_registry_components(
+        ecs::Registry& registry,
+        const SyncArchetype& archetype,
+        const EntityState& state,
+        SyncFrame frame,
+        std::uint64_t previous_present_mask,
+        std::uint64_t next_present_mask);
+    bool apply_registry_frame(
+        ecs::Registry& registry,
+        const SyncArchetype& archetype,
+        EntityState& state,
+        const RegistryFrameApplyInfo& input);
     bool fill_buffered_frames(
         const SyncSettings& settings,
         EntityState& state,
@@ -564,7 +600,7 @@ private:
         ecs::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
-        const EntityBufferedFrame& sample);
+        const client_detail::EntityFrameView& sample);
     bool apply_frame_data(
         ecs::Registry& registry,
         const SyncSettings& settings,
@@ -579,75 +615,79 @@ private:
         const QuantizedFrameData& decoded,
         bool full);
     bool validate_predicted_archetype(const SyncSettings& settings, SyncArchetypeId archetype) const;
-    bool apply_predicted_upsert(
-        ecs::Registry& registry,
-        const SyncSettings& settings,
-        SyncFrame frame,
-        ClientEntityNetworkId network_id,
-        SyncArchetypeId archetype,
-        QuantizedFrameData& authoritative,
-        bool full);
-    bool apply_predicted_destroy(ecs::Registry& registry, SyncFrame frame, ClientEntityNetworkId network_id);
     bool quantize_predicted_entity(
         const ecs::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
         SyncFrame frame);
-    bool run_prediction_frame(ecs::Registry& registry, SyncFrame frame, ecs::RunJobsOptions options);
+    void apply_buffered_frames_to_ecs(
+        ecs::Registry& registry,
+        const ReplicationClientClock::FrameRange& frames);
+    bool run_predicted_frames(
+        ecs::Registry& registry,
+        const ReplicationClientClock::FrameRange& frames,
+        ecs::RunJobsOptions options);
+#ifdef KAGE_SYNC_ENABLE_TRACING
+    void trace_local_time_frames(ecs::Registry& registry, const ReplicationClientClock::FrameRange& frames);
+#endif
     bool compare_predicted_frame(
         const SyncSettings& settings,
         EntityState& state,
         SyncFrame frame,
         const QuantizedFrameData& authoritative) const;
-    void refresh_pending_prediction_rollback_frame() noexcept;
-    void queue_prediction_rollback(EntityState& state, SyncFrame frame);
-    bool apply_pending_prediction_rollback(ecs::Registry& registry, ecs::RunJobsOptions options);
-    bool resimulate_all_predicted(ecs::Registry& registry, SyncFrame begin_frame, SyncFrame current_frame, ecs::RunJobsOptions options);
-    bool resimulate_affected_predicted(ecs::Registry& registry, SyncFrame begin_frame, SyncFrame current_frame, ecs::RunJobsOptions options);
     const ecs::JobGraph& resim_job_graph(ecs::Registry& registry);
-    void collect_resimulated_prediction_entities(std::vector<std::uint32_t>& out) const;
-    void capture_original_current_predictions(
-        SyncFrame current_frame,
-        const std::vector<std::uint32_t>& entity_indices,
-        std::vector<OriginalPredictionCapture>& out) const;
-    bool blend_resim_errors(
-        const ecs::Registry& registry,
-        const SyncSettings& settings,
-        SyncFrame current_frame,
-        const std::vector<OriginalPredictionCapture>& original);
     bool apply_latest_snap(ecs::Registry& registry, const SyncSettings& settings, EntityState& state);
     bool switch_entity_mode(
         ecs::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
         ReplicationClientMode mode);
+    enum class BaselineUpdate {
+        KeepExisting,
+        ReplaceAndApplyMask
+    };
+    void mark_mode_auto_selected(EntityState& state, ReplicationClientMode mode) noexcept;
+    void mark_mode_user_selected(EntityState& state, ReplicationClientMode mode) noexcept;
+    void reset_absent_entity_state(EntityState& state, SyncArchetypeId archetype) noexcept;
+    void record_authoritative_present(
+        EntityState& state,
+        SyncFrame frame,
+        SyncArchetypeId archetype,
+        QuantizedFrameData baseline,
+        BaselineUpdate baseline_update);
+    void record_authoritative_absent(EntityState& state, SyncFrame frame);
+    bool transition_to_snap(ecs::Registry& registry, const SyncSettings& settings, EntityState& state);
+    bool transition_to_buffered(const SyncSettings& settings, EntityState& state);
+    bool transition_to_predict(ecs::Registry& registry, const SyncSettings& settings, EntityState& state);
     bool has_buffered_entities() const noexcept;
     bool has_predicted_entities() const noexcept;
     void blend_snap_errors(const SyncSettings& settings, float dt_seconds);
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     void record_interpolation_frame(std::uint64_t checks, std::uint64_t starvations) noexcept;
 #endif
-    bool write_fractional_tick_samples(
-        const ecs::Registry& registry,
-        double target_frame,
-        bool include_snap,
-        bool include_empty_buffered,
-        FractionalTickSampleBuffer& out) const;
-    ComponentInterpolation interpolation_for(
-        const SyncSettings& settings,
-        SyncArchetypeId archetype,
-        ecs::Entity component) const;
     void remember_baseline(EntityState& state);
     void queue_ack(std::uint32_t packet_id);
-    void record_server_packet_sequence(std::uint32_t packet_id) noexcept;
     bool receive_connect_response(ecs::Registry& registry, ecs::BitBuffer& packet);
-    bool receive_pong(ecs::Registry& registry, ecs::BitBuffer& packet, SyncFrame receive_frame);
+    bool receive_pong(ecs::Registry& registry, ecs::BitBuffer& packet, const ReceiveContext& context);
+    bool receive_entity_update(ecs::Registry& registry, ecs::BitBuffer& packet, const ReceiveContext& context);
+    bool update_prediction_input_prefill_from_entity_update(
+        ecs::Registry& registry,
+        SyncFrame server_frame,
+        const ReceiveContext& context);
+    bool apply_prediction_input_prefill(
+        ecs::Registry& registry,
+        SyncFrame server_frame,
+        SyncFrame prefill_input_frame,
+        SyncFrame prediction_snap_lead_frames);
     void drain_connect_packets(std::vector<ecs::BitBuffer>& packets);
     void drain_ping_packets(std::vector<ecs::BitBuffer>& packets);
     void drain_ack_packets_into(std::vector<ecs::BitBuffer>& packets);
     void drain_input_packets_into(std::vector<ecs::BitBuffer>& packets);
-    bool process_inbound_packets(ecs::Registry& registry);
+    void process_inbound_packets(ecs::Registry& registry);
     void send_pending_packets();
+    void log_info(const char* event, const std::string& fields) const;
+    void log_server_packet_warning(std::uint8_t message, const char* reason_code, const char* reason_detail);
+    void log_client_error(std::uint8_t message, const char* event, const char* reason);
     ClientEntityNetworkId client_entity_network_id_for_wire(std::uint32_t wire_network_id);
     void advance_wire_network_id_version(std::uint32_t wire_network_id);
 #ifdef KAGE_SYNC_ENABLE_TRACING
@@ -674,8 +714,8 @@ private:
         const char* stage,
         SyncFrame local_frame,
         SyncFrame server_frame,
-        SyncFrame observed_receive_frame,
-        SyncFrame observed_playback_frame,
+        double observed_server_frame,
+        SyncFrame observed_buffered_frame,
         SyncFrame last_recorded_input_frame,
         SyncFrame prefill_input_frame) const;
     void trace_cue_event(
@@ -708,14 +748,13 @@ private:
 #endif
 #endif
     bool set_input_bytes(ecs::Registry& registry, ecs::Entity component, const void* input);
+    void set_client_id(ecs::Registry& registry, ClientId client) noexcept;
     bool record_input_frame(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame);
     bool fill_input_frames_through(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame);
     bool apply_input_frame(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame);
-    void acknowledge_input_frame(SyncFrame frame);
-
-    using WireNetworkIdState = client_detail::WireNetworkIdState;
 
     ReplicationClientOptions options_;
+    double fixed_dt_seconds_ = 1.0 / 60.0;
     ReplicationClientClock clock_;
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     ReplicationClientInterpolationDiagnostics interpolation_diagnostics_;
@@ -724,92 +763,66 @@ private:
     std::vector<ecs::Entity> cosmetic_jobs_;
     ecs::JobGraph resim_job_graph_;
     bool resim_job_graph_valid_ = false;
-    std::vector<EntityState> entities_;
-    std::vector<std::uint32_t> free_entity_indices_;
-    std::vector<std::uint32_t> active_entities_;
-    std::vector<std::uint32_t> buffered_entities_;
-    std::vector<std::uint32_t> snap_error_entities_;
-    std::vector<std::uint32_t> prediction_rollback_entities_;
-    std::vector<std::uint32_t> rollback_entity_indices_scratch_;
-    std::vector<ecs::Entity> rollback_affected_entities_scratch_;
-    std::vector<OriginalPredictionCapture> rollback_original_current_scratch_;
-    std::vector<WireNetworkIdState> wire_network_ids_;
-    std::unordered_map<ClientEntityNetworkId, std::uint32_t> network_entity_indices_;
+    std::unique_ptr<client_detail::ClientEntityStore> entity_store_;
+    std::unique_ptr<client_detail::ClientPredictionRuntime> prediction_;
+    std::unique_ptr<client_detail::ClientSessionTransport> session_transport_;
+    std::unique_ptr<client_detail::ClientCueRuntime> cue_runtime_;
+    std::unique_ptr<client_detail::ClientBufferedRuntime> buffered_runtime_;
     std::unique_ptr<client_detail::ClientAckQueue> ack_queue_;
+    std::unique_ptr<client_detail::ClientTimingStatsCalculator> timing_stats_;
+    std::unique_ptr<client_detail::ClientUpdateRuntime> update_runtime_;
     std::unique_ptr<client_detail::ClientInputBuffer> input_;
+    std::shared_ptr<spdlog::logger> logger_;
+    ObservabilityStats observability_stats_;
+    std::unordered_map<std::uint8_t, std::uint32_t> warning_logs_by_message_;
     SyncFrame last_server_update_frame_ = 0;
-    double last_server_update_receive_frame_ = 0.0;
     bool has_received_server_update_ = false;
-    using PendingPing = client_detail::PendingPing;
-
-    struct DestroyTombstone {
-        SyncFrame frame = 0;
-        std::uint32_t generation = 0;
-        std::uint64_t age_order = 0;
-    };
-
-    struct DestroyTombstoneAgeEntry {
-        std::uint32_t wire_network_id = 0;
-        std::uint32_t generation = 0;
-        std::uint64_t age_order = 0;
-    };
-
-    std::unordered_map<std::uint32_t, PendingPing> pending_pings_;
-    std::unordered_map<std::uint32_t, DestroyTombstone> destroy_tombstones_;
-    std::vector<DestroyTombstoneAgeEntry> destroy_tombstone_ages_;
-    std::size_t destroy_tombstone_age_begin_ = 0;
-    std::uint64_t destroy_tombstone_next_age_order_ = 0;
-#if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
-    std::vector<std::string> current_packet_cue_summaries_;
-#endif
-    std::vector<ecs::BitBuffer> inbound_packets_;
-    std::function<void(const ecs::BitBuffer&)> packet_sender_;
     FractionalTickSampleBuffer fractional_tick_frame_;
     FractionalTickSampleBuffer fractional_tick_scratch_;
-    std::string connect_error_;
     ClientId client_id_ = invalid_client_id;
-    ReplicationClientConnectionState connection_state_ = ReplicationClientConnectionState::Connecting;
-    double connect_resend_accumulator_seconds_ = 0.0;
-    double ping_accumulator_seconds_ = 0.0;
-    std::uint32_t next_ping_sequence_ = 1;
-    std::uint32_t stable_ping_samples_ = 0;
-    bool sent_initial_connect_request_ = false;
-    bool sent_initial_ping_ = false;
-    bool adaptive_ping_active_ = true;
-    SyncFrame last_applied_buffered_frame_ = 0;
-    bool has_applied_buffered_frame_ = false;
-    SyncFrame last_predicted_frame_ = 0;
-    bool has_predicted_frame_ = false;
-    SyncFrame active_prediction_snap_lead_frames_ = 0;
-    SyncFrame pending_prediction_catchup_frame_ = 0;
-    SyncFrame pending_prediction_catchup_server_frame_ = 0;
-    SyncFrame pending_prediction_rollback_frame_ = 0;
-    bool has_pending_prediction_rollback_ = false;
-    std::uint32_t highest_server_update_packet_id_ = 0;
-    std::uint64_t server_update_packet_window_mask_ = 0;
-    std::uint32_t server_update_packet_window_span_ = 0;
-    bool has_server_update_packet_window_ = false;
 #ifdef KAGE_SYNC_ENABLE_TRACING
     SyncTracer* tracer_ = nullptr;
     std::unique_ptr<KTraceDirectoryWriter> trace_writer_;
 #endif
 };
 
-template <std::size_t NetworkEntityIdTier0Bits = protocol::default_network_entity_id_tier0_bits>
+namespace detail {
+
+constexpr bool client_frame_capacity_power_of_two(std::size_t value) noexcept {
+    return value != 0U && (value & (value - 1U)) == 0U;
+}
+
+}  // namespace detail
+
+template <
+    std::size_t NetworkEntityIdTier0Bits = protocol::default_network_entity_id_tier0_bits,
+    std::size_t BufferedFrameCapacity = ReplicationClient::buffered_frame_capacity,
+    std::size_t PredictionFrameCapacity = ReplicationClient::prediction_frame_capacity>
 class ReplicationClientT : public ReplicationClient {
     static_assert(
         protocol::valid_network_entity_id_tier0_bits(NetworkEntityIdTier0Bits),
         "NetworkEntityIdTier0Bits must be in [1, 22]");
+    static_assert(
+        detail::client_frame_capacity_power_of_two(BufferedFrameCapacity),
+        "BufferedFrameCapacity must be a nonzero power of two");
+    static_assert(
+        detail::client_frame_capacity_power_of_two(PredictionFrameCapacity),
+        "PredictionFrameCapacity must be a nonzero power of two");
 
 public:
     static constexpr std::size_t network_entity_id_tier0_bits = NetworkEntityIdTier0Bits;
+    static constexpr std::size_t buffered_frame_capacity = BufferedFrameCapacity;
+    static constexpr std::size_t prediction_frame_capacity = PredictionFrameCapacity;
 
-    explicit ReplicationClientT(ReplicationClientOptions options = {})
-        : ReplicationClient(configure(std::move(options))) {}
+    explicit ReplicationClientT(ecs::Registry& registry, ReplicationClientOptions options = {})
+        : ReplicationClient(
+              registry,
+              configure(std::move(options)),
+              FrameHistoryCapacities{BufferedFrameCapacity, PredictionFrameCapacity}) {}
 
 private:
     static ReplicationClientOptions configure(ReplicationClientOptions options) {
-        options.protocol.network_entity_id_tier0_bits = NetworkEntityIdTier0Bits;
+        options.network.protocol.network_entity_id_tier0_bits = NetworkEntityIdTier0Bits;
         return options;
     }
 };

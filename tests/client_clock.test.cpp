@@ -3,6 +3,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <stdexcept>
 
 namespace {
@@ -10,19 +11,37 @@ namespace {
 kage::sync::ReplicationClientClockConfig test_config() {
     kage::sync::ReplicationClientClockConfig config;
     config.fixed_dt_seconds = 1.0 / 60.0;
-    config.interpolation_buffer_frames = 2;
-    config.interpolation_buffer_capacity_frames = 8;
+    config.buffered_frame_lag = 2;
+    config.buffered_frame_lag_capacity = 8;
     config.prediction_lead_frames = 2;
     config.input_buffer_capacity_frames = 16;
-    config.auto_interpolation_smoothing = 1.0f;
-    config.auto_interpolation_time_dilation_min = 0.90f;
-    config.auto_interpolation_time_dilation_max = 1.10f;
-    config.auto_interpolation_time_dilation_gain = 0.10f;
-    config.auto_prediction_time_dilation_min = 0.90f;
-    config.auto_prediction_time_dilation_max = 1.10f;
-    config.auto_prediction_time_dilation_gain = 0.10f;
+    config.auto_buffered_frame_lag_smoothing = 1.0f;
+    config.auto_buffered_time_dilation_min = 0.90f;
+    config.auto_buffered_time_dilation_max = 1.10f;
+    config.auto_buffered_time_dilation_gain = 0.10f;
+    config.auto_predicted_time_dilation_min = 0.90f;
+    config.auto_predicted_time_dilation_max = 1.10f;
+    config.auto_predicted_time_dilation_gain = 0.10f;
     config.auto_timing_warmup_samples = 3;
     return config;
+}
+
+void record_pong(
+    kage::sync::ReplicationClientClock& clock,
+    kage::sync::SyncFrame send_frame,
+    kage::sync::SyncFrame local_frame) {
+    const double dt = clock.config().fixed_dt_seconds;
+    const double client_send_time = static_cast<double>(send_frame) * dt;
+    const double client_receive_time = static_cast<double>(local_frame) * dt;
+    const double server_time = (static_cast<double>(send_frame) + static_cast<double>(local_frame)) * 0.5 * dt;
+    clock.record_time_sync_sample(client_send_time, server_time, server_time, client_receive_time);
+}
+
+void advance_local_frame_to(kage::sync::ReplicationClientClock& clock, kage::sync::SyncFrame frame) {
+    const double target_time = static_cast<double>(frame) * clock.config().fixed_dt_seconds;
+    if (target_time > clock.local_time_seconds()) {
+        clock.advance_local_time(target_time - clock.local_time_seconds());
+    }
 }
 
 }  // namespace
@@ -31,18 +50,18 @@ TEST_CASE("client clock initializes stats from startup timing config") {
     const kage::sync::ReplicationClientClock clock(test_config());
 
     REQUIRE_FALSE(clock.bootstrapped());
-    REQUIRE(clock.receive_frame() == 0);
-    REQUIRE(clock.playback_frame() == 0);
-    REQUIRE(clock.input_frame() == 0);
-    REQUIRE(clock.interpolation_buffer_frames() == 2);
-    REQUIRE(clock.stats().desired_interpolation_buffer_frames == 2);
-    REQUIRE(clock.stats().target_interpolation_buffer_frames == 2);
-    REQUIRE(clock.stats().current_interpolation_buffer_frames == 2);
+    REQUIRE(clock.local_time_seconds() == Catch::Approx(0.0));
+    REQUIRE(clock.buffered_frame() == 0);
+    REQUIRE(clock.predicted_frame() == 0);
+    REQUIRE(clock.buffered_frame_lag() == 2);
+    REQUIRE(clock.stats().desired_buffered_frame_lag == 2);
+    REQUIRE(clock.stats().target_buffered_frame_lag == 2);
+    REQUIRE(clock.stats().current_buffered_frame_lag == 2);
     REQUIRE(clock.stats().desired_prediction_lead_frames == 2);
     REQUIRE(clock.stats().target_prediction_lead_frames == 2);
     REQUIRE(clock.stats().current_prediction_lead_frames == 2);
-    REQUIRE(clock.stats().time_dilation == Catch::Approx(1.0f));
-    REQUIRE(clock.stats().prediction_time_dilation == Catch::Approx(1.0f));
+    REQUIRE(clock.stats().buffered_time_dilation == Catch::Approx(1.0f));
+    REQUIRE(clock.stats().predicted_time_dilation == Catch::Approx(1.0f));
 }
 
 TEST_CASE("client clock rejects invalid timing config") {
@@ -51,15 +70,15 @@ TEST_CASE("client clock rejects invalid timing config") {
     REQUIRE_THROWS_AS(kage::sync::ReplicationClientClock(config), std::invalid_argument);
 
     config = test_config();
-    config.interpolation_buffer_capacity_frames = 7;
+    config.buffered_frame_lag_capacity = 7;
     REQUIRE_THROWS_AS(kage::sync::ReplicationClientClock(config), std::invalid_argument);
 
     config = test_config();
-    config.interpolation_buffer_frames = 8;
+    config.buffered_frame_lag = 8;
     REQUIRE_THROWS_AS(kage::sync::ReplicationClientClock(config), std::invalid_argument);
 
     config = test_config();
-    config.auto_interpolation_smoothing = 0.0f;
+    config.auto_buffered_frame_lag_smoothing = 0.0f;
     REQUIRE_THROWS_AS(kage::sync::ReplicationClientClock(config), std::invalid_argument);
 
     config = test_config();
@@ -71,166 +90,178 @@ TEST_CASE("client clock rejects invalid timing config") {
     REQUIRE_THROWS_AS(kage::sync::ReplicationClientClock(config), std::invalid_argument);
 }
 
-TEST_CASE("client clock advances only receive frames before bootstrap") {
+TEST_CASE("client clock advances only local time before bootstrap") {
     kage::sync::ReplicationClientClock clock(test_config());
 
     const kage::sync::ReplicationClientClock::AdvanceResult advanced =
         clock.advance(3.0 * clock.config().fixed_dt_seconds);
 
-    REQUIRE(advanced.receive.first == 1);
-    REQUIRE(advanced.receive.last == 3);
-    REQUIRE(advanced.playback.empty());
-    REQUIRE(advanced.input.empty());
-    REQUIRE(clock.receive_frame() == 3);
-    REQUIRE(clock.playback_frame() == 0);
-    REQUIRE(clock.input_frame() == 0);
+    REQUIRE(advanced.buffered.empty());
+    REQUIRE(advanced.predicted.empty());
+    REQUIRE(clock.local_time_seconds() == Catch::Approx(3.0 * clock.config().fixed_dt_seconds));
+    REQUIRE(clock.buffered_frame() == 0);
+    REQUIRE(clock.predicted_frame() == 0);
 }
 
-TEST_CASE("client clock caps and drops receive accumulator backlog when configured") {
-    kage::sync::ReplicationClientClockConfig config = test_config();
-    config.max_fixed_steps_per_tick = 2;
-    kage::sync::ReplicationClientClock clock(config);
-
-    const kage::sync::ReplicationClientClock::FrameRange advanced =
-        clock.advance_receive(5.5 * clock.config().fixed_dt_seconds);
-
-    REQUIRE(advanced.first == 1);
-    REQUIRE(advanced.last == 2);
-    REQUIRE(clock.receive_frame() == 2);
-    REQUIRE(clock.receive_subframe() == Catch::Approx(0.5));
-    REQUIRE(clock.stats().dropped_receive_frames == 3);
-
-    const kage::sync::ReplicationClientClock::FrameRange next =
-        clock.advance_receive(0.51 * clock.config().fixed_dt_seconds);
-    REQUIRE(next.first == 3);
-    REQUIRE(next.last == 3);
-    REQUIRE(clock.receive_frame() == 3);
-}
-
-TEST_CASE("client clock bootstrap anchors playback and input without catchup burst") {
+TEST_CASE("client clock bootstrap anchors buffered and predicted without catchup burst") {
     kage::sync::ReplicationClientClock clock(test_config());
     (void)clock.advance(20.0 * clock.config().fixed_dt_seconds);
 
-    REQUIRE(clock.bootstrap_from_server_update(10));
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
     REQUIRE(clock.bootstrapped());
-    REQUIRE(clock.playback_frame() == 10);
-    REQUIRE(clock.input_frame() == 12);
+    REQUIRE(clock.buffered_frame() == 8);
+    REQUIRE(clock.predicted_frame() == 12);
     REQUIRE(clock.stats().current_prediction_lead_frames == 2);
 
     const kage::sync::ReplicationClientClock::AdvanceResult none = clock.advance(0.0);
-    REQUIRE(none.playback.empty());
-    REQUIRE(none.input.empty());
+    REQUIRE(none.buffered.empty());
+    REQUIRE(none.predicted.empty());
 
     const kage::sync::ReplicationClientClock::AdvanceResult one =
         clock.advance(clock.config().fixed_dt_seconds);
-    REQUIRE(one.playback.first == 11);
-    REQUIRE(one.playback.last == 11);
-    REQUIRE(one.input.first == 13);
-    REQUIRE(one.input.last == 13);
+    REQUIRE(one.buffered.first == 9);
+    REQUIRE(one.buffered.last == 9);
+    REQUIRE(one.predicted.first == 13);
+    REQUIRE(one.predicted.last == 13);
 }
 
-TEST_CASE("client clock caps playback and input accumulator backlog when configured") {
+TEST_CASE("client clock caps predicted accumulator backlog when configured") {
     kage::sync::ReplicationClientClockConfig config = test_config();
     config.max_fixed_steps_per_tick = 3;
     kage::sync::ReplicationClientClock clock(config);
-    REQUIRE(clock.bootstrap_from_server_update(10));
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
 
-    clock.mutable_stats().time_dilation = 1.5f;
     const kage::sync::ReplicationClientClock::AdvanceResult advanced =
-        clock.advance_playback_input(4.0 * clock.config().fixed_dt_seconds);
+        clock.advance_client_frame_numbers(4.0 * clock.config().fixed_dt_seconds);
 
-    REQUIRE(advanced.playback.first == 11);
-    REQUIRE(advanced.playback.last == 13);
-    REQUIRE(advanced.input.first == 13);
-    REQUIRE(advanced.input.last == 15);
-    REQUIRE(clock.playback_frame() == 13);
-    REQUIRE(clock.input_frame() == 15);
-    REQUIRE(clock.playback_subframe() == Catch::Approx(0.0));
-    REQUIRE(clock.input_subframe() == Catch::Approx(0.0));
-    REQUIRE(clock.stats().dropped_playback_frames == 3);
+    REQUIRE(advanced.buffered.empty());
+    REQUIRE(advanced.predicted.first == 13);
+    REQUIRE(advanced.predicted.last == 15);
+    REQUIRE(clock.buffered_frame() == 8);
+    REQUIRE(clock.predicted_frame() == 15);
+    REQUIRE(clock.buffered_subframe() == Catch::Approx(0.0));
+    REQUIRE(clock.predicted_subframe() == Catch::Approx(0.0));
+    REQUIRE(clock.stats().dropped_playback_frames == 0);
     REQUIRE(clock.stats().dropped_input_frames == 1);
 }
 
-TEST_CASE("client clock clamps bootstrap playback at zero") {
+TEST_CASE("client clock clamps bootstrap buffered at zero") {
     kage::sync::ReplicationClientClock clock(test_config());
 
-    REQUIRE(clock.bootstrap_from_server_update(1));
-    REQUIRE(clock.playback_frame() == 1);
-    REQUIRE(clock.input_frame() == 3);
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(1));
+    REQUIRE(clock.buffered_frame() == 0);
+    REQUIRE(clock.predicted_frame() == 3);
 }
 
 TEST_CASE("client clock records pre-bootstrap pongs for startup timing") {
     kage::sync::ReplicationClientClock clock(test_config());
 
-    clock.record_pong(0, 8);
-    clock.record_pong(8, 16);
-    clock.record_pong(16, 24);
+    record_pong(clock, 0, 8);
+    record_pong(clock, 8, 16);
+    record_pong(clock, 16, 24);
 
     REQUIRE(clock.stats().sample_count == 3);
     REQUIRE(clock.stats().latency_frames == Catch::Approx(4.0f));
-    REQUIRE(clock.stats().desired_interpolation_buffer_frames == 4);
-    REQUIRE(clock.stats().target_interpolation_buffer_frames == 4);
+    REQUIRE(clock.stats().desired_buffered_frame_lag == 4);
+    REQUIRE(clock.stats().target_buffered_frame_lag == 4);
     REQUIRE(clock.stats().desired_prediction_lead_frames == 9);
 }
 
 TEST_CASE("client clock holds startup targets during warmup samples") {
     kage::sync::ReplicationClientClock clock(test_config());
-    REQUIRE(clock.bootstrap_from_server_update(10));
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
 
-    clock.record_pong(10, 18);
-    clock.record_pong(18, 26);
+    record_pong(clock, 10, 18);
+    record_pong(clock, 18, 26);
 
     REQUIRE(clock.stats().sample_count == 2);
     REQUIRE(clock.stats().latency_frames == Catch::Approx(4.0f));
-    REQUIRE(clock.stats().desired_interpolation_buffer_frames == 2);
-    REQUIRE(clock.stats().target_interpolation_buffer_frames == 2);
+    REQUIRE(clock.stats().desired_buffered_frame_lag == 2);
+    REQUIRE(clock.stats().target_buffered_frame_lag == 2);
     REQUIRE(clock.stats().desired_prediction_lead_frames == 2);
     REQUIRE(clock.stats().target_prediction_lead_frames == 2);
 }
 
 TEST_CASE("client clock computes auto targets after warmup") {
     kage::sync::ReplicationClientClock clock(test_config());
-    REQUIRE(clock.bootstrap_from_server_update(10));
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
 
-    clock.record_pong(10, 18);
-    clock.record_pong(18, 26);
-    clock.record_pong(26, 34);
+    record_pong(clock, 10, 18);
+    record_pong(clock, 18, 26);
+    record_pong(clock, 26, 34);
 
     REQUIRE(clock.stats().sample_count == 3);
     REQUIRE(clock.stats().latency_frames == Catch::Approx(4.0f));
     REQUIRE(clock.stats().jitter_frames == Catch::Approx(0.0f));
-    REQUIRE(clock.stats().desired_interpolation_buffer_frames == 4);
-    REQUIRE(clock.stats().target_interpolation_buffer_frames == 4);
+    REQUIRE(clock.stats().desired_buffered_frame_lag == 4);
+    REQUIRE(clock.stats().target_buffered_frame_lag == 4);
     REQUIRE(clock.stats().desired_prediction_lead_frames == 9);
     REQUIRE(clock.stats().target_prediction_lead_frames == 9);
 }
 
-TEST_CASE("client clock fast recovery uses downstream lag before warmup") {
+TEST_CASE("client clock re-estimates server frame after server clock hitch") {
     kage::sync::ReplicationClientClock clock(test_config());
-    clock.advance_receive_frame_to(20);
-    REQUIRE(clock.bootstrap_from_server_update(10));
+    const double dt = clock.config().fixed_dt_seconds;
 
-    const kage::sync::SyncFrame prefill = clock.record_server_update(10, true, 12);
-    REQUIRE(clock.stats().desired_interpolation_buffer_frames == 2);
-    REQUIRE(clock.stats().target_interpolation_buffer_frames == 7);
-    REQUIRE(clock.interpolation_buffer_frames() == 7);
-    REQUIRE(clock.stats().target_prediction_lead_frames == 15);
-    REQUIRE(prefill == 25);
-    REQUIRE(clock.stats().time_dilation == Catch::Approx(0.90f));
+    clock.record_time_sync_sample(0.0 * dt, 0.5 * dt, 0.5 * dt, 1.0 * dt);
+    advance_local_frame_to(clock, 10);
+    REQUIRE(clock.estimated_server_frame() == Catch::Approx(10.0));
+
+    clock.record_time_sync_sample(10.0 * dt, 8.0 * dt, 8.0 * dt, 12.0 * dt);
+    REQUIRE(clock.local_time_seconds() == Catch::Approx(10.0 * dt));
+    REQUIRE(clock.estimated_server_frame() == Catch::Approx(7.0));
+
+    advance_local_frame_to(clock, 14);
+    REQUIRE(clock.estimated_server_frame() == Catch::Approx(11.0));
+
+    clock.record_time_sync_sample(14.0 * dt, 15.0 * dt, 15.0 * dt, 16.0 * dt);
+    REQUIRE(clock.estimated_server_frame() == Catch::Approx(14.0));
 }
 
-TEST_CASE("client clock fast recovery snaps large interpolation gaps to target") {
+TEST_CASE("client clock fast recovery uses downstream lag before warmup") {
+    kage::sync::ReplicationClientClock clock(test_config());
+    advance_local_frame_to(clock, 20);
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
+
+    const kage::sync::SyncFrame prefill = clock.record_server_update(10, 20, 18, true, 12);
+    REQUIRE(clock.stats().desired_buffered_frame_lag == 2);
+    REQUIRE(clock.stats().target_buffered_frame_lag == 7);
+    REQUIRE(clock.buffered_frame_lag() == 7);
+    REQUIRE(clock.stats().target_prediction_lead_frames == 15);
+    REQUIRE(prefill == 25);
+    REQUIRE(clock.stats().buffered_time_dilation == Catch::Approx(0.90f));
+}
+
+TEST_CASE("client clock handles divergent observed receive and buffered frames") {
+    kage::sync::ReplicationClientClock clock(test_config());
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(1));
+
+    (void)clock.record_server_update(
+        1,
+        10.0,
+        7.0,
+        10.0,
+        true,
+        10);
+
+    REQUIRE(std::isfinite(clock.stats().measured_buffered_frame_lag));
+    REQUIRE(std::isfinite(clock.stats().measured_prediction_lead_frames));
+    REQUIRE(std::isfinite(clock.stats().buffered_time_dilation));
+    REQUIRE(std::isfinite(clock.stats().predicted_time_dilation));
+}
+
+TEST_CASE("client clock fast recovery snaps large buffered lag gaps to target") {
     kage::sync::ReplicationClientClockConfig config = test_config();
-    config.interpolation_buffer_capacity_frames = 64;
+    config.buffered_frame_lag_capacity = 64;
     config.input_buffer_capacity_frames = 64;
     kage::sync::ReplicationClientClock clock(config);
-    clock.advance_receive_frame_to(40);
-    REQUIRE(clock.bootstrap_from_server_update(10));
+    advance_local_frame_to(clock, 40);
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
 
-    const kage::sync::SyncFrame prefill = clock.record_server_update(10, true, 12);
+    const kage::sync::SyncFrame prefill = clock.record_server_update(10, 40, 38, true, 12);
 
-    REQUIRE(clock.stats().target_interpolation_buffer_frames == 30);
-    REQUIRE(clock.interpolation_buffer_frames() == 30);
+    REQUIRE(clock.stats().target_buffered_frame_lag == 30);
+    REQUIRE(clock.buffered_frame_lag() == 30);
     REQUIRE(clock.stats().target_prediction_lead_frames == 61);
     REQUIRE(prefill == 71);
 }
@@ -239,96 +270,111 @@ TEST_CASE("client clock downstream lag floor can use legacy warmup behavior") {
     kage::sync::ReplicationClientClockConfig config = test_config();
     config.auto_timing_fast_recovery = false;
     kage::sync::ReplicationClientClock clock(config);
-    clock.advance_receive_frame_to(20);
-    REQUIRE(clock.bootstrap_from_server_update(10));
+    advance_local_frame_to(clock, 20);
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
 
     REQUIRE(clock.record_server_update(10, true, 12) == 0);
-    REQUIRE(clock.stats().target_interpolation_buffer_frames == 2);
-    REQUIRE(clock.stats().time_dilation == Catch::Approx(1.0f));
+    REQUIRE(clock.stats().target_buffered_frame_lag == 2);
+    REQUIRE(clock.stats().buffered_time_dilation == Catch::Approx(1.0f));
 
-    clock.record_pong(10, 18);
-    clock.record_pong(18, 26);
-    clock.record_pong(26, 34);
+    record_pong(clock, 10, 18);
+    record_pong(clock, 18, 26);
+    record_pong(clock, 26, 34);
     clock.record_server_update(11, true, 13);
 
-    REQUIRE(clock.stats().target_interpolation_buffer_frames == 7);
-    REQUIRE(clock.stats().time_dilation == Catch::Approx(0.90f));
-    REQUIRE(clock.interpolation_buffer_frames() == 3);
+    REQUIRE(clock.stats().target_buffered_frame_lag == 7);
+    REQUIRE(clock.stats().buffered_time_dilation == Catch::Approx(0.90f));
+    REQUIRE(clock.buffered_frame_lag() == 3);
 }
 
-TEST_CASE("client clock interpolation buffer shrinks one frame at a time") {
+TEST_CASE("client clock buffered frame lag shrinks one frame at a time") {
     kage::sync::ReplicationClientClockConfig config = test_config();
-    config.interpolation_buffer_frames = 4;
-    config.auto_interpolation_min_frames = 1;
-    config.auto_interpolation_jitter_multiplier = 0.0f;
+    config.buffered_frame_lag = 4;
+    config.auto_buffered_frame_lag_min = 1;
+    config.auto_buffered_frame_lag_jitter_multiplier = 0.0f;
     config.auto_timing_warmup_samples = 1;
     config.auto_timing_fast_recovery = false;
     kage::sync::ReplicationClientClock clock(config);
 
-    REQUIRE(clock.bootstrap_from_server_update(4));
-    clock.record_pong(10, 10);
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(4));
+    record_pong(clock, 10, 10);
     clock.record_server_update(4, true, 6);
-    REQUIRE(clock.stats().desired_interpolation_buffer_frames == 1);
-    REQUIRE(clock.interpolation_buffer_frames() == 3);
+    REQUIRE(clock.stats().desired_buffered_frame_lag == 1);
+    REQUIRE(clock.buffered_frame_lag() == 3);
 
     clock.record_server_update(3, true, 7);
-    REQUIRE(clock.interpolation_buffer_frames() == 2);
+    REQUIRE(clock.buffered_frame_lag() == 2);
 
     clock.record_server_update(2, true, 8);
-    REQUIRE(clock.interpolation_buffer_frames() == 1);
+    REQUIRE(clock.buffered_frame_lag() == 1);
 }
 
-TEST_CASE("client clock manual interpolation override resets target and dilation") {
+TEST_CASE("client clock manual buffered lag override resets target and dilation") {
     kage::sync::ReplicationClientClockConfig config = test_config();
     config.auto_timing_warmup_samples = 1;
     kage::sync::ReplicationClientClock clock(config);
 
-    REQUIRE(clock.bootstrap_from_server_update(10));
-    clock.record_pong(10, 18);
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
+    record_pong(clock, 10, 18);
     clock.record_server_update(11, true, 13);
-    REQUIRE(clock.stats().desired_interpolation_buffer_frames == 4);
-    REQUIRE(clock.stats().time_dilation != Catch::Approx(1.0f));
+    REQUIRE(clock.stats().desired_buffered_frame_lag == 4);
+    REQUIRE(clock.stats().buffered_time_dilation != Catch::Approx(1.0f));
 
-    REQUIRE(clock.set_interpolation_buffer_frames(3));
-    REQUIRE(clock.interpolation_buffer_frames() == 3);
-    REQUIRE(clock.stats().desired_interpolation_buffer_frames == 3);
-    REQUIRE(clock.stats().target_interpolation_buffer_frames == 3);
-    REQUIRE(clock.stats().current_interpolation_buffer_frames == 3);
-    REQUIRE(clock.stats().time_dilation == Catch::Approx(1.0f));
+    REQUIRE(clock.set_buffered_frame_lag(3));
+    REQUIRE(clock.buffered_frame_lag() == 3);
+    REQUIRE(clock.stats().desired_buffered_frame_lag == 3);
+    REQUIRE(clock.stats().target_buffered_frame_lag == 3);
+    REQUIRE(clock.stats().current_buffered_frame_lag == 3);
+    REQUIRE(clock.stats().buffered_time_dilation == Catch::Approx(1.0f));
 }
 
-TEST_CASE("client clock leaves playback neutral when auto interpolation is disabled") {
+TEST_CASE("client clock leaves buffered neutral when auto buffered frame lag is disabled") {
     kage::sync::ReplicationClientClockConfig config = test_config();
-    config.auto_interpolation_buffer_frames = false;
+    config.auto_buffered_frame_lag = false;
     config.auto_timing_warmup_samples = 1;
     kage::sync::ReplicationClientClock clock(config);
 
-    REQUIRE(clock.bootstrap_from_server_update(10));
-    clock.record_pong(10, 18);
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
+    record_pong(clock, 10, 18);
     clock.record_server_update(10, true, 12);
 
-    REQUIRE(clock.stats().desired_interpolation_buffer_frames == 4);
-    REQUIRE(clock.stats().target_interpolation_buffer_frames == 4);
-    REQUIRE(clock.interpolation_buffer_frames() == 2);
-    REQUIRE(clock.stats().time_dilation == Catch::Approx(1.0f));
+    REQUIRE(clock.stats().desired_buffered_frame_lag == 4);
+    REQUIRE(clock.stats().target_buffered_frame_lag == 4);
+    REQUIRE(clock.buffered_frame_lag() == 2);
+    REQUIRE(clock.stats().buffered_time_dilation == Catch::Approx(1.0f));
 }
 
-TEST_CASE("client clock prediction dilation follows measured input lead") {
+TEST_CASE("client clock zero buffered dilation gain tracks target with neutral speed") {
+    kage::sync::ReplicationClientClockConfig config = test_config();
+    config.auto_timing_warmup_samples = 1;
+    config.auto_buffered_time_dilation_gain = 0.0f;
+    kage::sync::ReplicationClientClock clock(config);
+
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
+    record_pong(clock, 10, 18);
+    clock.record_server_update(11, true, 13);
+
+    REQUIRE(clock.stats().desired_buffered_frame_lag == 4);
+    REQUIRE(clock.stats().target_buffered_frame_lag == 4);
+    REQUIRE(clock.stats().buffered_time_dilation == Catch::Approx(1.0f));
+}
+
+TEST_CASE("client clock predicted dilation follows measured input lead") {
     kage::sync::ReplicationClientClockConfig config = test_config();
     config.auto_timing_warmup_samples = 1;
     kage::sync::ReplicationClientClock clock(config);
 
-    REQUIRE(clock.bootstrap_from_server_update(10));
-    clock.record_pong(10, 18);
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
+    record_pong(clock, 10, 18);
     clock.record_server_update(10, false, 10);
 
     REQUIRE(clock.stats().desired_prediction_lead_frames == 9);
     REQUIRE(clock.stats().measured_prediction_lead_frames == Catch::Approx(0.0f));
-    REQUIRE(clock.stats().prediction_time_dilation == Catch::Approx(1.10f));
+    REQUIRE(clock.stats().predicted_time_dilation == Catch::Approx(1.10f));
 
     clock.record_server_update(11, false, 21);
     REQUIRE(clock.stats().measured_prediction_lead_frames == Catch::Approx(10.0f));
-    REQUIRE(clock.stats().prediction_time_dilation == Catch::Approx(0.90f));
+    REQUIRE(clock.stats().predicted_time_dilation == Catch::Approx(0.90f));
 }
 
 TEST_CASE("client clock small prediction lead changes keep time dilation nudging") {
@@ -336,23 +382,23 @@ TEST_CASE("client clock small prediction lead changes keep time dilation nudging
     config.auto_timing_warmup_samples = 1;
     kage::sync::ReplicationClientClock clock(config);
 
-    REQUIRE(clock.bootstrap_from_server_update(10));
-    clock.record_pong(10, 18);
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
+    record_pong(clock, 10, 18);
     const kage::sync::SyncFrame prefill = clock.record_server_update(11, 14, 9, false, 18);
 
     REQUIRE(prefill == 0);
     REQUIRE(clock.stats().target_prediction_lead_frames == 9);
     REQUIRE(clock.stats().measured_prediction_lead_frames == Catch::Approx(7.0f));
-    REQUIRE(clock.stats().prediction_time_dilation == Catch::Approx(1.10f));
+    REQUIRE(clock.stats().predicted_time_dilation == Catch::Approx(1.10f));
 }
 
-TEST_CASE("client clock prediction dilation uses continuous input lead") {
+TEST_CASE("client clock predicted dilation uses continuous input lead") {
     kage::sync::ReplicationClientClockConfig config = test_config();
     config.auto_timing_warmup_samples = 1;
     kage::sync::ReplicationClientClock clock(config);
 
-    REQUIRE(clock.bootstrap_from_server_update(10));
-    clock.record_pong(10, 18);
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
+    record_pong(clock, 10, 18);
     const kage::sync::SyncFrame prefill = clock.record_server_update(
         11,
         14.0,
@@ -363,16 +409,16 @@ TEST_CASE("client clock prediction dilation uses continuous input lead") {
     REQUIRE(prefill == 0);
     REQUIRE(clock.stats().target_prediction_lead_frames == 9);
     REQUIRE(clock.stats().measured_prediction_lead_frames == Catch::Approx(8.5f));
-    REQUIRE(clock.stats().prediction_time_dilation == Catch::Approx(1.05f));
+    REQUIRE(clock.stats().predicted_time_dilation == Catch::Approx(1.05f));
 }
 
-TEST_CASE("client clock prediction dilation has a subframe deadband") {
+TEST_CASE("client clock predicted dilation has a subframe deadband") {
     kage::sync::ReplicationClientClockConfig config = test_config();
     config.auto_timing_warmup_samples = 1;
     kage::sync::ReplicationClientClock clock(config);
 
-    REQUIRE(clock.bootstrap_from_server_update(10));
-    clock.record_pong(10, 18);
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
+    record_pong(clock, 10, 18);
     (void)clock.record_server_update(
         11,
         14.0,
@@ -382,69 +428,69 @@ TEST_CASE("client clock prediction dilation has a subframe deadband") {
 
     REQUIRE(clock.stats().target_prediction_lead_frames == 9);
     REQUIRE(clock.stats().measured_prediction_lead_frames == Catch::Approx(8.8f));
-    REQUIRE(clock.stats().prediction_time_dilation == Catch::Approx(1.0f));
+    REQUIRE(clock.stats().predicted_time_dilation == Catch::Approx(1.0f));
 }
 
-TEST_CASE("client clock small interpolation changes keep one-frame movement") {
+TEST_CASE("client clock small buffered lag changes keep one-frame movement") {
     kage::sync::ReplicationClientClockConfig config = test_config();
-    config.interpolation_buffer_frames = 2;
-    config.auto_interpolation_jitter_multiplier = 0.0f;
+    config.buffered_frame_lag = 2;
+    config.auto_buffered_frame_lag_jitter_multiplier = 0.0f;
     config.auto_timing_warmup_samples = 1;
     kage::sync::ReplicationClientClock clock(config);
 
-    REQUIRE(clock.bootstrap_from_server_update(10));
-    clock.record_pong(10, 16);
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
+    record_pong(clock, 10, 16);
     clock.record_server_update(11, 14, 11, true, 13);
 
-    REQUIRE(clock.stats().desired_interpolation_buffer_frames == 3);
-    REQUIRE(clock.stats().target_interpolation_buffer_frames == 3);
-    REQUIRE(clock.interpolation_buffer_frames() == 3);
-    REQUIRE(clock.stats().time_dilation == Catch::Approx(0.90f));
+    REQUIRE(clock.stats().desired_buffered_frame_lag == 3);
+    REQUIRE(clock.stats().target_buffered_frame_lag == 3);
+    REQUIRE(clock.buffered_frame_lag() == 3);
+    REQUIRE(clock.stats().buffered_time_dilation == Catch::Approx(0.90f));
 
-    clock.record_pong(16, 20);
-    clock.record_server_update(12, 12, 12, true, 14);
+    record_pong(clock, 16, 20);
+    clock.record_server_update(12, 12, 9, true, 14);
 
-    REQUIRE(clock.stats().desired_interpolation_buffer_frames == 2);
-    REQUIRE(clock.interpolation_buffer_frames() == 2);
-    REQUIRE(clock.stats().time_dilation == Catch::Approx(1.10f));
+    REQUIRE(clock.stats().desired_buffered_frame_lag == 2);
+    REQUIRE(clock.buffered_frame_lag() == 2);
+    REQUIRE(clock.stats().buffered_time_dilation == Catch::Approx(1.10f));
 }
 
-TEST_CASE("client clock interpolation dilation uses continuous playback delay") {
+TEST_CASE("client clock buffered dilation uses continuous buffered delay") {
     kage::sync::ReplicationClientClockConfig config = test_config();
     config.auto_timing_warmup_samples = 1;
     kage::sync::ReplicationClientClock clock(config);
 
-    REQUIRE(clock.bootstrap_from_server_update(10));
-    clock.record_pong(10, 16);
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
+    record_pong(clock, 10, 16);
     clock.record_server_update(
         11,
         14.0,
-        10.5,
+        8.5,
         13.0,
         true);
 
-    REQUIRE(clock.stats().target_interpolation_buffer_frames == 3);
-    REQUIRE(clock.stats().measured_interpolation_buffer_frames == Catch::Approx(2.5f));
-    REQUIRE(clock.stats().time_dilation == Catch::Approx(0.95f));
+    REQUIRE(clock.stats().target_buffered_frame_lag == 3);
+    REQUIRE(clock.stats().measured_buffered_frame_lag == Catch::Approx(2.5f));
+    REQUIRE(clock.stats().buffered_time_dilation == Catch::Approx(0.95f));
 }
 
-TEST_CASE("client clock interpolation dilation has a subframe deadband") {
+TEST_CASE("client clock buffered dilation has a subframe deadband") {
     kage::sync::ReplicationClientClockConfig config = test_config();
     config.auto_timing_warmup_samples = 1;
     kage::sync::ReplicationClientClock clock(config);
 
-    REQUIRE(clock.bootstrap_from_server_update(10));
-    clock.record_pong(10, 16);
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
+    record_pong(clock, 10, 16);
     clock.record_server_update(
         11,
         14.0,
-        9.8,
+        7.8,
         13.0,
         true);
 
-    REQUIRE(clock.stats().target_interpolation_buffer_frames == 3);
-    REQUIRE(clock.stats().measured_interpolation_buffer_frames == Catch::Approx(3.2f));
-    REQUIRE(clock.stats().time_dilation == Catch::Approx(1.0f));
+    REQUIRE(clock.stats().target_buffered_frame_lag == 3);
+    REQUIRE(clock.stats().measured_buffered_frame_lag == Catch::Approx(3.2f));
+    REQUIRE(clock.stats().buffered_time_dilation == Catch::Approx(1.0f));
 }
 
 TEST_CASE("client clock prediction lead budgets for both network legs") {
@@ -453,11 +499,11 @@ TEST_CASE("client clock prediction lead budgets for both network legs") {
     config.auto_timing_warmup_samples = 1;
     kage::sync::ReplicationClientClock clock(config);
 
-    REQUIRE(clock.bootstrap_from_server_update(10));
-    clock.record_pong(10, 22);
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
+    record_pong(clock, 10, 22);
 
     REQUIRE(clock.stats().latency_frames == Catch::Approx(6.0f));
-    REQUIRE(clock.stats().desired_interpolation_buffer_frames == 6);
+    REQUIRE(clock.stats().desired_buffered_frame_lag == 6);
     REQUIRE(clock.stats().desired_prediction_lead_frames == 13);
     REQUIRE(clock.stats().target_prediction_lead_frames == 13);
 }
@@ -468,10 +514,10 @@ TEST_CASE("client clock keeps prediction neutral when auto prediction is disable
     config.auto_timing_warmup_samples = 1;
     kage::sync::ReplicationClientClock clock(config);
 
-    REQUIRE(clock.bootstrap_from_server_update(10));
-    clock.record_pong(10, 18);
+    REQUIRE(clock.maybe_bootstrap_from_first_server_update(10));
+    record_pong(clock, 10, 18);
     clock.record_server_update(10, false, 10);
 
     REQUIRE(clock.stats().target_prediction_lead_frames == 2);
-    REQUIRE(clock.stats().prediction_time_dilation == Catch::Approx(1.0f));
+    REQUIRE(clock.stats().predicted_time_dilation == Catch::Approx(1.0f));
 }

@@ -1,5 +1,6 @@
 #include "ecs/bit_buffer.hpp"
 #include "kage/sync/delta.hpp"
+#include "kage/sync/detail/bit_reader.hpp"
 #include "kage/sync/protocol.hpp"
 
 #include <catch2/catch_approx.hpp>
@@ -73,6 +74,41 @@ TEST_CASE("bit buffer reset and clear preserve expected offsets") {
     REQUIRE(buffer.read_offset_bits() == 0);
 }
 
+TEST_CASE("bit buffer truncates written bits without reallocating forward") {
+    ecs::BitBuffer buffer;
+    buffer.push_bits(0b101, 3U);
+    buffer.push_unsigned_bits(0xffU, 8U);
+    buffer.push_bits(0b10, 2U);
+    REQUIRE(buffer.bit_size() == 13U);
+
+    buffer.truncate_bits(11U);
+    REQUIRE(buffer.bit_size() == 11U);
+    REQUIRE(buffer.byte_size() == 2U);
+    REQUIRE(buffer.read_bits(3U) == 0b101);
+    REQUIRE(buffer.read_unsigned_bits(8U) == 0xffU);
+    REQUIRE(buffer.remaining_bits() == 0U);
+
+    buffer.reset_read();
+    buffer.truncate_bits(2U);
+    REQUIRE(buffer.bit_size() == 2U);
+    REQUIRE(buffer.byte_size() == 1U);
+    REQUIRE(buffer.read_bits(2U) == 0b01);
+    REQUIRE(buffer.remaining_bits() == 0U);
+    REQUIRE_THROWS_AS(buffer.truncate_bits(3U), std::out_of_range);
+}
+
+TEST_CASE("bit buffer truncation clamps read offset") {
+    ecs::BitBuffer buffer;
+    buffer.push_unsigned_bits(0xabU, 8U);
+    REQUIRE(buffer.read_unsigned_bits(6U) == 0x2bU);
+    REQUIRE(buffer.read_offset_bits() == 6U);
+
+    buffer.truncate_bits(4U);
+    REQUIRE(buffer.bit_size() == 4U);
+    REQUIRE(buffer.read_offset_bits() == 4U);
+    REQUIRE(buffer.remaining_bits() == 0U);
+}
+
 TEST_CASE("bit buffer validates invalid read and write requests") {
     ecs::BitBuffer buffer;
 
@@ -87,6 +123,47 @@ TEST_CASE("bit buffer validates invalid read and write requests") {
     REQUIRE_THROWS_AS(buffer.read_bytes(nullptr, 1U), std::invalid_argument);
     REQUIRE_THROWS_AS(buffer.read_unsigned_bits(65U), std::invalid_argument);
     REQUIRE_THROWS_AS(buffer.read_bytes(&out, 1U), std::out_of_range);
+}
+
+TEST_CASE("bit reader guards reads and writes directly into typed outputs") {
+    ecs::BitBuffer buffer;
+    buffer.push_bool(true);
+    buffer.push_unsigned_bits(0xabU, 8U);
+    buffer.push_unsigned_bits(0xffU, 8U);
+    buffer.push_unsigned_bits(0x7fU, 8U);
+    buffer.push_unsigned_bits(0xffffffffULL, 32U);
+
+    kage::sync::detail::BitReader reader(buffer);
+    bool flag = false;
+    std::uint8_t value = 0;
+    std::int32_t negative_8 = 0;
+    std::int32_t positive_8 = 0;
+    std::int32_t negative_32 = 0;
+
+    REQUIRE(reader.read_bits(1U, flag));
+    REQUIRE(flag);
+    REQUIRE(reader.read_bits(8U, value));
+    REQUIRE(value == 0xabU);
+    REQUIRE(reader.read_signed_bits(8U, negative_8));
+    REQUIRE(negative_8 == -1);
+    REQUIRE(reader.read_signed_bits(8U, positive_8));
+    REQUIRE(positive_8 == 127);
+    REQUIRE(reader.read_signed_bits(32U, negative_32));
+    REQUIRE(negative_32 == -1);
+    REQUIRE(buffer.remaining_bits() == 0U);
+}
+
+TEST_CASE("bit reader failed reads do not advance the buffer") {
+    ecs::BitBuffer buffer;
+    buffer.push_bits(0b101, 3U);
+
+    kage::sync::detail::BitReader reader(buffer);
+    std::uint8_t value = 0;
+    REQUIRE_FALSE(reader.read_bits(4U, value));
+    REQUIRE(buffer.read_offset_bits() == 0U);
+    REQUIRE(reader.read_bits(3U, value));
+    REQUIRE(value == 0b101U);
+    REQUIRE(buffer.remaining_bits() == 0U);
 }
 
 TEST_CASE("bit buffer overwrites existing aligned and unaligned bit ranges") {

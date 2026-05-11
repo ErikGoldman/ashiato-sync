@@ -37,7 +37,7 @@ TEST_CASE("replication server sends pending destroys before bandwidth-limited up
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, destroyed, archetype));
     REQUIRE(start_sync(registry, live, archetype));
@@ -76,7 +76,7 @@ TEST_CASE("replication server resends pending destroys until ACKed") {
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, entity, archetype));
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -114,7 +114,7 @@ TEST_CASE("replication server does not reuse client-local network ids before des
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
 
     auto spawn = [&](float x) {
@@ -169,7 +169,7 @@ TEST_CASE("replication server reuses client-local network ids after each client'
         payloads.push_back({client, payload});
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
 
@@ -281,7 +281,7 @@ TEST_CASE("replication server reuses network ids immediately when no clients hav
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     const ecs::Entity first = registry.create();
     REQUIRE(registry.add<kage_sync_tests::Position>(first, kage_sync_tests::Position{1.0f, 1.0f}) != nullptr);
     REQUIRE(start_sync(registry, first, archetype));
@@ -319,7 +319,7 @@ TEST_CASE("replication server accepts delayed entity ACKs for retained quantized
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, entity, archetype));
 
@@ -358,7 +358,7 @@ TEST_CASE("replication server shares ACKed quantized frames across clients and f
         payloads.push_back({client, payload});
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(registry, entity, archetype));
@@ -373,9 +373,9 @@ TEST_CASE("replication server shares ACKed quantized frames across clients and f
     REQUIRE(server.retained_quantized_frame_count() == 1);
     REQUIRE(server.retained_quantized_frame_bytes() == sizeof(kage_sync_tests::QuantizedNetworkedPosition));
 
-    REQUIRE(server.remove_client(1));
+    REQUIRE(server.remove_client(registry, 1));
     REQUIRE(server.retained_quantized_frame_count() == 1);
-    REQUIRE(server.remove_client(2));
+    REQUIRE(server.remove_client(registry, 2));
     REQUIRE(server.retained_quantized_frame_count() == 0);
     REQUIRE(server.retained_quantized_frame_bytes() == 0);
 }
@@ -397,7 +397,7 @@ TEST_CASE("replication server trims unacked pending quantized frames per entity"
     options.transport = [&](kage::sync::ClientId, const ecs::BitBuffer& payload) {
         payloads.push_back(payload);
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, entity, archetype));
 
@@ -430,7 +430,7 @@ TEST_CASE("replication server keeps swapped clients addressable after removal") 
         payloads.push_back({client, payload});
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     REQUIRE(start_sync(registry, entity, archetype));
@@ -446,7 +446,7 @@ TEST_CASE("replication server keeps swapped clients addressable after removal") 
     }
     REQUIRE(client_two_packet_id != 0);
 
-    REQUIRE(server.remove_client(1));
+    REQUIRE(server.remove_client(registry, 1));
     REQUIRE(server.has_client(2));
     REQUIRE(server.process_packet(registry, 2, write_ack_packet(client_two_packet_id)));
 }
@@ -469,7 +469,7 @@ TEST_CASE("replication server records bandwidth savings for ACKed delta updates"
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(start_sync(registry, entity, archetype));
 

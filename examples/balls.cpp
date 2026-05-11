@@ -406,7 +406,7 @@ struct RuntimeStats {
     int server_entities = 0;
     int client_entities = 0;
     kage::sync::SyncFrame frame = 0;
-    kage::sync::SyncFrame receive_frame = 0;
+    kage::sync::SyncFrame estimated_server_frame = 0;
     kage::sync::SyncFrame client_frame = 0;
 };
 
@@ -976,7 +976,7 @@ void draw_stats_overlay(
     const LinkSettings& link,
     kage::sync::ReplicationClientMode client_mode,
     int target_ball_count,
-    kage::sync::SyncFrame buffer_frames,
+    kage::sync::SyncFrame buffered_frame_lag,
     const kage::sync::ReplicationServer::ClientBandwidthStats& bandwidth,
     const kage::sync::ReplicationClientTimingStats& timing
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
@@ -1068,11 +1068,11 @@ void draw_stats_overlay(
         Color{215, 220, 230, 255});
     DrawText(
         TextFormat(
-            "net frame %u   client frame %u   buffer %u->%u   mode M/1/2",
-            stats.receive_frame,
+            "net frame %u   client frame %u   buffered lag %u->%u   mode M/1/2",
+            stats.estimated_server_frame,
             stats.client_frame,
-            buffer_frames,
-            timing.target_interpolation_buffer_frames),
+            buffered_frame_lag,
+            timing.target_buffered_frame_lag),
         28,
         204,
         16,
@@ -1082,7 +1082,7 @@ void draw_stats_overlay(
             "measured %.1f frames latency  %.1f jitter  %.3fx",
             timing.latency_frames,
             timing.jitter_frames,
-            timing.time_dilation),
+            timing.buffered_time_dilation),
         28,
         224,
         16,
@@ -1122,11 +1122,11 @@ int main(int argc, char** argv) {
     constexpr double server_fixed_dt_seconds = 1.0 / 30.0;
     constexpr float server_fixed_dt = static_cast<float>(server_fixed_dt_seconds);
     kage::sync::ReplicationClientMode client_mode = kage::sync::ReplicationClientMode::Snap;
-    kage::sync::SyncFrame interpolation_buffer_frames = 2;
-    bool auto_interpolation_buffer_frames = true;
-    float time_dilation_min = 0.95f;
-    float time_dilation_max = 1.05f;
-    float time_dilation_gain = 0.05f;
+    kage::sync::SyncFrame buffered_frame_lag = 2;
+    bool auto_buffered_frame_lag = true;
+    float buffered_time_dilation_min = 0.95f;
+    float buffered_time_dilation_max = 1.05f;
+    float buffered_time_dilation_gain = 0.05f;
     LinkSettings link_settings;
     bool dynamic_bandwidth = true;
     std::size_t static_bandwidth_limit_bytes_per_tick = 32U * 1024U;
@@ -1226,21 +1226,21 @@ int main(int argc, char** argv) {
             (void)require_value();
             throw std::runtime_error("--trace-packet-logs requires a build with KAGE_SYNC_TRACE_PACKET_LOGS=ON");
 #endif
-        } else if (arg == "--auto-interpolation-buffer") {
+        } else if (arg == "--auto-buffered-frame-lag") {
             const std::string value = require_value();
             if (value == "on" || value == "true" || value == "1") {
-                auto_interpolation_buffer_frames = true;
+                auto_buffered_frame_lag = true;
             } else if (value == "off" || value == "false" || value == "0") {
-                auto_interpolation_buffer_frames = false;
+                auto_buffered_frame_lag = false;
             } else {
-                throw std::runtime_error("--auto-interpolation-buffer must be on or off");
+                throw std::runtime_error("--auto-buffered-frame-lag must be on or off");
             }
-        } else if (arg == "--time-dilation-min") {
-            time_dilation_min = std::stof(require_value());
-        } else if (arg == "--time-dilation-max") {
-            time_dilation_max = std::stof(require_value());
-        } else if (arg == "--time-dilation-gain") {
-            time_dilation_gain = std::stof(require_value());
+        } else if (arg == "--buffered-time-dilation-min") {
+            buffered_time_dilation_min = std::stof(require_value());
+        } else if (arg == "--buffered-time-dilation-max") {
+            buffered_time_dilation_max = std::stof(require_value());
+        } else if (arg == "--buffered-time-dilation-gain") {
+            buffered_time_dilation_gain = std::stof(require_value());
         } else {
             throw std::runtime_error("unknown argument: " + arg);
         }
@@ -1305,26 +1305,25 @@ int main(int argc, char** argv) {
     std::vector<kage::sync::ClientEntityNetworkId> known_client_entities;
     known_client_entities.reserve(max_ball_count);
     kage::sync::ReplicationClientOptions client_options;
-    client_options.mtu_bytes = 1200;
-    client_options.default_entity_mode = client_mode;
-    client_options.interpolation_buffer_frames = interpolation_buffer_frames;
-    client_options.interpolation_buffer_capacity_frames = 64;
-    client_options.auto_interpolation_buffer_frames = auto_interpolation_buffer_frames;
-    client_options.auto_interpolation_jitter_multiplier = 2.0f;
-    client_options.auto_interpolation_smoothing = 0.1f;
-    client_options.auto_interpolation_time_dilation_min = time_dilation_min;
-    client_options.auto_interpolation_time_dilation_max = time_dilation_max;
-    client_options.auto_interpolation_time_dilation_gain = time_dilation_gain;
-    client_options.entity_mode_selector = [&](const kage::sync::ReplicatedEntityUpdateView& update) {
+    client_options.network.mtu_bytes = 1200;
+    client_options.entities.default_mode = client_mode;
+    client_options.buffered.buffered_frame_lag = buffered_frame_lag;
+    client_options.buffered.auto_buffered_frame_lag = auto_buffered_frame_lag;
+    client_options.buffered.auto_buffered_frame_lag_jitter_multiplier = 2.0f;
+    client_options.buffered.auto_buffered_frame_lag_smoothing = 0.1f;
+    client_options.buffered.auto_buffered_time_dilation_min = buffered_time_dilation_min;
+    client_options.buffered.auto_buffered_time_dilation_max = buffered_time_dilation_max;
+    client_options.buffered.auto_buffered_time_dilation_gain = buffered_time_dilation_gain;
+    client_options.entities.mode_selector = [&](const kage::sync::ReplicatedEntityUpdateView& update) {
         remember_client_entity(known_client_entities, update.client_entity_network_id);
         return client_mode;
     };
-    client_options.fixed_dt_seconds = 1.0 / 30.0;
-    client_options.rollback_policy = kage::sync::ReplicationRollbackPolicy::OnlyAffected;
+    client_options.clock.fixed_dt_seconds = 1.0 / 30.0;
+    client_options.prediction.rollback_policy = kage::sync::ReplicationRollbackPolicy::OnlyAffected;
 #ifdef KAGE_SYNC_ENABLE_TRACING
     client_options.trace = trace_options;
 #endif
-    kage::sync::ReplicationClient client(client_options);
+    kage::sync::ReplicationClient client(client_registry, client_options);
     register_client_prediction_jobs(client_registry, client);
 
     InitWindow(1280, 720, "kage-sync localhost balls");
@@ -1405,7 +1404,7 @@ int main(int argc, char** argv) {
                 stats.frame = static_cast<kage::sync::SyncFrame>(read.read_bits(32U));
             }
             client.receive_packet(received);
-            interpolation_buffer_frames = client.current_interpolation_buffer_frames();
+            buffered_frame_lag = client.current_buffered_frame_lag();
         }
         client.tick(client_registry, dt);
         std::vector<ecs::Entity> expired_flashes;
@@ -1418,8 +1417,8 @@ int main(int argc, char** argv) {
         for (ecs::Entity entity : expired_flashes) {
             client_registry.remove<BallCueFlash>(entity);
         }
-        stats.receive_frame = client.receive_frame();
-        stats.client_frame = client.playback_frame();
+        stats.estimated_server_frame = static_cast<kage::sync::SyncFrame>(client.estimated_server_frame());
+        stats.client_frame = client.buffered_frame();
 
         int visible_entities = 0;
         client_registry.view<const BallPosition, const BallVisual>().each(
@@ -1524,7 +1523,7 @@ int main(int argc, char** argv) {
             link_settings,
             client_mode,
             target_ball_count,
-            interpolation_buffer_frames,
+            buffered_frame_lag,
             server.bandwidth_stats(client_id),
             client.timing_stats()
 #ifdef KAGE_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS

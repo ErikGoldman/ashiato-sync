@@ -1,5 +1,6 @@
 #pragma once
 
+#include "client/store/frame_payload_ring.hpp"
 #include "client/state.hpp"
 
 #include "ecs/bit_buffer.hpp"
@@ -46,6 +47,7 @@ public:
 
     bool apply_frame(ecs::Registry& registry, const SyncSettings& settings, SyncFrame frame) const;
     void acknowledge_frame(SyncFrame frame);
+    void retire_transmit_frames_through(SyncFrame frame) noexcept;
     void apply_latest_to_owned_entities(ecs::Registry& registry, const SyncSettings& settings) const;
 
     bool drain_packet(
@@ -66,14 +68,22 @@ public:
 private:
     bool ready_for(const SyncSettings& settings) const noexcept;
     void ensure_capacity(std::size_t capacity_frames);
+    std::uint8_t* frame_bytes(std::size_t slot) noexcept;
+    const std::uint8_t* frame_bytes(std::size_t slot) const noexcept;
 
-    std::vector<InputFrame> frames_;
+    struct InputFrameSlot {
+        SyncFrame frame = 0;
+        bool valid = false;
+    };
+
+    FramePayloadRing<InputFrameSlot> frames_;
     std::vector<std::uint8_t> latest_;
     std::vector<std::uint8_t> acked_baseline_;
     SyncComponentOps ops_;
     ecs::Entity component_;
     SyncFrame last_recorded_frame_ = 0;
     SyncFrame acked_frame_ = 0;
+    SyncFrame retired_transmit_frame_ = 0;
     bool has_latest_ = false;
     bool has_ops_ = false;
     bool has_acked_baseline_ = true;

@@ -38,7 +38,7 @@ TEST_CASE("replication prioritizer refreshes cached decisions by replicated slot
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
 
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -98,7 +98,7 @@ TEST_CASE("replication prioritizer priority affects serialized send order") {
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     server.tick(registry, server.options().fixed_dt_seconds);
 
@@ -154,7 +154,7 @@ TEST_CASE("entity references boost visible low priority targets on the next tick
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     server.tick(registry, server.options().fixed_dt_seconds);
 
@@ -214,7 +214,7 @@ TEST_CASE("replication prioritizer component masks apply to delta updates") {
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 1);
@@ -267,7 +267,7 @@ TEST_CASE("replication prioritizer can emit an entity record with an all-zero co
         payloads.push_back(payload);
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     server.tick(registry, server.options().fixed_dt_seconds);
 
@@ -309,7 +309,7 @@ TEST_CASE("replication prioritizer applies independent decisions per client") {
         payloads.push_back({client, payload});
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -362,7 +362,7 @@ TEST_CASE("replication prioritizer decisions are honored by the parallel seriali
         payloads.push_back({client, payload});
     };
 
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     REQUIRE(server.add_client(1));
     REQUIRE(server.add_client(2));
     server.tick(registry, server.options().fixed_dt_seconds);

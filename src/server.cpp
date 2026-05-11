@@ -2,6 +2,7 @@
 
 #include "kage/sync/bandwidth_budget.hpp"
 #include "detail/frame_data.hpp"
+#include "detail/logging.hpp"
 #include "detail/options_validation.hpp"
 #include "server/detail.hpp"
 #include "server/packet.hpp"
@@ -11,9 +12,6 @@
 #include "kage/sync/tracing.hpp"
 
 #include <spdlog/logger.h>
-#include <spdlog/fmt/fmt.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cmath>
@@ -26,7 +24,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <utility>
 
 namespace kage::sync {
@@ -84,166 +81,6 @@ struct OutboundPacket {
     ClientId client = invalid_client_id;
     ecs::BitBuffer packet;
 };
-
-void append_json_string(spdlog::memory_buf_t& dest, std::string_view value) {
-    for (const char ch : value) {
-        switch (ch) {
-        case '"':
-            fmt::format_to(std::back_inserter(dest), "\\\"");
-            break;
-        case '\\':
-            fmt::format_to(std::back_inserter(dest), "\\\\");
-            break;
-        case '\b':
-            fmt::format_to(std::back_inserter(dest), "\\b");
-            break;
-        case '\f':
-            fmt::format_to(std::back_inserter(dest), "\\f");
-            break;
-        case '\n':
-            fmt::format_to(std::back_inserter(dest), "\\n");
-            break;
-        case '\r':
-            fmt::format_to(std::back_inserter(dest), "\\r");
-            break;
-        case '\t':
-            fmt::format_to(std::back_inserter(dest), "\\t");
-            break;
-        default:
-            if (static_cast<unsigned char>(ch) < 0x20U) {
-                fmt::format_to(std::back_inserter(dest), "\\u{:04x}", static_cast<unsigned int>(ch));
-            } else {
-                dest.push_back(ch);
-            }
-            break;
-        }
-    }
-}
-
-bool json_value_is_number(std::string_view value) noexcept {
-    if (value.empty()) {
-        return false;
-    }
-    std::size_t index = 0;
-    if (value[index] == '-') {
-        ++index;
-    }
-    bool saw_digit = false;
-    for (; index < value.size(); ++index) {
-        const char ch = value[index];
-        if (ch >= '0' && ch <= '9') {
-            saw_digit = true;
-            continue;
-        }
-        if (ch == '.') {
-            continue;
-        }
-        return false;
-    }
-    return saw_digit;
-}
-
-void append_json_field_value(spdlog::memory_buf_t& dest, std::string_view value) {
-    if (value == "true" || value == "false" || json_value_is_number(value)) {
-        fmt::format_to(std::back_inserter(dest), "{}", value);
-        return;
-    }
-    dest.push_back('"');
-    append_json_string(dest, value);
-    dest.push_back('"');
-}
-
-void append_payload_fields(spdlog::memory_buf_t& dest, std::string_view payload) {
-    std::size_t start = 0;
-    while (start < payload.size()) {
-        while (start < payload.size() && payload[start] == ' ') {
-            ++start;
-        }
-        const std::size_t end = payload.find(' ', start);
-        const std::string_view token = payload.substr(
-            start,
-            end == std::string_view::npos ? std::string_view::npos : end - start);
-        const std::size_t equals = token.find('=');
-        if (equals != std::string_view::npos && equals != 0U && equals + 1U < token.size()) {
-            fmt::format_to(std::back_inserter(dest), ",\"");
-            append_json_string(dest, token.substr(0, equals));
-            fmt::format_to(std::back_inserter(dest), "\":");
-            append_json_field_value(dest, token.substr(equals + 1U));
-        }
-        if (end == std::string_view::npos) {
-            break;
-        }
-        start = end + 1U;
-    }
-}
-
-std::string log_token(std::string_view value) {
-    std::string result;
-    result.reserve(value.size());
-    for (const char ch : value) {
-        result.push_back(ch == ' ' ? '_' : ch);
-    }
-    return result;
-}
-
-class JsonLogFormatter final : public spdlog::formatter {
-public:
-    void format(const spdlog::details::log_msg& msg, spdlog::memory_buf_t& dest) override {
-        const auto level = spdlog::level::to_string_view(msg.level);
-        fmt::format_to(std::back_inserter(dest), "{{\"level\":\"");
-        append_json_string(dest, std::string_view(level.data(), level.size()));
-        fmt::format_to(std::back_inserter(dest), "\",\"logger\":\"");
-        append_json_string(dest, std::string_view(msg.logger_name.data(), msg.logger_name.size()));
-        dest.push_back('"');
-        append_payload_fields(dest, std::string_view(msg.payload.data(), msg.payload.size()));
-        fmt::format_to(std::back_inserter(dest), "}}\n");
-    }
-
-    std::unique_ptr<spdlog::formatter> clone() const override {
-        return std::make_unique<JsonLogFormatter>();
-    }
-};
-
-spdlog::level::level_enum to_spdlog_level(LogLevel level) noexcept {
-    switch (level) {
-    case LogLevel::Trace:
-        return spdlog::level::trace;
-    case LogLevel::Debug:
-        return spdlog::level::debug;
-    case LogLevel::Info:
-        return spdlog::level::info;
-    case LogLevel::Warning:
-        return spdlog::level::warn;
-    case LogLevel::Error:
-        return spdlog::level::err;
-    case LogLevel::Critical:
-        return spdlog::level::critical;
-    case LogLevel::Off:
-        return spdlog::level::off;
-    }
-    return spdlog::level::off;
-}
-
-std::shared_ptr<spdlog::logger> make_server_logger(const LoggingOptions& options) {
-    if (options.logger != nullptr) {
-        options.logger->set_level(to_spdlog_level(options.level));
-        return options.logger;
-    }
-    if (options.level == LogLevel::Off) {
-        return nullptr;
-    }
-
-    auto logger = std::make_shared<spdlog::logger>(
-        "kage.sync.server",
-        std::make_shared<spdlog::sinks::stderr_color_sink_mt>());
-    logger->set_level(to_spdlog_level(options.level));
-    if (options.format == LogFormat::Json) {
-        logger->set_formatter(std::make_unique<JsonLogFormatter>());
-    } else {
-        logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%l] %v");
-    }
-    return logger;
-}
 
 #ifdef KAGE_SYNC_ENABLE_TRACING
 using server_detail::make_server_trace_event;
@@ -380,11 +217,17 @@ std::uint64_t visible_tag_mask(
 
 }  // namespace
 
-ReplicationServer::ReplicationServer(ReplicationServerOptions options)
+ReplicationServer::ReplicationServer(ecs::Registry& registry, ReplicationServerOptions options)
     : options_(detail::validate_server_options(std::move(options))),
       registry_dirty_frame_listeners_(std::make_shared<ServerRegistryDirtyFrameSubscription::State>()),
       frame_batch_listeners_(std::make_shared<ServerFrameBatchListenerSubscription::State>()),
-      logger_(make_server_logger(options_.logging)) {
+      logger_(detail::make_logger(options_.logging, "kage.sync.server")) {
+    register_components(registry);
+    SyncSettings& settings = registry.write<SyncSettings>();
+    settings.role = SyncRole::Server;
+    settings.fixed_dt_seconds = options_.fixed_dt_seconds;
+    registry.write<SyncAuthority>().authoritative = true;
+    set_local_client_id(registry, invalid_client_id);
     server_dirty_frame_subscription_ = registry_dirty_frame_broadcaster_.subscribe(*this);
 #ifdef KAGE_SYNC_ENABLE_TRACING
     set_trace_options(options_.trace);
@@ -405,15 +248,15 @@ void ReplicationServer::set_transport(TransportFn transport) {
 
 void ReplicationServer::set_logger(std::shared_ptr<spdlog::logger> logger) {
     options_.logging.logger = std::move(logger);
-    logger_ = make_server_logger(options_.logging);
+    logger_ = detail::make_logger(options_.logging, "kage.sync.server");
 }
 
 void ReplicationServer::set_log_level(LogLevel level) {
     options_.logging.level = level;
     if (logger_ == nullptr) {
-        logger_ = make_server_logger(options_.logging);
+        logger_ = detail::make_logger(options_.logging, "kage.sync.server");
     } else {
-        logger_->set_level(to_spdlog_level(level));
+        logger_->set_level(detail::to_spdlog_level(level));
     }
 }
 
@@ -627,7 +470,12 @@ bool ReplicationServer::add_client_for_peer(ClientId peer, ClientId client, bool
     return add_client_state(std::move(state));
 }
 
-ClientId ReplicationServer::add_local_client() {
+void ReplicationServer::set_local_client_id(ecs::Registry& registry, ClientId client) noexcept {
+    local_client_ = client;
+    registry.write<SyncSettings>().local_client = client;
+}
+
+ClientId ReplicationServer::add_local_client(ecs::Registry& registry) {
     if (local_client_ != invalid_client_id) {
         return invalid_client_id;
     }
@@ -647,10 +495,11 @@ ClientId ReplicationServer::add_local_client() {
     state.local = true;
     state.ready_for_updates = true;
     state.connect_resend_accumulator_seconds = options_.connect_resend_interval_seconds;
+    const ClientId local_client = state.id;
     if (!add_client_state(std::move(state))) {
         return invalid_client_id;
     }
-    local_client_ = next_connect_client_id_ - 1U;
+    set_local_client_id(registry, local_client);
     return local_client_;
 }
 
@@ -874,7 +723,7 @@ void ReplicationServer::append_packet_ack_cues(
 #endif
 #endif
 
-bool ReplicationServer::remove_client(ClientId client) {
+bool ReplicationServer::remove_client(ecs::Registry& registry, ClientId client) {
     const auto found = client_to_index_.find(client);
     if (found == client_to_index_.end()) {
         return false;
@@ -909,7 +758,7 @@ bool ReplicationServer::remove_client(ClientId client) {
         log_info("client_removed", "peer=" + std::to_string(removed_peer) +
             " client=" + std::to_string(removed_id));
     } else {
-        local_client_ = invalid_client_id;
+        set_local_client_id(registry, invalid_client_id);
     }
 #ifdef KAGE_SYNC_ENABLE_TRACING
     if (tracer_ != nullptr && tracer_->enabled()) {
@@ -1326,11 +1175,12 @@ bool ReplicationServer::process_packet(ClientId client, ecs::BitBuffer packet) {
         return result;
     };
     try {
-        if (packet.remaining_bits() < 8U) {
+        detail::BitReader reader(packet);
+        std::uint8_t message = 0;
+        if (!reader.read_bits(8U, message)) {
             log_client_packet_warning(client, 0, "missing_message_id", "packet_missing_message_id");
             return finish(false);
         }
-        const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
 
         if (message == protocol::client_connect_request_message) {
             return finish(process_connect_request_packet(client, packet));
@@ -1376,11 +1226,12 @@ bool ReplicationServer::process_packet(ecs::Registry& registry, ClientId client,
         return result;
     };
     try {
-        if (packet.remaining_bits() < 8U) {
+        detail::BitReader reader(packet);
+        std::uint8_t message = 0;
+        if (!reader.read_bits(8U, message)) {
             log_client_packet_warning(client, 0, "missing_message_id", "packet_missing_message_id");
             return finish(false);
         }
-        const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
 
         if (message == protocol::client_connect_request_message) {
             return finish(process_connect_request_packet(client, packet));
@@ -1491,11 +1342,12 @@ bool ReplicationServer::process_message_from_connected_client(
 }
 
 bool ReplicationServer::process_connection_request_ack_packet(ClientState& client, ecs::BitBuffer& packet) {
-    if (packet.remaining_bits() < 64U) {
+    detail::BitReader reader(packet);
+    ClientId acked_client = invalid_client_id;
+    if (!reader.read_bits(64U, acked_client)) {
         log_client_packet_warning(client.peer, protocol::client_connect_ack_message, "truncated_connect_ack", "truncated_connect_ack");
         return false;
     }
-    const ClientId acked_client = static_cast<ClientId>(packet.read_unsigned_bits(64U));
     if (acked_client != client.id) {
         log_client_packet_warning(client.peer, protocol::client_connect_ack_message, "connect_ack_client_mismatch", "connect_ack_client_id_mismatch");
         return false;
@@ -1509,17 +1361,18 @@ bool ReplicationServer::process_connection_request_ack_packet(ClientState& clien
 }
 
 bool ReplicationServer::process_ping_packet(ClientState& client, ecs::BitBuffer& packet) {
-    if (packet.remaining_bits() < 64U) {
+    detail::BitReader reader(packet);
+    std::uint32_t sequence = 0;
+    if (!reader.read_bits(32U, sequence)) {
         log_client_packet_warning(client.peer, protocol::client_ping_message, "truncated_ping", "truncated_ping");
         return false;
     }
-    const auto sequence = static_cast<std::uint32_t>(packet.read_bits(32U));
-    const auto send_frame = static_cast<SyncFrame>(packet.read_bits(32U));
-    std::uint16_t send_subframe = 0;
-    if (packet.remaining_bits() >= protocol::frame_subframe_bits) {
-        send_subframe = static_cast<std::uint16_t>(packet.read_bits(protocol::frame_subframe_bits));
-    }
-    send_pong(client.peer, sequence, send_frame, send_subframe);
+    const double subframe = tick_accumulator_seconds_ / options_.fixed_dt_seconds;
+    const auto server_receive_subframe = static_cast<std::uint16_t>(std::clamp(
+        static_cast<std::uint32_t>(std::floor(subframe * static_cast<double>(protocol::frame_subframe_scale))),
+        std::uint32_t{0},
+        protocol::frame_subframe_scale - 1U));
+    send_pong(client.peer, sequence, frame_, server_receive_subframe);
     return true;
 }
 
@@ -1584,20 +1437,21 @@ ReplicationServer::ClientUpdateAckResult ReplicationServer::process_client_acks_
 #endif
 ) {
     const std::size_t packet_id_bits = configured_packet_id_bits(options_);
-    if (packet.remaining_bits() < 16U) {
+    detail::BitReader reader(packet);
+    std::uint16_t ack_count = 0;
+    if (!reader.read_bits(16U, ack_count)) {
         return ClientUpdateAckResult{};
     }
-    const auto ack_count = static_cast<std::uint16_t>(packet.read_bits(16U));
 #if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
     trace_acks.reserve(trace_acks.size() + ack_count);
 #endif
 
     bool all_acknowledged = true;
     for (std::uint16_t ack = 0; ack < ack_count; ++ack) {
-        if (packet.remaining_bits() < packet_id_bits) {
+        std::uint32_t packet_id = 0;
+        if (!reader.read_bits(packet_id_bits, packet_id)) {
             return ClientUpdateAckResult{};
         }
-        const auto packet_id = static_cast<std::uint32_t>(packet.read_bits(packet_id_bits));
 #if defined(KAGE_SYNC_ENABLE_TRACING) && defined(KAGE_SYNC_TRACE_PACKET_LOGS)
         trace_acks.push_back(packet_id);
 #endif
@@ -1671,7 +1525,7 @@ void ReplicationServer::log_client_packet_warning(
     const char* reason_code,
     const char* reason_detail) {
     ++observability_stats_.client_packet_warnings;
-    const std::uint32_t max_logs = options_.logging.max_warning_logs_per_peer;
+    const std::uint32_t max_logs = options_.logging.max_warning_logs_per_source;
     std::uint32_t& logged_count = warning_logs_by_peer_[peer];
     if (max_logs != 0U && logged_count >= max_logs) {
         ++observability_stats_.suppressed_client_packet_warnings;
@@ -1695,7 +1549,7 @@ void ReplicationServer::log_client_packet_warning(
             peer,
             message,
             reason_code,
-            log_token(reason_detail));
+            detail::log_token(reason_detail));
     }
 }
 
@@ -1705,7 +1559,7 @@ void ReplicationServer::log_server_error(ClientId peer, const char* event, const
     }
     ++observability_stats_.server_errors;
     if (logger_ != nullptr && logger_->should_log(spdlog::level::err)) {
-        logger_->error("event={} frame={} peer={} reason={}", event, frame_, peer, log_token(reason));
+        logger_->error("event={} frame={} peer={} reason={}", event, frame_, peer, detail::log_token(reason));
     }
 }
 
@@ -1786,7 +1640,7 @@ bool ReplicationServer::tick(ecs::Registry& registry, double dt_seconds) {
     inbound_packets_.clear();
 
     resend_pending_connect_responses(dt_seconds);
-    disconnect_timed_out_clients();
+    disconnect_timed_out_clients(registry);
 
     const FixedStepAdvance advance = consume_fixed_steps(
         tick_accumulator_seconds_,
@@ -1799,7 +1653,6 @@ bool ReplicationServer::tick(ecs::Registry& registry, double dt_seconds) {
     const std::uint32_t completed_frames = advance.steps;
     for (std::uint32_t step = 0; step < completed_frames; ++step) {
         ++frame_;
-        registry.write<SyncSettings>().fixed_dt_seconds = options_.fixed_dt_seconds;
         registry.write<FrameInfo>().frame = frame_;
         push_client_inputs_to_ecs(registry);
         registry.run_jobs();
@@ -1823,7 +1676,6 @@ bool ReplicationServer::advance_frame_without_simulating(ecs::Registry& registry
     }
     frame_ = frame;
     tick_accumulator_seconds_ = 0.0;
-    registry.write<SyncSettings>().fixed_dt_seconds = options_.fixed_dt_seconds;
     registry.write<FrameInfo>().frame = frame_;
     push_dirty_info_to_listeners(registry);
     push_frame_to_listeners(registry, options_.fixed_dt_seconds, 1U);
@@ -1856,7 +1708,7 @@ void ReplicationServer::resend_pending_connect_responses(double dt_seconds) {
     }
 }
 
-void ReplicationServer::disconnect_timed_out_clients() {
+void ReplicationServer::disconnect_timed_out_clients(ecs::Registry& registry) {
     if (options_.idle_client_timeout_seconds == 0.0) {
         return;
     }
@@ -1871,7 +1723,7 @@ void ReplicationServer::disconnect_timed_out_clients() {
             ++observability_stats_.clients_timed_out;
             log_info("client_timed_out", "peer=" + std::to_string(client.peer) +
                 " client=" + std::to_string(client.id));
-            remove_client(client_id);
+            remove_client(registry, client_id);
             continue;
         }
         ++index;
@@ -2775,6 +2627,9 @@ bool ReplicationServer::upsert_replicated(ecs::Registry& registry, ecs::Entity e
     const EntityKey key = entity.value;
     const auto found = entity_to_replicated_index_.find(key);
     if (found != entity_to_replicated_index_.end()) {
+        if (replicated_[found->second].archetype != archetype) {
+            throw std::logic_error("replicated entity archetype cannot change while syncing");
+        }
         replicated_[found->second].archetype = archetype;
         replicated_[found->second].same_frame_quantized_frame = invalid_quantized_frame_id;
         replicated_[found->second].same_frame_quantized_frame_frame = 0;

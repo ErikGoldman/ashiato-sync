@@ -44,15 +44,19 @@ void define_fuzz_schema(ecs::Registry& registry) {
         {{position, kage::sync::ReplicationAudience::All}});
 }
 
-void configure_client_registry(ecs::Registry& registry) {
+void setup_client_registry(ecs::Registry& registry) {
     define_fuzz_schema(registry);
-    kage::sync::configure_client(registry, fuzz_peer);
+    kage::sync::SyncSettings& settings = registry.write<kage::sync::SyncSettings>();
+    settings.role = kage::sync::SyncRole::Client;
+    registry.write<kage::sync::SyncAuthority>().authoritative = false;
     (void)kage::sync::set_client_input_component<kage_sync_tests::NetworkedPosition>(registry);
 }
 
-void configure_server_registry(ecs::Registry& registry) {
+void setup_server_registry(ecs::Registry& registry) {
     define_fuzz_schema(registry);
-    kage::sync::configure_server(registry);
+    kage::sync::SyncSettings& settings = registry.write<kage::sync::SyncSettings>();
+    settings.role = kage::sync::SyncRole::Server;
+    registry.write<kage::sync::SyncAuthority>().authoritative = true;
     (void)kage::sync::set_client_input_component<kage_sync_tests::NetworkedPosition>(registry);
 }
 
@@ -125,8 +129,6 @@ ecs::BitBuffer make_client_ping() {
     ecs::BitBuffer packet;
     packet.push_bits(kage::sync::protocol::client_ping_message, 8U);
     packet.push_bits(1, 32U);
-    packet.push_bits(5, 32U);
-    packet.push_bits(0, kage::sync::protocol::frame_subframe_bits);
     return packet;
 }
 
@@ -146,26 +148,28 @@ ecs::BitBuffer make_client_input() {
 
 void fuzz_client_receive(ecs::BitBuffer packet, bool seed_client) {
     ecs::Registry registry;
-    configure_client_registry(registry);
+    setup_client_registry(registry);
 
     kage::sync::ReplicationClientOptions options;
-    options.default_entity_mode = kage::sync::ReplicationClientMode::Snap;
-    kage::sync::ReplicationClient client(options);
+    options.entities.default_mode = kage::sync::ReplicationClientMode::Snap;
+    options.session.local_client = fuzz_peer;
+    kage::sync::ReplicationClient client(registry, options);
     if (seed_client) {
-        (void)client.receive(registry, make_client_seed_update(), 1, 1);
+        (void)client.receive(registry, make_client_seed_update());
     }
-    (void)client.receive(registry, std::move(packet), 7, 7);
+    (void)client.receive(registry, std::move(packet));
 }
 
 void fuzz_server_connected(ecs::BitBuffer packet, bool with_registry) {
     kage::sync::ReplicationServerOptions options;
     options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(options);
+    ecs::Registry server_registry;
+    kage::sync::ReplicationServer server(server_registry, options);
     (void)server.add_client(fuzz_peer);
 
     if (with_registry) {
         ecs::Registry registry;
-        configure_server_registry(registry);
+        setup_server_registry(registry);
         (void)server.process_packet(registry, fuzz_peer, std::move(packet));
     } else {
         (void)server.process_packet(fuzz_peer, std::move(packet));
@@ -174,11 +178,11 @@ void fuzz_server_connected(ecs::BitBuffer packet, bool with_registry) {
 
 void fuzz_server_connect(ecs::BitBuffer packet) {
     ecs::Registry registry;
-    configure_server_registry(registry);
+    setup_server_registry(registry);
 
     kage::sync::ReplicationServerOptions options;
     options.transport = [](kage::sync::ClientId, const ecs::BitBuffer&) {};
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
     (void)server.process_packet(registry, fuzz_peer, std::move(packet));
 }
 

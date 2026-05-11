@@ -56,13 +56,13 @@ TEST_CASE("fractional tick sample marker is stored as a component entity tag") {
 TEST_CASE("server and client configuration update singleton settings") {
     ecs::Registry registry;
 
-    kage::sync::configure_client(registry, 42);
+    kage_sync_tests::configure_test_client_registry(registry, 42);
 
     REQUIRE(registry.get<kage::sync::SyncSettings>().role == kage::sync::SyncRole::Client);
     REQUIRE(registry.get<kage::sync::SyncSettings>().local_client == 42);
     REQUIRE_FALSE(registry.get<kage::sync::SyncAuthority>().is_authoritative());
 
-    kage::sync::configure_server(registry);
+    kage_sync_tests::configure_test_server_registry(registry);
 
     REQUIRE(registry.get<kage::sync::SyncSettings>().role == kage::sync::SyncRole::Server);
     REQUIRE(registry.get<kage::sync::SyncSettings>().local_client == kage::sync::invalid_client_id);

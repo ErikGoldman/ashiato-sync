@@ -41,7 +41,7 @@ TEST_CASE("server connect response resends until client id is ACKed") {
     options.transport = [&](kage::sync::ClientId peer, const ecs::BitBuffer& packet) {
         sent.push_back({peer, packet});
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
 
     REQUIRE(server.process_packet(registry, 99, make_connect_request("token")));
     REQUIRE(server.has_client(7));
@@ -92,7 +92,7 @@ TEST_CASE("server duplicate connect request from same peer resends existing acce
     options.transport = [&](kage::sync::ClientId peer, const ecs::BitBuffer& packet) {
         sent.push_back({peer, packet});
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
 
     REQUIRE(server.process_packet(registry, 77, make_connect_request("token")));
     REQUIRE(server.process_packet(registry, 77, make_connect_request("token")));
@@ -126,7 +126,7 @@ TEST_CASE("server starts client replication only after connect response ACK") {
     options.transport = [&](kage::sync::ClientId peer, const ecs::BitBuffer& packet) {
         sent.push_back({peer, packet});
     };
-    kage::sync::ReplicationServer server(options);
+    kage::sync::ReplicationServer server(registry, options);
 
     REQUIRE(server.process_packet(registry, 99, make_connect_request("token")));
     REQUIRE(server.has_client(7));
@@ -204,11 +204,11 @@ TEST_CASE("client and server recover when each critical handshake packet is lost
         }
         (void)downstream.enqueue(client, packet, now_seconds);
     };
-    kage::sync::ReplicationServer server(server_options);
+    kage::sync::ReplicationServer server(server_registry, server_options);
 
     kage::sync::ReplicationClientOptions client_options;
-    client_options.connect_token = "token";
-    kage::sync::ReplicationClient client(client_options);
+    client_options.session.connect_token = "token";
+    kage::sync::ReplicationClient client(client_registry, kage_sync_tests::make_test_client_options(client_registry, client_options));
     client.set_packet_sender([&](const ecs::BitBuffer& packet) {
         const std::uint8_t message = packet_message(packet);
         if (message == kage::sync::protocol::client_connect_request_message && !dropped_connect_request) {
@@ -255,25 +255,27 @@ TEST_CASE("client and server recover when each critical handshake packet is lost
 }
 
 TEST_CASE("replication client and server templates configure network id tier width") {
-    kage::sync::ReplicationClientT<8> client;
-    REQUIRE(client.options().protocol.network_entity_id_tier0_bits == 8U);
+    ecs::Registry registry;
+    kage::sync::ReplicationClientT<8> client(registry, kage_sync_tests::make_test_client_options(registry, {}));
+    REQUIRE(client.options().network.protocol.network_entity_id_tier0_bits == 8U);
 
-    kage::sync::ReplicationServerT<8> server;
+    kage::sync::ReplicationServerT<8> server(registry);
     REQUIRE(server.options().protocol.network_entity_id_tier0_bits == 8U);
 }
 
 TEST_CASE("replication client and server reject invalid network id tier widths") {
+    ecs::Registry registry;
     kage::sync::ReplicationClientOptions client_options;
-    client_options.protocol.network_entity_id_tier0_bits = 0U;
-    REQUIRE_THROWS_AS(kage::sync::ReplicationClient(client_options), std::invalid_argument);
-    client_options.protocol.network_entity_id_tier0_bits = 23U;
-    REQUIRE_THROWS_AS(kage::sync::ReplicationClient(client_options), std::invalid_argument);
+    client_options.network.protocol.network_entity_id_tier0_bits = 0U;
+    REQUIRE_THROWS_AS(kage::sync::ReplicationClient(registry, client_options), std::invalid_argument);
+    client_options.network.protocol.network_entity_id_tier0_bits = 23U;
+    REQUIRE_THROWS_AS(kage::sync::ReplicationClient(registry, client_options), std::invalid_argument);
 
     kage::sync::ReplicationServerOptions server_options;
     server_options.protocol.network_entity_id_tier0_bits = 0U;
-    REQUIRE_THROWS_AS(kage::sync::ReplicationServer(server_options), std::invalid_argument);
+    REQUIRE_THROWS_AS(kage::sync::ReplicationServer(registry, server_options), std::invalid_argument);
     server_options.protocol.network_entity_id_tier0_bits = 23U;
-    REQUIRE_THROWS_AS(kage::sync::ReplicationServer(server_options), std::invalid_argument);
+    REQUIRE_THROWS_AS(kage::sync::ReplicationServer(registry, server_options), std::invalid_argument);
 }
 
 TEST_CASE("replication client and server interoperate with custom network id tier width") {
@@ -292,7 +294,7 @@ TEST_CASE("replication client and server interoperate with custom network id tie
         REQUIRE(client == 1);
         payloads.push_back(payload);
     };
-    kage::sync::ReplicationServerT<8> server(server_options);
+    kage::sync::ReplicationServerT<8> server(server_registry, server_options);
     REQUIRE(server.add_client(1));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(payloads.size() == 1);
@@ -308,8 +310,8 @@ TEST_CASE("replication client and server interoperate with custom network id tie
     ecs::Registry client_registry;
     const kage::sync::SyncArchetypeId client_archetype = define_position_archetype(client_registry);
     REQUIRE(client_archetype.value == server_archetype.value);
-    kage::sync::configure_client(client_registry, 1);
-    kage::sync::ReplicationClientT<8> client;
+    kage_sync_tests::configure_test_client_registry(client_registry, 1);
+    kage::sync::ReplicationClientT<8> client(client_registry, kage_sync_tests::make_test_client_options(client_registry, {}));
     REQUIRE(client.receive(client_registry, payloads[0]));
 
     const kage::sync::ClientEntityNetworkId client_network_id =
@@ -323,12 +325,12 @@ TEST_CASE("replication client and server interoperate with custom network id tie
 }
 
 TEST_CASE("replication rejects client ids that cannot fit in client entity network ids") {
-    kage::sync::ReplicationServer server;
+    ecs::Registry registry;
+    kage::sync::ReplicationServer server(registry);
     REQUIRE_FALSE(server.add_client(kage::sync::max_client_entity_network_id_client + 1U));
 
-    ecs::Registry registry;
     REQUIRE_THROWS_AS(
-        kage::sync::configure_client(registry, kage::sync::max_client_entity_network_id_client + 1U),
+        kage_sync_tests::configure_test_client_registry(registry, kage::sync::max_client_entity_network_id_client + 1U),
         std::invalid_argument);
 
     std::vector<ecs::BitBuffer> responses;
@@ -340,7 +342,7 @@ TEST_CASE("replication rejects client ids that cannot fit in client entity netwo
         accepted = kage::sync::max_client_entity_network_id_client + 1U;
         return true;
     };
-    kage::sync::ReplicationServer connect_server(options);
+    kage::sync::ReplicationServer connect_server(registry, options);
     REQUIRE(connect_server.process_packet(registry, 99, make_connect_request("token")));
     REQUIRE_FALSE(connect_server.has_client(kage::sync::max_client_entity_network_id_client + 1U));
     REQUIRE(responses.size() == 1);
