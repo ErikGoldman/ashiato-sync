@@ -64,6 +64,7 @@ jobs:
           -DASHIATO_SYNC_BUILD_EXAMPLES=OFF
           -DASHIATO_SYNC_BUILD_TRACE_VIEWER=OFF
           -DASHIATO_SYNC_ENABLE_COVERAGE=ON
+          -DASHIATO_SYNC_ASHIATO_SOURCE_DIR=${{ github.workspace }}/main
 
       - name: Build tests, run tests, and collect coverage
         run: cmake --build build-coverage --parallel --target coverage

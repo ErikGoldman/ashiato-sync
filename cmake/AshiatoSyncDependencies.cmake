@@ -4,7 +4,7 @@ function(ashiato_sync_add_ashiato_dependency)
     set(ashiato_sync_build_testing ${BUILD_TESTING})
 
     set(ASHIATO_SYNC_ASHIATO_GIT_REPOSITORY
-        "git@github.com:ErikGoldman/ashiato.git"
+        "https://github.com/ErikGoldman/ashiato.git"
         CACHE STRING "Ashiato ECS Git repository"
     )
     set(ASHIATO_SYNC_ASHIATO_GIT_TAG
