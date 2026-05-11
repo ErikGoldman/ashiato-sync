@@ -41,6 +41,8 @@ cmake --build build
 ```
 
 The library target is `ashiato_sync`, with the alias target `ashiato::sync`.
+Pass `-DASHIATO_SYNC_BUILD_STATIC_LIBRARY=ON` to force `ashiato_sync` to build
+as a static library even when `BUILD_SHARED_LIBS` is enabled.
 CMake fetches Ashiato from GitHub at the pinned `ASHIATO_SYNC_ASHIATO_GIT_TAG`.
 For local ECS development, pass
 `-DASHIATO_SYNC_ASHIATO_SOURCE_DIR=/path/to/Ashiato` to use a checkout instead.

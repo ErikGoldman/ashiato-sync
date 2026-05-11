@@ -32,7 +32,7 @@ namespace {
 constexpr std::size_t max_pending_quantized_frames_per_entity = 64;
 constexpr std::size_t max_cues_per_entity_record = server_detail::max_cues_per_entity_record;
 
-struct FixedStepAdvance {
+struct ServerFixedStepAdvance {
     std::uint32_t steps = 0;
     std::uint64_t dropped_steps = 0;
 };
@@ -50,7 +50,7 @@ using server_detail::destroy_record_bits;
 using server_detail::make_server_packet;
 using server_detail::server_update_header_bits;
 
-FixedStepAdvance consume_fixed_steps(
+ServerFixedStepAdvance consume_server_fixed_steps(
     double& accumulator_seconds,
     double fixed_dt_seconds,
     std::uint32_t max_fixed_steps_per_tick) noexcept {
@@ -72,7 +72,7 @@ FixedStepAdvance consume_fixed_steps(
         ? whole_steps
         : std::min<std::uint64_t>(whole_steps, max_fixed_steps_per_tick);
     accumulator_seconds = clamped_remainder;
-    return FixedStepAdvance{
+    return ServerFixedStepAdvance{
         static_cast<std::uint32_t>(std::min<std::uint64_t>(capped_steps, std::numeric_limits<std::uint32_t>::max())),
         whole_steps - capped_steps};
 }
@@ -1642,7 +1642,7 @@ bool ReplicationServer::tick(ashiato::Registry& registry, double dt_seconds) {
     resend_pending_connect_responses(dt_seconds);
     disconnect_timed_out_clients(registry);
 
-    const FixedStepAdvance advance = consume_fixed_steps(
+    const ServerFixedStepAdvance advance = consume_server_fixed_steps(
         tick_accumulator_seconds_,
         options_.fixed_dt_seconds,
         options_.max_fixed_steps_per_tick);

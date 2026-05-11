@@ -36,8 +36,6 @@
 namespace ashiato::sync {
 namespace {
 
-constexpr std::size_t max_baseline_history_per_entity = 64;
-
 using client_detail::apply_archetype_tags;
 using client_detail::EntityFrameView;
 using client_detail::frame_component_data;
@@ -1454,13 +1452,14 @@ bool ReplicationClient::sample_fractional_tick_frame(
 }
 
 void ReplicationClient::remember_baseline(EntityState& state) {
-    if (state.replication.history.size() != max_baseline_history_per_entity) {
+    if (state.replication.history.size() != client_detail::max_baseline_history_per_entity) {
         state.replication.history.clear();
-        state.replication.history.resize(max_baseline_history_per_entity);
+        state.replication.history.resize(client_detail::max_baseline_history_per_entity);
         state.replication.history_next = 0;
     }
 
-    client_detail::EntityFrameBaseline& baseline = state.replication.history[state.replication.frame & (max_baseline_history_per_entity - 1U)];
+    client_detail::EntityFrameBaseline& baseline =
+        state.replication.history[state.replication.frame & (client_detail::max_baseline_history_per_entity - 1U)];
     baseline.frame = state.replication.frame;
     baseline.valid = true;
     baseline.baseline = state.replication.baseline;

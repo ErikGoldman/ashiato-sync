@@ -10,7 +10,7 @@ namespace ashiato::sync {
 
 namespace {
 
-struct FixedStepAdvance {
+struct ClientFixedStepAdvance {
     SyncFrame steps = 0;
     std::uint64_t dropped_steps = 0;
 };
@@ -31,7 +31,7 @@ SyncFrame rounded_frame_count(double frames) noexcept {
     return static_cast<SyncFrame>(std::round(frames));
 }
 
-FixedStepAdvance consume_fixed_steps(
+ClientFixedStepAdvance consume_client_fixed_steps(
     double& accumulator_seconds,
     double dt_seconds,
     double fixed_dt_seconds,
@@ -56,7 +56,7 @@ FixedStepAdvance consume_fixed_steps(
         ? whole_steps
         : std::min<std::uint64_t>(whole_steps, max_fixed_steps_per_tick);
     accumulator_seconds = clamped_remainder;
-    return FixedStepAdvance{
+    return ClientFixedStepAdvance{
         static_cast<SyncFrame>(std::min<std::uint64_t>(max_steps, std::numeric_limits<SyncFrame>::max())),
         whole_steps - max_steps};
 }
@@ -128,7 +128,7 @@ ReplicationClientClock::AdvanceResult ReplicationClientClock::advance_client_fra
     }
 
     const SyncFrame previous_predicted_frame = predicted_frame_;
-    const FixedStepAdvance predicted_advance = consume_fixed_steps(
+    const ClientFixedStepAdvance predicted_advance = consume_client_fixed_steps(
         predicted_accumulator_seconds_,
         dt_seconds * static_cast<double>(stats_.predicted_time_dilation),
         config_.fixed_dt_seconds,

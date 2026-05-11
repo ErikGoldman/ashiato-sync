@@ -9,6 +9,9 @@
 
 namespace ashiato::sync::client_detail {
 
+inline constexpr std::uint32_t invalid_entity_index = std::numeric_limits<std::uint32_t>::max();
+inline constexpr std::size_t max_baseline_history_per_entity = 64;
+
 struct EntityCue {
     SyncFrame frame = 0;
     SyncCueTypeId type = 0;
@@ -17,7 +20,7 @@ struct EntityCue {
 };
 
 struct EntityPlayedCue {
-    std::uint32_t entity_index = std::numeric_limits<std::uint32_t>::max();
+    std::uint32_t entity_index = invalid_entity_index;
     SyncFrame frame = 0;
     SyncFrame expire_frame = 0;
     SyncCueTypeId type = 0;
@@ -85,13 +88,13 @@ struct EntityState {
 };
 
 struct OriginalPredictionCapture {
-    std::uint32_t entity_index = std::numeric_limits<std::uint32_t>::max();
+    std::uint32_t entity_index = invalid_entity_index;
     QuantizedFrameData baseline;
 };
 
 struct WireNetworkIdState {
     std::uint32_t version = 0;
-    std::uint32_t entity_index = std::numeric_limits<std::uint32_t>::max();
+    std::uint32_t entity_index = invalid_entity_index;
     bool alive = false;
 };
 

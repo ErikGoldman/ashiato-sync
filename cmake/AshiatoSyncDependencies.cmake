@@ -8,7 +8,7 @@ function(ashiato_sync_add_ashiato_dependency)
         CACHE STRING "Ashiato ECS Git repository"
     )
     set(ASHIATO_SYNC_ASHIATO_GIT_TAG
-        "eef993892879a6fe6cb9a3ee5129d931f150871a"
+        "e862fd344a5150d4e95c26a395ee04a6c0220e5c"
         CACHE STRING "Pinned Ashiato ECS Git commit/tag"
     )
     set(ASHIATO_SYNC_ASHIATO_SOURCE_DIR

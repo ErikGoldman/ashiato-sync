@@ -15,7 +15,6 @@ namespace ashiato::sync {
 namespace {
 
 constexpr std::size_t invalid_membership_index = std::numeric_limits<std::size_t>::max();
-constexpr std::uint32_t invalid_entity_index = std::numeric_limits<std::uint32_t>::max();
 constexpr std::size_t max_destroy_tombstones = 65536;
 
 using DestroyTombstoneAgeEntry = client_detail::ClientEntityStore::DestroyTombstoneAgeEntry;

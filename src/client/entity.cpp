@@ -8,15 +8,8 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 
 namespace ashiato::sync {
-namespace {
-
-constexpr std::uint32_t invalid_entity_index = std::numeric_limits<std::uint32_t>::max();
-constexpr std::size_t max_baseline_history_per_entity = 64;
-
-}  // namespace
 
 ReplicationClient::EntityState* ReplicationClient::find_entity_state(
     ClientEntityNetworkId client_entity_network_id) noexcept {
@@ -101,7 +94,7 @@ void ReplicationClient::sync_entity_memberships(EntityState& state) {
     }
     const std::uint32_t entity_index =
         entity_store_->entity_index_for_client_entity_network_id(state.identity.client_entity_network_id);
-    if (entity_index == invalid_entity_index) {
+    if (entity_index == client_detail::invalid_entity_index) {
         return;
     }
     entity_store_->sync_mode_memberships(entity_index);
@@ -123,9 +116,9 @@ const QuantizedFrameData* ReplicationClient::find_baseline(
     }
 
     const std::size_t count = state.replication.history.size();
-    if (count == max_baseline_history_per_entity) {
+    if (count == client_detail::max_baseline_history_per_entity) {
         const client_detail::EntityFrameBaseline& baseline =
-            state.replication.history[frame & (max_baseline_history_per_entity - 1U)];
+            state.replication.history[frame & (client_detail::max_baseline_history_per_entity - 1U)];
         return baseline.valid && baseline.frame == frame ? &baseline.baseline : nullptr;
     }
 

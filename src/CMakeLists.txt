@@ -1,4 +1,9 @@
-add_library(ashiato_sync
+set(ASHIATO_SYNC_LIBRARY_TYPE)
+if(ASHIATO_SYNC_BUILD_STATIC_LIBRARY)
+    set(ASHIATO_SYNC_LIBRARY_TYPE STATIC)
+endif()
+
+add_library(ashiato_sync ${ASHIATO_SYNC_LIBRARY_TYPE}
     client.cpp
     client/entity.cpp
     client/runtime/buffered_runtime.cpp
