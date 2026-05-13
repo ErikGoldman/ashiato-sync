@@ -59,6 +59,24 @@ inline constexpr ClientEntityNetworkId invalid_client_entity_network_id = 0;
 inline constexpr ClientId max_client_entity_network_id_client = 0xfffULL;
 inline constexpr std::uint32_t max_client_local_wire_network_id = (std::uint32_t{1} << 20U) - 1U;
 
+enum class ReplicationServerConnectionEventType {
+    Accepted,
+    Ready,
+    Rejected,
+    Removed,
+    TimedOut
+};
+
+struct ReplicationServerConnectionEvent {
+    ReplicationServerConnectionEventType type = ReplicationServerConnectionEventType::Accepted;
+    ClientId peer = invalid_client_id;
+    ClientId client = invalid_client_id;
+    bool local = false;
+    std::string reason;
+};
+
+using ServerConnectionEventFn = std::function<void(const ReplicationServerConnectionEvent&)>;
+
 inline constexpr ClientEntityNetworkId make_client_entity_network_id(
     ClientId client,
     std::uint32_t wire_network_id,
@@ -613,6 +631,7 @@ struct ReplicationServerOptions {
     ReplicationPrioritizerFn prioritizer;
     ConnectHandlerFn connect_handler;
     TransportFn transport;
+    ServerConnectionEventFn connection_event_handler;
     LoggingOptions logging;
     std::uint32_t max_fixed_steps_per_tick = 0;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING

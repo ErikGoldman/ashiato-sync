@@ -215,7 +215,7 @@ ReplicationClient::ReplicationClient(
 #endif
     session_transport_->adaptive_ping_active = true;
     if (options_.session.connect_token.empty()) {
-        session_transport_->connection_state = ReplicationClientConnectionState::Ready;
+        set_connection_state(ReplicationClientConnectionState::Ready, client_id_);
         (void)clock_.maybe_bootstrap_from_first_server_update(0, false, true);
     }
 }
@@ -244,6 +244,24 @@ void ReplicationClient::set_client_id(ashiato::Registry& registry, ClientId clie
     client_id_ = client;
     SyncSettings& settings = registry.write<SyncSettings>();
     settings.local_client = client;
+}
+
+void ReplicationClient::set_connection_state(
+    ReplicationClientConnectionState state,
+    ClientId client,
+    std::string reason) {
+    const ReplicationClientConnectionState previous = session_transport_->connection_state;
+    if (previous == state) {
+        return;
+    }
+    session_transport_->connection_state = state;
+    if (options_.connection_event_handler) {
+        options_.connection_event_handler(ReplicationClientConnectionEvent{
+            previous,
+            state,
+            client == invalid_client_id ? client_id_ : client,
+            std::move(reason)});
+    }
 }
 
 ReplicationClientConnectionState ReplicationClient::connection_state() const noexcept {

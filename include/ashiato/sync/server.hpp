@@ -308,6 +308,7 @@ private:
         const std::vector<PacketAckRecord>& ack_records);
     bool add_client_for_peer(ClientId peer, ClientId client, bool ready_for_updates);
     bool add_client_state(ClientState state);
+    void notify_connection_event(ReplicationServerConnectionEvent event);
     void create_client_replicator(ClientState& client);
     void send_connect_response(ClientState& client);
     void send_pong(

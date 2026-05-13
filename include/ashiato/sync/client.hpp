@@ -118,6 +118,15 @@ enum class ReplicationClientConnectionState {
     Rejected
 };
 
+struct ReplicationClientConnectionEvent {
+    ReplicationClientConnectionState previous = ReplicationClientConnectionState::Disconnected;
+    ReplicationClientConnectionState current = ReplicationClientConnectionState::Disconnected;
+    ClientId client = invalid_client_id;
+    std::string reason;
+};
+
+using ClientConnectionEventFn = std::function<void(const ReplicationClientConnectionEvent&)>;
+
 enum class EntityReferenceStatus {
     Invalid,
     Pending,
@@ -206,6 +215,7 @@ struct ReplicationClientOptions {
     ReplicationClientPredictionOptions prediction;
     ReplicationClientSessionOptions session;
     ReplicationClientClockOptions clock;
+    ClientConnectionEventFn connection_event_handler;
     LoggingOptions logging;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     TraceOptions trace;
@@ -422,6 +432,7 @@ public:
     ReplicationClientMode entity_mode(ClientEntityNetworkId client_entity_network_id) const noexcept;
     bool set_buffered_frame_lag(SyncFrame frames) noexcept;
     SyncFrame current_buffered_frame_lag() const noexcept;
+    bool set_input_bytes(ashiato::Registry& registry, ashiato::Entity component, const void* input);
     template <typename T>
     bool set_input(ashiato::Registry& registry, const T& input) {
         const ashiato::Entity component = registry.template component<T>();
@@ -747,8 +758,11 @@ private:
         std::uint16_t record_count) const;
 #endif
 #endif
-    bool set_input_bytes(ashiato::Registry& registry, ashiato::Entity component, const void* input);
     void set_client_id(ashiato::Registry& registry, ClientId client) noexcept;
+    void set_connection_state(
+        ReplicationClientConnectionState state,
+        ClientId client = invalid_client_id,
+        std::string reason = {});
     bool record_input_frame(ashiato::Registry& registry, const SyncSettings& settings, SyncFrame frame);
     bool fill_input_frames_through(ashiato::Registry& registry, const SyncSettings& settings, SyncFrame frame);
     bool apply_input_frame(ashiato::Registry& registry, const SyncSettings& settings, SyncFrame frame);

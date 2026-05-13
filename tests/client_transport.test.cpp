@@ -138,6 +138,38 @@ TEST_CASE("replication client queued receive packets are processed during tick")
     REQUIRE(client.local_time_seconds() == Catch::Approx(client.fixed_dt_seconds() * 0.5));
 }
 
+TEST_CASE("replication client emits connection state callbacks") {
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = ashiato_sync_tests::define_position_archetype(registry);
+    REQUIRE(archetype.value == 0);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+
+    std::vector<ashiato::sync::ReplicationClientConnectionEvent> events;
+    ashiato::sync::ReplicationClientOptions options;
+    options.session.connect_token = "token";
+    options.connection_event_handler = [&](const ashiato::sync::ReplicationClientConnectionEvent& event) {
+        events.push_back(event);
+    };
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+
+    ashiato::BitBuffer accepted;
+    accepted.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
+    accepted.push_bool(true);
+    accepted.push_unsigned_bits(1U, 64U);
+    REQUIRE(client.receive(registry, accepted));
+
+    const ashiato::Entity server_entity{42};
+    REQUIRE(client.receive(registry, make_position_packet(1, {{server_entity, Position{1.0f, 2.0f}}})));
+
+    REQUIRE(events.size() == 2);
+    REQUIRE(events[0].previous == ashiato::sync::ReplicationClientConnectionState::Connecting);
+    REQUIRE(events[0].current == ashiato::sync::ReplicationClientConnectionState::Accepted);
+    REQUIRE(events[0].client == 1);
+    REQUIRE(events[1].previous == ashiato::sync::ReplicationClientConnectionState::Accepted);
+    REQUIRE(events[1].current == ashiato::sync::ReplicationClientConnectionState::Ready);
+    REQUIRE(events[1].client == 1);
+}
+
 TEST_CASE("replication client rejects malformed connect responses") {
     ashiato::Registry registry;
     ashiato_sync_tests::configure_test_client_registry(registry, 1);
@@ -204,6 +236,31 @@ TEST_CASE("replication client stores rejected connect response errors") {
     REQUIRE(client.receive(registry, rejected));
     REQUIRE(client.connection_state() == ashiato::sync::ReplicationClientConnectionState::Rejected);
     REQUIRE(client.connect_error() == "bad token");
+}
+
+TEST_CASE("replication client emits rejected connection callback") {
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+
+    std::vector<ashiato::sync::ReplicationClientConnectionEvent> events;
+    ashiato::sync::ReplicationClientOptions options;
+    options.session.connect_token = "token";
+    options.connection_event_handler = [&](const ashiato::sync::ReplicationClientConnectionEvent& event) {
+        events.push_back(event);
+    };
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+
+    ashiato::BitBuffer rejected;
+    rejected.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
+    rejected.push_bool(false);
+    ashiato::sync::protocol::write_string(rejected, "bad token");
+
+    REQUIRE(client.receive(registry, rejected));
+    REQUIRE(events.size() == 1);
+    REQUIRE(events[0].previous == ashiato::sync::ReplicationClientConnectionState::Connecting);
+    REQUIRE(events[0].current == ashiato::sync::ReplicationClientConnectionState::Rejected);
+    REQUIRE(events[0].client == ashiato::sync::invalid_client_id);
+    REQUIRE(events[0].reason == "bad token");
 }
 
 TEST_CASE("replication client queued stale receive packets do not fail tick") {

@@ -136,7 +136,10 @@ bool ReplicationClient::receive_connect_response(ashiato::Registry& registry, as
         }
         client_id_ = invalid_client_id;
         session_transport_->connect_error = std::move(error);
-        session_transport_->connection_state = ReplicationClientConnectionState::Rejected;
+        set_connection_state(
+            ReplicationClientConnectionState::Rejected,
+            invalid_client_id,
+            session_transport_->connect_error);
         ++observability_stats_.client_connects_rejected;
         log_info("client_connect_rejected", "reason=" + detail::log_token(session_transport_->connect_error));
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
@@ -160,12 +163,12 @@ bool ReplicationClient::receive_connect_response(ashiato::Registry& registry, as
         return false;
     }
     session_transport_->connect_error.clear();
-    session_transport_->connection_state = ReplicationClientConnectionState::Accepted;
     session_transport_->connect_resend_accumulator_seconds = options_.session.connect_resend_interval_seconds;
     SyncSettings& settings = registry.write<SyncSettings>();
     settings.role = SyncRole::Client;
     registry.write<SyncAuthority>().authoritative = false;
     set_client_id(registry, client_id_);
+    set_connection_state(ReplicationClientConnectionState::Accepted, client_id_);
     ++observability_stats_.client_connects_accepted;
     log_info("client_connect_accepted", "client=" + std::to_string(client_id_));
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
@@ -228,7 +231,7 @@ bool ReplicationClient::receive_entity_update(
         return false;
     }
 
-    session_transport_->connection_state = ReplicationClientConnectionState::Ready;
+    set_connection_state(ReplicationClientConnectionState::Ready, client_id_);
     last_server_update_frame_ = frame;
     has_received_server_update_ = true;
     input_->retire_transmit_frames_through(frame);

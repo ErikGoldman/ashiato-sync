@@ -7,6 +7,7 @@
 
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -120,4 +121,57 @@ TEST_CASE("replication server records connection lifecycle observability") {
 
     const ashiato::sync::ReplicationServer::ObservabilityStats stats = server.observability_stats();
     REQUIRE(stats.client_connects_accepted == 1);
+}
+
+TEST_CASE("replication server emits connection callbacks") {
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_server_registry(registry);
+
+    std::vector<ashiato::sync::ReplicationServerConnectionEvent> events;
+    ashiato::sync::ReplicationServerOptions options;
+    options.connection_event_handler = [&](const ashiato::sync::ReplicationServerConnectionEvent& event) {
+        events.push_back(event);
+    };
+    ashiato::sync::ReplicationServer server(registry, options);
+
+    REQUIRE(server.add_client(7));
+    REQUIRE(events.size() == 2);
+    REQUIRE(events[0].type == ashiato::sync::ReplicationServerConnectionEventType::Accepted);
+    REQUIRE(events[0].peer == 7);
+    REQUIRE(events[0].client == 7);
+    REQUIRE(events[1].type == ashiato::sync::ReplicationServerConnectionEventType::Ready);
+    REQUIRE(events[1].peer == 7);
+    REQUIRE(events[1].client == 7);
+
+    REQUIRE(server.remove_client(registry, 7));
+    REQUIRE(events.size() == 3);
+    REQUIRE(events[2].type == ashiato::sync::ReplicationServerConnectionEventType::Removed);
+    REQUIRE(events[2].peer == 7);
+    REQUIRE(events[2].client == 7);
+}
+
+TEST_CASE("replication server emits rejected connection callback") {
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_server_registry(registry);
+
+    std::vector<ashiato::sync::ReplicationServerConnectionEvent> events;
+    ashiato::sync::ReplicationServerOptions options;
+    options.connect_handler = [](const std::string&, ashiato::sync::ClientId&, std::string& error) {
+        error = "bad token";
+        return false;
+    };
+    options.connection_event_handler = [&](const ashiato::sync::ReplicationServerConnectionEvent& event) {
+        events.push_back(event);
+    };
+    ashiato::sync::ReplicationServer server(registry, options);
+
+    ashiato::BitBuffer connect;
+    connect.push_bits(ashiato::sync::protocol::client_connect_request_message, 8U);
+    ashiato::sync::protocol::write_string(connect, "token");
+
+    REQUIRE(server.process_packet(registry, 99, connect));
+    REQUIRE(events.size() == 1);
+    REQUIRE(events[0].type == ashiato::sync::ReplicationServerConnectionEventType::Rejected);
+    REQUIRE(events[0].peer == 99);
+    REQUIRE(events[0].reason == "bad token");
 }

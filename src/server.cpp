@@ -428,6 +428,20 @@ bool ReplicationServer::add_client_state(ClientState state) {
             " client=" + std::to_string(client) +
             " ready=" + (ready_for_updates ? std::string("true") : std::string("false")));
     }
+    notify_connection_event(ReplicationServerConnectionEvent{
+        ReplicationServerConnectionEventType::Accepted,
+        peer,
+        client,
+        local,
+        {}});
+    if (ready_for_updates) {
+        notify_connection_event(ReplicationServerConnectionEvent{
+            ReplicationServerConnectionEventType::Ready,
+            peer,
+            client,
+            local,
+            {}});
+    }
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     if (tracer_ != nullptr && tracer_->enabled()) {
         SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::ClientConnected, client, frame_);
@@ -435,6 +449,12 @@ bool ReplicationServer::add_client_state(ClientState state) {
     }
 #endif
     return true;
+}
+
+void ReplicationServer::notify_connection_event(ReplicationServerConnectionEvent event) {
+    if (options_.connection_event_handler) {
+        options_.connection_event_handler(event);
+    }
 }
 
 void ReplicationServer::create_client_replicator(ClientState& client) {
@@ -760,6 +780,12 @@ bool ReplicationServer::remove_client(ashiato::Registry& registry, ClientId clie
     } else {
         set_local_client_id(registry, invalid_client_id);
     }
+    notify_connection_event(ReplicationServerConnectionEvent{
+        ReplicationServerConnectionEventType::Removed,
+        removed_peer,
+        removed_id,
+        removed_local,
+        {}});
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     if (tracer_ != nullptr && tracer_->enabled()) {
         SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::ClientDisconnected, removed_client, frame_);
@@ -1303,6 +1329,12 @@ bool ReplicationServer::process_connect_request_packet(ClientId peer, ashiato::B
         ++observability_stats_.client_connects_rejected;
         log_info("client_connect_rejected", "peer=" + std::to_string(peer) +
             " client=" + std::to_string(accepted_client));
+        notify_connection_event(ReplicationServerConnectionEvent{
+            ReplicationServerConnectionEventType::Rejected,
+            peer,
+            accepted_client,
+            false,
+            error});
         return accepted_client != invalid_client_id || !accepted;
     }
 
@@ -1352,11 +1384,19 @@ bool ReplicationServer::process_connection_request_ack_packet(ClientState& clien
         log_client_packet_warning(client.peer, protocol::client_connect_ack_message, "connect_ack_client_mismatch", "connect_ack_client_id_mismatch");
         return false;
     }
-    client.ready_for_updates = true;
-    create_client_replicator(client);
-    ++observability_stats_.clients_ready;
-    log_info("client_ready", "peer=" + std::to_string(client.peer) +
-        " client=" + std::to_string(client.id));
+    if (!client.ready_for_updates) {
+        client.ready_for_updates = true;
+        create_client_replicator(client);
+        ++observability_stats_.clients_ready;
+        log_info("client_ready", "peer=" + std::to_string(client.peer) +
+            " client=" + std::to_string(client.id));
+        notify_connection_event(ReplicationServerConnectionEvent{
+            ReplicationServerConnectionEventType::Ready,
+            client.peer,
+            client.id,
+            client.local,
+            {}});
+    }
     return true;
 }
 
@@ -1720,9 +1760,16 @@ void ReplicationServer::disconnect_timed_out_clients(ashiato::Registry& registry
         }
         if (client.idle_seconds >= options_.idle_client_timeout_seconds) {
             const ClientId client_id = client.id;
+            const ClientId peer = client.peer;
             ++observability_stats_.clients_timed_out;
             log_info("client_timed_out", "peer=" + std::to_string(client.peer) +
                 " client=" + std::to_string(client.id));
+            notify_connection_event(ReplicationServerConnectionEvent{
+                ReplicationServerConnectionEventType::TimedOut,
+                peer,
+                client_id,
+                false,
+                "idle timeout"});
             remove_client(registry, client_id);
             continue;
         }
