@@ -7,6 +7,7 @@
 #include <cstring>
 #include <filesystem>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -62,7 +63,9 @@ std::uint8_t read_trace_byte(std::ifstream& file) {
 }
 
 std::uint16_t read_trace_u16(std::ifstream& file) {
-    return static_cast<std::uint16_t>(read_trace_byte(file) | (std::uint16_t{read_trace_byte(file)} << 8U));
+    const std::uint16_t lo = read_trace_byte(file);
+    const std::uint16_t hi = read_trace_byte(file);
+    return static_cast<std::uint16_t>(lo | (hi << 8U));
 }
 
 std::uint32_t read_trace_u32(std::ifstream& file) {
@@ -85,14 +88,25 @@ KTraceFileHeader read_trace_file_header(std::ifstream& file, const std::string& 
     char magic[8]{};
     file.read(magic, sizeof(magic));
     if (std::string(magic, sizeof(magic)) != "KTRACE03") {
-        throw std::runtime_error("unsupported ktrace magic");
+        static constexpr char hex[] = "0123456789abcdef";
+        std::ostringstream message;
+        message << "unsupported ktrace magic in " << path << ": got ";
+        for (const char byte : magic) {
+            const auto value = static_cast<unsigned char>(byte);
+            message << hex[value >> 4U] << hex[value & 0x0fU];
+        }
+        throw std::runtime_error(message.str());
     }
 
     KTraceFileHeader header;
     header.path = path;
     header.version = read_trace_u16(file);
     if (header.version != ktrace_format_version) {
-        throw std::runtime_error("unsupported ktrace version");
+        std::ostringstream message;
+        message << "unsupported ktrace version in " << path
+            << ": expected " << ktrace_format_version
+            << ", got " << header.version;
+        throw std::runtime_error(message.str());
     }
     header.role = static_cast<SyncTraceRole>(read_trace_byte(file));
     header.recorded_unix_ns = read_trace_u64(file);

@@ -28,6 +28,9 @@ void each_dirty_replicated_slot(
     frame.dirty.each_dirty<Replicated>([&](ashiato::Entity entity, const void*) {
         mark_entity(entity);
     });
+    frame.dirty.each_added<Replicated>([&](ashiato::Entity entity, const void*) {
+        mark_entity(entity);
+    });
     frame.dirty.each_removed<Replicated>([&](ashiato::Registry::ComponentRemoval removal) {
         mark_entity_index(removal.entity_index);
     });
@@ -35,6 +38,9 @@ void each_dirty_replicated_slot(
     for (const SyncArchetype& archetype : settings.archetypes) {
         for (const SyncTagReplication& tag_replication : archetype.tags) {
             frame.dirty.each_dirty(tag_replication.tag, [&](ashiato::Entity entity, const void*) {
+                mark_entity(entity);
+            });
+            frame.dirty.each_added(tag_replication.tag, [&](ashiato::Entity entity, const void*) {
                 mark_entity(entity);
             });
             frame.dirty.each_removed(tag_replication.tag, [&](ashiato::Registry::ComponentRemoval removal) {
@@ -48,12 +54,18 @@ void each_dirty_replicated_slot(
         frame.dirty.each_dirty(component, [&](ashiato::Entity entity, const void*) {
             mark_entity(entity);
         });
+        frame.dirty.each_added(component, [&](ashiato::Entity entity, const void*) {
+            mark_entity(entity);
+        });
         frame.dirty.each_removed(component, [&](ashiato::Registry::ComponentRemoval removal) {
             mark_entity_index(removal.entity_index);
         });
     }
 
     frame.dirty.each_dirty<NetworkOwner>([&](ashiato::Entity entity, const void*) {
+        mark_entity(entity);
+    });
+    frame.dirty.each_added<NetworkOwner>([&](ashiato::Entity entity, const void*) {
         mark_entity(entity);
     });
     frame.dirty.each_removed<NetworkOwner>([&](ashiato::Registry::ComponentRemoval removal) {

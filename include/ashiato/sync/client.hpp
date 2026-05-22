@@ -755,7 +755,8 @@ private:
         SyncFrame server_frame,
         std::uint32_t packet_id,
         SyncFrame input_ack_frame,
-        std::uint16_t record_count) const;
+        std::uint16_t record_count,
+        bool applied) const;
 #endif
 #endif
     void set_client_id(ashiato::Registry& registry, ClientId client) noexcept;

@@ -455,7 +455,12 @@ void ClientUpdateRuntime::trace_cues_received(
             if (client.tracer_ != nullptr && client.tracer_->frame_data_enabled() &&
                 cue.type < settings.cue_ops.size() && settings.cue_ops[cue.type].trace != nullptr) {
                 SyncTraceStringBuilder builder;
-                if (settings.cue_ops[cue.type].trace(cue.payload, builder) && !builder.value.empty()) {
+                if (settings.cue_ops[cue.type].trace(
+                        cue.type,
+                        settings.cue_ops[cue.type].user_data,
+                        cue.payload,
+                        builder) &&
+                    !builder.value.empty()) {
                     summary << ",data=" << builder.value;
                 }
             }

@@ -136,7 +136,7 @@ void append_trace_cue_data(
         return;
     }
     SyncTraceStringBuilder builder;
-    if (settings.cue_ops[cue_type].trace(payload, builder)) {
+    if (settings.cue_ops[cue_type].trace(cue_type, settings.cue_ops[cue_type].user_data, payload, builder)) {
         event.data = std::move(builder.value);
     }
 #else
@@ -439,7 +439,8 @@ void ReplicationClient::trace_incoming_update_packet(
     SyncFrame server_frame,
     std::uint32_t packet_id,
     SyncFrame input_ack_frame,
-    std::uint16_t record_count) const {
+    std::uint16_t record_count,
+    bool applied) const {
     if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->packet_logs_enabled()) {
         return;
     }
@@ -450,6 +451,7 @@ void ReplicationClient::trace_incoming_update_packet(
         << ",server_frame=" << server_frame
         << ",input_ack=" << input_ack_frame
         << ",record_count=" << record_count
+        << ",applied=" << (applied ? "true" : "false")
         << ",cues=[";
     const std::vector<std::string>& cue_summaries = cue_runtime_->current_packet_cue_summaries();
     for (std::size_t index = 0; index < cue_summaries.size(); ++index) {

@@ -224,7 +224,8 @@ bool ReplicationClient::receive_entity_update(
         frame,
         packet_id,
         input_ack_frame,
-        record_count);
+        record_count,
+        applied);
 #endif
 
     if (!applied) {

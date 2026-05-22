@@ -452,7 +452,7 @@ bool ReplicationReplayStreamer::apply_cues(
             if (ops.deserialize_value == nullptr) {
                 continue;
             }
-            cue.value = ops.deserialize_value(cue_payload, &references);
+            cue.value = ops.deserialize_value(type, ops.user_data, cue_payload, &references);
             if (!cue.value) {
                 continue;
             }

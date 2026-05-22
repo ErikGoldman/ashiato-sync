@@ -76,6 +76,105 @@ TEST_CASE("replication client applies full updates and queues ACKs") {
     REQUIRE(server.process_packet(server_registry, 1, ack_packets[0]));
 }
 
+TEST_CASE("replication client receives entities when replication starts and stops after server initialization") {
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato_sync_tests::define_position_archetype(server_registry);
+
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& packet) {
+        REQUIRE(client == 1);
+        packets.push_back(packet);
+    };
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
+    REQUIRE(server.add_client(1));
+
+    REQUIRE(server.tick(server_registry, server.options().fixed_dt_seconds));
+    REQUIRE(server.replicated_count() == 0);
+    packets.clear();
+
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype == server_archetype);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato::sync::ReplicationClient client(
+        client_registry,
+        ashiato_sync_tests::make_test_client_options(client_registry, {}));
+
+    const ashiato::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<Position>(server_entity, Position{3.0f, 4.0f}) != nullptr);
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+    REQUIRE(server.tick(server_registry, server.options().fixed_dt_seconds));
+    REQUIRE(server.is_replicated(server_entity));
+    REQUIRE(server.replicated_count() == 1);
+    REQUIRE(packets.size() == 1);
+    REQUIRE(client.receive(client_registry, packets.back()));
+
+    const ashiato::sync::ClientEntityNetworkId client_network_id = first_allocated_client_entity_network_id(1);
+    const ashiato::Entity local = client.local_entity(client_network_id);
+    REQUIRE(local);
+    REQUIRE(client_registry.alive(local));
+    REQUIRE(client_registry.contains<Position>(local));
+    REQUIRE(client_registry.get<Position>(local).x == 3.0f);
+    REQUIRE(client_registry.get<Position>(local).y == 4.0f);
+
+    for (ashiato::BitBuffer ack : client.drain_ack_packets()) {
+        REQUIRE(server.process_packet(server_registry, 1, ack));
+    }
+    packets.clear();
+
+    REQUIRE(server_registry.remove<ashiato::sync::Replicated>(server_entity));
+    REQUIRE(server.tick(server_registry, server.options().fixed_dt_seconds));
+    REQUIRE_FALSE(server.is_replicated(server_entity));
+    REQUIRE(server.replicated_count() == 0);
+    REQUIRE(packets.size() == 1);
+    REQUIRE(client.receive(client_registry, packets.back()));
+    REQUIRE_FALSE(client.local_entity(client_network_id));
+    REQUIRE_FALSE(client_registry.alive(local));
+}
+
+TEST_CASE("replication client receives existing replicated entities when connecting late") {
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato_sync_tests::define_position_archetype(server_registry);
+    const ashiato::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<Position>(server_entity, Position{7.0f, 8.0f}) != nullptr);
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& packet) {
+        REQUIRE(client == 1);
+        packets.push_back(packet);
+    };
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
+
+    REQUIRE(server.tick(server_registry, server.options().fixed_dt_seconds));
+    REQUIRE(server.is_replicated(server_entity));
+    REQUIRE(server.replicated_count() == 1);
+    REQUIRE(packets.empty());
+
+    REQUIRE(server.add_client(1));
+    REQUIRE(server.tick(server_registry, server.options().fixed_dt_seconds));
+    REQUIRE(packets.size() == 1);
+
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype == server_archetype);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato::sync::ReplicationClient client(
+        client_registry,
+        ashiato_sync_tests::make_test_client_options(client_registry, {}));
+
+    REQUIRE(client.receive(client_registry, packets.back()));
+    const ashiato::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
+    REQUIRE(local);
+    REQUIRE(client_registry.alive(local));
+    REQUIRE(client_registry.contains<Position>(local));
+    REQUIRE(client_registry.get<Position>(local).x == 7.0f);
+    REQUIRE(client_registry.get<Position>(local).y == 8.0f);
+}
+
 TEST_CASE("replication client exposes server timing estimates after updates") {
     ashiato::Registry server_registry;
     const ashiato::sync::SyncArchetypeId server_archetype = ashiato_sync_tests::define_position_archetype(server_registry);

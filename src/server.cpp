@@ -148,7 +148,7 @@ void append_trace_cue_data(
         return;
     }
     SyncTraceStringBuilder builder;
-    if (settings.cue_ops[cue_type].trace(payload, builder)) {
+    if (settings.cue_ops[cue_type].trace(cue_type, settings.cue_ops[cue_type].user_data, payload, builder)) {
         event.data = std::move(builder.value);
     }
 #else
@@ -675,6 +675,9 @@ void ReplicationServer::trace_outgoing_update_packet(
         << ",sequence=" << packet_id
         << ",server_frame=" << frame
         << ",input_ack=" << input_ack_frame
+        << ",record_count=" << records.size()
+        << ",replicated_count=" << active_replicated_count_
+        << ",client_count=" << client_count()
         << ",updated_server_entities=[";
     bool first = true;
     for (const PacketAckRecord& record : records) {
@@ -685,6 +688,19 @@ void ReplicationServer::trace_outgoing_update_packet(
             out << ",";
         }
         first = false;
+        out << record.entity.value;
+    }
+    out << "]";
+    out << ",destroyed_server_entities=[";
+    bool first_destroy = true;
+    for (const PacketAckRecord& record : records) {
+        if (!record.destroy) {
+            continue;
+        }
+        if (!first_destroy) {
+            out << ",";
+        }
+        first_destroy = false;
         out << record.entity.value;
     }
     out << "]";
@@ -730,7 +746,7 @@ void ReplicationServer::append_packet_ack_cues(
         if (tracer_ != nullptr && tracer_->frame_data_enabled() &&
             cue.type < settings.cue_ops.size() && settings.cue_ops[cue.type].trace != nullptr) {
             SyncTraceStringBuilder builder;
-            if (settings.cue_ops[cue.type].trace(cue.payload, builder)) {
+            if (settings.cue_ops[cue.type].trace(cue.type, settings.cue_ops[cue.type].user_data, cue.payload, builder)) {
                 summary.data = std::move(builder.value);
             }
         }
@@ -972,6 +988,10 @@ void ReplicationServer::rediscover_replicated_entities(ashiato::Registry& regist
 
     dirty.each_removed<Replicated>([&](ashiato::Registry::ComponentRemoval removal) {
         deactivate_entity_index(removal.entity_index);
+    });
+
+    dirty.each_added<Replicated>([&](ashiato::Entity entity, const void* value) {
+        upsert_replicated(registry, entity, static_cast<const Replicated*>(value)->archetype);
     });
 
     dirty.each_dirty<Replicated>([&](ashiato::Entity entity, const void* value) {
@@ -1603,6 +1623,29 @@ void ReplicationServer::log_server_error(ClientId peer, const char* event, const
     }
 }
 
+void ReplicationServer::log_entity_update_exceeds_mtu(
+    ClientId peer,
+    ClientId client,
+    ashiato::Entity entity,
+    SyncArchetypeId archetype,
+    std::size_t packet_bytes,
+    std::size_t mtu_bytes,
+    std::size_t record_bits) {
+    ++observability_stats_.server_errors;
+    if (logger_ != nullptr && logger_->should_log(spdlog::level::err)) {
+        logger_->error(
+            "event=server_entity_update_exceeds_mtu frame={} peer={} client={} entity={} archetype={} packet_bytes={} mtu_bytes={} record_bits={}",
+            frame_,
+            peer,
+            client,
+            entity.value,
+            archetype.value,
+            packet_bytes,
+            mtu_bytes,
+            record_bits);
+    }
+}
+
 std::size_t ReplicationServer::retained_quantized_frame_count() const noexcept {
     std::size_t count = 0;
     for (const QuantizedFrame& quantized_frame : quantized_frames_) {
@@ -1963,7 +2006,15 @@ bool ReplicationServer::play_local_cue(
         payload.clear();
         settings.cue_ops[cue.type].serialize(cue.value.get(), payload, &reference_context);
     }
-    return settings.cue_ops[cue.type].play(registry, cue.entity, payload, 0.0f, cue.frame, &reference_context);
+    return settings.cue_ops[cue.type].play(
+        cue.type,
+        settings.cue_ops[cue.type].user_data,
+        registry,
+        cue.entity,
+        payload,
+        0.0f,
+        cue.frame,
+        &reference_context);
 }
 
 void ReplicationServer::capture_queued_cues(
@@ -2674,32 +2725,15 @@ bool ReplicationServer::upsert_replicated(ashiato::Registry& registry, ashiato::
     const EntityKey key = entity.value;
     const auto found = entity_to_replicated_index_.find(key);
     if (found != entity_to_replicated_index_.end()) {
-        if (replicated_[found->second].archetype != archetype) {
+        const std::uint32_t slot = found->second;
+        if (slot >= replicated_.size() || !replicated_[slot].active) {
+            entity_to_replicated_index_.erase(found);
+            entity_index_to_replicated_index_.erase(ashiato::Registry::entity_index(entity));
+        } else if (replicated_[slot].archetype != archetype) {
             throw std::logic_error("replicated entity archetype cannot change while syncing");
+        } else {
+            return true;
         }
-        replicated_[found->second].archetype = archetype;
-        replicated_[found->second].same_frame_quantized_frame = invalid_quantized_frame_id;
-        replicated_[found->second].same_frame_quantized_frame_frame = 0;
-        const SyncSettings& settings = registry.get<SyncSettings>();
-        if (archetype.value < settings.archetypes.size()) {
-            replicated_[found->second].same_frame_cacheable =
-                archetype_is_same_frame_cacheable(settings.archetypes[archetype.value]);
-            replicated_[found->second].component_dirty_generations.assign(
-                sync_slot_count(settings.archetypes[archetype.value]),
-                1U);
-        }
-        for (ClientState& client : clients_) {
-            if (client.replication == nullptr) {
-                continue;
-            }
-            ServerClientReplicator& replication = *client.replication;
-            replication.entities.clear_preserving_network_identity(*this, found->second);
-            replication.mark_dirty(*this, found->second, frame_);
-            if (found->second < replication.dirty_queue.entries.size()) {
-                replication.dirty_queue.entries[found->second].baseline_frame = 0;
-            }
-        }
-        return true;
     }
 
     deactivate_entity_index(ashiato::Registry::entity_index(entity));

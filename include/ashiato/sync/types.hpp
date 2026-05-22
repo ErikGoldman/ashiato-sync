@@ -428,12 +428,35 @@ struct SyncComponentOps {
 
 struct SyncCueOps {
     using SerializeFn = void (*)(const void*, ashiato::BitBuffer&, EntityReferenceContext*);
-    using DeserializeValueFn = std::shared_ptr<void> (*)(const ashiato::BitBuffer&, EntityReferenceContext*);
-    using PlayFn = bool (*)(ashiato::Registry&, ashiato::Entity, const ashiato::BitBuffer&, float, SyncFrame, EntityReferenceContext*);
-    using RollbackFn = bool (*)(ashiato::Registry&, ashiato::Entity, const ashiato::BitBuffer&, EntityReferenceContext*);
-    using EqualsFn = bool (*)(const ashiato::BitBuffer&, const ashiato::BitBuffer&, EntityReferenceContext*);
+    using DeserializeValueFn = std::shared_ptr<void> (*)(
+        SyncCueTypeId,
+        void*,
+        const ashiato::BitBuffer&,
+        EntityReferenceContext*);
+    using PlayFn = bool (*)(
+        SyncCueTypeId,
+        void*,
+        ashiato::Registry&,
+        ashiato::Entity,
+        const ashiato::BitBuffer&,
+        float,
+        SyncFrame,
+        EntityReferenceContext*);
+    using RollbackFn = bool (*)(
+        SyncCueTypeId,
+        void*,
+        ashiato::Registry&,
+        ashiato::Entity,
+        const ashiato::BitBuffer&,
+        EntityReferenceContext*);
+    using EqualsFn = bool (*)(
+        SyncCueTypeId,
+        void*,
+        const ashiato::BitBuffer&,
+        const ashiato::BitBuffer&,
+        EntityReferenceContext*);
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
-    using TraceFn = bool (*)(const ashiato::BitBuffer&, SyncTraceStringBuilder&);
+    using TraceFn = bool (*)(SyncCueTypeId, void*, const ashiato::BitBuffer&, SyncTraceStringBuilder&);
 #endif
 
     SerializeFn serialize = nullptr;
@@ -441,6 +464,7 @@ struct SyncCueOps {
     PlayFn play = nullptr;
     RollbackFn rollback = nullptr;
     EqualsFn equals = nullptr;
+    void* user_data = nullptr;
     std::string name;
     bool references_entities = false;
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
@@ -489,6 +513,19 @@ public:
         float relevance_seconds,
         bool only_replicate_to_owner = false);
 
+    bool emit_raw(
+        const SyncSettings& settings,
+        SyncFrame frame,
+        ashiato::Entity entity,
+        SyncCueTypeId type,
+        ashiato::BitBuffer payload,
+        float relevance_seconds,
+        bool only_replicate_to_owner = false);
+
+    QueuedSyncCueView view() const noexcept;
+    bool empty() const noexcept;
+    std::size_t size() const noexcept;
+
 private:
     friend class client_detail::ClientCueRuntime;
     friend class ReplicationClient;
@@ -498,9 +535,6 @@ private:
     bool enqueue(QueuedSyncCue cue);
     std::vector<QueuedSyncCue> drain();
     void clear();
-    QueuedSyncCueView view() const noexcept;
-    bool empty() const noexcept;
-    std::size_t size() const noexcept;
     mutable std::mutex mutex_;
     std::vector<QueuedSyncCue> cues_;
 };
@@ -552,6 +586,7 @@ struct SyncSettings {
         component_ops.swap(other.component_ops);
         cue_ops.swap(other.cue_ops);
         cue_type_ids.swap(other.cue_type_ids);
+        runtime_cue_type_ids.swap(other.runtime_cue_type_ids);
         swap(fixed_dt_seconds, other.fixed_dt_seconds);
     }
 
@@ -562,6 +597,7 @@ struct SyncSettings {
     std::unordered_map<std::uint64_t, SyncComponentOps> component_ops;
     std::vector<SyncCueOps> cue_ops;
     std::unordered_map<std::type_index, SyncCueTypeId> cue_type_ids;
+    std::unordered_map<std::string, SyncCueTypeId> runtime_cue_type_ids;
     double fixed_dt_seconds = 1.0 / 60.0;
 };
 

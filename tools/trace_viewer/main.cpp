@@ -274,6 +274,7 @@ struct ViewerState {
     SyncTraceHistory history;
     std::array<char, 1024> directory{};
     std::string status;
+    bool status_is_error = false;
     SelectedCell selected;
     SelectedPacketChip selected_packet;
     int selected_source = 0;
@@ -706,6 +707,7 @@ void poll_control_server(
         if (fd < 0) {
             if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
                 state.status = std::string("control socket accept failed: ") + std::strerror(errno);
+                state.status_is_error = true;
             }
             if (errno == EINTR) {
                 continue;
@@ -2484,12 +2486,14 @@ void process_loader_messages(ViewerState& state) {
             state.loader.load_ms = message.load_ms;
             state.benchmark.load_ms = message.load_ms;
             state.status = "loaded " + std::to_string(state.history.sources.size()) + " trace source(s)";
+            state.status_is_error = false;
             break;
         case TraceLoadMessage::Type::Failed:
             state.loader.active = false;
             state.loader.finished = true;
             state.benchmark.load_ms = 0.0;
             state.status = message.error;
+            state.status_is_error = true;
             break;
         }
     }
@@ -2672,6 +2676,7 @@ void load_directory(ViewerState& state) {
         stop_loading_directory(state);
         reset_loaded_trace(state);
         state.status = "choose a directory containing .ktrace files";
+        state.status_is_error = false;
         return;
     }
 
@@ -2684,6 +2689,7 @@ void load_directory(ViewerState& state) {
     state.loader.finished = false;
     state.loader.cancel = std::make_shared<std::atomic_bool>(false);
     state.status = "loading trace data...";
+    state.status_is_error = false;
     const std::string directory = state.directory.data();
     std::shared_ptr<std::atomic_bool> cancel = state.loader.cancel;
     state.loader.worker = std::thread([directory, &loader = state.loader, cancel]() {
@@ -3236,8 +3242,19 @@ void draw_packet_frame_markers(
 void render_event_log(ViewerState& state) {
     const auto start = Clock::now();
     if (state.packet_clients.empty()) {
+        std::size_t total_records = 0;
+        for (const KTraceSourceHistory& source : state.history.sources) {
+            total_records += source.records.size();
+        }
         ImGui::BeginChild("packet_event_log", ImVec2(0.0f, -180.0f), true);
-        ImGui::TextColored(ImVec4(0.56f, 0.62f, 0.70f, 1.0f), "No packet events.");
+        ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "No packet events in this trace.");
+        ImGui::TextColored(
+            ImVec4(0.72f, 0.78f, 0.86f, 1.0f),
+            "Packet logging is enabled for the trace files, but %zu loaded records contain zero packet-log records.",
+            total_records);
+        ImGui::TextColored(
+            ImVec4(0.72f, 0.78f, 0.86f, 1.0f),
+            "Regenerate the trace with the rebuilt plugin if this run was captured before packet tracing was compiled in.");
         ImGui::EndChild();
         state.current_timing.timeline_ms += elapsed_ms(start);
         return;
@@ -4100,6 +4117,108 @@ std::string trace_data_without_viewer_fields(const std::string& data) {
     return out;
 }
 
+void append_detail_line(std::string& out, const std::string& line = {}) {
+    out += line;
+    out += '\n';
+}
+
+void append_merged_cue_details_text(std::string& out, const std::vector<SelectedRecordDetail>& details) {
+    std::vector<std::string> order;
+    std::unordered_map<std::string, CueDisplaySummary> summaries;
+    for (const SelectedRecordDetail& detail : details) {
+        if (detail.record == nullptr || !is_cue_event(detail.record->event.type)) {
+            continue;
+        }
+        const std::string key = cue_instance_key(detail.record->event);
+        if (summaries.find(key) == summaries.end()) {
+            order.push_back(key);
+        }
+        merge_cue_display_event(summaries[key], detail);
+    }
+    for (const std::string& key : order) {
+        const auto found = summaries.find(key);
+        if (found == summaries.end() || found->second.event == nullptr) {
+            continue;
+        }
+        const CueDisplaySummary& summary = found->second;
+        append_detail_line(
+            out,
+            "cue played: " + cue_type_label(*summary.event, summary.source) +
+                " (" + cue_display_status(summary) + ")");
+        if (!summary.data.empty()) {
+            append_detail_line(out, "  data: " + summary.data);
+        }
+    }
+}
+
+void append_record_detail_text(
+    std::string& out,
+    const SelectedRecordDetail& detail,
+    const std::vector<SelectedRecordDetail>* selection_details = nullptr) {
+    if (detail.record == nullptr) {
+        return;
+    }
+    const KTraceRecord& record = *detail.record;
+    const SyncTraceEvent& event = record.event;
+    if (is_cue_event(event.type)) {
+        (void)selection_details;
+        return;
+    }
+    if (is_rollback_conflict_detail(event)) {
+        append_detail_line(out, "conflict triggered rollback");
+        return;
+    }
+    if (is_rollback_reason_detail(event)) {
+        if (!event.data.empty()) {
+            append_detail_line(out, "  reason: " + event.data);
+        }
+        return;
+    }
+    if (detail.source_history != nullptr &&
+        is_received_component_detail(event)) {
+        append_detail_line(out, detail_received_component_label(event, *detail.source_history));
+        if (!event.data.empty()) {
+            append_detail_line(out, "  data: " + event.data);
+        }
+        return;
+    }
+    if (detail.source_history != nullptr &&
+        is_frame_component_detail(event)) {
+        append_detail_line(out, detail_frame_component_label(record, *detail.source_history));
+        if (!event.data.empty()) {
+            append_detail_line(out, "  data: " + event.data);
+        }
+        return;
+    }
+    append_detail_line(out, std::string(detail_source_label(record, detail.source.c_str())) + " " + event_name(event.type));
+    if (!event.data.empty()) {
+        append_detail_line(out, "  data: " + event.data);
+    }
+}
+
+std::string build_record_details_text(const std::vector<SelectedRecordDetail>& details) {
+    std::string out;
+    append_merged_cue_details_text(out, details);
+    for (const SelectedRecordDetail& detail : details) {
+        append_record_detail_text(out, detail, &details);
+    }
+    if (!out.empty() && out.back() == '\n') {
+        out.pop_back();
+    }
+    return out;
+}
+
+void render_selectable_detail_text(const char* id, const std::string& text) {
+    std::vector<char> buffer(text.begin(), text.end());
+    buffer.push_back('\0');
+    ImGui::InputTextMultiline(
+        id,
+        buffer.data(),
+        buffer.size(),
+        ImVec2(-1.0f, -1.0f),
+        ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_NoUndoRedo);
+}
+
 void render_record_detail(
     const SelectedRecordDetail& detail,
     const std::vector<SelectedRecordDetail>* selection_details = nullptr) {
@@ -4239,10 +4358,8 @@ void render_details(ViewerState& state) {
             static_cast<double>(event->relative_us) / 1000.0);
         ImGui::SetWindowFontScale(1.0f);
         ImGui::Separator();
-        render_merged_cue_details(state.cached_details);
-        for (const SelectedRecordDetail& detail : state.cached_details) {
-            render_record_detail(detail, &state.cached_details);
-        }
+        const std::string details_text = build_record_details_text(state.cached_details);
+        render_selectable_detail_text("##event_detail_text", details_text);
         ImGui::EndChild();
         state.current_timing.details_ms += elapsed_ms(start);
         return;
@@ -4260,10 +4377,8 @@ void render_details(ViewerState& state) {
     ImGui::SetWindowFontScale(1.0f);
     ImGui::Separator();
 
-    render_merged_cue_details(state.cached_details);
-    for (const SelectedRecordDetail& detail : state.cached_details) {
-        render_record_detail(detail, &state.cached_details);
-    }
+    const std::string details_text = build_record_details_text(state.cached_details);
+    render_selectable_detail_text("##frame_detail_text", details_text);
     ImGui::EndChild();
     state.current_timing.details_ms += elapsed_ms(start);
 }
@@ -4337,13 +4452,25 @@ void render_app(ViewerState& state) {
         ImGui::Dummy(bar_size);
     } else if (!state.status.empty()) {
         const ImVec2 status_pos = ImGui::GetCursorScreenPos();
-        const ImVec2 status_size{ImGui::GetContentRegionAvail().x, ImGui::GetFrameHeight()};
+        const ImVec2 status_size{
+            ImGui::GetContentRegionAvail().x,
+            state.status_is_error ? ImGui::GetTextLineHeightWithSpacing() * 2.0f : ImGui::GetFrameHeight()};
         const ImVec2 text_pos{
-            status_pos.x,
+            status_pos.x + (state.status_is_error ? ImGui::GetStyle().FramePadding.x : 0.0f),
             status_pos.y + (status_size.y - ImGui::GetTextLineHeight()) * 0.5f};
-        ImGui::GetWindowDrawList()->AddText(
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        if (state.status_is_error) {
+            draw_list->AddRectFilled(
+                status_pos,
+                ImVec2(status_pos.x + status_size.x, status_pos.y + status_size.y),
+                IM_COL32(172, 32, 44, 255),
+                ImGui::GetStyle().FrameRounding);
+        }
+        draw_list->AddText(
             text_pos,
-            ImGui::GetColorU32(ImVec4(0.58f, 0.66f, 0.76f, 1.0f)),
+            state.status_is_error
+                ? IM_COL32(255, 255, 255, 255)
+                : ImGui::GetColorU32(ImVec4(0.58f, 0.66f, 0.76f, 1.0f)),
             state.status.c_str());
         ImGui::Dummy(status_size);
     }
@@ -4609,6 +4736,7 @@ int main(int argc, char** argv) {
     }
     if (!state.control_socket_path.empty()) {
         state.status = "control socket listening at " + state.control_socket_path;
+        state.status_is_error = false;
         std::fprintf(stderr, "control socket listening at %s\n", state.control_socket_path.c_str());
     }
     AutomationInput automation_input;
@@ -4660,10 +4788,12 @@ int main(int argc, char** argv) {
             if (write_framebuffer_png(path, width, height, error)) {
                 state.last_screenshot_path = path;
                 state.status = "screenshot saved to " + path;
+                state.status_is_error = false;
                 std::fprintf(stderr, "screenshot saved to %s\n", path.c_str());
             } else {
                 state.screenshot_failed = true;
                 state.status = "screenshot failed: " + error;
+                state.status_is_error = true;
                 std::fprintf(stderr, "screenshot failed: %s\n", error.c_str());
             }
             state.screenshot_requested = false;

@@ -5,10 +5,14 @@
 #include "server/state.hpp"
 
 #include "ashiato/sync/protocol.hpp"
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+#include "ashiato/sync/tracing.hpp"
+#endif
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <string>
 
 namespace ashiato::sync {
 
@@ -214,6 +218,34 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
             server.release_server_quantized_frame(serialized_.quantized_frame);
             if (packet_bytes <= options.mtu_bytes) {
                 result.stopped_for_budget = true;
+            } else {
+                server.log_entity_update_exceeds_mtu(
+                    replication.peer,
+                    replication.id,
+                    server.replicated_slot_entity(slot),
+                    server.replicated_slot_archetype(slot),
+                    packet_bytes,
+                    options.mtu_bytes,
+                    serialized_.payload.bit_size());
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+                if (SyncTracer* tracer = server.server_tracer();
+                    tracer != nullptr && tracer->enabled() && tracer->packet_logs_enabled()) {
+                    SyncTraceEvent event;
+                    event.type = SyncTraceEventType::PacketLog;
+                    event.role = SyncTraceRole::Server;
+                    event.client = replication.id;
+                    event.frame = server.frame();
+                    event.server_entity = server.replicated_slot_entity(slot);
+                    event.archetype = server.replicated_slot_archetype(slot);
+                    event.data = "direction=meta,message=server_entity_update_exceeds_mtu,client=" + std::to_string(replication.id) +
+                        ",entity=" + std::to_string(server.replicated_slot_entity(slot).value) +
+                        ",archetype=" + std::to_string(server.replicated_slot_archetype(slot).value) +
+                        ",packet_bytes=" + std::to_string(packet_bytes) +
+                        ",mtu_bytes=" + std::to_string(options.mtu_bytes) +
+                        ",record_bits=" + std::to_string(serialized_.payload.bit_size());
+                    tracer->trace(event);
+                }
+#endif
             }
             continue;
         }

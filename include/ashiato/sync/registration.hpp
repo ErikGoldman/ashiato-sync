@@ -129,7 +129,7 @@ SyncCueTypeId register_sync_cue(ashiato::Registry& registry, std::string name = 
     ops.serialize = [](const void* value, ashiato::BitBuffer& out, EntityReferenceContext* references) {
         detail::serialize_cue_payload<T>(*static_cast<const T*>(value), out, references);
     };
-    ops.deserialize_value = [](const ashiato::BitBuffer& payload, EntityReferenceContext* references) -> std::shared_ptr<void> {
+    ops.deserialize_value = [](SyncCueTypeId, void*, const ashiato::BitBuffer& payload, EntityReferenceContext* references) -> std::shared_ptr<void> {
         T value{};
         if (!detail::read_cue_payload(payload, value, references)) {
             return {};
@@ -150,6 +150,49 @@ SyncCueTypeId register_sync_cue(ashiato::Registry& registry, std::string name = 
     settings.cue_ops.push_back(ops);
     settings.cue_type_ids[type] = id;
     return id;
+}
+
+inline SyncCueTypeId register_runtime_sync_cue(
+    ashiato::Registry& registry,
+    std::string key,
+    SyncCueOps ops) {
+    register_components(registry);
+
+    SyncSettings& settings = registry.write<SyncSettings>();
+    const auto found = settings.runtime_cue_type_ids.find(key);
+    if (found != settings.runtime_cue_type_ids.end()) {
+        if (found->second < settings.cue_ops.size()) {
+            if (ops.name.empty()) {
+                ops.name = key;
+            }
+            settings.cue_ops[found->second] = std::move(ops);
+        }
+        return found->second;
+    }
+    if (settings.cue_ops.size() >= std::numeric_limits<SyncCueTypeId>::max()) {
+        throw std::length_error("sync cue type id space exhausted");
+    }
+
+    const SyncCueTypeId id = static_cast<SyncCueTypeId>(settings.cue_ops.size());
+    if (ops.name.empty()) {
+        ops.name = key;
+    }
+    settings.cue_ops.push_back(std::move(ops));
+    settings.runtime_cue_type_ids.emplace(std::move(key), id);
+    return id;
+}
+
+inline bool find_runtime_sync_cue(
+    const ashiato::Registry& registry,
+    const std::string& key,
+    SyncCueTypeId& out) {
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    const auto found = settings.runtime_cue_type_ids.find(key);
+    if (found == settings.runtime_cue_type_ids.end()) {
+        return false;
+    }
+    out = found->second;
+    return true;
 }
 
 template <typename T>
@@ -195,6 +238,31 @@ bool CueDispatcher::emit(
     } else {
         settings.cue_ops[type].serialize(&cue, queued.payload, nullptr);
     }
+    return enqueue(std::move(queued));
+}
+
+inline bool CueDispatcher::emit_raw(
+    const SyncSettings& settings,
+    SyncFrame frame,
+    ashiato::Entity entity,
+    SyncCueTypeId type,
+    ashiato::BitBuffer payload,
+    float relevance_seconds,
+    bool only_replicate_to_owner) {
+    if (!entity || frame == 0U || relevance_seconds < 0.0f) {
+        return false;
+    }
+    if (type >= settings.cue_ops.size() || settings.cue_ops[type].play == nullptr) {
+        return false;
+    }
+
+    QueuedSyncCue queued;
+    queued.entity = entity;
+    queued.frame = frame;
+    queued.type = type;
+    queued.relevance_seconds = relevance_seconds;
+    queued.payload = std::move(payload);
+    queued.only_replicate_to_owner = only_replicate_to_owner;
     return enqueue(std::move(queued));
 }
 

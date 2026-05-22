@@ -58,6 +58,9 @@ TEST_CASE("packet log tracing is opt-in and records client and server packet det
             event.role == ashiato::sync::SyncTraceRole::Server &&
             event.data.find("message=server_update") != std::string::npos &&
             event.data.find("sequence=1") != std::string::npos &&
+            event.data.find("record_count=1") != std::string::npos &&
+            event.data.find("replicated_count=1") != std::string::npos &&
+            event.data.find("client_count=1") != std::string::npos &&
             event.data.find("updated_server_entities=[" + std::to_string(server_entity.value) + "]") != std::string::npos;
     }));
 
@@ -77,7 +80,9 @@ TEST_CASE("packet log tracing is opt-in and records client and server packet det
         return event.type == ashiato::sync::SyncTraceEventType::PacketLog &&
             event.role == ashiato::sync::SyncTraceRole::Client &&
             event.data.find("message=server_update") != std::string::npos &&
-            event.data.find("sequence=1") != std::string::npos;
+            event.data.find("sequence=1") != std::string::npos &&
+            event.data.find("record_count=1") != std::string::npos &&
+            event.data.find("applied=true") != std::string::npos;
     }));
     std::vector<ashiato::BitBuffer> ack_packets = client.drain_ack_packets();
     REQUIRE(ack_packets.size() == 1);

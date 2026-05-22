@@ -52,7 +52,7 @@ bool ClientCueRuntime::play(
     }
     EntityReferenceContext reference_context = make_reference_context(client);
     EntityReferenceContext* references = settings.cue_ops[cue.type].references_entities ? &reference_context : nullptr;
-    EntityPlayedCue* existing = store_.find_played(settings, entity_index, cue, references);
+    EntityPlayedCue* existing = store_.find_played(registry, settings, entity_index, cue, references);
     if (existing != nullptr) {
         if (confirmed) {
             confirm_played(client, settings, state, *existing, cue, "server");
@@ -63,7 +63,15 @@ bool ClientCueRuntime::play(
     if (!state.identity.local || !registry.alive(state.identity.local)) {
         return false;
     }
-    if (!settings.cue_ops[cue.type].play(registry, state.identity.local, cue.payload, late_seconds, cue.frame, references)) {
+    if (!settings.cue_ops[cue.type].play(
+            cue.type,
+            settings.cue_ops[cue.type].user_data,
+            registry,
+            state.identity.local,
+            cue.payload,
+            late_seconds,
+            cue.frame,
+            references)) {
         return false;
     }
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
@@ -147,7 +155,14 @@ bool ClientCueRuntime::rollback_played(
     }
     EntityReferenceContext reference_context = make_reference_context(client);
     EntityReferenceContext* references = settings.cue_ops[cue.type].references_entities ? &reference_context : nullptr;
-    const bool rolled_back = settings.cue_ops[cue.type].rollback(registry, state.identity.local, cue.payload, references);
+    const bool rolled_back =
+        settings.cue_ops[cue.type].rollback(
+            cue.type,
+            settings.cue_ops[cue.type].user_data,
+            registry,
+            state.identity.local,
+            cue.payload,
+            references);
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     if (rolled_back) {
         client.trace_cue_event(SyncTraceEventType::CueRolledBack, settings, state, cue, rollback_reason, "local_prediction");
@@ -187,7 +202,7 @@ void ClientCueRuntime::reconcile_authoritative_predicted(
     const std::vector<EntityCue>& cues,
     SyncFrame frame) {
     for (const EntityCue& cue : cues) {
-        EntityPlayedCue* found = store_.find_played(settings, entity_index, cue, nullptr);
+        EntityPlayedCue* found = store_.find_played(registry, settings, entity_index, cue, nullptr);
         if (found != nullptr) {
             confirm_played(client, settings, state, *found, cue, "server");
             continue;
@@ -210,7 +225,7 @@ void ClientCueRuntime::reconcile_authoritative_predicted(
             ++played;
             continue;
         }
-        const EntityCue* authoritative_match = store_.find_authoritative(settings, cues, *played);
+        const EntityCue* authoritative_match = store_.find_authoritative(registry, settings, cues, *played);
         if (authoritative_match != nullptr) {
             confirm_played(client, settings, state, *played, *authoritative_match, "server");
             ++played;
@@ -245,7 +260,7 @@ void ClientCueRuntime::drain_emitted_prediction(
         client.trace_cue_event(SyncTraceEventType::CueEmitted, settings, *state, cue, nullptr, "local_prediction");
 #endif
 
-        EntityPlayedCue* found = store_.find_played(settings, entity_index, cue, nullptr);
+        EntityPlayedCue* found = store_.find_played(registry, settings, entity_index, cue, nullptr);
         if (found != nullptr) {
             store_.mark_seen_in_resim(*found);
             continue;

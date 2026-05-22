@@ -8,6 +8,7 @@
 namespace ashiato::sync::client_detail {
 
 EntityPlayedCue* ClientCueStore::find_played(
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     std::uint32_t entity_index,
     const EntityCue& cue,
@@ -22,12 +23,18 @@ EntityPlayedCue* ClientCueStore::find_played(
             return candidate.entity_index == entity_index &&
                 candidate.frame == cue.frame &&
                 candidate.type == cue.type &&
-                settings.cue_ops[cue.type].equals(candidate.payload, cue.payload, references);
+                settings.cue_ops[cue.type].equals(
+                    cue.type,
+                    settings.cue_ops[cue.type].user_data,
+                    candidate.payload,
+                    cue.payload,
+                    references);
         });
     return found == played.end() ? nullptr : &*found;
 }
 
 const EntityCue* ClientCueStore::find_authoritative(
+    ashiato::Registry& registry,
     const SyncSettings& settings,
     const std::vector<EntityCue>& cues,
     const EntityPlayedCue& played_cue) const {
@@ -40,7 +47,12 @@ const EntityCue* ClientCueStore::find_authoritative(
         [&](const EntityCue& cue) {
             return cue.frame == played_cue.frame &&
                 cue.type == played_cue.type &&
-                settings.cue_ops[cue.type].equals(played_cue.payload, cue.payload, nullptr);
+                settings.cue_ops[cue.type].equals(
+                    cue.type,
+                    settings.cue_ops[cue.type].user_data,
+                    played_cue.payload,
+                    cue.payload,
+                    nullptr);
         });
     return found == cues.end() ? nullptr : &*found;
 }

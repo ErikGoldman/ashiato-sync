@@ -21,11 +21,13 @@ struct BufferedEntityCue {
 class ClientCueStore {
 public:
     EntityPlayedCue* find_played(
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         std::uint32_t entity_index,
         const EntityCue& cue,
         EntityReferenceContext* references);
     const EntityCue* find_authoritative(
+        ashiato::Registry& registry,
         const SyncSettings& settings,
         const std::vector<EntityCue>& cues,
         const EntityPlayedCue& played) const;

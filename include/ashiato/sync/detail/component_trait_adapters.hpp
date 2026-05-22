@@ -69,6 +69,8 @@ bool read_cue_payload(const ashiato::BitBuffer& payload, T& out, EntityReference
 
 template <typename T>
 bool play_cue_payload(
+    SyncCueTypeId,
+    void*,
     ashiato::Registry& registry,
     ashiato::Entity owner,
     const ashiato::BitBuffer& payload,
@@ -89,6 +91,8 @@ bool play_cue_payload(
 
 template <typename T>
 bool rollback_cue_payload(
+    SyncCueTypeId,
+    void*,
     ashiato::Registry& registry,
     ashiato::Entity owner,
     const ashiato::BitBuffer& payload,
@@ -102,6 +106,8 @@ bool rollback_cue_payload(
 
 template <typename T>
 bool equal_cue_payloads(
+    SyncCueTypeId,
+    void*,
     const ashiato::BitBuffer& lhs_payload,
     const ashiato::BitBuffer& rhs_payload,
     EntityReferenceContext* references) {
@@ -367,7 +373,7 @@ struct has_trace_cue<
         std::declval<SyncTraceStringBuilder&>()))>> : std::true_type {};
 
 template <typename T>
-bool trace_cue_payload(const ashiato::BitBuffer& payload, SyncTraceStringBuilder& out) {
+bool trace_cue_payload(SyncCueTypeId, void*, const ashiato::BitBuffer& payload, SyncTraceStringBuilder& out) {
     T value{};
     if (!read_cue_payload(payload, value)) {
         return false;

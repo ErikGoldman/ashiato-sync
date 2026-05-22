@@ -190,6 +190,14 @@ public:
     std::size_t begin_client_bandwidth_tick(server_detail::ServerClientReplicator& client);
     ReplicationSendResult flush_client_updates(ashiato::Registry& registry, server_detail::ServerClientReplicator& client);
     std::size_t charged_packet_bytes(std::size_t payload_bytes) const noexcept;
+    void log_entity_update_exceeds_mtu(
+        ClientId peer,
+        ClientId client,
+        ashiato::Entity entity,
+        SyncArchetypeId archetype,
+        std::size_t packet_bytes,
+        std::size_t mtu_bytes,
+        std::size_t record_bits);
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     SyncTracer* server_tracer() const noexcept;
     void trace_entity_started_syncing(
