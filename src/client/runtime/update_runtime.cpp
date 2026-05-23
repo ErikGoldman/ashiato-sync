@@ -423,14 +423,13 @@ bool ClientUpdateRuntime::read_cues(detail::BitReader& packet, std::vector<Entit
     }
     out.reserve(cue_count);
     for (std::uint16_t index = 0; index < cue_count; ++index) {
-        EntityCue cue;
-        std::uint16_t payload_bits = 0;
-        if (!packet.read_bits(32U, cue.frame) ||
-            !packet.read_bits(16U, cue.type) ||
-            !packet.read_bytes(reinterpret_cast<char*>(&cue.relevance_seconds), sizeof(cue.relevance_seconds)) ||
-            !packet.read_bits(16U, payload_bits) ||
-            !packet.read_buffer_bits(cue.payload, payload_bits)) {
-            return false;
+		EntityCue cue;
+		std::uint16_t payload_bits = 0;
+		if (!packet.read_bits(32U, cue.frame) ||
+			!packet.read_bits(16U, cue.type) ||
+			!packet.read_bits(16U, payload_bits) ||
+			!packet.read_buffer_bits(cue.payload, payload_bits)) {
+			return false;
         }
         out.push_back(std::move(cue));
     }

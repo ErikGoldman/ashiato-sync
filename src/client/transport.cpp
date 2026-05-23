@@ -236,7 +236,6 @@ bool ReplicationClient::receive_entity_update(
     last_server_update_frame_ = frame;
     has_received_server_update_ = true;
     input_->retire_transmit_frames_through(frame);
-    cue_runtime_->prune_confirmed(frame);
     if (clock_.maybe_bootstrap_from_first_server_update(frame)) {
         const SyncSettings& settings = registry.get<SyncSettings>();
         (void)fill_input_frames_through(registry, settings, clock_.predicted_frame());

@@ -108,6 +108,36 @@ TEST_CASE("replication replay writer records destroyed replicated slots") {
     REQUIRE(static_cast<std::uint32_t>(payload.read_bits(32U)) == 1U);
 }
 
+TEST_CASE("replication replay writer records replicated slots added after initialization") {
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_server_registry(registry);
+    const ashiato::sync::SyncArchetypeId archetype = ashiato_sync_tests::define_position_archetype(registry);
+
+    std::vector<ashiato::sync::ReplicationReplayFrame> frames;
+    ashiato::sync::ReplicationReplayWriter writer({60, [&](const ashiato::sync::ReplicationReplayFrame& frame) {
+        frames.push_back(frame);
+    }});
+
+    ashiato::sync::ReplicationServer server(registry);
+    writer.attach(server);
+    REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
+    REQUIRE(frames.size() == 1U);
+    frames.clear();
+
+    const ashiato::Entity entity = registry.create();
+    registry.add<ashiato_sync_tests::Position>(entity, ashiato_sync_tests::Position{1.0f, 2.0f});
+    REQUIRE(ashiato_sync_tests::start_sync(registry, entity, archetype));
+    REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
+
+    REQUIRE(frames.size() == 1U);
+    REQUIRE(frames[0].kind == ashiato::sync::ReplicationReplayFrameKind::Delta);
+    ashiato::BitBuffer payload = frames[0].payload;
+    REQUIRE(static_cast<std::uint16_t>(payload.read_bits(16U)) == 1U);
+    REQUIRE_FALSE(payload.read_bool());
+    REQUIRE(static_cast<std::uint32_t>(payload.read_bits(32U)) == 1U);
+    REQUIRE(static_cast<std::uint32_t>(payload.read_bits(32U)) == archetype.value);
+}
+
 TEST_CASE("replication replay writer records queued cues in the replay payload") {
     ashiato::Registry registry;
     ashiato_sync_tests::configure_test_server_registry(registry);

@@ -15,14 +15,12 @@ inline constexpr std::size_t max_baseline_history_per_entity = 64;
 struct EntityCue {
     SyncFrame frame = 0;
     SyncCueTypeId type = 0;
-    float relevance_seconds = 0.0f;
     ashiato::BitBuffer payload;
 };
 
 struct EntityPlayedCue {
     std::uint32_t entity_index = invalid_entity_index;
     SyncFrame frame = 0;
-    SyncFrame expire_frame = 0;
     SyncCueTypeId type = 0;
     ashiato::BitBuffer payload;
     bool confirmed = false;

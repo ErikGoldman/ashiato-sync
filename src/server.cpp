@@ -172,6 +172,10 @@ void append_trace_data_field(SyncTraceEvent& event, const char* key, const char*
     event.data += value;
 }
 
+void append_trace_data_field(SyncTraceEvent& event, const char* key, std::uint64_t value) {
+    append_trace_data_field(event, key, std::to_string(value).c_str());
+}
+
 void append_trace_cue_name(const SyncSettings& settings, SyncCueTypeId cue_type, SyncTraceEvent& event) {
     if (cue_type < settings.cue_ops.size()) {
         event.component_name = settings.cue_ops[cue_type].name;
@@ -2549,8 +2553,15 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
             if (previous == nullptr || current == nullptr) {
                 throw std::logic_error("replicated quantized frame component bytes are missing");
             }
+            EntityReferenceContext* references = ops.references_entities ? references_for_component() : nullptr;
+            ashiato::ComponentSerializationContext serialization_context{references};
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+            const std::size_t component_wire_begin_bits = out.bit_size();
+#endif
+            ops.serialization.serialize(previous, current, out, references != nullptr ? &serialization_context : nullptr);
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
             if (server.server_tracer() != nullptr && server.server_tracer()->enabled()) {
+                const std::size_t wire_bits = out.bit_size() - component_wire_begin_bits;
                 SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::ComponentSent, client.id, quantized_frame);
                 event.server_entity = server.replicated_slot_entity(slot);
                 event.wire_network_id = network_id;
@@ -2559,12 +2570,12 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
                 event.archetype = quantized_archetype;
                 event.component = archetype.components[component_index].component;
                 append_trace_component_data(server.server_tracer(), archetype, component_index, current, event);
+                append_trace_data_field(event, "payload_kind", "component");
+                append_trace_data_field(event, "wire_bits", static_cast<std::uint64_t>(wire_bits));
+                append_trace_data_field(event, "wire_bytes", static_cast<std::uint64_t>(protocol::bytes_for_bits(wire_bits)));
                 server.server_tracer()->trace(event);
             }
 #endif
-            EntityReferenceContext* references = ops.references_entities ? references_for_component() : nullptr;
-            ashiato::ComponentSerializationContext serialization_context{references};
-            ops.serialization.serialize(previous, current, out, references != nullptr ? &serialization_context : nullptr);
         }
         const std::size_t cue_count = std::min(entity_state->pending_cues.size(), max_cues_per_entity_record);
         out.push_bool(cue_count != 0U);
@@ -2572,13 +2583,16 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
             out.push_bits(static_cast<std::int64_t>(cue_count), 16U);
             for (std::size_t cue_index = 0; cue_index < cue_count; ++cue_index) {
                 const ClientEntityState::PendingCue& cue = entity_state->pending_cues[cue_index];
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+                const std::size_t cue_wire_begin_bits = out.bit_size();
+#endif
                 out.push_bits(cue.frame, 32U);
                 out.push_bits(cue.type, 16U);
-                out.push_bytes(reinterpret_cast<const char*>(&cue.relevance_seconds), sizeof(cue.relevance_seconds));
                 out.push_bits(static_cast<std::int64_t>(cue.payload.bit_size()), 16U);
                 out.push_buffer_bits(cue.payload);
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
                 if (server.server_tracer() != nullptr && server.server_tracer()->enabled()) {
+                    const std::size_t wire_bits = out.bit_size() - cue_wire_begin_bits;
                     SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::CueSent, client.id, cue.frame);
                     event.server_entity = server.replicated_slot_entity(slot);
                     event.wire_network_id = network_id;
@@ -2589,6 +2603,11 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
                     append_trace_cue_name(settings, cue.type, event);
                     append_trace_cue_data(server.server_tracer(), settings, cue.type, cue.payload, event);
                     append_trace_data_field(event, "source", "server");
+                    append_trace_data_field(event, "payload_kind", "cue");
+                    append_trace_data_field(event, "payload_bits", static_cast<std::uint64_t>(cue.payload.bit_size()));
+                    append_trace_data_field(event, "payload_bytes", static_cast<std::uint64_t>(cue.payload.byte_size()));
+                    append_trace_data_field(event, "wire_bits", static_cast<std::uint64_t>(wire_bits));
+                    append_trace_data_field(event, "wire_bytes", static_cast<std::uint64_t>(protocol::bytes_for_bits(wire_bits)));
                     server.server_tracer()->trace(event);
                 }
 #endif
@@ -2661,8 +2680,15 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
         if (!use_presence_mask) {
             out.push_bits(static_cast<std::int64_t>(component_index + 1U), sync_slot_bits);
         }
+        EntityReferenceContext* references = ops.references_entities ? references_for_component() : nullptr;
+        ashiato::ComponentSerializationContext serialization_context{references};
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+        const std::size_t component_wire_begin_bits = out.bit_size();
+#endif
+        ops.serialization.serialize(nullptr, current, out, references != nullptr ? &serialization_context : nullptr);
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
         if (server.server_tracer() != nullptr && server.server_tracer()->enabled()) {
+            const std::size_t wire_bits = out.bit_size() - component_wire_begin_bits;
             SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::ComponentSent, client.id, quantized_frame);
             event.server_entity = server.replicated_slot_entity(slot);
             event.wire_network_id = network_id;
@@ -2671,12 +2697,12 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
             event.archetype = quantized_archetype;
             event.component = archetype.components[component_index].component;
             append_trace_component_data(server.server_tracer(), archetype, component_index, current, event);
+            append_trace_data_field(event, "payload_kind", "component");
+            append_trace_data_field(event, "wire_bits", static_cast<std::uint64_t>(wire_bits));
+            append_trace_data_field(event, "wire_bytes", static_cast<std::uint64_t>(protocol::bytes_for_bits(wire_bits)));
             server.server_tracer()->trace(event);
         }
 #endif
-        EntityReferenceContext* references = ops.references_entities ? references_for_component() : nullptr;
-        ashiato::ComponentSerializationContext serialization_context{references};
-        ops.serialization.serialize(nullptr, current, out, references != nullptr ? &serialization_context : nullptr);
     }
 
     const std::size_t cue_count = std::min(entity_state->pending_cues.size(), max_cues_per_entity_record);
@@ -2685,13 +2711,16 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
         out.push_bits(static_cast<std::int64_t>(cue_count), 16U);
         for (std::size_t cue_index = 0; cue_index < cue_count; ++cue_index) {
             const ClientEntityState::PendingCue& cue = entity_state->pending_cues[cue_index];
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+            const std::size_t cue_wire_begin_bits = out.bit_size();
+#endif
             out.push_bits(cue.frame, 32U);
             out.push_bits(cue.type, 16U);
-            out.push_bytes(reinterpret_cast<const char*>(&cue.relevance_seconds), sizeof(cue.relevance_seconds));
             out.push_bits(static_cast<std::int64_t>(cue.payload.bit_size()), 16U);
             out.push_buffer_bits(cue.payload);
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
             if (server.server_tracer() != nullptr && server.server_tracer()->enabled()) {
+                const std::size_t wire_bits = out.bit_size() - cue_wire_begin_bits;
                 SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::CueSent, client.id, cue.frame);
                 event.server_entity = server.replicated_slot_entity(slot);
                 event.wire_network_id = network_id;
@@ -2702,6 +2731,11 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
                 append_trace_cue_name(settings, cue.type, event);
                 append_trace_cue_data(server.server_tracer(), settings, cue.type, cue.payload, event);
                 append_trace_data_field(event, "source", "server");
+                append_trace_data_field(event, "payload_kind", "cue");
+                append_trace_data_field(event, "payload_bits", static_cast<std::uint64_t>(cue.payload.bit_size()));
+                append_trace_data_field(event, "payload_bytes", static_cast<std::uint64_t>(cue.payload.byte_size()));
+                append_trace_data_field(event, "wire_bits", static_cast<std::uint64_t>(wire_bits));
+                append_trace_data_field(event, "wire_bytes", static_cast<std::uint64_t>(protocol::bytes_for_bits(wire_bits)));
                 server.server_tracer()->trace(event);
             }
 #endif

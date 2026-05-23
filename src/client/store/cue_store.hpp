@@ -32,7 +32,6 @@ public:
         const std::vector<EntityCue>& cues,
         const EntityPlayedCue& played) const;
     void mark_seen_in_resim(EntityPlayedCue& cue) const noexcept;
-    void prune_confirmed(SyncFrame server_frame);
     void store_buffered(
         const ClientFrameRingStore& buffered_frames,
         std::uint32_t entity_index,

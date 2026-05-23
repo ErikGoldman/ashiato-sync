@@ -27,7 +27,6 @@ public:
 
     void erase_for_entity(std::uint32_t entity_index);
     void erase_buffered_for_entity(std::uint32_t entity_index);
-    void prune_confirmed(SyncFrame server_frame);
     void clear_current_packet_cue_summaries();
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     const std::vector<std::string>& current_packet_cue_summaries() const noexcept;
@@ -88,7 +87,6 @@ public:
 
 private:
     EntityReferenceContext make_reference_context(ReplicationClient& client) const;
-    SyncFrame expire_frame(const ReplicationClient& client, const EntityCue& cue) const noexcept;
     void confirm_played(
         ReplicationClient& client,
         const SyncSettings& settings,

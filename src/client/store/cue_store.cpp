@@ -13,6 +13,7 @@ EntityPlayedCue* ClientCueStore::find_played(
     std::uint32_t entity_index,
     const EntityCue& cue,
     EntityReferenceContext* references) {
+    (void)registry;
     if (cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].equals == nullptr) {
         return nullptr;
     }
@@ -38,6 +39,7 @@ const EntityCue* ClientCueStore::find_authoritative(
     const SyncSettings& settings,
     const std::vector<EntityCue>& cues,
     const EntityPlayedCue& played_cue) const {
+    (void)registry;
     if (played_cue.type >= settings.cue_ops.size() || settings.cue_ops[played_cue.type].equals == nullptr) {
         return nullptr;
     }
@@ -59,17 +61,6 @@ const EntityCue* ClientCueStore::find_authoritative(
 
 void ClientCueStore::mark_seen_in_resim(EntityPlayedCue& cue) const noexcept {
     cue.seen_resim_generation = resim_generation;
-}
-
-void ClientCueStore::prune_confirmed(SyncFrame server_frame) {
-    played.erase(
-        std::remove_if(
-            played.begin(),
-            played.end(),
-            [server_frame](const EntityPlayedCue& cue) {
-                return cue.confirmed && cue.expire_frame != 0U && server_frame > cue.expire_frame;
-            }),
-        played.end());
 }
 
 void ClientCueStore::store_buffered(

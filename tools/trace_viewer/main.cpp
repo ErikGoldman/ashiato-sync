@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cctype>
 #include <atomic>
 #include <deque>
 #include <exception>
@@ -166,6 +167,53 @@ struct PacketClientTimeline {
     std::vector<PacketFrameMarker> client_frames;
 };
 
+enum class PayloadSortMode {
+    TotalBytes,
+    AverageBytes,
+    MaxBytes
+};
+
+struct PayloadEventInfo {
+    int source_index = -1;
+    std::uint32_t record_index = 0;
+    SyncFrame frame = 0;
+    ClientId client = invalid_client_id;
+    ClientEntityNetworkId network_id = invalid_client_entity_network_id;
+    ashiato::Entity server_entity{};
+    ashiato::Entity component{};
+    SyncCueTypeId cue_type = 0;
+    std::string source;
+    std::string name;
+    std::string kind;
+    std::string breakdown;
+    std::string data;
+    std::uint64_t wire_bits = 0;
+    std::uint64_t wire_bytes = 0;
+    std::uint64_t payload_bytes = 0;
+    std::uint64_t limit_bytes = 0;
+    bool over_limit = false;
+};
+
+struct PayloadAggregateRow {
+    std::string key;
+    std::string source;
+    std::string name;
+    std::string kind;
+    ClientId client = invalid_client_id;
+    ClientEntityNetworkId network_id = invalid_client_entity_network_id;
+    ashiato::Entity server_entity{};
+    ashiato::Entity component{};
+    SyncCueTypeId cue_type = 0;
+    std::uint64_t count = 0;
+    std::uint64_t total_bytes = 0;
+    std::uint64_t max_bytes = 0;
+    std::uint64_t last_bytes = 0;
+    std::uint64_t limit_bytes = 0;
+    bool over_limit = false;
+    int max_event_index = -1;
+    std::vector<int> event_indices;
+};
+
 struct DirectoryPickerEntry {
     std::string name;
     std::string path;
@@ -231,7 +279,8 @@ struct TraceLoadState {
 
 enum class ViewerMode {
     Frames,
-    EventLog
+    EventLog,
+    Payloads
 };
 
 struct EntityExpansionKey {
@@ -290,6 +339,12 @@ struct ViewerState {
     std::vector<PacketClientTimeline> packet_clients;
     std::uint64_t packet_log_min_us = 0;
     std::uint64_t packet_log_max_us = 0;
+    std::vector<PayloadEventInfo> payload_events;
+    std::vector<PayloadAggregateRow> payload_rows;
+    PayloadSortMode payload_sort = PayloadSortMode::TotalBytes;
+    std::array<char, 256> payload_filter{};
+    int selected_payload_row = -1;
+    bool payload_dirty = true;
     std::unordered_map<ClientEntityNetworkId, ashiato::Entity> server_entities_by_network_id;
     int selected_packet_client = 0;
     std::array<char, 1024> picker_path{};
@@ -1136,6 +1191,18 @@ std::string packet_value(const PacketKeyValues& values, const char* key) {
     return found != values.values.end() ? found->second : std::string{};
 }
 
+std::uint64_t packet_u64(const PacketKeyValues& values, const char* key) {
+    const std::string value = packet_value(values, key);
+    if (value.empty()) {
+        return 0;
+    }
+    try {
+        return static_cast<std::uint64_t>(std::stoull(value));
+    } catch (...) {
+        return 0;
+    }
+}
+
 ClientId parse_packet_client(const PacketKeyValues& values, const KTraceSourceHistory& source, const SyncTraceEvent& event) {
     const std::string client = packet_value(values, "client");
     if (!client.empty()) {
@@ -1440,6 +1507,135 @@ std::string component_label(const KTraceSourceHistory& source, ashiato::Entity c
         return found->second;
     }
     return "component " + std::to_string(component.value);
+}
+
+std::string cue_label(const KTraceSourceHistory& source, SyncCueTypeId cue_type) {
+    const auto found = source.cue_names.find(cue_type);
+    if (found != source.cue_names.end() && !found->second.empty()) {
+        return found->second;
+    }
+    return "cue " + std::to_string(cue_type);
+}
+
+std::string payload_row_key(const PayloadEventInfo& event) {
+    std::ostringstream out;
+    out << event.source << "|" << event.client << "|" << event.network_id << "|"
+        << event.kind << "|" << event.component.value << "|" << event.cue_type;
+    return out.str();
+}
+
+bool payload_row_matches_filter(const PayloadAggregateRow& row, const char* filter) {
+    if (filter == nullptr || filter[0] == '\0') {
+        return true;
+    }
+    std::string query(filter);
+    std::transform(query.begin(), query.end(), query.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    std::string haystack = row.source + " " + row.name + " " + row.kind + " " +
+        std::to_string(row.client) + " " + std::to_string(row.network_id);
+    std::transform(haystack.begin(), haystack.end(), haystack.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return haystack.find(query) != std::string::npos;
+}
+
+ClientEntityNetworkId payload_network_key(const SyncTraceEvent& event) {
+    if (event.client_network_id != invalid_client_entity_network_id) {
+        return event.client_network_id;
+    }
+    if (event.server_entity) {
+        return event.server_entity.value;
+    }
+    if (event.local_entity) {
+        return event.local_entity.value;
+    }
+    return invalid_client_entity_network_id;
+}
+
+void rebuild_payload_rows(ViewerState& state) {
+    state.payload_events.clear();
+    state.payload_rows.clear();
+    std::unordered_map<std::string, int> row_by_key;
+    for (int source_index = 0; source_index < static_cast<int>(state.history.sources.size()); ++source_index) {
+        const KTraceSourceHistory& source = state.history.sources[static_cast<std::size_t>(source_index)];
+        for (std::uint32_t record_index = 0; record_index < source.records.size(); ++record_index) {
+            const KTraceRecord& record = source.records[record_index];
+            const SyncTraceEvent& trace = record.event;
+            if (trace.type != SyncTraceEventType::ComponentSent && trace.type != SyncTraceEventType::CueSent) {
+                continue;
+            }
+            const PacketKeyValues fields = parse_packet_data(trace.data);
+            const std::uint64_t wire_bytes = packet_u64(fields, "wire_bytes");
+            if (wire_bytes == 0U) {
+                continue;
+            }
+            PayloadEventInfo event;
+            event.source_index = source_index;
+            event.record_index = record_index;
+            event.frame = trace.frame;
+            event.client = trace.client;
+            event.network_id = payload_network_key(trace);
+            event.server_entity = trace.server_entity;
+            event.component = trace.component;
+            event.cue_type = trace.cue_type;
+            event.source = source_label(source);
+            event.kind = trace.type == SyncTraceEventType::CueSent ? "cue" : "component";
+            event.name = trace.type == SyncTraceEventType::CueSent
+                ? cue_label(source, trace.cue_type)
+                : (!trace.component_name.empty() ? trace.component_name : component_label(source, trace.component));
+            event.breakdown = packet_value(fields, "payload_breakdown");
+            event.data = trace.data;
+            event.wire_bits = packet_u64(fields, "wire_bits");
+            event.wire_bytes = wire_bytes;
+            event.payload_bytes = packet_u64(fields, "payload_bytes");
+            event.limit_bytes = packet_u64(fields, "payload_limit");
+            event.over_limit = packet_u64(fields, "payload_over_limit") != 0U;
+
+            const int event_index = static_cast<int>(state.payload_events.size());
+            const std::string key = payload_row_key(event);
+            state.payload_events.push_back(std::move(event));
+            auto found = row_by_key.find(key);
+            if (found == row_by_key.end()) {
+                const PayloadEventInfo& stored = state.payload_events[static_cast<std::size_t>(event_index)];
+                PayloadAggregateRow row;
+                row.key = key;
+                row.source = stored.source;
+                row.name = stored.name;
+                row.kind = stored.kind;
+                row.client = stored.client;
+                row.network_id = stored.network_id;
+                row.server_entity = stored.server_entity;
+                row.component = stored.component;
+                row.cue_type = stored.cue_type;
+                row_by_key[key] = static_cast<int>(state.payload_rows.size());
+                state.payload_rows.push_back(std::move(row));
+                found = row_by_key.find(key);
+            }
+            PayloadAggregateRow& row = state.payload_rows[static_cast<std::size_t>(found->second)];
+            const PayloadEventInfo& stored = state.payload_events[static_cast<std::size_t>(event_index)];
+            ++row.count;
+            row.total_bytes += stored.wire_bytes;
+            row.last_bytes = stored.wire_bytes;
+            row.limit_bytes = std::max(row.limit_bytes, stored.limit_bytes);
+            row.over_limit = row.over_limit || stored.over_limit;
+            row.event_indices.push_back(event_index);
+            if (stored.wire_bytes >= row.max_bytes) {
+                row.max_bytes = stored.wire_bytes;
+                row.max_event_index = event_index;
+            }
+        }
+    }
+    state.selected_payload_row = state.payload_rows.empty()
+        ? -1
+        : std::clamp(state.selected_payload_row, 0, static_cast<int>(state.payload_rows.size()) - 1);
+}
+
+void ensure_payload_rows(ViewerState& state) {
+    if (state.payload_dirty) {
+        rebuild_payload_rows(state);
+        state.payload_dirty = false;
+    }
 }
 
 CellVisual visual_for_cell(const KTraceFrameCell& cell, SyncTraceRole role) {
@@ -2373,6 +2569,7 @@ void publish_loaded_source(
         std::make_move_iterator(benchmark_candidates.begin()),
         std::make_move_iterator(benchmark_candidates.end()));
     state.packet_log_dirty = true;
+    state.payload_dirty = true;
     state.details_dirty = true;
     state.packet_details_dirty = true;
     state.cached_details.clear();
@@ -2402,6 +2599,10 @@ void reset_loaded_trace(ViewerState& state) {
     state.packet_clients.clear();
     state.packet_log_min_us = 0;
     state.packet_log_max_us = 0;
+    state.payload_events.clear();
+    state.payload_rows.clear();
+    state.selected_payload_row = -1;
+    state.payload_dirty = true;
     state.server_entities_by_network_id.clear();
     state.packet_log_dirty = false;
     state.selected_source = 0;
@@ -4337,6 +4538,162 @@ void rebuild_packet_detail_cache(ViewerState& state) {
     state.current_timing.selection_ms += elapsed_ms(start);
 }
 
+std::string format_payload_breakdown(std::string breakdown) {
+    if (breakdown.size() >= 2 && breakdown.front() == '[' && breakdown.back() == ']') {
+        breakdown = breakdown.substr(1, breakdown.size() - 2);
+    }
+    std::replace(breakdown.begin(), breakdown.end(), '|', '\n');
+    std::replace(breakdown.begin(), breakdown.end(), ':', ' ');
+    return breakdown;
+}
+
+void render_payload_details(const ViewerState& state) {
+    ImGui::BeginChild("payload_details", ImVec2(0.0f, 0.0f), true);
+    if (state.selected_payload_row < 0 ||
+        state.selected_payload_row >= static_cast<int>(state.payload_rows.size())) {
+        ImGui::TextColored(ImVec4(0.72f, 0.78f, 0.86f, 1.0f), "Select a payload row to inspect its largest event.");
+        ImGui::EndChild();
+        return;
+    }
+    const PayloadAggregateRow& row = state.payload_rows[static_cast<std::size_t>(state.selected_payload_row)];
+    ImGui::Text("%s", row.name.c_str());
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.72f, 0.78f, 0.86f, 1.0f), "%s client %llu entity %llu",
+        row.source.c_str(),
+        static_cast<unsigned long long>(row.client),
+        static_cast<unsigned long long>(row.network_id));
+    if (row.max_event_index >= 0 &&
+        row.max_event_index < static_cast<int>(state.payload_events.size())) {
+        const PayloadEventInfo& event = state.payload_events[static_cast<std::size_t>(row.max_event_index)];
+        ImGui::Separator();
+        ImGui::Text(
+            "Largest event: frame %u, wire %llu bytes (%llu bits), raw payload %llu bytes",
+            event.frame,
+            static_cast<unsigned long long>(event.wire_bytes),
+            static_cast<unsigned long long>(event.wire_bits),
+            static_cast<unsigned long long>(event.payload_bytes));
+        if (event.limit_bytes != 0U) {
+            ImGui::Text(
+                "Limit: %llu bytes%s",
+                static_cast<unsigned long long>(event.limit_bytes),
+                event.over_limit ? " (over limit)" : "");
+        }
+        if (!event.breakdown.empty()) {
+            ImGui::Separator();
+            ImGui::TextUnformatted("Breakdown");
+            const std::string breakdown = format_payload_breakdown(event.breakdown);
+            ImGui::TextUnformatted(breakdown.c_str());
+        }
+        ImGui::Separator();
+        ImGui::TextUnformatted("Trace Data");
+        ImGui::TextWrapped("%s", event.data.c_str());
+    }
+    ImGui::EndChild();
+}
+
+void render_payloads(ViewerState& state) {
+    const auto start = Clock::now();
+    ensure_payload_rows(state);
+    ImGui::InputTextWithHint("Filter", "component, cue, entity, client, source", state.payload_filter.data(), state.payload_filter.size());
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Total", state.payload_sort == PayloadSortMode::TotalBytes)) {
+        state.payload_sort = PayloadSortMode::TotalBytes;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Average", state.payload_sort == PayloadSortMode::AverageBytes)) {
+        state.payload_sort = PayloadSortMode::AverageBytes;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Max", state.payload_sort == PayloadSortMode::MaxBytes)) {
+        state.payload_sort = PayloadSortMode::MaxBytes;
+    }
+
+    std::vector<int> rows;
+    rows.reserve(state.payload_rows.size());
+    for (int index = 0; index < static_cast<int>(state.payload_rows.size()); ++index) {
+        if (payload_row_matches_filter(state.payload_rows[static_cast<std::size_t>(index)], state.payload_filter.data())) {
+            rows.push_back(index);
+        }
+    }
+    std::sort(rows.begin(), rows.end(), [&](int lhs_index, int rhs_index) {
+        const PayloadAggregateRow& lhs = state.payload_rows[static_cast<std::size_t>(lhs_index)];
+        const PayloadAggregateRow& rhs = state.payload_rows[static_cast<std::size_t>(rhs_index)];
+        const auto lhs_avg = lhs.count == 0U ? 0U : lhs.total_bytes / lhs.count;
+        const auto rhs_avg = rhs.count == 0U ? 0U : rhs.total_bytes / rhs.count;
+        switch (state.payload_sort) {
+        case PayloadSortMode::AverageBytes:
+            if (lhs_avg != rhs_avg) return lhs_avg > rhs_avg;
+            break;
+        case PayloadSortMode::MaxBytes:
+            if (lhs.max_bytes != rhs.max_bytes) return lhs.max_bytes > rhs.max_bytes;
+            break;
+        case PayloadSortMode::TotalBytes:
+        default:
+            if (lhs.total_bytes != rhs.total_bytes) return lhs.total_bytes > rhs.total_bytes;
+            break;
+        }
+        return lhs.name < rhs.name;
+    });
+
+    ImGui::BeginChild("payload_rows", ImVec2(0.0f, -180.0f), true);
+    if (rows.empty()) {
+        ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "No traced payload byte metrics found.");
+        ImGui::TextColored(
+            ImVec4(0.72f, 0.78f, 0.86f, 1.0f),
+            "Capture a new trace with tracing and component data enabled after rebuilding the plugin.");
+    } else if (ImGui::BeginTable("payload_table", 10, ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY)) {
+        ImGui::TableSetupColumn("Source");
+        ImGui::TableSetupColumn("Client");
+        ImGui::TableSetupColumn("Entity");
+        ImGui::TableSetupColumn("Kind");
+        ImGui::TableSetupColumn("Name");
+        ImGui::TableSetupColumn("Count");
+        ImGui::TableSetupColumn("Total");
+        ImGui::TableSetupColumn("Avg");
+        ImGui::TableSetupColumn("Max");
+        ImGui::TableSetupColumn("Limit");
+        ImGui::TableHeadersRow();
+        for (int row_index : rows) {
+            const PayloadAggregateRow& row = state.payload_rows[static_cast<std::size_t>(row_index)];
+            const std::uint64_t avg = row.count == 0U ? 0U : row.total_bytes / row.count;
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            const bool selected = state.selected_payload_row == row_index;
+            if (ImGui::Selectable(row.source.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
+                state.selected_payload_row = row_index;
+            }
+            ImGui::TableSetColumnIndex(1);
+            ImGui::Text("%llu", static_cast<unsigned long long>(row.client));
+            ImGui::TableSetColumnIndex(2);
+            ImGui::Text("%llu", static_cast<unsigned long long>(row.network_id));
+            ImGui::TableSetColumnIndex(3);
+            ImGui::TextUnformatted(row.kind.c_str());
+            ImGui::TableSetColumnIndex(4);
+            ImGui::TextUnformatted(row.name.c_str());
+            ImGui::TableSetColumnIndex(5);
+            ImGui::Text("%llu", static_cast<unsigned long long>(row.count));
+            ImGui::TableSetColumnIndex(6);
+            ImGui::Text("%llu", static_cast<unsigned long long>(row.total_bytes));
+            ImGui::TableSetColumnIndex(7);
+            ImGui::Text("%llu", static_cast<unsigned long long>(avg));
+            ImGui::TableSetColumnIndex(8);
+            ImGui::Text("%llu", static_cast<unsigned long long>(row.max_bytes));
+            ImGui::TableSetColumnIndex(9);
+            if (row.limit_bytes != 0U) {
+                if (row.over_limit) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.42f, 0.36f, 1.0f), "%llu", static_cast<unsigned long long>(row.limit_bytes));
+                } else {
+                    ImGui::Text("%llu", static_cast<unsigned long long>(row.limit_bytes));
+                }
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::EndChild();
+    render_payload_details(state);
+    state.current_timing.timeline_ms += elapsed_ms(start);
+}
+
 void render_details(ViewerState& state) {
     const auto start = Clock::now();
     ImGui::BeginChild("details", ImVec2(0.0f, 0.0f), true);
@@ -4482,8 +4839,10 @@ void render_app(ViewerState& state) {
     if (!has_packet_logs && state.mode == ViewerMode::EventLog) {
         state.mode = ViewerMode::Frames;
     }
-    if (has_packet_logs) {
-        const char* current_mode = state.mode == ViewerMode::Frames ? "Frames" : "Event Log";
+    {
+        const char* current_mode = state.mode == ViewerMode::Frames
+            ? "Frames"
+            : (state.mode == ViewerMode::EventLog ? "Event Log" : "Payloads");
         ImGui::SetNextItemWidth(160.0f);
         if (ImGui::BeginCombo("View", current_mode)) {
             const bool frames_selected = state.mode == ViewerMode::Frames;
@@ -4500,6 +4859,13 @@ void render_app(ViewerState& state) {
             if (event_selected) {
                 ImGui::SetItemDefaultFocus();
             }
+            const bool payload_selected = state.mode == ViewerMode::Payloads;
+            if (ImGui::Selectable("Payloads", payload_selected)) {
+                state.mode = ViewerMode::Payloads;
+            }
+            if (payload_selected) {
+                ImGui::SetItemDefaultFocus();
+            }
             ImGui::EndCombo();
         }
     }
@@ -4507,6 +4873,8 @@ void render_app(ViewerState& state) {
     if (state.mode == ViewerMode::EventLog) {
         ensure_packet_log_rows(state);
         render_event_log(state);
+    } else if (state.mode == ViewerMode::Payloads) {
+        render_payloads(state);
     } else if (ImGui::BeginTabBar("sources")) {
         for (int i = 0; i < static_cast<int>(state.history.sources.size()); ++i) {
             const std::string label = source_label(state.history.sources[static_cast<std::size_t>(i)]);

@@ -71,6 +71,24 @@ TEST_CASE("replication server tracks clients and replicated component changes") 
     REQUIRE_FALSE(server.has_client(7));
 }
 
+TEST_CASE("replication server discovers replicated entities added after initialization") {
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_server_registry(registry);
+    const ashiato::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+
+    ashiato::sync::ReplicationServer server(registry);
+    REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
+    REQUIRE(server.replicated_count() == 0U);
+
+    const ashiato::Entity entity = registry.create();
+    registry.add<Position>(entity, Position{1.0f, 2.0f});
+    REQUIRE(start_sync(registry, entity, archetype));
+
+    REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
+    REQUIRE(server.is_replicated(entity));
+    REQUIRE(server.replicated_count() == 1U);
+}
+
 TEST_CASE("replication server allocates one local client and skips remote id collisions") {
     ashiato::Registry registry;
     ashiato::sync::ReplicationServerOptions options;

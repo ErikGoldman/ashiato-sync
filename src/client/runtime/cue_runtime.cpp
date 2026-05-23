@@ -10,7 +10,6 @@
 #include "ashiato/sync/tracing.hpp"
 
 #include <algorithm>
-#include <cmath>
 
 namespace ashiato::sync::client_detail {
 
@@ -20,10 +19,6 @@ void ClientCueRuntime::erase_for_entity(std::uint32_t entity_index) {
 
 void ClientCueRuntime::erase_buffered_for_entity(std::uint32_t entity_index) {
     store_.erase_buffered_for_entity(entity_index);
-}
-
-void ClientCueRuntime::prune_confirmed(SyncFrame server_frame) {
-    store_.prune_confirmed(server_frame);
 }
 
 void ClientCueRuntime::clear_current_packet_cue_summaries() {
@@ -86,7 +81,6 @@ bool ClientCueRuntime::play(
     store_.played.push_back(EntityPlayedCue{
         entity_index,
         cue.frame,
-        confirmed ? expire_frame(client, cue) : 0U,
         cue.type,
         cue.payload,
         confirmed,
@@ -107,12 +101,6 @@ EntityReferenceContext ClientCueRuntime::make_reference_context(ReplicationClien
     return reference_context;
 }
 
-SyncFrame ClientCueRuntime::expire_frame(const ReplicationClient& client, const EntityCue& cue) const noexcept {
-    const SyncFrame relevance_frames = static_cast<SyncFrame>(
-        std::ceil(static_cast<double>(cue.relevance_seconds) / client.fixed_dt_seconds_));
-    return cue.frame + relevance_frames;
-}
-
 void ClientCueRuntime::confirm_played(
     ReplicationClient& client,
     const SyncSettings& settings,
@@ -129,7 +117,7 @@ void ClientCueRuntime::confirm_played(
     (void)cue_source;
 #endif
     played.confirmed = true;
-    played.expire_frame = expire_frame(client, cue);
+    (void)cue;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     if (newly_confirmed) {
         client.trace_cue_event(SyncTraceEventType::CueConfirmed, settings, state, played, nullptr, cue_source);
@@ -254,7 +242,6 @@ void ClientCueRuntime::drain_emitted_prediction(
         EntityCue cue;
         cue.frame = emitted.frame;
         cue.type = emitted.type;
-        cue.relevance_seconds = emitted.relevance_seconds;
         cue.payload = emitted.payload;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
         client.trace_cue_event(SyncTraceEventType::CueEmitted, settings, *state, cue, nullptr, "local_prediction");
