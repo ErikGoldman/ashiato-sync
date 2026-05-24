@@ -41,6 +41,7 @@ constexpr ashiato::sync::SyncFrame replay_total_frames =
 constexpr ashiato::sync::SyncFrame replay_tail_frames =
     replay_total_frames > replay_preroll_frames ? replay_total_frames - replay_preroll_frames : 0U;
 constexpr double replay_done_resend_seconds = 1.0;
+constexpr double replay_target_resend_seconds = 0.25;
 constexpr double replay_session_timeout_seconds = 8.0;
 constexpr float replay_client_timeout_seconds = 8.0f;
 constexpr float replay_done_client_drain_seconds = 0.35f;
@@ -92,6 +93,7 @@ struct FpsReplayServer::Session {
     sockaddr_in address{};
     ashiato::sync::ClientId client = ashiato::sync::invalid_client_id;
     std::uint64_t killer_player_id = 0;
+    ashiato::sync::SyncFrame death_frame = 0;
     ashiato::sync::ReplicationServer* live_server = nullptr;
     ashiato::Registry registry;
     std::unique_ptr<ashiato::sync::ReplicationServer> server;
@@ -100,6 +102,7 @@ struct FpsReplayServer::Session {
     bool done = false;
     double lifetime_seconds = 0.0;
     double done_notify_seconds = 0.0;
+    double target_notify_seconds = replay_target_resend_seconds;
 
     Session(
         const FpsReplayRecorder& recorder,
@@ -108,7 +111,7 @@ struct FpsReplayServer::Session {
         const sockaddr_in& peer_address,
         ashiato::sync::ClientId victim_client,
         ashiato::sync::ReplicationServer* source_server,
-        ashiato::sync::SyncFrame death_frame,
+        ashiato::sync::SyncFrame recorded_death_frame,
         std::uint64_t recorded_killer_player_id,
         const ashiato::BitBuffer& connect_packet)
         : source_recorder(&recorder),
@@ -116,6 +119,7 @@ struct FpsReplayServer::Session {
           address(peer_address),
           client(victim_client),
           live_server(source_server),
+          death_frame(recorded_death_frame),
           killer_player_id(recorded_killer_player_id) {
         (void)define_schema(registry);
 
@@ -131,11 +135,11 @@ struct FpsReplayServer::Session {
             accepted = victim_client;
             return true;
         };
-        options.transport = [socket, peer_address](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
-            send_packet(socket, peer_address, packet);
+        options.transport = [this](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
+            send_packet(this->socket, address, packet);
         };
         server = std::make_unique<ashiato::sync::ReplicationServer>(registry, options);
-        if (!recorder.streamer().begin_session(death_frame, registry, *server, replay_session)) {
+        if (!recorder.streamer().begin_session(recorded_death_frame, registry, *server, replay_session)) {
             throw std::runtime_error("no full FPS replay frame is available before death");
         }
         (void)server->process_packet(registry, peer, connect_packet);
@@ -159,7 +163,7 @@ struct FpsReplayServer::Session {
                         ashiato::sync::ReplicationBandwidthParticipantOptions{1U, 1}});
             }
             ready = true;
-            send_replay_target(socket, address, killer_player_id);
+            target_notify_seconds = replay_target_resend_seconds;
         }
     }
 
@@ -175,6 +179,11 @@ struct FpsReplayServer::Session {
         }
         if (!ready) {
             return;
+        }
+        target_notify_seconds += fixed_dt;
+        if (target_notify_seconds >= replay_target_resend_seconds) {
+            target_notify_seconds = 0.0;
+            send_replay_target(socket, address, killer_player_id);
         }
         if (!recorder.streamer().tick_session(replay_session, registry, *server)) {
             finish();
@@ -348,9 +357,34 @@ void FpsReplayServer::tick(double dt_seconds) {
     sockaddr_in sender{};
     while (receive_packet(socket_, packet, &sender)) {
         const ashiato::sync::ClientId peer = peer_id(sender);
+        ashiato::sync::ClientId requested_client = ashiato::sync::invalid_client_id;
+        bool requests_newer_death = false;
+        {
+            ashiato::BitBuffer copy = packet;
+            if (copy.remaining_bits() >= 8U &&
+                static_cast<std::uint8_t>(copy.read_bits(8U)) ==
+                    ashiato::sync::protocol::client_connect_request_message) {
+                std::string token;
+                if (ashiato::sync::protocol::read_string(copy, token) &&
+                    parse_replay_token(token, requested_client)) {
+                    const auto death = deaths_.find(requested_client);
+                    if (death != deaths_.end()) {
+                        requests_newer_death = true;
+                    }
+                }
+            }
+        }
         auto found = std::find_if(sessions_.begin(), sessions_.end(), [peer](const std::unique_ptr<Session>& session) {
-            return peer_id(session->address) == peer;
+            return !session->done && peer_id(session->address) == peer;
         });
+        if (found != sessions_.end() && requests_newer_death) {
+            const auto death = deaths_.find(requested_client);
+            if (death != deaths_.end() &&
+                ((*found)->client != requested_client || (*found)->death_frame != death->second.frame)) {
+                (*found)->finish();
+                found = sessions_.end();
+            }
+        }
         if (found != sessions_.end()) {
             (*found)->receive(peer, std::move(packet));
         } else {

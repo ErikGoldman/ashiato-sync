@@ -301,7 +301,7 @@ bool ClientUpdateRuntime::decode_full_upsert_record_payload(
                 packet.raw(),
                 nullptr,
                 received_bytes,
-                references != nullptr ? &serialization_context : nullptr)) {
+                serialization_context)) {
             return false;
         }
         record.changed_sync_slots |= sync_slot_bit(sync_slot);
@@ -388,7 +388,7 @@ bool ClientUpdateRuntime::decode_delta_upsert_record_payload(
                 packet.raw(),
                 previous_bytes,
                 merged_bytes,
-                references != nullptr ? &serialization_context : nullptr)) {
+                serialization_context)) {
             return false;
         }
     }

@@ -41,14 +41,22 @@ struct SyncComponentTraits {
         return value;
     }
 
-    static void serialize(const Quantized* /*previous*/, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(
+        const Quantized* /*previous*/,
+        const Quantized& current,
+        ashiato::BitBuffer& out,
+        ashiato::ComponentSerializationContext& /*context*/) {
         static_assert(
             std::is_trivially_copyable<Quantized>::value,
             "default SyncComponentTraits serialization requires a trivially copyable quantized state");
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized* /*previous*/, Quantized& out) {
+    static bool deserialize(
+        ashiato::BitBuffer& in,
+        const Quantized* /*previous*/,
+        Quantized& out,
+        ashiato::ComponentSerializationContext& /*context*/) {
         static_assert(
             std::is_trivially_copyable<Quantized>::value,
             "default SyncComponentTraits deserialization requires a trivially copyable quantized state");

@@ -227,6 +227,100 @@ TEST_CASE("ktrace directory writer marks files when packet logs are enabled") {
 }
 #endif
 
+TEST_CASE("ktrace directory writer preserves serialization payload scopes") {
+    const std::string directory = "/tmp/ashiato_sync_ktrace_payload_scopes_test";
+    std::filesystem::remove_all(directory);
+
+    {
+        ashiato::sync::KTraceDirectoryWriter writer({directory, 64, 32, true});
+        writer.tracer().set_serialization_payloads_enabled(true);
+        ashiato::sync::SyncTraceEvent event;
+        event.type = ashiato::sync::SyncTraceEventType::SerializationPayload;
+        event.role = ashiato::sync::SyncTraceRole::Server;
+        event.client = 4;
+        event.frame = 9;
+        event.payload_source = ashiato::sync::SyncTracePayloadSource::Network;
+        event.wire_bits = 24;
+        event.payload_bits = 24;
+        event.payload_scopes.push_back(ashiato::sync::SyncPayloadTraceScope{0, UINT32_MAX, "packet", 0, 24, 24});
+        event.payload_scopes.push_back(ashiato::sync::SyncPayloadTraceScope{1, 0, "header", 0, 8, 8});
+        event.payload_scopes.push_back(ashiato::sync::SyncPayloadTraceScope{2, 0, "body", 8, 24, 16});
+        writer.tracer().trace(event);
+        writer.close();
+    }
+
+    const ashiato::sync::SyncTraceHistory history = ashiato::sync::KTraceReader{}.read_directory(directory);
+    REQUIRE(history.sources.size() == 1);
+    REQUIRE((history.sources[0].flags & ashiato::sync::ktrace_flag_serialization_payloads) != 0U);
+    REQUIRE(history.sources[0].records.size() == 1);
+    const ashiato::sync::SyncTraceEvent& event = history.sources[0].records[0].event;
+    REQUIRE(event.type == ashiato::sync::SyncTraceEventType::SerializationPayload);
+    REQUIRE(event.client == 4U);
+    REQUIRE(event.wire_bits == 24U);
+    REQUIRE(event.payload_scopes.size() == 3U);
+    REQUIRE(event.payload_scopes[2].name == "body");
+    REQUIRE(event.payload_scopes[2].payload_bits == 16U);
+}
+
+TEST_CASE("ktrace directory writer maps serialization payload tag names once") {
+    const std::string directory = "/tmp/ashiato_sync_ktrace_payload_tag_names_test";
+    std::filesystem::remove_all(directory);
+
+    {
+        ashiato::sync::KTraceDirectoryWriter writer({directory, 256, 64, true});
+        writer.tracer().set_serialization_payloads_enabled(true);
+        ashiato::sync::SyncTraceEvent event;
+        event.type = ashiato::sync::SyncTraceEventType::SerializationPayload;
+        event.role = ashiato::sync::SyncTraceRole::Server;
+        event.client = 4;
+        event.frame = 9;
+        event.payload_source = ashiato::sync::SyncTracePayloadSource::Network;
+        event.wire_bits = 8;
+        event.payload_bits = 8;
+        event.payload_scopes.push_back(ashiato::sync::SyncPayloadTraceScope{0, UINT32_MAX, "packet", 0, 8, 8});
+        ashiato::sync::add_sync_trace_payload_tag(event, ashiato::sync::sync_trace_payload_tag_outgoing);
+        event.data = "message=server_update";
+        writer.tracer().trace(event);
+
+        event.frame = 10;
+        writer.tracer().trace(event);
+
+        event.frame = 11;
+        event.payload_tag_bits = 0;
+        ashiato::sync::add_sync_trace_payload_tag(event, ashiato::sync::sync_trace_payload_tag_incoming);
+        event.data = "message=client_ack";
+        writer.tracer().trace(event);
+        writer.close();
+    }
+
+    const ashiato::sync::SyncTraceHistory history = ashiato::sync::KTraceReader{}.read_directory(directory);
+    REQUIRE(history.sources.size() == 1);
+    const ashiato::sync::KTraceSourceHistory& source = history.sources[0];
+    REQUIRE(source.payload_tag_names[0] == "outgoing");
+    REQUIRE(source.payload_tag_names[1] == "incoming");
+    REQUIRE(std::count_if(
+        source.records.begin(),
+        source.records.end(),
+        [](const ashiato::sync::KTraceRecord& record) {
+            return record.event.type == ashiato::sync::SyncTraceEventType::SerializationPayloadTagName &&
+                record.event.payload_tag_bits == ashiato::sync::sync_trace_payload_tag_outgoing;
+        }) == 1);
+    REQUIRE(std::count_if(
+        source.records.begin(),
+        source.records.end(),
+        [](const ashiato::sync::KTraceRecord& record) {
+            return record.event.type == ashiato::sync::SyncTraceEventType::SerializationPayload &&
+                ashiato::sync::sync_trace_payload_has_tag(record.event, ashiato::sync::sync_trace_payload_tag_outgoing);
+        }) == 2);
+    REQUIRE(std::none_of(
+        source.records.begin(),
+        source.records.end(),
+        [](const ashiato::sync::KTraceRecord& record) {
+            return record.event.type == ashiato::sync::SyncTraceEventType::SerializationPayload &&
+                record.event.data.find("direction=") != std::string::npos;
+        }));
+}
+
 TEST_CASE("ktrace reader keeps complete records when final record is truncated") {
     const std::string directory = "/tmp/ashiato_sync_ktrace_truncated_tail_test";
     std::filesystem::remove_all(directory);

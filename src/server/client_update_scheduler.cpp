@@ -5,7 +5,7 @@
 #include "server/state.hpp"
 
 #include "ashiato/sync/protocol.hpp"
-#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
 #include "ashiato/sync/tracing.hpp"
 #endif
 
@@ -179,6 +179,9 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
 
         serialized_.payload.clear();
         serialized_.quantized_frame = server_detail::invalid_quantized_frame_id;
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+        serialized_.serialization_events.clear();
+#endif
         if (!writer_.serialize_entity(
                 server,
                 registry,
@@ -252,6 +255,13 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
 
         records_.push_bool(false);
         records_.push_buffer_bits(serialized_.payload);
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+        if (SyncTracer* tracer = server.server_tracer()) {
+            for (const SyncTraceEvent& event : serialized_.serialization_events) {
+                tracer->trace(event);
+            }
+        }
+#endif
         PacketAckRecord ack_record{server.replicated_slot_entity(slot), server.frame(), false};
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
         if (const ClientEntityState* entity_state = replication.entities.try_get(slot)) {

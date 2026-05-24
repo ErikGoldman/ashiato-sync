@@ -156,7 +156,14 @@ bool ReplicationClientClock::maybe_bootstrap_from_first_server_update(
     if (bootstrapped_) {
         return false;
     }
-    if (!has_time_sync_sample_) {
+    bool anchor_to_update = !has_time_sync_sample_;
+    if (has_time_sync_sample_) {
+        const double estimated_frame = estimated_server_frame();
+        const double frame_delta = std::fabs(estimated_frame - static_cast<double>(server_frame));
+        anchor_to_update = !std::isfinite(estimated_frame) ||
+            frame_delta >= time_sync_reconfigure_threshold_frames();
+    }
+    if (anchor_to_update) {
         server_time_offset_seconds_ =
             static_cast<double>(server_frame) * config_.fixed_dt_seconds - local_time_seconds_;
     }
@@ -202,14 +209,27 @@ void ReplicationClientClock::record_time_sync_sample(
         ((server_receive_time_seconds - client_send_time_seconds) +
          (server_send_time_seconds - client_receive_time_seconds)) *
         0.5;
+    const double previous_estimated_frame = estimated_server_frame();
+    const double sample_estimated_frame =
+        (client_receive_time_seconds + sample_offset_seconds) / config_.fixed_dt_seconds;
+    const double frame_delta = std::fabs(sample_estimated_frame - previous_estimated_frame);
+    const float sample_latency_frames = static_cast<float>(round_trip_seconds * 0.5 / config_.fixed_dt_seconds);
+    record_ping_sample(sample_latency_frames);
+    const bool reconfigure_from_sample = bootstrapped_ &&
+        (!std::isfinite(previous_estimated_frame) ||
+         frame_delta >= time_sync_reconfigure_threshold_frames());
     if (!has_time_sync_sample_) {
         server_time_offset_seconds_ = sample_offset_seconds;
         has_time_sync_sample_ = true;
+    } else if (reconfigure_from_sample) {
+        server_time_offset_seconds_ = sample_offset_seconds;
     } else {
         const double smoothing = static_cast<double>(config_.auto_buffered_frame_lag_smoothing);
         server_time_offset_seconds_ += (sample_offset_seconds - server_time_offset_seconds_) * smoothing;
     }
-    record_ping_sample(static_cast<float>(round_trip_seconds * 0.5 / config_.fixed_dt_seconds));
+    if (reconfigure_from_sample) {
+        reconfigure_frames_from_estimated_server_time();
+    }
 }
 
 SyncFrame ReplicationClientClock::record_server_update(
@@ -370,6 +390,35 @@ void ReplicationClientClock::compute_auto_targets() noexcept {
         static_cast<SyncFrame>(std::ceil(std::max(0.0f, prediction_wanted))));
     stats_.desired_prediction_lead_frames = prediction_target;
     stats_.target_prediction_lead_frames = prediction_target;
+}
+
+double ReplicationClientClock::time_sync_reconfigure_threshold_frames() const noexcept {
+    return static_cast<double>(
+        stats_.latency_frames +
+        stats_.jitter_frames * 2.0f +
+        static_cast<float>(config_.auto_timing_fast_recovery_min_frame_gap));
+}
+
+void ReplicationClientClock::reconfigure_frames_from_estimated_server_time() noexcept {
+    const double estimated_frame = estimated_server_frame();
+    if (!std::isfinite(estimated_frame)) {
+        return;
+    }
+    const double continuous_buffered = buffered_frame_for_estimated_server_frame(estimated_frame);
+    buffered_frame_ = static_cast<SyncFrame>(std::floor(continuous_buffered));
+    buffered_accumulator_seconds_ =
+        (continuous_buffered - static_cast<double>(buffered_frame_)) * config_.fixed_dt_seconds;
+
+    const SyncFrame server_frame = rounded_frame_count(std::max(0.0, estimated_frame));
+    const SyncFrame prediction_lead = config_.auto_prediction_lead_frames
+        ? stats_.target_prediction_lead_frames
+        : config_.prediction_lead_frames;
+    predicted_frame_ = server_frame + prediction_lead;
+    predicted_accumulator_seconds_ = 0.0;
+    display_accumulator_seconds_ = 0.0;
+    display_target_frame_ = continuous_buffered;
+    has_display_target_frame_ = true;
+    stats_.current_prediction_lead_frames = prediction_lead;
 }
 
 double ReplicationClientClock::observed_downstream_frames(

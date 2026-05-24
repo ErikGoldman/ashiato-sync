@@ -5,6 +5,9 @@
 
 #include "ashiato/bit_buffer.hpp"
 #include "ashiato/sync/components.hpp"
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+#include "ashiato/sync/tracing.hpp"
+#endif
 
 #include <cstdint>
 #include <vector>
@@ -55,7 +58,14 @@ public:
         std::size_t packet_id_bits,
         std::vector<std::uint32_t>& pending_acks,
         std::vector<ashiato::BitBuffer>& packets,
-        ClientInputPacketTrace* trace);
+        ClientInputPacketTrace* trace
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+        ,
+        const SyncTracer* serialization_tracer = nullptr,
+        ClientId client = invalid_client_id,
+        SyncFrame trace_frame = 0
+#endif
+    );
 
     SyncFrame last_recorded_frame() const noexcept {
         return last_recorded_frame_;

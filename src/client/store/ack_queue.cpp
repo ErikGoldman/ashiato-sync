@@ -1,7 +1,10 @@
 #include "client/store/ack_queue.hpp"
 
+#include "ashiato/sync/tracing.hpp"
+
 #include <algorithm>
 #include <limits>
+#include <optional>
 
 namespace ashiato::sync::client_detail {
 
@@ -21,7 +24,14 @@ void ClientAckQueue::drain_ack_packets(
     std::size_t mtu_bytes,
     std::size_t packet_id_bits,
     std::vector<ashiato::BitBuffer>& packets,
-    std::vector<ClientAckPacketTrace>* traces) {
+    std::vector<ClientAckPacketTrace>* traces
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    ,
+    const SyncTracer* serialization_tracer,
+    ClientId client,
+    SyncFrame frame
+#endif
+) {
     if (pending_.empty()) {
         pending_.clear();
         return;
@@ -46,12 +56,50 @@ void ClientAckQueue::drain_ack_packets(
     std::uint16_t packet_ack_count = 0;
     std::size_t packet_count_offset = 0;
     ClientAckPacketTrace trace;
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    std::optional<ScopedSerializationTraceCapture> serialization_capture;
+    const bool capture_serialization =
+        serialization_tracer != nullptr &&
+        serialization_tracer->enabled() &&
+        serialization_tracer->serialization_payloads_enabled() &&
+        serialization_tracer->traces_client(client);
+#endif
     auto begin_packet = [&]() {
         packet.clear();
         packet.reserve_bytes(mtu_bytes);
-        packet.push_bits(protocol::client_ack_message, 8U);
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+        if (capture_serialization) {
+            serialization_capture.emplace(
+                serialization_tracer,
+                SyncTracePayloadSource::Network,
+                SyncTraceRole::Client,
+                client,
+                frame,
+                "client_ack_packet",
+                false);
+            serialization_capture->set_target(&packet);
+            if (serialization_capture->active()) {
+                add_sync_trace_payload_tag(serialization_capture->event(), sync_trace_payload_tag_incoming);
+                serialization_capture->event().data = "message=client_ack";
+            }
+        }
+        ScopedSerializationTraceScope header_scope(
+            serialization_capture ? &*serialization_capture : nullptr,
+            "header");
+#endif
+        SERIALIZE_TRACE_WITH_CAPTURE(
+            serialization_capture ? &*serialization_capture : nullptr,
+            packet,
+            protocol::client_ack_message,
+            8U,
+            "message");
         packet_count_offset = packet.bit_size();
-        packet.push_bits(0, 16U);
+        SERIALIZE_TRACE_WITH_CAPTURE(
+            serialization_capture ? &*serialization_capture : nullptr,
+            packet,
+            0,
+            16U,
+            "ack_count");
         packet_ack_count = 0;
         trace.acks.clear();
     };
@@ -60,6 +108,12 @@ void ClientAckQueue::drain_ack_packets(
             return;
         }
         packet.overwrite_unsigned_bits(packet_count_offset, packet_ack_count, 16U);
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+        if (serialization_capture) {
+            serialization_capture->flush();
+            serialization_capture.reset();
+        }
+#endif
         if (traces != nullptr) {
             traces->push_back(trace);
         }
@@ -73,7 +127,12 @@ void ClientAckQueue::drain_ack_packets(
             finish_packet();
             begin_packet();
         }
-        packet.push_bits(packet_id, packet_id_bits);
+        SERIALIZE_TRACE_WITH_CAPTURE(
+            serialization_capture ? &*serialization_capture : nullptr,
+            packet,
+            packet_id,
+            packet_id_bits,
+            "ack");
         trace.acks.push_back(packet_id);
         ++packet_ack_count;
     }

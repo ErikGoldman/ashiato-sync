@@ -43,11 +43,11 @@ struct SyncComponentTraits<stress::BallPosition> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -97,16 +97,31 @@ namespace ashiato::sync {
 
 template <>
 struct SyncCueTraits<stress::BallBounceCue> {
-    static void serialize(const stress::BallBounceCue& cue, ashiato::BitBuffer& out) {
-        out.push_bits(cue.sequence, 32U);
-        out.push_bits(cue.energy, 8U);
-        out.push_bytes(reinterpret_cast<const char*>(cue.padding), sizeof(cue.padding));
+    static void serialize(
+        const stress::BallBounceCue& cue,
+        ashiato::BitBuffer& out,
+        ashiato::ComponentSerializationContext& context) {
+        SERIALIZE_TRACE(out, cue.sequence, 32U, "sequence");
+        SERIALIZE_TRACE(out, cue.energy, 8U, "energy");
+        SERIALIZE_BYTES_TRACE(out, reinterpret_cast<const char*>(cue.padding), sizeof(cue.padding), "padding");
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, stress::BallBounceCue& out) {
-        out.sequence = static_cast<std::uint32_t>(in.read_bits(32U));
-        out.energy = static_cast<std::uint8_t>(in.read_bits(8U));
-        in.read_bytes(reinterpret_cast<char*>(out.padding), sizeof(out.padding));
+    static bool deserialize(
+        ashiato::BitBuffer& in,
+        stress::BallBounceCue& out,
+        ashiato::ComponentSerializationContext& context) {
+        {
+            ASHIATO_SERIALIZATION_TRACE_SCOPE("sequence");
+            out.sequence = static_cast<std::uint32_t>(in.read_bits(32U));
+        }
+        {
+            ASHIATO_SERIALIZATION_TRACE_SCOPE("energy");
+            out.energy = static_cast<std::uint8_t>(in.read_bits(8U));
+        }
+        {
+            ASHIATO_SERIALIZATION_TRACE_SCOPE("padding");
+            in.read_bytes(reinterpret_cast<char*>(out.padding), sizeof(out.padding));
+        }
         return true;
     }
 

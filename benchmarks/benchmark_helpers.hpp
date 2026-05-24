@@ -66,7 +66,7 @@ struct SyncComponentTraits<benchmarks::DeltaPosition> {
         return value;
     }
 
-    static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         if (previous == nullptr) {
             out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
             return;
@@ -76,7 +76,7 @@ struct SyncComponentTraits<benchmarks::DeltaPosition> {
         out.push_bits(current.y - previous->y, 8U);
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized* previous, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized* previous, Quantized& out, ashiato::ComponentSerializationContext&) {
         if (previous == nullptr) {
             in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
             return true;
@@ -113,7 +113,7 @@ struct SyncComponentTraits<benchmarks::LargePayload> {
         return value;
     }
 
-    static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         if (previous == nullptr) {
             out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
             return;
@@ -124,7 +124,7 @@ struct SyncComponentTraits<benchmarks::LargePayload> {
         }
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized* previous, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized* previous, Quantized& out, ashiato::ComponentSerializationContext&) {
         if (previous == nullptr) {
             in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
             return true;
@@ -150,12 +150,12 @@ struct SyncComponentTraits<benchmarks::TinyFlags> {
         return value;
     }
 
-    static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         const std::uint8_t base = previous == nullptr ? 0U : previous->bits;
         out.push_bits(static_cast<std::int32_t>(current.bits ^ base), 4U);
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized* previous, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized* previous, Quantized& out, ashiato::ComponentSerializationContext&) {
         const std::uint8_t base = previous == nullptr ? 0U : previous->bits;
         out.bits = static_cast<std::uint8_t>(base ^ static_cast<std::uint8_t>(in.read_bits(4U)));
         return true;

@@ -139,11 +139,18 @@ namespace ashiato::sync {
 
 template <>
 struct SyncCueTraits<ashiato_sync_tests::TestCue> {
-    static void serialize(const ashiato_sync_tests::TestCue& cue, ashiato::BitBuffer& out) {
-        out.push_bits(cue.id, 16U);
+    static void serialize(
+        const ashiato_sync_tests::TestCue& cue,
+        ashiato::BitBuffer& out,
+        ashiato::ComponentSerializationContext& context) {
+        SERIALIZE_TRACE(out, cue.id, 16U, "id");
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, ashiato_sync_tests::TestCue& out) {
+    static bool deserialize(
+        ashiato::BitBuffer& in,
+        ashiato_sync_tests::TestCue& out,
+        ashiato::ComponentSerializationContext& context) {
+        ASHIATO_SERIALIZATION_TRACE_SCOPE("id");
         out.id = static_cast<std::int32_t>(in.read_bits(16U));
         return true;
     }
@@ -193,17 +200,23 @@ struct SyncCueTraits<ashiato_sync_tests::TestCue> {
 
 template <>
 struct SyncCueTraits<ashiato_sync_tests::ReferenceCue> {
+    static constexpr bool references_entities = true;
+
     static void serialize(
         const ashiato_sync_tests::ReferenceCue& cue,
         ashiato::BitBuffer& out,
-        EntityReferenceContext& references) {
+        ashiato::ComponentSerializationContext& context) {
+        EntityReferenceContext& references = *static_cast<EntityReferenceContext*>(context.userContext);
+        ASHIATO_SYNC_TRACE_SCOPE("target");
         (void)write_entity_reference(out, cue.target, references);
     }
 
     static bool deserialize(
         ashiato::BitBuffer& in,
         ashiato_sync_tests::ReferenceCue& out,
-        EntityReferenceContext& references) {
+        ashiato::ComponentSerializationContext& context) {
+        EntityReferenceContext& references = *static_cast<EntityReferenceContext*>(context.userContext);
+        ASHIATO_SERIALIZATION_TRACE_SCOPE("target");
         return read_entity_reference(in, references, out.target);
     }
 
@@ -262,12 +275,12 @@ struct SyncComponentTraits<ashiato_sync_tests::PredictedPosition> {
         };
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bits(current.x, 16U);
         out.push_bits(current.y, 16U);
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         out.x = static_cast<std::int32_t>(in.read_bits(16U));
         out.y = static_cast<std::int32_t>(in.read_bits(16U));
         return true;
@@ -336,7 +349,7 @@ struct SyncComponentTraits<ashiato_sync_tests::NetworkedPosition> {
         };
     }
 
-    static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bool(previous != nullptr);
         const std::int32_t x = previous == nullptr ? current.x : current.x - previous->x;
         const std::int32_t y = previous == nullptr ? current.y : current.y - previous->y;
@@ -344,7 +357,7 @@ struct SyncComponentTraits<ashiato_sync_tests::NetworkedPosition> {
         out.push_bits(y, 8U);
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized* previous, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized* previous, Quantized& out, ashiato::ComponentSerializationContext&) {
         const bool delta = in.read_bool();
         const auto x = static_cast<std::int32_t>(in.read_bits(8U));
         const auto y = static_cast<std::int32_t>(in.read_bits(8U));
@@ -382,11 +395,11 @@ struct SyncComponentTraits<ashiato_sync_tests::SmoothPosition> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -430,6 +443,7 @@ struct SyncComponentTraits<ashiato_sync_tests::SmoothPosition> {
 template <>
 struct SyncComponentTraits<ashiato_sync_tests::TargetReference> {
     using Quantized = ashiato_sync_tests::TargetReference;
+    static constexpr bool references_entities = true;
 
     static Quantized quantize(const ashiato_sync_tests::TargetReference& value) {
         return value;
@@ -443,7 +457,8 @@ struct SyncComponentTraits<ashiato_sync_tests::TargetReference> {
         const Quantized*,
         const Quantized& current,
         ashiato::BitBuffer& out,
-        EntityReferenceContext& references) {
+        ashiato::ComponentSerializationContext& context) {
+        EntityReferenceContext& references = *static_cast<EntityReferenceContext*>(context.userContext);
         (void)write_entity_reference(out, current.target, references);
     }
 
@@ -451,7 +466,8 @@ struct SyncComponentTraits<ashiato_sync_tests::TargetReference> {
         ashiato::BitBuffer& in,
         const Quantized*,
         Quantized& out,
-        EntityReferenceContext& references) {
+        ashiato::ComponentSerializationContext& context) {
+        EntityReferenceContext& references = *static_cast<EntityReferenceContext*>(context.userContext);
         return read_entity_reference(in, references, out.target);
     }
 };
@@ -468,7 +484,7 @@ struct SyncComponentTraits<ashiato_sync_tests::BandwidthProbe> {
         return ashiato_sync_tests::BandwidthProbe{value};
     }
 
-    static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bool(previous != nullptr);
         if (previous == nullptr) {
             out.push_bits(current, 32U);
@@ -477,7 +493,7 @@ struct SyncComponentTraits<ashiato_sync_tests::BandwidthProbe> {
         out.push_bits(current - *previous, 8U);
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized* previous, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized* previous, Quantized& out, ashiato::ComponentSerializationContext&) {
         const bool delta = in.read_bool();
         if (!delta) {
             out = static_cast<std::int32_t>(in.read_bits(32U));

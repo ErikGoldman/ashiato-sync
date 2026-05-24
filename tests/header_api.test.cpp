@@ -39,11 +39,11 @@ struct SyncComponentTraits<HeaderApiDefaultNamedComponent> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         if (in.remaining_bits() < sizeof(out) * 8U) {
             return false;
         }
@@ -54,11 +54,18 @@ struct SyncComponentTraits<HeaderApiDefaultNamedComponent> {
 
 template <>
 struct SyncCueTraits<HeaderApiDefaultNamedCue> {
-    static void serialize(const HeaderApiDefaultNamedCue& cue, ashiato::BitBuffer& out) {
-        out.push_bits(cue.value, 8U);
+    static void serialize(
+        const HeaderApiDefaultNamedCue& cue,
+        ashiato::BitBuffer& out,
+        ashiato::ComponentSerializationContext& context) {
+        SERIALIZE_TRACE(out, cue.value, 8U, "value");
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, HeaderApiDefaultNamedCue& out) {
+    static bool deserialize(
+        ashiato::BitBuffer& in,
+        HeaderApiDefaultNamedCue& out,
+        ashiato::ComponentSerializationContext& context) {
+        ASHIATO_SERIALIZATION_TRACE_SCOPE("value");
         out.value = static_cast<int>(in.read_bits(8U));
         return true;
     }

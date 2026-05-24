@@ -4,12 +4,14 @@
 
 #include "ashiato/sync/components.hpp"
 #include "ashiato/sync/server.hpp"
+#include "ashiato/sync/tracing.hpp"
 
 #include "server/dirty_slots.hpp"
 
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -85,7 +87,13 @@ void append_cue_entries(
     const SyncSettings& settings,
     ReplicationServer& server,
     EntityReferenceContext& reference_context,
-    std::vector<ashiato::BitBuffer>& out) {
+    std::vector<ashiato::BitBuffer>& out,
+    SyncFrame sync_frame
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    ,
+    SyncTracer* serialization_tracer
+#endif
+) {
     const std::size_t count = std::min<std::size_t>(cues.size, std::numeric_limits<std::uint16_t>::max());
     for (std::size_t index = 0; index < count; ++index) {
         const QueuedSyncCue& cue = cues.data[index];
@@ -93,12 +101,48 @@ void append_cue_entries(
             continue;
         }
         ashiato::BitBuffer payload = cue.payload;
-        if (settings.cue_ops[cue.type].references_entities) {
+        if (cue.value) {
             if (!cue.value) {
                 continue;
             }
             payload.clear();
-            settings.cue_ops[cue.type].serialize(cue.value.get(), payload, &reference_context);
+            EntityReferenceContext* references = settings.cue_ops[cue.type].references_entities ? &reference_context : nullptr;
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+            ScopedSerializationTraceCapture cue_serialization_capture(
+                serialization_tracer,
+                SyncTracePayloadSource::Replay,
+                SyncTraceRole::Server,
+                invalid_client_id,
+                sync_frame,
+                "replay_cue_payload",
+                false);
+            cue_serialization_capture.set_target(&payload);
+            if (cue_serialization_capture.active()) {
+                SyncTraceEvent& event = cue_serialization_capture.event();
+                event.server_entity = cue.entity;
+                event.cue_type = cue.type;
+                event.component_name = settings.cue_ops[cue.type].name;
+                event.data = "payload_kind=cue";
+            }
+            ashiato::ComponentSerializationContext serialization_context{
+                references,
+                cue_serialization_capture.payload_capture()};
+            {
+                ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(cue_serialization_capture, settings.cue_ops[cue.type].name.c_str());
+                settings.cue_ops[cue.type].serialize(cue.value.get(), payload, serialization_context);
+            }
+            if (cue_serialization_capture.active()) {
+                SyncTraceEvent& event = cue_serialization_capture.event();
+                event.payload_bits = payload.bit_size();
+                event.wire_bits = payload.bit_size();
+                event.data += ",payload_bits=" + std::to_string(payload.bit_size());
+                event.data += ",payload_bytes=" + std::to_string(payload.byte_size());
+                cue_serialization_capture.flush();
+            }
+#else
+            ashiato::ComponentSerializationContext serialization_context{references};
+            settings.cue_ops[cue.type].serialize(cue.value.get(), payload, serialization_context);
+#endif
         }
         const std::uint32_t slot = server.replicated_slot_for_entity(cue.entity);
         ashiato::BitBuffer entry;
@@ -118,15 +162,28 @@ void append_cue_entries(
     }
 }
 
-void write_cue_entries(const std::vector<ashiato::BitBuffer>& cues, ashiato::BitBuffer& out) {
+void write_cue_entries(
+    const std::vector<ashiato::BitBuffer>& cues,
+    ashiato::BitBuffer& out
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    ,
+    ScopedSerializationTraceCapture* serialization_capture
+#endif
+) {
     const std::size_t count = std::min<std::size_t>(cues.size(), std::numeric_limits<std::uint16_t>::max());
-    out.push_bool(count != 0U);
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    ScopedSerializationTraceScope cue_entries_scope(serialization_capture, "cue_entries");
+#endif
+    SERIALIZE_BOOL_TRACE_WITH_CAPTURE(serialization_capture, out, count != 0U, "has_cue_entries");
     if (count == 0U) {
         return;
     }
-    out.push_bits(static_cast<std::int64_t>(count), 16U);
+    SERIALIZE_TRACE_WITH_CAPTURE(serialization_capture, out, static_cast<std::int64_t>(count), 16U, "cue_entry_count");
     for (std::size_t index = 0; index < count; ++index) {
-        out.push_buffer_bits(cues[index]);
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+        ScopedSerializationTraceScope cue_entry_scope(serialization_capture, "cue_entry");
+#endif
+        SERIALIZE_BUFFER_TRACE_WITH_CAPTURE(serialization_capture, out, cues[index], "payload");
     }
 }
 
@@ -205,7 +262,18 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
     reference_context.network_entity_id_tier0_bits = server.options().protocol.network_entity_id_tier0_bits;
     reference_context.server_network_id_for_entity = &replay_network_id_for_entity;
 
-    append_cue_entries(cues, settings, server, reference_context, state_->pending_cues);
+    append_cue_entries(
+        cues,
+        settings,
+        server,
+        reference_context,
+        state_->pending_cues,
+        sync_frame
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+        ,
+        options_.serialization_tracer
+#endif
+    );
 
     for (const ServerDestroyedReplicatedSlot& destroyed : destroyed_slots) {
         state_->pending_destroyed_slots.push_back(destroyed);
@@ -246,8 +314,21 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
     }
 
     ashiato::BitBuffer payload;
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    ScopedSerializationTraceCapture serialization_capture(
+        options_.serialization_tracer,
+        SyncTracePayloadSource::Replay,
+        SyncTraceRole::Server,
+        invalid_client_id,
+        sync_frame,
+        full ? "replay_full_frame" : "replay_delta_frame");
+    serialization_capture.set_target(&payload);
+    if (serialization_capture.active()) {
+        serialization_capture.event().data = full ? "source=replay,kind=full" : "source=replay,kind=delta";
+    }
+#endif
     const std::size_t record_count_offset = payload.bit_size();
-    payload.push_bits(0, 16U);
+    SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, 0, 16U, "record_count");
     std::uint16_t record_count = 0;
     std::vector<std::uint8_t> emitted_destroyed_slots;
 
@@ -260,8 +341,11 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
             if (destroyed.slot < emitted_destroyed_slots.size() && emitted_destroyed_slots[destroyed.slot] != 0U) {
                 continue;
             }
-            payload.push_bool(true);
-            payload.push_bits(replay_id_for_slot(destroyed.slot), 32U);
+            {
+                ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "destroy_record");
+                SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, payload, true, "destroy");
+                SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, replay_id_for_slot(destroyed.slot), 32U, "entity");
+            }
             if (destroyed.slot < emitted_destroyed_slots.size()) {
                 emitted_destroyed_slots[destroyed.slot] = std::uint8_t{1};
             }
@@ -283,8 +367,13 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
         if (record_count == std::numeric_limits<std::uint16_t>::max()) {
             break;
         }
-        payload.push_bool(!active);
-        payload.push_bits(replay_id_for_slot(slot), 32U);
+        {
+            ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(
+                serialization_capture,
+                active ? "entity_record_header" : "destroy_record");
+            SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, payload, !active, "destroy");
+            SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, replay_id_for_slot(slot), 32U, "entity");
+        }
         if (!active) {
             ++record_count;
             continue;
@@ -299,12 +388,20 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
         if (!quantize_replay_entity(frame.registry, archetype, entity, state_->scratch)) {
             continue;
         }
-        payload.push_bits(archetype_id.value, 32U);
-        payload.push_unsigned_bits(state_->scratch.tag_mask, 64U);
-        payload.push_unsigned_bits(state_->scratch.present_mask, 64U);
+        {
+            ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "entity_metadata");
+            SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, archetype_id.value, 32U, "archetype");
+            SERIALIZE_UNSIGNED_TRACE_WITH_CONTEXT(serialization_capture, payload, state_->scratch.tag_mask, 64U, "tag_mask");
+            SERIALIZE_UNSIGNED_TRACE_WITH_CONTEXT(
+                serialization_capture,
+                payload,
+                state_->scratch.present_mask,
+                64U,
+                "present_mask");
+        }
 
         const std::size_t component_count_offset = payload.bit_size();
-        payload.push_bits(0, 16U);
+        SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, 0, 16U, "component_count");
         std::uint16_t component_count = 0;
         for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
             if (!detail::frame_has_component(state_->scratch, component_index) ||
@@ -320,19 +417,35 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
             if (current == nullptr) {
                 continue;
             }
-            ashiato::BitBuffer component_payload;
-            ashiato::ComponentSerializationContext serialization_context{ops.references_entities ? &reference_context : nullptr};
-            ops.serialization.serialize(
-                nullptr,
-                current,
-                component_payload,
-                ops.references_entities ? &serialization_context : nullptr);
-            payload.push_bits(static_cast<std::int64_t>(component_index), 16U);
-            payload.push_bits(static_cast<std::int64_t>(std::min<std::size_t>(
-                                  component_payload.bit_size(),
-                                  std::numeric_limits<std::uint16_t>::max())),
-                16U);
-            payload.push_buffer_bits(component_payload);
+            {
+                ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "component_record");
+                SERIALIZE_TRACE_WITH_CONTEXT(
+                    serialization_capture,
+                    payload,
+                    static_cast<std::int64_t>(component_index),
+                    16U,
+                    "component_index");
+                const std::size_t component_bits_offset = payload.bit_size();
+                SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, 0, 16U, "payload_bits");
+                const std::size_t component_payload_begin_bits = payload.bit_size();
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+                ashiato::ComponentSerializationContext serialization_context{
+                    ops.references_entities ? &reference_context : nullptr,
+                    serialization_capture.payload_capture()};
+                ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, ops.serialization.name.c_str());
+#else
+                ashiato::ComponentSerializationContext serialization_context{
+                    ops.references_entities ? &reference_context : nullptr};
+#endif
+                ops.serialization.serialize(nullptr, current, payload, serialization_context);
+                const std::size_t component_payload_bits = payload.bit_size() - component_payload_begin_bits;
+                payload.overwrite_unsigned_bits(
+                    component_bits_offset,
+                    static_cast<std::uint64_t>(std::min<std::size_t>(
+                        component_payload_bits,
+                        std::numeric_limits<std::uint16_t>::max())),
+                    16U);
+            }
             ++component_count;
         }
         payload.overwrite_unsigned_bits(component_count_offset, component_count, 16U);
@@ -340,8 +453,18 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
     }
 
     payload.overwrite_unsigned_bits(record_count_offset, record_count, 16U);
-    write_cue_entries(state_->pending_cues, payload);
+    write_cue_entries(
+        state_->pending_cues,
+        payload
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+        ,
+        &serialization_capture
+#endif
+    );
 
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    serialization_capture.flush();
+#endif
     options_.write(ReplicationReplayFrame{
         sync_frame,
         full ? ReplicationReplayFrameKind::Full : ReplicationReplayFrameKind::Delta,

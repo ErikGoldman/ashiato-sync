@@ -105,11 +105,11 @@ struct SyncComponentTraits<prediction_stress::PredPosition> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -153,11 +153,11 @@ struct SyncComponentTraits<prediction_stress::PredVelocity> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -181,11 +181,11 @@ struct SyncComponentTraits<prediction_stress::PredAcceleration> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -209,11 +209,11 @@ struct SyncComponentTraits<prediction_stress::PredEnergy> {
         return prediction_stress::PredEnergy{value};
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bits(current, 32U);
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         out = static_cast<std::int32_t>(in.read_bits(32U));
         return true;
     }
@@ -235,11 +235,11 @@ struct SyncComponentTraits<prediction_stress::PredFlags> {
         return prediction_stress::PredFlags{value};
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_unsigned_bits(current, 32U);
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         out = static_cast<std::uint32_t>(in.read_unsigned_bits(32U));
         return true;
     }

@@ -7,6 +7,7 @@
 #include <cstring>
 #include <filesystem>
 #include <limits>
+#include <iterator>
 #include <sstream>
 #include <stdexcept>
 #include <type_traits>
@@ -27,6 +28,20 @@ void append_pod(std::vector<std::uint8_t>& out, T value) {
 void append_string(std::vector<std::uint8_t>& out, const std::string& value) {
     append_pod<std::uint32_t>(out, static_cast<std::uint32_t>(value.size()));
     out.insert(out.end(), value.begin(), value.end());
+}
+
+void append_payload_scopes(std::vector<std::uint8_t>& out, const std::vector<SyncPayloadTraceScope>& scopes) {
+    append_pod<std::uint32_t>(out, static_cast<std::uint32_t>(std::min<std::size_t>(
+        scopes.size(),
+        std::numeric_limits<std::uint32_t>::max())));
+    for (const SyncPayloadTraceScope& scope : scopes) {
+        append_pod<std::uint32_t>(out, scope.id);
+        append_pod<std::uint32_t>(out, scope.parent);
+        append_string(out, scope.name);
+        append_pod<std::uint64_t>(out, scope.begin_bits);
+        append_pod<std::uint64_t>(out, scope.end_bits);
+        append_pod<std::uint64_t>(out, scope.payload_bits);
+    }
 }
 
 template <typename T>
@@ -51,6 +66,23 @@ std::string read_string(const std::vector<std::uint8_t>& bytes, std::size_t& off
     std::string value(reinterpret_cast<const char*>(bytes.data() + offset), size);
     offset += size;
     return value;
+}
+
+std::vector<SyncPayloadTraceScope> read_payload_scopes(const std::vector<std::uint8_t>& bytes, std::size_t& offset) {
+    const std::uint32_t count = read_pod<std::uint32_t>(bytes, offset);
+    std::vector<SyncPayloadTraceScope> scopes;
+    scopes.reserve(count);
+    for (std::uint32_t index = 0; index < count; ++index) {
+        SyncPayloadTraceScope scope;
+        scope.id = read_pod<std::uint32_t>(bytes, offset);
+        scope.parent = read_pod<std::uint32_t>(bytes, offset);
+        scope.name = read_string(bytes, offset);
+        scope.begin_bits = read_pod<std::uint64_t>(bytes, offset);
+        scope.end_bits = read_pod<std::uint64_t>(bytes, offset);
+        scope.payload_bits = read_pod<std::uint64_t>(bytes, offset);
+        scopes.push_back(std::move(scope));
+    }
+    return scopes;
 }
 
 std::uint8_t read_trace_byte(std::ifstream& file) {
@@ -151,6 +183,11 @@ void append_event_payload(std::vector<std::uint8_t>& payload, const SyncTraceEve
     append_pod<std::uint8_t>(payload, event.remove ? 1U : 0U);
     append_string(payload, event.data);
     append_string(payload, event.component_name);
+    append_pod<std::uint8_t>(payload, static_cast<std::uint8_t>(event.payload_source));
+    append_pod<std::uint64_t>(payload, event.wire_bits);
+    append_pod<std::uint64_t>(payload, event.payload_bits);
+    append_pod<std::uint8_t>(payload, event.payload_tag_bits);
+    append_payload_scopes(payload, event.payload_scopes);
 }
 
 SyncTraceEvent read_event_payload(
@@ -176,6 +213,11 @@ SyncTraceEvent read_event_payload(
     event.remove = read_pod<std::uint8_t>(payload, offset) != 0U;
     event.data = read_string(payload, offset);
     event.component_name = read_string(payload, offset);
+    event.payload_source = static_cast<SyncTracePayloadSource>(read_pod<std::uint8_t>(payload, offset));
+    event.wire_bits = read_pod<std::uint64_t>(payload, offset);
+    event.payload_bits = read_pod<std::uint64_t>(payload, offset);
+    event.payload_tag_bits = read_pod<std::uint8_t>(payload, offset);
+    event.payload_scopes = read_payload_scopes(payload, offset);
     if (offset != payload.size()) {
         throw std::runtime_error("ktrace record has trailing bytes");
     }
@@ -203,6 +245,31 @@ SyncTraceEvent make_cue_name_event(const SyncTraceEvent& event) {
     mapping.cue_type = event.cue_type;
     mapping.data = event.component_name;
     return mapping;
+}
+
+SyncTraceEvent make_payload_tag_name_event(const SyncTraceEvent& event, std::uint8_t tag_bit) {
+    SyncTraceEvent mapping;
+    mapping.type = SyncTraceEventType::SerializationPayloadTagName;
+    mapping.role = event.role;
+    mapping.client = event.client;
+    mapping.frame = event.frame;
+    mapping.payload_source = event.payload_source;
+    mapping.payload_tag_bits = tag_bit;
+    mapping.data = sync_trace_payload_tag_name(tag_bit);
+    return mapping;
+}
+
+std::uint8_t known_payload_tag_bits(std::uint8_t tag_bits) noexcept {
+    return static_cast<std::uint8_t>(tag_bits & (sync_trace_payload_tag_outgoing | sync_trace_payload_tag_incoming));
+}
+
+int payload_tag_index(std::uint8_t tag_bit) noexcept {
+    for (int index = 0; index < 8; ++index) {
+        if (tag_bit == (1U << index)) {
+            return index;
+        }
+    }
+    return -1;
 }
 
 bool event_has_cue_name(const SyncTraceEvent& event) {
@@ -431,9 +498,30 @@ void SyncTracer::set_callbacks(SyncTraceCallbacks callbacks) {
     callbacks_ = std::move(callbacks);
 }
 
+bool SyncTracer::traces_client(ClientId client) const {
+    return client == invalid_client_id ||
+        monitored_clients_.empty() ||
+        std::find(monitored_clients_.begin(), monitored_clients_.end(), client) != monitored_clients_.end();
+}
+
+void SyncTracer::set_monitored_clients(std::vector<ClientId> clients) {
+    std::sort(clients.begin(), clients.end());
+    clients.erase(std::unique(clients.begin(), clients.end()), clients.end());
+    monitored_clients_ = std::move(clients);
+}
+
+void SyncTracer::clear_monitored_clients() {
+    monitored_clients_.clear();
+}
+
 void SyncTracer::trace(const SyncTraceEvent& event) const {
     if (!enabled_) {
         return;
+    }
+    if (event.type == SyncTraceEventType::SerializationPayload) {
+        if (!serialization_payloads_enabled_ || !traces_client(event.client)) {
+            return;
+        }
     }
 #ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     if (event.type == SyncTraceEventType::PacketLog && !packet_logs_enabled_) {
@@ -528,6 +616,11 @@ void SyncTracer::trace(const SyncTraceEvent& event) const {
     case SyncTraceEventType::ClockSkew:
         if (callbacks_.on_clock_skew) callbacks_.on_clock_skew(event);
         break;
+    case SyncTraceEventType::SerializationPayload:
+        if (callbacks_.on_serialization_payload) callbacks_.on_serialization_payload(event);
+        break;
+    case SyncTraceEventType::SerializationPayloadTagName:
+        break;
 #ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     case SyncTraceEventType::PacketLog:
         if (!packet_logs_enabled_) {
@@ -539,6 +632,105 @@ void SyncTracer::trace(const SyncTraceEvent& event) const {
     case SyncTraceEventType::PacketLog:
         break;
 #endif
+    }
+}
+
+ScopedSerializationTraceCapture::ScopedSerializationTraceCapture(
+    const SyncTracer* tracer,
+    SyncTracePayloadSource source,
+    SyncTraceRole role,
+    ClientId client,
+    SyncFrame frame,
+    const char* root_name,
+    bool auto_flush)
+    : tracer_(tracer),
+      capture_(
+          tracer != nullptr &&
+              tracer->enabled() &&
+              tracer->serialization_payloads_enabled() &&
+              tracer->traces_client(client),
+          nullptr,
+          root_name != nullptr ? root_name : "payload"),
+      auto_flush_(auto_flush) {
+    if (active()) {
+        event_.type = SyncTraceEventType::SerializationPayload;
+        event_.role = role;
+        event_.client = client;
+        event_.frame = frame;
+        event_.payload_source = source;
+    }
+}
+
+ScopedSerializationTraceCapture::~ScopedSerializationTraceCapture() {
+    if (active()) {
+        finish();
+        if (auto_flush_) {
+            flush();
+        }
+    }
+}
+
+void ScopedSerializationTraceCapture::set_target(const ashiato::BitBuffer* target) noexcept {
+    target_ = target;
+    capture_.set_target(target_);
+}
+
+void ScopedSerializationTraceCapture::finish() {
+    capture_.finish();
+    event_.wire_bits = capture_.wire_bits();
+    event_.payload_bits = capture_.payload_bits();
+    event_.payload_scopes = capture_.scopes();
+}
+
+SyncTraceEvent ScopedSerializationTraceCapture::release_event() {
+    finish();
+    flushed_ = true;
+    return event_;
+}
+
+void ScopedSerializationTraceCapture::flush() {
+    if (!active() || flushed_ || tracer_ == nullptr) {
+        return;
+    }
+    finish();
+    tracer_->trace(event_);
+    flushed_ = true;
+}
+
+void ScopedSerializationTraceCapture::truncate_to_bits(std::uint64_t bit_size) {
+    capture_.truncate_to_bits(bit_size);
+}
+
+std::uint32_t ScopedSerializationTraceCapture::push_scope(const char* name) {
+    return capture_.push_scope(name);
+}
+
+void ScopedSerializationTraceCapture::pop_scope(std::uint32_t id) {
+    capture_.pop_scope(id);
+}
+
+ScopedSerializationTraceScope::ScopedSerializationTraceScope(ScopedSerializationTraceCapture* capture, const char* name)
+    : capture_(capture),
+      payload_capture_(capture != nullptr ? capture->payload_capture() : nullptr) {
+    if (payload_capture_ != nullptr && payload_capture_->active()) {
+        id_ = payload_capture_->push_scope(name);
+    }
+}
+
+ScopedSerializationTraceScope::ScopedSerializationTraceScope(
+    ashiato::ComponentSerializationContext& context,
+    const char* name)
+    : capture_(nullptr),
+      payload_capture_(context.payloadTrace),
+      id_(UINT32_MAX) {
+    if (payload_capture_ != nullptr && payload_capture_->active()) {
+        id_ = payload_capture_->push_scope(name);
+    }
+}
+
+ScopedSerializationTraceScope::~ScopedSerializationTraceScope() {
+    if (payload_capture_ != nullptr && payload_capture_->active()) {
+        payload_capture_->pop_scope(id_);
     }
 }
 
@@ -705,11 +897,11 @@ void KTraceDirectoryWriter::write_header(Sink& sink) {
     for (std::size_t byte = 0; byte < sizeof(sink.client); ++byte) {
         sink.file.put(static_cast<char>((sink.client >> (byte * 8U)) & 0xffU));
     }
-    const std::uint32_t flags =
+    std::uint32_t flags = tracer_.serialization_payloads_enabled() ? ktrace_flag_serialization_payloads : 0U;
 #ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
-        tracer_.packet_logs_enabled() ? ktrace_flag_packet_logs : 0U;
-#else
-        0U;
+    if (tracer_.packet_logs_enabled()) {
+        flags |= ktrace_flag_packet_logs;
+    }
 #endif
     for (std::size_t byte = 0; byte < sizeof(flags); ++byte) {
         sink.file.put(static_cast<char>((flags >> (byte * 8U)) & 0xffU));
@@ -750,20 +942,30 @@ void KTraceDirectoryWriter::record(const SyncTraceEvent& event) {
     const std::uint64_t now_us = steady_time_us();
     const std::uint64_t timestamp_us = now_us >= sink.start_steady_us ? now_us - sink.start_steady_us : 0U;
     std::vector<std::uint8_t> record;
-    std::vector<std::uint8_t> name_record;
-    bool emit_name = false;
+    std::vector<std::vector<std::uint8_t>> name_records;
     std::size_t record_size = 0;
     std::unique_lock<std::mutex> lock(sink.mutex);
     if (event.component && !event.component_name.empty() &&
         sink.named_components.insert(event.component.value).second) {
-        emit_name = true;
-        name_record = encode_v2_record(make_component_name_event(event), timestamp_us);
-        record_size += name_record.size();
+        name_records.push_back(encode_v2_record(make_component_name_event(event), timestamp_us));
+        record_size += name_records.back().size();
     }
     if (event_has_cue_name(event) && sink.named_cues.insert(event.cue_type).second) {
-        emit_name = true;
-        name_record = encode_v2_record(make_cue_name_event(event), timestamp_us);
-        record_size += name_record.size();
+        name_records.push_back(encode_v2_record(make_cue_name_event(event), timestamp_us));
+        record_size += name_records.back().size();
+    }
+    if (event.type == SyncTraceEventType::SerializationPayload) {
+        std::uint8_t unmapped_payload_tags = static_cast<std::uint8_t>(
+            known_payload_tag_bits(event.payload_tag_bits) & ~sink.named_payload_tags);
+        for (int index = 0; index < 8; ++index) {
+            const std::uint8_t tag_bit = static_cast<std::uint8_t>(1U << index);
+            if ((unmapped_payload_tags & tag_bit) == 0U) {
+                continue;
+            }
+            name_records.push_back(encode_v2_record(make_payload_tag_name_event(event, tag_bit), timestamp_us));
+            record_size += name_records.back().size();
+            sink.named_payload_tags = static_cast<std::uint8_t>(sink.named_payload_tags | tag_bit);
+        }
     }
     record = encode_v2_record(stored_trace_event(event), timestamp_us);
     record_size += record.size();
@@ -780,7 +982,7 @@ void KTraceDirectoryWriter::record(const SyncTraceEvent& event) {
         return;
     }
     sink.queued_bytes += record_size;
-    if (emit_name) {
+    for (std::vector<std::uint8_t>& name_record : name_records) {
         sink.queue.push_back(std::move(name_record));
     }
     sink.queue.push_back(std::move(record));
@@ -955,6 +1157,7 @@ KTraceSourceHistory KTraceReader::build_source_history(KTraceFile file) {
     source.records = std::move(file.records);
     source.component_names = std::move(file.component_names);
     source.cue_names = std::move(file.cue_names);
+    source.payload_tag_names = std::move(file.payload_tag_names);
 
     std::unordered_map<ClientEntityNetworkId, ReplicationClientMode> modes;
     std::unordered_map<ClientEntityNetworkId, std::unordered_map<std::uint64_t, bool>> predicted_conflicts;
@@ -969,6 +1172,12 @@ KTraceSourceHistory KTraceReader::build_source_history(KTraceFile file) {
             }
             if (event.type == SyncTraceEventType::CueName && !event.data.empty()) {
                 source.cue_names[event.cue_type] = event.data;
+            }
+            if (event.type == SyncTraceEventType::SerializationPayloadTagName && !event.data.empty()) {
+                const int tag_index = payload_tag_index(event.payload_tag_bits);
+                if (tag_index >= 0) {
+                    source.payload_tag_names[static_cast<std::size_t>(tag_index)] = event.data;
+                }
             }
             continue;
         }
@@ -1202,6 +1411,8 @@ std::unique_ptr<KTraceDirectoryWriter> make_trace_writer(const TraceOptions& opt
     writer_options.truncate_existing = options.truncate_existing;
     auto writer = std::make_unique<KTraceDirectoryWriter>(std::move(writer_options));
     writer->tracer().set_frame_data_enabled(options.frame_data);
+    writer->tracer().set_serialization_payloads_enabled(options.serialization_payloads);
+    writer->tracer().set_monitored_clients(options.monitored_clients);
 #ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     writer->tracer().set_packet_logs_enabled(options.packet_logs);
 #endif

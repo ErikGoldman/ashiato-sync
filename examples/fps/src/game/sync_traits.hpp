@@ -3,6 +3,8 @@
 #include "game/components.hpp"
 #include "game/cues.hpp"
 
+#include "ashiato/sync/tracing.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -85,11 +87,11 @@ struct SyncComponentTraits<FpsUniquePlayerId> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_unsigned_bits(current.value, 64U);
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         out.value = in.read_unsigned_bits(64U);
         return true;
     }
@@ -112,11 +114,11 @@ struct SyncComponentTraits<NetworkOwner> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_unsigned_bits(current.client, 64U);
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         out.client = static_cast<ClientId>(in.read_unsigned_bits(64U));
         return true;
     }
@@ -140,11 +142,11 @@ struct SyncComponentTraits<FpsTransform> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(out));
         return true;
     }
@@ -233,11 +235,11 @@ struct SyncComponentTraits<FpsVelocity> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(out));
         return true;
     }
@@ -277,11 +279,11 @@ struct SyncComponentTraits<FpsCombatState> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(out));
         return true;
     }
@@ -338,12 +340,14 @@ struct SyncComponentTraits<FpsDeathInfo> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_unsigned_bits(current.killer, 64U);
+        out.push_bits(current.sequence, 32U);
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         out.killer = static_cast<ClientId>(in.read_unsigned_bits(64U));
+        out.sequence = static_cast<std::uint32_t>(in.read_bits(32U));
         return true;
     }
 
@@ -355,6 +359,8 @@ struct SyncComponentTraits<FpsDeathInfo> {
     static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
         out.append("killer=");
         out.append_number(value.killer);
+        out.append(" sequence=");
+        out.append_number(value.sequence);
     }
 #endif
 };
@@ -371,11 +377,11 @@ struct SyncComponentTraits<FpsVisual> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(out));
         return true;
     }
@@ -420,11 +426,11 @@ struct SyncComponentTraits<FpsInput> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(out));
         return true;
     }
@@ -453,10 +459,10 @@ struct SyncComponentTraits<FpsInput> {
 
 template <>
 struct SyncCueTraits<ShotCue> {
-    static void serialize(const ShotCue&, ashiato::BitBuffer&) {
+    static void serialize(const ShotCue&, ashiato::BitBuffer&, ashiato::ComponentSerializationContext&) {
     }
 
-    static bool deserialize(ashiato::BitBuffer&, ShotCue&) {
+    static bool deserialize(ashiato::BitBuffer&, ShotCue&, ashiato::ComponentSerializationContext&) {
         return true;
     }
 
@@ -483,14 +489,26 @@ struct SyncCueTraits<ShotCue> {
 
 template <>
 struct SyncCueTraits<SurfaceHitCue> {
-    static void serialize(const SurfaceHitCue& cue, ashiato::BitBuffer& out) {
-        detail::serialize_fps_cue_position(cue.position, out);
-        detail::serialize_fps_cue_normal(cue.normal, out);
+    static void serialize(const SurfaceHitCue& cue, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext& context) {
+        {
+            ASHIATO_SERIALIZATION_TRACE_SCOPE("position");
+            detail::serialize_fps_cue_position(cue.position, out);
+        }
+        {
+            ASHIATO_SERIALIZATION_TRACE_SCOPE("normal");
+            detail::serialize_fps_cue_normal(cue.normal, out);
+        }
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, SurfaceHitCue& out) {
-        out.position = detail::deserialize_fps_cue_position(in);
-        out.normal = detail::deserialize_fps_cue_normal(in);
+    static bool deserialize(ashiato::BitBuffer& in, SurfaceHitCue& out, ashiato::ComponentSerializationContext& context) {
+        {
+            ASHIATO_SERIALIZATION_TRACE_SCOPE("position");
+            out.position = detail::deserialize_fps_cue_position(in);
+        }
+        {
+            ASHIATO_SERIALIZATION_TRACE_SCOPE("normal");
+            out.normal = detail::deserialize_fps_cue_normal(in);
+        }
         return true;
     }
 
@@ -553,11 +571,17 @@ struct SyncCueTraits<SurfaceHitCue> {
 
 template <>
 struct SyncCueTraits<PlayerHitCue> {
-    static void serialize(const PlayerHitCue& cue, ashiato::BitBuffer& out, EntityReferenceContext& references) {
+    static constexpr bool references_entities = true;
+
+    static void serialize(const PlayerHitCue& cue, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext& context) {
+        EntityReferenceContext& references = *static_cast<EntityReferenceContext*>(context.userContext);
+        ASHIATO_SYNC_TRACE_SCOPE("shooter");
         (void)write_entity_reference(out, cue.shooter, references);
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, PlayerHitCue& out, EntityReferenceContext& references) {
+    static bool deserialize(ashiato::BitBuffer& in, PlayerHitCue& out, ashiato::ComponentSerializationContext& context) {
+        EntityReferenceContext& references = *static_cast<EntityReferenceContext*>(context.userContext);
+        ASHIATO_SERIALIZATION_TRACE_SCOPE("shooter");
         return read_entity_reference(in, references, out.shooter);
     }
 
@@ -608,11 +632,17 @@ struct SyncCueTraits<PlayerHitCue> {
 
 template <>
 struct SyncCueTraits<HitConfirmCue> {
-    static void serialize(const HitConfirmCue& cue, ashiato::BitBuffer& out, EntityReferenceContext& references) {
+    static constexpr bool references_entities = true;
+
+    static void serialize(const HitConfirmCue& cue, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext& context) {
+        EntityReferenceContext& references = *static_cast<EntityReferenceContext*>(context.userContext);
+        ASHIATO_SYNC_TRACE_SCOPE("victim");
         (void)write_entity_reference(out, cue.victim, references);
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, HitConfirmCue& out, EntityReferenceContext& references) {
+    static bool deserialize(ashiato::BitBuffer& in, HitConfirmCue& out, ashiato::ComponentSerializationContext& context) {
+        EntityReferenceContext& references = *static_cast<EntityReferenceContext*>(context.userContext);
+        ASHIATO_SERIALIZATION_TRACE_SCOPE("victim");
         return read_entity_reference(in, references, out.victim);
     }
 
@@ -655,11 +685,17 @@ struct SyncCueTraits<HitConfirmCue> {
 
 template <>
 struct SyncCueTraits<PlayerDeathCue> {
-    static void serialize(const PlayerDeathCue& cue, ashiato::BitBuffer& out, EntityReferenceContext& references) {
+    static constexpr bool references_entities = true;
+
+    static void serialize(const PlayerDeathCue& cue, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext& context) {
+        EntityReferenceContext& references = *static_cast<EntityReferenceContext*>(context.userContext);
+        ASHIATO_SYNC_TRACE_SCOPE("shooter");
         (void)write_entity_reference(out, cue.shooter, references);
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, PlayerDeathCue& out, EntityReferenceContext& references) {
+    static bool deserialize(ashiato::BitBuffer& in, PlayerDeathCue& out, ashiato::ComponentSerializationContext& context) {
+        EntityReferenceContext& references = *static_cast<EntityReferenceContext*>(context.userContext);
+        ASHIATO_SERIALIZATION_TRACE_SCOPE("shooter");
         return read_entity_reference(in, references, out.shooter);
     }
 

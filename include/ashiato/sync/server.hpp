@@ -142,6 +142,8 @@ public:
     bool tick(ashiato::Registry& registry, double dt_seconds);
     bool advance_frame_without_simulating(ashiato::Registry& registry);
     bool advance_frame_without_simulating(ashiato::Registry& registry, SyncFrame frame);
+    // Moves the server clock without sending updates; intended for restoring synthetic timelines such as replay playback.
+    bool set_frame_without_broadcast(ashiato::Registry& registry, SyncFrame frame);
     // Current server simulation frame; remains 0 until the first tick begins.
     SyncFrame frame() const noexcept {
         return frame_;

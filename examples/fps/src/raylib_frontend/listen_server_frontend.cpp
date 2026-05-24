@@ -67,6 +67,7 @@ struct ListenServerFrontend::Impl {
     MouseLookState look;
     bool show_stats = true;
     bool was_local_dead = false;
+    std::uint32_t last_death_sequence = 0;
     ashiato::sync::SyncFrame captured_frame = 0;
     Sound shot_sound{};
     Sound hit_confirm_sound{};
@@ -154,7 +155,16 @@ void ListenServerFrontend::update_effects(ashiato::Registry& registry, float dt)
             is_local_dead = combat->dead != 0U;
         }
     }
-    if (is_local_dead && !impl_->was_local_dead && !impl_->death_cam.active()) {
+    bool death_sequence_advanced = false;
+    if (local_entity && registry.alive(local_entity)) {
+        if (const FpsDeathInfo* death = registry.try_get<FpsDeathInfo>(local_entity)) {
+            if (death->sequence != 0U && death->sequence != impl_->last_death_sequence) {
+                impl_->last_death_sequence = death->sequence;
+                death_sequence_advanced = true;
+            }
+        }
+    }
+    if (death_sequence_advanced || (is_local_dead && !impl_->was_local_dead)) {
         impl_->death_cam.start(impl_->replay_host, impl_->replay_port, impl_->host_client);
     }
     impl_->was_local_dead = is_local_dead;
@@ -165,9 +175,25 @@ void ListenServerFrontend::update_effects(ashiato::Registry& registry, float dt)
 }
 
 void ListenServerFrontend::render(ashiato::Registry& registry, ashiato::sync::ReplicationServer& server) {
-    const ashiato::Entity replay_local_entity =
-        impl_->death_cam.active() ? find_local_player(impl_->death_cam.registry(), impl_->host_client) : ashiato::Entity{};
-    const bool replay_ready = replay_local_entity != ashiato::Entity{};
+    ashiato::Entity replay_target_entity;
+    ashiato::Entity replay_local_entity;
+    if (impl_->death_cam.active()) {
+        replay_local_entity = find_local_player(impl_->death_cam.registry(), impl_->host_client);
+        const std::uint64_t replay_target_player_id = impl_->death_cam.target_player_id();
+        if (replay_target_player_id != 0U) {
+            impl_->death_cam.registry().view<const FpsUniquePlayerId, const FpsTransform>().each(
+                [&replay_target_entity, replay_target_player_id](
+                    ashiato::Entity entity,
+                    const FpsUniquePlayerId& unique,
+                    const FpsTransform&) {
+                    if (!replay_target_entity && unique.value == replay_target_player_id) {
+                        replay_target_entity = entity;
+                    }
+                });
+        }
+    }
+    const bool replay_ready = replay_target_entity != ashiato::Entity{} ||
+        replay_local_entity != ashiato::Entity{};
     if (replay_ready && impl_->death_cam_display == nullptr) {
         impl_->death_cam_display = std::make_unique<ashiato::sync::FractionalTickSampler>(impl_->death_cam.client());
     } else if (!replay_ready) {
@@ -186,19 +212,9 @@ void ListenServerFrontend::render(ashiato::Registry& registry, ashiato::sync::Re
                     ecs_target = entity;
                 }
             });
-        const std::uint64_t replay_target_player_id = impl_->death_cam.target_player_id();
-        if (replay_target_player_id != 0U) {
-            render_registry.view<const FpsUniquePlayerId, const FpsTransform>().each(
-                [&ecs_target, replay_target_player_id](
-                    ashiato::Entity entity,
-                    const FpsUniquePlayerId& unique,
-                    const FpsTransform&) {
-                    if (unique.value == replay_target_player_id) {
-                        ecs_target = entity;
-                    }
-                });
-        }
-        if (ecs_target) {
+        if (replay_target_entity) {
+            local_entity = replay_target_entity;
+        } else if (ecs_target) {
             local_entity = ecs_target;
         }
     }

@@ -2,6 +2,9 @@
 
 #include "ashiato/sync/components.hpp"
 #include "ashiato/sync/server_frame_consumer.hpp"
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+#include "ashiato/sync/tracing.hpp"
+#endif
 #include "server/bandwidth_controller.hpp"
 
 #include <cstddef>
@@ -92,6 +95,9 @@ struct PendingPacketAck {
 struct SerializedEntity {
     std::uint32_t quantized_frame = invalid_quantized_frame_id;
     ashiato::BitBuffer payload;
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    std::vector<SyncTraceEvent> serialization_events;
+#endif
 };
 
 struct SerializedCandidate {
@@ -242,7 +248,12 @@ private:
         std::uint32_t slot,
         std::uint32_t quantized_frame,
         std::uint64_t component_mask,
-        ashiato::BitBuffer& out);
+        ashiato::BitBuffer& out
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+        ,
+        std::vector<SyncTraceEvent>* serialization_events
+#endif
+    );
 
     QuantizedFrameData quantized_frame_scratch_;
     std::vector<std::uint64_t> quantized_frame_dirty_scratch_;

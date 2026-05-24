@@ -4,6 +4,10 @@
 
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
 
+#include "client/store/ack_queue.hpp"
+
+#include "ashiato/sync/replay_writer.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -71,6 +75,244 @@ TEST_CASE("sync tracing records server send client receive and apply events") {
     REQUIRE(has_event(client_events, ashiato::sync::SyncTraceEventType::EntityReceived));
     REQUIRE(has_event(client_events, ashiato::sync::SyncTraceEventType::ComponentReceived));
     REQUIRE_FALSE(has_event(client_events, ashiato::sync::SyncTraceEventType::ComponentApplied));
+}
+
+TEST_CASE("serialization payload tracing is opt-in scoped and client-filtered") {
+    std::vector<ashiato::sync::SyncTraceEvent> events;
+    ashiato::sync::SyncTracer tracer;
+    tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { events.push_back(event); }});
+
+    {
+        ashiato::BitBuffer payload;
+        ashiato::sync::ScopedSerializationTraceCapture capture(
+            &tracer,
+            ashiato::sync::SyncTracePayloadSource::Network,
+            ashiato::sync::SyncTraceRole::Server,
+            7,
+            1,
+            "packet");
+        capture.set_target(&payload);
+        ashiato::sync::ScopedSerializationTraceScope header_scope(&capture, "header");
+        payload.push_bits(0xab, 8U);
+    }
+    REQUIRE(events.empty());
+
+    tracer.set_serialization_payloads_enabled(true);
+    tracer.set_monitored_clients({8});
+    {
+        ashiato::BitBuffer payload;
+        ashiato::sync::ScopedSerializationTraceCapture capture(
+            &tracer,
+            ashiato::sync::SyncTracePayloadSource::Network,
+            ashiato::sync::SyncTraceRole::Server,
+            7,
+            1,
+            "packet");
+        capture.set_target(&payload);
+        ashiato::sync::ScopedSerializationTraceScope header_scope(&capture, "header");
+        payload.push_bits(0xab, 8U);
+    }
+    REQUIRE(events.empty());
+
+    tracer.set_monitored_clients({7});
+    {
+        ashiato::BitBuffer payload;
+        ashiato::sync::ScopedSerializationTraceCapture capture(
+            &tracer,
+            ashiato::sync::SyncTracePayloadSource::Network,
+            ashiato::sync::SyncTraceRole::Server,
+            7,
+            1,
+            "packet");
+        capture.set_target(&payload);
+        {
+            ashiato::sync::ScopedSerializationTraceScope header_scope(&capture, "header");
+            payload.push_bits(0xab, 8U);
+        }
+        {
+            ashiato::sync::ScopedSerializationTraceScope body_scope(&capture, "body");
+            payload.push_bits(0xcdef, 16U);
+        }
+    }
+    REQUIRE(events.size() == 1U);
+    REQUIRE(events[0].type == ashiato::sync::SyncTraceEventType::SerializationPayload);
+    REQUIRE(events[0].wire_bits == 24U);
+    REQUIRE(events[0].payload_scopes.size() == 3U);
+    REQUIRE(events[0].payload_scopes[0].name == "packet");
+    REQUIRE(events[0].payload_scopes[1].name == "header");
+    REQUIRE(events[0].payload_scopes[1].payload_bits == 8U);
+    REQUIRE(events[0].payload_scopes[2].name == "body");
+    REQUIRE(events[0].payload_scopes[2].payload_bits == 16U);
+}
+
+TEST_CASE("serialization payload trace macro uses the passed serialization context") {
+    std::vector<ashiato::sync::SyncTraceEvent> events;
+    ashiato::sync::SyncTracer tracer;
+    tracer.set_serialization_payloads_enabled(true);
+    tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { events.push_back(event); }});
+
+    ashiato::BitBuffer payload;
+    ashiato::sync::ScopedSerializationTraceCapture capture(
+        &tracer,
+        ashiato::sync::SyncTracePayloadSource::Network,
+        ashiato::sync::SyncTraceRole::Server,
+        7,
+        1,
+        "packet");
+    capture.set_target(&payload);
+    ashiato::ComponentSerializationContext context{nullptr, capture.payload_capture()};
+    {
+        SERIALIZE_TRACE(payload, 0xab, 8U, "serializer_section");
+    }
+
+    capture.flush();
+    REQUIRE(events.size() == 1U);
+    REQUIRE(events[0].payload_scopes.size() == 2U);
+    REQUIRE(events[0].payload_scopes[1].name == "serializer_section");
+    REQUIRE(events[0].payload_scopes[1].payload_bits == 8U);
+}
+
+TEST_CASE("server update serialization payload traces are emitted after accepted sends") {
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = define_networked_archetype(server_registry);
+    const ashiato::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<ashiato_sync_tests::NetworkedPosition>(
+        server_entity,
+        ashiato_sync_tests::NetworkedPosition{1.0f, 2.0f}) != nullptr);
+
+    std::vector<ashiato::BitBuffer> packets;
+    std::vector<ashiato::sync::SyncTraceEvent> events;
+    ashiato::sync::SyncTracer tracer;
+    tracer.set_serialization_payloads_enabled(true);
+    tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { events.push_back(event); }});
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
+    server.set_tracer(&tracer);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+    server.tick(server_registry, server.options().fixed_dt_seconds);
+    REQUIRE(packets.size() == 1U);
+
+    const auto found = std::find_if(events.begin(), events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::SerializationPayload &&
+            event.payload_source == ashiato::sync::SyncTracePayloadSource::Network &&
+            event.data.find("server_update_record") != std::string::npos;
+    });
+    REQUIRE(found != events.end());
+    REQUIRE(found->client == 1U);
+    REQUIRE(found->server_entity == server_entity);
+    REQUIRE(found->wire_bits != 0U);
+    REQUIRE(ashiato::sync::sync_trace_payload_has_tag(*found, ashiato::sync::sync_trace_payload_tag_outgoing));
+    REQUIRE(found->data.find("direction=") == std::string::npos);
+    REQUIRE(std::any_of(found->payload_scopes.begin(), found->payload_scopes.end(), [](const ashiato::sync::SyncPayloadTraceScope& scope) {
+        return scope.name == "NetworkedPosition" && scope.payload_bits != 0U;
+    }));
+}
+
+TEST_CASE("replay serialization payload tracing uses the replay source") {
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_server_registry(registry);
+    const ashiato::sync::SyncArchetypeId archetype = ashiato_sync_tests::define_position_archetype(registry);
+
+    const ashiato::Entity entity = registry.create();
+    registry.add<ashiato_sync_tests::Position>(entity, ashiato_sync_tests::Position{1.0f, 2.0f});
+    REQUIRE(ashiato_sync_tests::start_sync(registry, entity, archetype));
+
+    std::vector<ashiato::sync::SyncTraceEvent> events;
+    ashiato::sync::SyncTracer tracer;
+    tracer.set_serialization_payloads_enabled(true);
+    tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { events.push_back(event); }});
+
+    std::vector<ashiato::sync::ReplicationReplayFrame> frames;
+    ashiato::sync::ReplicationReplayWriterOptions options;
+    options.write = [&](ashiato::sync::ReplicationReplayFrame frame) {
+        frames.push_back(std::move(frame));
+    };
+    options.serialization_tracer = &tracer;
+    ashiato::sync::ReplicationReplayWriter writer(options);
+
+    ashiato::sync::ReplicationServer server(registry);
+    writer.attach(server);
+    REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
+    REQUIRE(frames.size() == 1U);
+    REQUIRE(std::any_of(events.begin(), events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::SerializationPayload &&
+            event.payload_source == ashiato::sync::SyncTracePayloadSource::Replay &&
+            event.wire_bits != 0U &&
+            std::any_of(event.payload_scopes.begin(), event.payload_scopes.end(), [](const ashiato::sync::SyncPayloadTraceScope& scope) {
+                return scope.name == "Position" && scope.payload_bits != 0U;
+            });
+    }));
+}
+
+TEST_CASE("client ack and input packets emit serialization payload scopes") {
+    ashiato::Registry client_registry;
+    ashiato::sync::register_sync_component<ashiato_sync_tests::NetworkedPosition>(client_registry, "NetworkedPosition");
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
+    REQUIRE(ashiato::sync::set_client_input_component<ashiato_sync_tests::NetworkedPosition>(client_registry));
+    const ashiato::Entity client_owned = client_registry.create();
+    REQUIRE(ashiato::sync::set_owner(client_registry, client_owned, 1));
+
+    std::vector<ashiato::sync::SyncTraceEvent> client_events;
+    ashiato::sync::SyncTracer client_tracer;
+    client_tracer.set_serialization_payloads_enabled(true);
+    client_tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { client_events.push_back(event); }});
+
+    ashiato::sync::client_detail::ClientAckQueue ack_queue;
+    ack_queue.push(7);
+    std::vector<ashiato::BitBuffer> ack_packets;
+    ack_queue.drain_ack_packets(
+        1200,
+        ashiato::sync::protocol::server_packet_id_bits,
+        ack_packets,
+        nullptr,
+        &client_tracer,
+        1,
+        1);
+    REQUIRE(ack_packets.size() == 1U);
+
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
+    client.set_tracer(&client_tracer);
+    REQUIRE(client.set_input(client_registry, ashiato_sync_tests::NetworkedPosition{5.0f, 6.0f}));
+    REQUIRE(client.tick(client_registry, client.fixed_dt_seconds()));
+    std::vector<ashiato::BitBuffer> input_packets = client.drain_packets();
+    REQUIRE(std::any_of(input_packets.begin(), input_packets.end(), [](ashiato::BitBuffer packet) {
+        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
+    }));
+
+    const auto ack_event = std::find_if(client_events.begin(), client_events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::SerializationPayload &&
+            event.role == ashiato::sync::SyncTraceRole::Client &&
+            event.data.find("message=client_ack") != std::string::npos;
+    });
+    REQUIRE(ack_event != client_events.end());
+    REQUIRE(ack_event->wire_bits == ack_packets[0].bit_size());
+    REQUIRE(ashiato::sync::sync_trace_payload_has_tag(*ack_event, ashiato::sync::sync_trace_payload_tag_incoming));
+    REQUIRE(ack_event->data.find("direction=") == std::string::npos);
+    REQUIRE(std::any_of(ack_event->payload_scopes.begin(), ack_event->payload_scopes.end(), [](const ashiato::sync::SyncPayloadTraceScope& scope) {
+        return scope.name == "ack" && scope.payload_bits != 0U;
+    }));
+
+    const auto input_event = std::find_if(client_events.begin(), client_events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::SerializationPayload &&
+            event.role == ashiato::sync::SyncTraceRole::Client &&
+            event.data.find("message=client_input") != std::string::npos;
+    });
+    REQUIRE(input_event != client_events.end());
+    REQUIRE(input_event->component_name == "NetworkedPosition");
+    REQUIRE(ashiato::sync::sync_trace_payload_has_tag(*input_event, ashiato::sync::sync_trace_payload_tag_incoming));
+    REQUIRE(input_event->data.find("direction=") == std::string::npos);
+    REQUIRE(std::any_of(input_event->payload_scopes.begin(), input_event->payload_scopes.end(), [](const ashiato::sync::SyncPayloadTraceScope& scope) {
+        return scope.name == "input_frame" && scope.payload_bits != 0U;
+    }));
 }
 
 TEST_CASE("cue tracing records lifecycle events and uses frame data gating") {

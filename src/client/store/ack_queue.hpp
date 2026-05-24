@@ -2,6 +2,9 @@
 
 #include "ashiato/bit_buffer.hpp"
 #include "ashiato/sync/protocol.hpp"
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+#include "ashiato/sync/tracing.hpp"
+#endif
 
 #include <cstddef>
 #include <cstdint>
@@ -23,7 +26,14 @@ public:
         std::size_t mtu_bytes,
         std::size_t packet_id_bits,
         std::vector<ashiato::BitBuffer>& packets,
-        std::vector<ClientAckPacketTrace>* traces);
+        std::vector<ClientAckPacketTrace>* traces
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+        ,
+        const SyncTracer* serialization_tracer = nullptr,
+        ClientId client = invalid_client_id,
+        SyncFrame frame = 0
+#endif
+    );
 
 private:
     std::vector<std::uint32_t> pending_;

@@ -12,7 +12,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <iostream>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -101,6 +100,7 @@ void run_client(const AppConfig& config) {
     std::unordered_map<std::uint64_t, std::uint8_t> previous_dead;
     FpsDeathCamClient death_cam;
     bool was_local_dead = false;
+    std::uint32_t last_death_sequence = 0;
     bool show_latency_stats = true;
     double packet_drop_remaining_seconds = 0.0;
     client.set_packet_sender([&packet_drop_remaining_seconds, &outgoing_link, &link_time_seconds](const ashiato::BitBuffer& packet) {
@@ -170,15 +170,41 @@ void run_client(const AppConfig& config) {
                 is_local_dead = combat->dead != 0U;
             }
         }
-        if (is_local_dead && !was_local_dead && !death_cam.active()) {
+        bool death_sequence_advanced = false;
+        if (live_local_entity && registry.alive(live_local_entity)) {
+            if (const FpsDeathInfo* death = registry.try_get<FpsDeathInfo>(live_local_entity)) {
+                if (death->sequence != 0U && death->sequence != last_death_sequence) {
+                    last_death_sequence = death->sequence;
+                    death_sequence_advanced = true;
+                }
+            }
+        }
+        if (death_sequence_advanced || (is_local_dead && !was_local_dead)) {
             death_cam.start(config.host, config.replay_port, registry.get<ashiato::sync::SyncSettings>().local_client);
             previous_dead.clear();
         }
         was_local_dead = is_local_dead;
         death_cam.tick(dt);
 
-        const ashiato::Entity replay_local_entity = death_cam.active() ? find_local_entity(death_cam.registry()) : ashiato::Entity{};
-        const bool replay_ready = replay_local_entity != ashiato::Entity{};
+        ashiato::Entity replay_target_entity;
+        ashiato::Entity replay_local_entity;
+        if (death_cam.active()) {
+            replay_local_entity = find_local_entity(death_cam.registry());
+            const std::uint64_t replay_target_player_id = death_cam.target_player_id();
+            if (replay_target_player_id != 0U) {
+                death_cam.registry().view<const FpsUniquePlayerId, const FpsTransform>().each(
+                    [&replay_target_entity, replay_target_player_id](
+                        ashiato::Entity entity,
+                        const FpsUniquePlayerId& unique,
+                        const FpsTransform&) {
+                        if (!replay_target_entity && unique.value == replay_target_player_id) {
+                            replay_target_entity = entity;
+                        }
+                    });
+            }
+        }
+        const bool replay_ready = replay_target_entity != ashiato::Entity{} ||
+            replay_local_entity != ashiato::Entity{};
         if (replay_ready && death_cam_display == nullptr) {
             death_cam_display = std::make_unique<ashiato::sync::FractionalTickSampler>(death_cam.client());
         } else if (!replay_ready) {
@@ -200,19 +226,9 @@ void run_client(const AppConfig& config) {
                         ecs_target = entity;
                     }
                 });
-            const std::uint64_t replay_target_player_id = death_cam.target_player_id();
-            if (replay_target_player_id != 0U) {
-                render_registry.view<const FpsUniquePlayerId, const FpsTransform>().each(
-                    [&ecs_target, replay_target_player_id](
-                        ashiato::Entity entity,
-                        const FpsUniquePlayerId& unique,
-                        const FpsTransform&) {
-                        if (unique.value == replay_target_player_id) {
-                            ecs_target = entity;
-                        }
-                    });
-            }
-            if (ecs_target) {
+            if (replay_target_entity) {
+                local_entity = replay_target_entity;
+            } else if (ecs_target) {
                 local_entity = ecs_target;
             }
         }

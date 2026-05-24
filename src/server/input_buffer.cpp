@@ -98,7 +98,8 @@ bool ServerInputBuffer::process_packet_payload(
     for (std::uint16_t index = 0; index < input_count; ++index) {
         const SyncFrame frame = first_input_frame + static_cast<SyncFrame>(index);
         const std::uint8_t* previous_bytes = index == 0U && first_input_full ? nullptr : previous.data();
-        if (!ops.serialization.deserialize(reader.raw(), previous_bytes, decoded.data(), nullptr)) {
+        ashiato::ComponentSerializationContext serialization_context;
+        if (!ops.serialization.deserialize(reader.raw(), previous_bytes, decoded.data(), serialization_context)) {
             return false;
         }
         if (trace != nullptr) {

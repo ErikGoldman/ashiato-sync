@@ -85,11 +85,11 @@ struct SyncComponentTraits<BallPosition> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -164,11 +164,11 @@ struct SyncComponentTraits<BallVelocity> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -224,14 +224,20 @@ namespace ashiato::sync {
 
 template <>
 struct SyncCueTraits<BallBounceCue> {
-    static void serialize(const BallBounceCue& cue, ashiato::BitBuffer& out) {
-        out.push_bits(cue.sequence, 32U);
-        out.push_bytes(reinterpret_cast<const char*>(&cue.strength), sizeof(cue.strength));
+    static void serialize(const BallBounceCue& cue, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext& context) {
+        SERIALIZE_TRACE(out, cue.sequence, 32U, "sequence");
+        SERIALIZE_BYTES_TRACE(out, reinterpret_cast<const char*>(&cue.strength), sizeof(cue.strength), "strength");
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, BallBounceCue& out) {
-        out.sequence = static_cast<std::uint32_t>(in.read_bits(32U));
-        in.read_bytes(reinterpret_cast<char*>(&out.strength), sizeof(out.strength));
+    static bool deserialize(ashiato::BitBuffer& in, BallBounceCue& out, ashiato::ComponentSerializationContext& context) {
+        {
+            ASHIATO_SERIALIZATION_TRACE_SCOPE("sequence");
+            out.sequence = static_cast<std::uint32_t>(in.read_bits(32U));
+        }
+        {
+            ASHIATO_SERIALIZATION_TRACE_SCOPE("strength");
+            in.read_bytes(reinterpret_cast<char*>(&out.strength), sizeof(out.strength));
+        }
         return true;
     }
 
@@ -272,11 +278,11 @@ struct SyncComponentTraits<BallVisual> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
@@ -309,6 +315,7 @@ struct SyncComponentTraits<BallVisual> {
 template <>
 struct SyncComponentTraits<BallContact> {
     using Quantized = BallContact;
+    static constexpr bool references_entities = true;
 
     static Quantized quantize(const BallContact& value) {
         return value;
@@ -322,7 +329,9 @@ struct SyncComponentTraits<BallContact> {
         const Quantized*,
         const Quantized& current,
         ashiato::BitBuffer& out,
-        EntityReferenceContext& references) {
+        ashiato::ComponentSerializationContext& context) {
+        EntityReferenceContext& references = *static_cast<EntityReferenceContext*>(context.userContext);
+        ASHIATO_SYNC_TRACE_SCOPE("target");
         (void)write_entity_reference(out, current.target, references);
     }
 
@@ -330,7 +339,9 @@ struct SyncComponentTraits<BallContact> {
         ashiato::BitBuffer& in,
         const Quantized*,
         Quantized& out,
-        EntityReferenceContext& references) {
+        ashiato::ComponentSerializationContext& context) {
+        EntityReferenceContext& references = *static_cast<EntityReferenceContext*>(context.userContext);
+        ASHIATO_SERIALIZATION_TRACE_SCOPE("target");
         return read_entity_reference(in, references, out.target);
     }
 

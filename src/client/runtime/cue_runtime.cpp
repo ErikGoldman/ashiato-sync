@@ -47,6 +47,7 @@ bool ClientCueRuntime::play(
     }
     EntityReferenceContext reference_context = make_reference_context(client);
     EntityReferenceContext* references = settings.cue_ops[cue.type].references_entities ? &reference_context : nullptr;
+    ashiato::ComponentSerializationContext serialization_context{references};
     EntityPlayedCue* existing = store_.find_played(registry, settings, entity_index, cue, references);
     if (existing != nullptr) {
         if (confirmed) {
@@ -66,7 +67,7 @@ bool ClientCueRuntime::play(
             cue.payload,
             late_seconds,
             cue.frame,
-            references)) {
+            serialization_context)) {
         return false;
     }
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
@@ -143,6 +144,7 @@ bool ClientCueRuntime::rollback_played(
     }
     EntityReferenceContext reference_context = make_reference_context(client);
     EntityReferenceContext* references = settings.cue_ops[cue.type].references_entities ? &reference_context : nullptr;
+    ashiato::ComponentSerializationContext serialization_context{references};
     const bool rolled_back =
         settings.cue_ops[cue.type].rollback(
             cue.type,
@@ -150,7 +152,7 @@ bool ClientCueRuntime::rollback_played(
             registry,
             state.identity.local,
             cue.payload,
-            references);
+            serialization_context);
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     if (rolled_back) {
         client.trace_cue_event(SyncTraceEventType::CueRolledBack, settings, state, cue, rollback_reason, "local_prediction");
@@ -243,6 +245,14 @@ void ClientCueRuntime::drain_emitted_prediction(
         cue.frame = emitted.frame;
         cue.type = emitted.type;
         cue.payload = emitted.payload;
+        if (emitted.value && emitted.type < settings.cue_ops.size() && settings.cue_ops[emitted.type].serialize != nullptr) {
+            EntityReferenceContext reference_context = make_reference_context(client);
+            EntityReferenceContext* references =
+                settings.cue_ops[emitted.type].references_entities ? &reference_context : nullptr;
+            ashiato::ComponentSerializationContext serialization_context{references};
+            cue.payload.clear();
+            settings.cue_ops[emitted.type].serialize(emitted.value.get(), cue.payload, serialization_context);
+        }
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
         client.trace_cue_event(SyncTraceEventType::CueEmitted, settings, *state, cue, nullptr, "local_prediction");
 #endif

@@ -18,9 +18,16 @@ option(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION "Build trace viewer socket au
 option(ASHIATO_SYNC_ENABLE_COVERAGE "Build ashiato-sync targets with coverage instrumentation" OFF)
 option(ASHIATO_SYNC_ENABLE_GPROF "Build ashiato-sync benchmark tools with gprof instrumentation" OFF)
 option(ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS "Build ashiato-sync with buffered interpolation starvation diagnostics" OFF)
-option(ASHIATO_SYNC_ENABLE_TRACING "Build ashiato-sync with client/server tracing hooks" OFF)
+option(ASHIATO_SYNC_ENABLE_TRACING "Compatibility alias for ASHIATO_ENABLE_SERIALIZATION_TRACING" OFF)
 option(ASHIATO_SYNC_TRACE_COMPONENT_DATA "Build ashiato-sync tracing support for component data serialization" OFF)
 option(ASHIATO_SYNC_TRACE_PACKET_LOGS "Build ashiato-sync tracing support for packet event logging" OFF)
+
+if(ASHIATO_ENABLE_SERIALIZATION_TRACING)
+    set(ASHIATO_SYNC_ENABLE_TRACING ON CACHE BOOL "Compatibility alias for ASHIATO_ENABLE_SERIALIZATION_TRACING" FORCE)
+endif()
+if(ASHIATO_SYNC_ENABLE_TRACING)
+    set(ASHIATO_ENABLE_SERIALIZATION_TRACING ON CACHE BOOL "Build serialization payload trace capture helpers" FORCE)
+endif()
 
 set(ASHIATO_SYNC_BASELINE_FRAME_DELTA_BITS "5" CACHE STRING "Compile-time bit count for relative delta baseline frame numbers")
 set(ASHIATO_SYNC_BALL_STRESS_RUN_MODE "none" CACHE STRING "How run_ashiato_sync_ball_stress invokes the stress tool: none, gprof, memcheck, or massif")

@@ -42,7 +42,7 @@ struct SyncComponentSerializationTraitsAdapter {
             previous,
             current,
             out,
-            static_cast<EntityReferenceContext*>(context.userContext));
+            context);
     }
 
     static bool deserialize(
@@ -54,7 +54,7 @@ struct SyncComponentSerializationTraitsAdapter {
             in,
             previous,
             out,
-            static_cast<EntityReferenceContext*>(context.userContext));
+            context);
     }
 };
 
@@ -80,9 +80,7 @@ ashiato::Entity register_sync_component(ashiato::Registry& registry, std::string
 
     SyncComponentOps ops;
     ops.serialization = std::move(serialization_ops);
-    ops.references_entities =
-        detail::has_context_serialize<Traits, Quantized>::value ||
-        detail::has_context_deserialize<Traits, Quantized>::value;
+    ops.references_entities = detail::references_entities<Traits>::value;
     if constexpr (detail::has_interpolate<Traits, Quantized>::value) {
         ops.interpolate = &detail::interpolate_quantized<Traits, Quantized>;
     }
@@ -126,12 +124,12 @@ SyncCueTypeId register_sync_cue(ashiato::Registry& registry, std::string name = 
     const SyncCueTypeId id = static_cast<SyncCueTypeId>(settings.cue_ops.size());
     SyncCueOps ops;
     ops.name = name.empty() ? detail::default_type_name<T>() : std::move(name);
-    ops.serialize = [](const void* value, ashiato::BitBuffer& out, EntityReferenceContext* references) {
-        detail::serialize_cue_payload<T>(*static_cast<const T*>(value), out, references);
+    ops.serialize = [](const void* value, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext& context) {
+        detail::serialize_cue_payload<T>(*static_cast<const T*>(value), out, context);
     };
-    ops.deserialize_value = [](SyncCueTypeId, void*, const ashiato::BitBuffer& payload, EntityReferenceContext* references) -> std::shared_ptr<void> {
+    ops.deserialize_value = [](SyncCueTypeId, void*, const ashiato::BitBuffer& payload, ashiato::ComponentSerializationContext& context) -> std::shared_ptr<void> {
         T value{};
-        if (!detail::read_cue_payload(payload, value, references)) {
+        if (!detail::read_cue_payload(payload, value, context)) {
             return {};
         }
         return std::make_shared<T>(std::move(value));
@@ -139,9 +137,7 @@ SyncCueTypeId register_sync_cue(ashiato::Registry& registry, std::string name = 
     ops.play = &detail::play_cue_payload<T>;
     ops.rollback = &detail::rollback_cue_payload<T>;
     ops.equals = &detail::equal_cue_payloads<T>;
-    ops.references_entities =
-        detail::has_context_cue_serialize<T>::value ||
-        detail::has_context_cue_deserialize<T>::value;
+    ops.references_entities = detail::references_entities<SyncCueTraits<T>>::value;
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
     if constexpr (detail::has_trace_cue<SyncCueTraits<T>, T>::value) {
         ops.trace = &detail::trace_cue_payload<T>;
@@ -233,11 +229,7 @@ bool CueDispatcher::emit(
     queued.type = type;
     queued.relevance_seconds = relevance_seconds;
     queued.only_replicate_to_owner = only_replicate_to_owner;
-    if (settings.cue_ops[type].references_entities) {
-        queued.value = std::make_shared<T>(cue);
-    } else {
-        settings.cue_ops[type].serialize(&cue, queued.payload, nullptr);
-    }
+    queued.value = std::make_shared<T>(cue);
     return enqueue(std::move(queued));
 }
 

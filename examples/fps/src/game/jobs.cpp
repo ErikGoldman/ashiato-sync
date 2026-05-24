@@ -145,6 +145,7 @@ void simulate_fire(
                     if (const ashiato::sync::NetworkOwner* owner = view.template try_get<const ashiato::sync::NetworkOwner>(shooter)) {
                         best_death->killer = owner->client;
                     }
+                    ++best_death->sequence;
                 }
             }
         }

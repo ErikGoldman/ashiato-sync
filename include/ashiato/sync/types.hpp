@@ -1,5 +1,12 @@
 #pragma once
 
+#if defined(ASHIATO_ENABLE_SERIALIZATION_TRACING) && !defined(ASHIATO_SYNC_ENABLE_TRACING)
+#define ASHIATO_SYNC_ENABLE_TRACING 1
+#endif
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && !defined(ASHIATO_ENABLE_SERIALIZATION_TRACING)
+#define ASHIATO_ENABLE_SERIALIZATION_TRACING 1
+#endif
+
 #include "ashiato/bit_buffer.hpp"
 #include "ashiato/sync/logging.hpp"
 #include "ashiato/sync/protocol.hpp"
@@ -42,6 +49,9 @@ class ReplicationClient;
 class ReplicationBandwidthBudget;
 class ReplicationReplayStreamer;
 class ReplicationServer;
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+class SyncTracer;
+#endif
 
 struct ReplicationPriorityObject {
     ashiato::Entity entity;
@@ -147,6 +157,8 @@ struct TraceOptions {
     bool truncate_existing = true;
     bool frame_data = false;
     bool packet_logs = false;
+    bool serialization_payloads = false;
+    std::vector<ClientId> monitored_clients;
 };
 
 struct SyncTraceStringBuilder {
@@ -427,12 +439,12 @@ struct SyncComponentOps {
 };
 
 struct SyncCueOps {
-    using SerializeFn = void (*)(const void*, ashiato::BitBuffer&, EntityReferenceContext*);
+    using SerializeFn = void (*)(const void*, ashiato::BitBuffer&, ashiato::ComponentSerializationContext&);
     using DeserializeValueFn = std::shared_ptr<void> (*)(
         SyncCueTypeId,
         void*,
         const ashiato::BitBuffer&,
-        EntityReferenceContext*);
+        ashiato::ComponentSerializationContext&);
     using PlayFn = bool (*)(
         SyncCueTypeId,
         void*,
@@ -441,20 +453,20 @@ struct SyncCueOps {
         const ashiato::BitBuffer&,
         float,
         SyncFrame,
-        EntityReferenceContext*);
+        ashiato::ComponentSerializationContext&);
     using RollbackFn = bool (*)(
         SyncCueTypeId,
         void*,
         ashiato::Registry&,
         ashiato::Entity,
         const ashiato::BitBuffer&,
-        EntityReferenceContext*);
+        ashiato::ComponentSerializationContext&);
     using EqualsFn = bool (*)(
         SyncCueTypeId,
         void*,
         const ashiato::BitBuffer&,
         const ashiato::BitBuffer&,
-        EntityReferenceContext*);
+        ashiato::ComponentSerializationContext&);
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
     using TraceFn = bool (*)(SyncCueTypeId, void*, const ashiato::BitBuffer&, SyncTraceStringBuilder&);
 #endif

@@ -153,7 +153,7 @@ bool apply_components(
                 component_payload,
                 nullptr,
                 scratch.data(),
-                ops.references_entities ? &serialization_context : nullptr)) {
+                serialization_context)) {
             return false;
         }
         if (!ops.serialization.push_to_registry(registry, entity, scratch.data())) {
@@ -247,6 +247,10 @@ bool ReplicationReplayStreamer::begin_session(
     server.rediscover_all_replicated_entities(registry);
     session.next_frame_index = 0;
     session.playback_frame = session_frames.front().frame;
+    if (!server.set_frame_without_broadcast(registry, session.playback_frame)) {
+        session = {};
+        return false;
+    }
     return true;
 }
 
@@ -452,7 +456,8 @@ bool ReplicationReplayStreamer::apply_cues(
             if (ops.deserialize_value == nullptr) {
                 continue;
             }
-            cue.value = ops.deserialize_value(type, ops.user_data, cue_payload, &references);
+            ashiato::ComponentSerializationContext serialization_context{&references};
+            cue.value = ops.deserialize_value(type, ops.user_data, cue_payload, serialization_context);
             if (!cue.value) {
                 continue;
             }

@@ -20,7 +20,7 @@ bool play_runtime_test_cue(
     const ashiato::BitBuffer& payload,
     float late_seconds,
     ashiato::sync::SyncFrame frame,
-    ashiato::sync::EntityReferenceContext*) {
+    ashiato::ComponentSerializationContext&) {
     ashiato::BitBuffer copy = payload;
     if (!registry.contains<CuePlayback>(owner)) {
         registry.add<CuePlayback>(owner);
@@ -39,7 +39,7 @@ bool rollback_runtime_test_cue(
     ashiato::Registry& registry,
     ashiato::Entity owner,
     const ashiato::BitBuffer&,
-    ashiato::sync::EntityReferenceContext*) {
+    ashiato::ComponentSerializationContext&) {
     if (!registry.contains<CuePlayback>(owner)) {
         registry.add<CuePlayback>(owner);
     }
@@ -52,7 +52,7 @@ bool equal_runtime_test_cue(
     void*,
     const ashiato::BitBuffer& lhs,
     const ashiato::BitBuffer& rhs,
-    ashiato::sync::EntityReferenceContext*) {
+    ashiato::ComponentSerializationContext&) {
     return lhs == rhs;
 }
 }

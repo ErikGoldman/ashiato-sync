@@ -25,6 +25,9 @@ struct ReplicationReplayWriterOptions {
     SyncFrame full_frame_interval_frames = 60;
     std::function<void(ReplicationReplayFrame)> write;
     SyncFrame write_interval_frames = 1;
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    SyncTracer* serialization_tracer = nullptr;
+#endif
 };
 
 class ReplicationReplayWriter final : public ServerRegistryDirtyFrameListener {

@@ -11,7 +11,7 @@ ashiato::sync::SyncComponentOps byte_input_ops() {
         ashiato::BitBuffer& packet,
         const std::uint8_t*,
         std::uint8_t* out,
-        ashiato::ComponentSerializationContext*) {
+        ashiato::ComponentSerializationContext&) {
         if (packet.remaining_bits() < 8U) {
             return false;
         }

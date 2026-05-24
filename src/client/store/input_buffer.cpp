@@ -1,10 +1,12 @@
 #include "client/store/input_buffer.hpp"
 
 #include "ashiato/sync/protocol.hpp"
+#include "ashiato/sync/tracing.hpp"
 
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <memory>
 
 namespace ashiato::sync::client_detail {
 
@@ -178,7 +180,14 @@ bool ClientInputBuffer::drain_packet(
     std::size_t packet_id_bits,
     std::vector<std::uint32_t>& pending_acks,
     std::vector<ashiato::BitBuffer>& packets,
-    ClientInputPacketTrace* trace) {
+    ClientInputPacketTrace* trace
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    ,
+    const SyncTracer* serialization_tracer,
+    ClientId client,
+    SyncFrame trace_frame
+#endif
+) {
     if (trace != nullptr) {
         *trace = {};
     }
@@ -216,9 +225,30 @@ bool ClientInputBuffer::drain_packet(
 
     ashiato::BitBuffer packet;
     packet.reserve_bytes(mtu_bytes);
-    packet.push_bits(protocol::client_input_message, 8U);
-    const std::size_t ack_count_offset = packet.bit_size();
-    packet.push_bits(0, 16U);
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    ScopedSerializationTraceCapture serialization_capture(
+        serialization_tracer,
+        SyncTracePayloadSource::Network,
+        SyncTraceRole::Client,
+        client,
+        trace_frame,
+        "client_input_packet",
+        false);
+    serialization_capture.set_target(&packet);
+    if (serialization_capture.active()) {
+        serialization_capture.event().component = component_;
+        serialization_capture.event().component_name = ops_.serialization.name;
+        add_sync_trace_payload_tag(serialization_capture.event(), sync_trace_payload_tag_incoming);
+        serialization_capture.event().data = "message=client_input";
+    }
+#endif
+    std::size_t ack_count_offset = 0;
+    {
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "message_header");
+        SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, packet, protocol::client_input_message, 8U, "message");
+        ack_count_offset = packet.bit_size();
+        SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, packet, 0, 16U, "ack_count");
+    }
 
     std::size_t reserved_first_input_bits = 0;
     if (first_input != nullptr) {
@@ -226,7 +256,8 @@ bool ClientInputBuffer::drain_packet(
         const std::uint8_t* previous = first_input_full || acked_baseline_.empty()
             ? nullptr
             : acked_baseline_.data();
-        ops_.serialization.serialize(previous, first_input_bytes, first_input_payload, nullptr);
+        ashiato::ComponentSerializationContext serialization_context;
+        ops_.serialization.serialize(previous, first_input_bytes, first_input_payload, serialization_context);
         reserved_first_input_bits = first_input_payload.bit_size();
     }
 
@@ -236,12 +267,15 @@ bool ClientInputBuffer::drain_packet(
         (mtu_bits - fixed_header_bits) / packet_id_bits);
     while (ack_count < max_acks && ack_count < pending_acks.size()) {
         const std::size_t rollback_bits = packet.bit_size();
-        packet.push_bits(pending_acks[ack_count], packet_id_bits);
+        SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, packet, pending_acks[ack_count], packet_id_bits, "ack");
         const std::size_t explicit_first_frame_bits = first_input_full ? 32U : 0U;
         if (protocol::bytes_for_bits(
                 packet.bit_size() + 32U + 16U + 1U + explicit_first_frame_bits + reserved_first_input_bits) >
             mtu_bytes) {
             packet.truncate_bits(rollback_bits);
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+            serialization_capture.truncate_to_bits(rollback_bits);
+#endif
             break;
         }
         if (trace != nullptr) {
@@ -251,12 +285,16 @@ bool ClientInputBuffer::drain_packet(
     }
     packet.overwrite_unsigned_bits(ack_count_offset, ack_count, 16U);
 
-    packet.push_bits(acked_frame_, 32U);
-    const std::size_t input_count_offset = packet.bit_size();
-    packet.push_bits(0, 16U);
-    packet.push_bool(first_input_full);
-    if (first_input_full) {
-        packet.push_bits(first_input_frame, 32U);
+    std::size_t input_count_offset = 0;
+    {
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "input_header");
+        SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, packet, acked_frame_, 32U, "acked_frame");
+        input_count_offset = packet.bit_size();
+        SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, packet, 0, 16U, "input_count");
+        SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, packet, first_input_full, "first_input_full");
+        if (first_input_full) {
+            SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, packet, first_input_frame, 32U, "first_input_frame");
+        }
     }
 
     std::uint16_t input_count = 0;
@@ -277,9 +315,21 @@ bool ClientInputBuffer::drain_packet(
 
             const std::uint8_t* input_bytes = frame_bytes(slot);
             const std::size_t rollback_bits = packet.bit_size();
-            ops_.serialization.serialize(previous, input_bytes, packet, nullptr);
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+            ashiato::ComponentSerializationContext serialization_context{nullptr, serialization_capture.payload_capture()};
+            {
+                ScopedSerializationTraceScope input_frame_scope(&serialization_capture, "input_frame");
+                ops_.serialization.serialize(previous, input_bytes, packet, serialization_context);
+            }
+#else
+            ashiato::ComponentSerializationContext serialization_context{nullptr};
+            ops_.serialization.serialize(previous, input_bytes, packet, serialization_context);
+#endif
             if (protocol::bytes_for_bits(packet.bit_size()) > mtu_bytes) {
                 packet.truncate_bits(rollback_bits);
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+                serialization_capture.truncate_to_bits(rollback_bits);
+#endif
                 break;
             }
             previous = input_bytes;
@@ -295,6 +345,9 @@ bool ClientInputBuffer::drain_packet(
         return false;
     }
     packet.overwrite_unsigned_bits(input_count_offset, input_count, 16U);
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    serialization_capture.flush();
+#endif
     packets.push_back(std::move(packet));
     if (input_count != 0U) {
         history_discontinuous_ = false;

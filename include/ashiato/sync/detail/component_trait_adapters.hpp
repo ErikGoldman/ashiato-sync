@@ -18,7 +18,7 @@ struct has_context_cue_serialize<
     std::void_t<decltype(SyncCueTraits<T>::serialize(
         std::declval<const T&>(),
         std::declval<ashiato::BitBuffer&>(),
-        std::declval<EntityReferenceContext&>()))>> : std::true_type {};
+        std::declval<ashiato::ComponentSerializationContext&>()))>> : std::true_type {};
 
 template <typename T, typename = void>
 struct has_context_cue_deserialize : std::false_type {};
@@ -29,7 +29,7 @@ struct has_context_cue_deserialize<
     std::void_t<decltype(SyncCueTraits<T>::deserialize(
         std::declval<ashiato::BitBuffer&>(),
         std::declval<T&>(),
-        std::declval<EntityReferenceContext&>()))>> : std::true_type {};
+        std::declval<ashiato::ComponentSerializationContext&>()))>> : std::true_type {};
 
 template <typename T, typename = void>
 struct has_frame_cue_play : std::false_type {};
@@ -45,26 +45,20 @@ struct has_frame_cue_play<
         std::declval<SyncFrame>()))>> : std::true_type {};
 
 template <typename T>
-void serialize_cue_payload(const T& cue, ashiato::BitBuffer& out, EntityReferenceContext* references) {
-    if constexpr (has_context_cue_serialize<T>::value) {
-        EntityReferenceContext empty_references;
-        SyncCueTraits<T>::serialize(cue, out, references != nullptr ? *references : empty_references);
-    } else {
-        (void)references;
-        SyncCueTraits<T>::serialize(cue, out);
-    }
+void serialize_cue_payload(const T& cue, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext& context) {
+    static_assert(
+        has_context_cue_serialize<T>::value,
+        "SyncCueTraits must implement serialize(cue, out, ComponentSerializationContext&)");
+    SyncCueTraits<T>::serialize(cue, out, context);
 }
 
 template <typename T>
-bool read_cue_payload(const ashiato::BitBuffer& payload, T& out, EntityReferenceContext* references = nullptr) {
+bool read_cue_payload(const ashiato::BitBuffer& payload, T& out, ashiato::ComponentSerializationContext& context) {
+    static_assert(
+        has_context_cue_deserialize<T>::value,
+        "SyncCueTraits must implement deserialize(in, out, ComponentSerializationContext&)");
     ashiato::BitBuffer copy = payload;
-    if constexpr (has_context_cue_deserialize<T>::value) {
-        EntityReferenceContext empty_references;
-        return SyncCueTraits<T>::deserialize(copy, out, references != nullptr ? *references : empty_references);
-    } else {
-        (void)references;
-        return SyncCueTraits<T>::deserialize(copy, out);
-    }
+    return SyncCueTraits<T>::deserialize(copy, out, context);
 }
 
 template <typename T>
@@ -76,9 +70,9 @@ bool play_cue_payload(
     const ashiato::BitBuffer& payload,
     float late_seconds,
     SyncFrame frame,
-    EntityReferenceContext* references) {
+    ashiato::ComponentSerializationContext& context) {
     T value{};
-    if (!read_cue_payload(payload, value, references)) {
+    if (!read_cue_payload(payload, value, context)) {
         return false;
     }
     if constexpr (has_frame_cue_play<T>::value) {
@@ -96,9 +90,9 @@ bool rollback_cue_payload(
     ashiato::Registry& registry,
     ashiato::Entity owner,
     const ashiato::BitBuffer& payload,
-    EntityReferenceContext* references) {
+    ashiato::ComponentSerializationContext& context) {
     T value{};
-    if (!read_cue_payload(payload, value, references)) {
+    if (!read_cue_payload(payload, value, context)) {
         return false;
     }
     return SyncCueTraits<T>::rollback(registry, owner, value);
@@ -110,10 +104,10 @@ bool equal_cue_payloads(
     void*,
     const ashiato::BitBuffer& lhs_payload,
     const ashiato::BitBuffer& rhs_payload,
-    EntityReferenceContext* references) {
+    ashiato::ComponentSerializationContext& context) {
     T lhs{};
     T rhs{};
-    if (!read_cue_payload(lhs_payload, lhs, references) || !read_cue_payload(rhs_payload, rhs, references)) {
+    if (!read_cue_payload(lhs_payload, lhs, context) || !read_cue_payload(rhs_payload, rhs, context)) {
         return lhs_payload == rhs_payload;
     }
     return SyncCueTraits<T>::equals_cue(lhs, rhs);
@@ -130,21 +124,18 @@ struct has_context_serialize<
         std::declval<const Quantized*>(),
         std::declval<const Quantized&>(),
         std::declval<ashiato::BitBuffer&>(),
-        std::declval<EntityReferenceContext&>()))>> : std::true_type {};
+        std::declval<ashiato::ComponentSerializationContext&>()))>> : std::true_type {};
 
 template <typename Traits, typename Quantized>
 void serialize_quantized(
     const Quantized* previous,
     const Quantized& current,
     ashiato::BitBuffer& out,
-    EntityReferenceContext* references) {
-    if constexpr (has_context_serialize<Traits, Quantized>::value) {
-        EntityReferenceContext empty_references;
-        Traits::serialize(previous, current, out, references != nullptr ? *references : empty_references);
-    } else {
-        (void)references;
-        Traits::serialize(previous, current, out);
-    }
+    ashiato::ComponentSerializationContext& context) {
+    static_assert(
+        has_context_serialize<Traits, Quantized>::value,
+        "SyncComponentTraits must implement serialize(previous, current, out, ComponentSerializationContext&)");
+    Traits::serialize(previous, current, out, context);
 }
 
 template <typename Traits, typename Quantized, typename = void>
@@ -158,22 +149,26 @@ struct has_context_deserialize<
         std::declval<ashiato::BitBuffer&>(),
         std::declval<const Quantized*>(),
         std::declval<Quantized&>(),
-        std::declval<EntityReferenceContext&>()))>> : std::true_type {};
+        std::declval<ashiato::ComponentSerializationContext&>()))>> : std::true_type {};
 
 template <typename Traits, typename Quantized>
 bool deserialize_quantized(
     ashiato::BitBuffer& in,
     const Quantized* previous,
     Quantized& out,
-    EntityReferenceContext* references) {
-    if constexpr (has_context_deserialize<Traits, Quantized>::value) {
-        EntityReferenceContext empty_references;
-        return Traits::deserialize(in, previous, out, references != nullptr ? *references : empty_references);
-    } else {
-        (void)references;
-        return Traits::deserialize(in, previous, out);
-    }
+    ashiato::ComponentSerializationContext& context) {
+    static_assert(
+        has_context_deserialize<Traits, Quantized>::value,
+        "SyncComponentTraits must implement deserialize(in, previous, out, ComponentSerializationContext&)");
+    return Traits::deserialize(in, previous, out, context);
 }
+
+template <typename Traits, typename = void>
+struct references_entities : std::false_type {};
+
+template <typename Traits>
+struct references_entities<Traits, std::void_t<decltype(Traits::references_entities)>> :
+    std::bool_constant<Traits::references_entities> {};
 
 template <typename Traits, typename Quantized, typename = void>
 struct has_interpolate : std::false_type {};
@@ -375,7 +370,12 @@ struct has_trace_cue<
 template <typename T>
 bool trace_cue_payload(SyncCueTypeId, void*, const ashiato::BitBuffer& payload, SyncTraceStringBuilder& out) {
     T value{};
-    if (!read_cue_payload(payload, value)) {
+    ashiato::ComponentSerializationContext context;
+    try {
+        if (!read_cue_payload(payload, value, context)) {
+            return false;
+        }
+    } catch (...) {
         return false;
     }
     SyncCueTraits<T>::trace(value, out);

@@ -203,7 +203,8 @@ TEST_CASE("sync component traits provide type-erased quantization and serializat
     ops->serialization.quantize(&position, quantized.data());
 
     ashiato::BitBuffer payload;
-    ops->serialization.serialize(nullptr, quantized.data(), payload, nullptr);
+    ashiato::ComponentSerializationContext serialization_context;
+    ops->serialization.serialize(nullptr, quantized.data(), payload, serialization_context);
     const NetworkedPayload fields = read_networked_payload(payload);
     REQUIRE_FALSE(fields.delta);
     REQUIRE(fields.x == 10);
@@ -211,7 +212,7 @@ TEST_CASE("sync component traits provide type-erased quantization and serializat
 
     payload.reset_read();
     std::array<std::uint8_t, sizeof(ashiato_sync_tests::QuantizedNetworkedPosition)> decoded{};
-    REQUIRE(ops->serialization.deserialize(payload, nullptr, decoded.data(), nullptr));
+    REQUIRE(ops->serialization.deserialize(payload, nullptr, decoded.data(), serialization_context));
 
     NetworkedPosition dequantized;
     ops->serialization.dequantize(decoded.data(), &dequantized);

@@ -448,11 +448,11 @@ struct SyncComponentTraits<replay_network_tests::ReplayTransform> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(out));
         return true;
     }
@@ -470,11 +470,11 @@ struct SyncComponentTraits<replay_network_tests::ReplayDeathState> {
         return value;
     }
 
-    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out) {
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         out.push_bits(current.dead, 1U);
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out) {
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
         out.dead = static_cast<std::uint8_t>(in.read_bits(1U));
         return true;
     }
@@ -482,11 +482,18 @@ struct SyncComponentTraits<replay_network_tests::ReplayDeathState> {
 
 template <>
 struct SyncCueTraits<replay_network_tests::ShootingCue> {
-    static void serialize(const replay_network_tests::ShootingCue& cue, ashiato::BitBuffer& out) {
-        out.push_bits(cue.id, 16U);
+    static void serialize(
+        const replay_network_tests::ShootingCue& cue,
+        ashiato::BitBuffer& out,
+        ashiato::ComponentSerializationContext& context) {
+        SERIALIZE_TRACE(out, cue.id, 16U, "id");
     }
 
-    static bool deserialize(ashiato::BitBuffer& in, replay_network_tests::ShootingCue& out) {
+    static bool deserialize(
+        ashiato::BitBuffer& in,
+        replay_network_tests::ShootingCue& out,
+        ashiato::ComponentSerializationContext& context) {
+        ASHIATO_SERIALIZATION_TRACE_SCOPE("id");
         out.id = static_cast<std::int32_t>(in.read_bits(16U));
         return true;
     }

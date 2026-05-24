@@ -174,6 +174,8 @@ public:
 private:
     void record_ping_sample(float sample) noexcept;
     void compute_auto_targets() noexcept;
+    double time_sync_reconfigure_threshold_frames() const noexcept;
+    void reconfigure_frames_from_estimated_server_time() noexcept;
     double observed_downstream_frames(SyncFrame server_frame, double observed_server_frame) const noexcept;
     SyncFrame fast_recovery_step(SyncFrame current, SyncFrame target) const noexcept;
     SyncFrame prediction_target_from_observed(double observed_downstream) const noexcept;

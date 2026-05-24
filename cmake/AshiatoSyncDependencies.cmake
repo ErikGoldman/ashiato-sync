@@ -6,10 +6,12 @@ function(ashiato_sync_add_ashiato_dependency)
     set(ASHIATO_SYNC_ASHIATO_GIT_REPOSITORY
         "https://github.com/ErikGoldman/ashiato.git"
         CACHE STRING "Ashiato ECS Git repository"
+        FORCE
     )
     set(ASHIATO_SYNC_ASHIATO_GIT_TAG
-        "42294744ec5cc632055f5b04f6f5be233ad18261"
+        "6a964ea7347b130391687467a46f524a24e49ddc"
         CACHE STRING "Pinned Ashiato ECS Git commit/tag"
+        FORCE
     )
     set(ASHIATO_SYNC_ASHIATO_SOURCE_DIR
         ""
@@ -19,6 +21,7 @@ function(ashiato_sync_add_ashiato_dependency)
     set(ASHIATO_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
     set(ASHIATO_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
     set(ASHIATO_BUILD_PROFILING OFF CACHE BOOL "" FORCE)
+    set(ASHIATO_ENABLE_SERIALIZATION_TRACING ${ASHIATO_SYNC_ENABLE_TRACING} CACHE BOOL "" FORCE)
     set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 
     if(ASHIATO_SYNC_ASHIATO_SOURCE_DIR)
@@ -31,6 +34,30 @@ function(ashiato_sync_add_ashiato_dependency)
             GIT_PROGRESS TRUE
         )
         FetchContent_MakeAvailable(Ashiato)
+        FetchContent_GetProperties(Ashiato)
+        if(ashiato_SOURCE_DIR)
+            set(ashiato_resolved_source_dir "${ashiato_SOURCE_DIR}")
+        elseif(Ashiato_SOURCE_DIR)
+            set(ashiato_resolved_source_dir "${Ashiato_SOURCE_DIR}")
+        else()
+            set(ashiato_resolved_source_dir "${PROJECT_BINARY_DIR}/_deps/ashiato-src")
+        endif()
+        if(EXISTS "${ashiato_resolved_source_dir}/.git")
+            execute_process(
+                COMMAND git -C "${ashiato_resolved_source_dir}" rev-parse HEAD
+                OUTPUT_VARIABLE ashiato_resolved_git_tag
+                ERROR_QUIET
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+            )
+            if(ashiato_resolved_git_tag AND NOT ashiato_resolved_git_tag STREQUAL ASHIATO_SYNC_ASHIATO_GIT_TAG)
+                message(FATAL_ERROR
+                    "Cached Ashiato dependency at ${ashiato_resolved_source_dir} is ${ashiato_resolved_git_tag}, "
+                    "but Ashiato Sync pins ${ASHIATO_SYNC_ASHIATO_GIT_TAG}. "
+                    "Remove ${PROJECT_BINARY_DIR}/_deps/ashiato-src and ${PROJECT_BINARY_DIR}/_deps/ashiato-build, "
+                    "or configure with -DASHIATO_SYNC_ASHIATO_SOURCE_DIR=/path/to/ashiato."
+                )
+            endif()
+        endif()
     endif()
 
     set(BUILD_TESTING ${ashiato_sync_build_testing} CACHE BOOL "" FORCE)

@@ -89,6 +89,7 @@ struct FpsServerFrame {
 
 struct FpsDeathInfo {
     ashiato::sync::ClientId killer = ashiato::sync::invalid_client_id;
+    std::uint32_t sequence = 0;
 };
 
 struct FpsShotEffect {

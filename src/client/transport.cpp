@@ -78,12 +78,30 @@ void ReplicationClient::send_pending_packets() {
 }
 
 void ReplicationClient::drain_ack_packets_into(std::vector<ashiato::BitBuffer>& packets) {
-#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     std::vector<client_detail::ClientAckPacketTrace> traces;
-    ack_queue_->drain_ack_packets(options_.network.mtu_bytes, configured_packet_id_bits(options_), packets, &traces);
+    ack_queue_->drain_ack_packets(
+        options_.network.mtu_bytes,
+        configured_packet_id_bits(options_),
+        packets,
+        &traces,
+        tracer_,
+        client_id_,
+        clock_.predicted_frame());
     for (const client_detail::ClientAckPacketTrace& trace : traces) {
         trace_outgoing_ack_packet(trace.acks);
     }
+#else
+    ack_queue_->drain_ack_packets(
+        options_.network.mtu_bytes,
+        configured_packet_id_bits(options_),
+        packets,
+        nullptr,
+        tracer_,
+        client_id_,
+        clock_.predicted_frame());
+#endif
 #else
     ack_queue_->drain_ack_packets(options_.network.mtu_bytes, configured_packet_id_bits(options_), packets, nullptr);
 #endif
@@ -93,17 +111,32 @@ void ReplicationClient::drain_input_packets_into(std::vector<ashiato::BitBuffer>
     if (session_transport_->connection_state != ReplicationClientConnectionState::Ready || !clock_.bootstrapped()) {
         return;
     }
-#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+#ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     client_detail::ClientInputPacketTrace trace;
     const bool sent = input_->drain_packet(
         options_.network.mtu_bytes,
         configured_packet_id_bits(options_),
         ack_queue_->pending(),
         packets,
-        &trace);
+        &trace,
+        tracer_,
+        client_id_,
+        clock_.predicted_frame());
     if (sent && trace.sent) {
         trace_outgoing_input_packet(trace.acks, trace.baseline_frame, trace.first_input_frame, trace.last_input_frame);
     }
+#else
+    (void)input_->drain_packet(
+        options_.network.mtu_bytes,
+        configured_packet_id_bits(options_),
+        ack_queue_->pending(),
+        packets,
+        nullptr,
+        tracer_,
+        client_id_,
+        clock_.predicted_frame());
+#endif
 #else
     (void)input_->drain_packet(
         options_.network.mtu_bytes,
