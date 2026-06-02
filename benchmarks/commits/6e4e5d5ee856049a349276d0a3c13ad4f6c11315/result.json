@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "commit": "6e4e5d5ee856049a349276d0a3c13ad4f6c11315",
+  "ref": "main",
+  "repository": "ErikGoldman/ashiato-sync",
+  "run_id": "26796184126",
+  "run_attempt": "1",
+  "started_at": "2026-06-02T03:20:03.240830+00:00",
+  "finished_at": "2026-06-02T03:20:26.417953+00:00",
+  "subset": "characteristic",
+  "cpu_filter": "^(BM_ServerTickSerializedDelta/16384/8|BM_ServerTickPackedAckedDeltaShared/16384/8|BM_ServerTickMutatingAckedDelta/16384/8|BM_ServerTickBudgetLimited/16384/8/64|BM_ClientReceivePredict/4096/16|BM_ClientApplyBufferedInterpolation/4096/16|BM_ClientSampleFractionalTickLargePayload/1024/16|BM_BitBufferAppendBits/131072)$",
+  "bandwidth_scenarios": [
+    "ball_snap_baseline",
+    "ball_buffered_latency",
+    "prediction_rollback_mixed"
+  ],
+  "cpu": [
+    {
+      "name": "BM_ClientReceivePredict/4096/16",
+      "real_time": 20915386.87499961,
+      "cpu_time": 20915326.781249996,
+      "time_unit": "ns",
+      "items_per_second": 16877.57517211993,
+      "bytes_per_second": null,
+      "iterations": 32
+    },
+    {
+      "name": "BM_ClientApplyBufferedInterpolation/4096/16",
+      "real_time": 7339190.3267324185,
+      "cpu_time": 7337113.742574261,
+      "time_unit": "ns",
+      "items_per_second": 2180.694011482821,
+      "bytes_per_second": null,
+      "iterations": 101
+    },
+    {
+      "name": "BM_ClientSampleFractionalTickLargePayload/1024/16",
+      "real_time": 1300703.580705018,
+      "cpu_time": 1300435.892393315,
+      "time_unit": "ns",
+      "items_per_second": 11534.593967868792,
+      "bytes_per_second": null,
+      "iterations": 539
+    },
+    {
+      "name": "BM_ServerTickBudgetLimited/16384/8/64",
+      "real_time": 14140497.291666776,
+      "cpu_time": 14140481.645833334,
+      "time_unit": "ns",
+      "items_per_second": 36208.10187543132,
+      "bytes_per_second": null,
+      "iterations": 48
+    },
+    {
+      "name": "BM_ServerTickSerializedDelta/16384/8",
+      "real_time": 98926165.14285839,
+      "cpu_time": 98913546.0000001,
+      "time_unit": "ns",
+      "items_per_second": 1325116.784307782,
+      "bytes_per_second": null,
+      "iterations": 7
+    },
+    {
+      "name": "BM_ServerTickPackedAckedDeltaShared/16384/8",
+      "real_time": 546422.1572942144,
+      "cpu_time": 546337.9054604733,
+      "time_unit": "ns",
+      "items_per_second": 239910133.80176833,
+      "bytes_per_second": null,
+      "iterations": 1227
+    },
+    {
+      "name": "BM_ServerTickMutatingAckedDelta/16384/8",
+      "real_time": 172450513.6666655,
+      "cpu_time": 172447022.00000006,
+      "time_unit": "ns",
+      "items_per_second": 760071.1133185006,
+      "bytes_per_second": null,
+      "iterations": 3
+    },
+    {
+      "name": "BM_BitBufferAppendBits/131072",
+      "real_time": 241.50758703537647,
+      "cpu_time": 241.49477480327798,
+      "time_unit": "ns",
+      "items_per_second": 542752944061.7151,
+      "bytes_per_second": null,
+      "iterations": 2895202
+    }
+  ],
+  "bandwidth": [
+    {
+      "scenario": "ball_snap_baseline",
+      "wall_seconds": 0.645772853,
+      "server_replication_seconds": 0.398891517,
+      "client_receive_seconds": 0.214699118,
+      "server_to_clients_bytes": 6620612,
+      "server_to_clients_packets": 5876,
+      "clients_to_server_bytes": 6492,
+      "clients_to_server_packets": 604,
+      "server_bytes": null,
+      "server_packets": null,
+      "client_bytes": null,
+      "client_packets": null
+    },
+    {
+      "scenario": "ball_buffered_latency",
+      "wall_seconds": 0.893383689,
+      "server_replication_seconds": 0.490253944,
+      "client_receive_seconds": 0.346138954,
+      "server_to_clients_bytes": 8057160,
+      "server_to_clients_packets": 7080,
+      "clients_to_server_bytes": 7358,
+      "clients_to_server_packets": 599,
+      "server_bytes": null,
+      "server_packets": null,
+      "client_bytes": null,
+      "client_packets": null
+    },
+    {
+      "scenario": "prediction_rollback_mixed",
+      "wall_seconds": 7.101327,
+      "server_replication_seconds": 2.324633,
+      "client_receive_seconds": 1.998601,
+      "server_to_clients_bytes": null,
+      "server_to_clients_packets": null,
+      "clients_to_server_bytes": null,
+      "clients_to_server_packets": null,
+      "server_bytes": 30579612,
+      "server_packets": 25950,
+      "client_bytes": 27188,
+      "client_packets": 1217
+    }
+  ]
+}
