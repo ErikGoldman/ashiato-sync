@@ -30,8 +30,8 @@ TEST_CASE("replication server logs malformed client packets as warnings") {
     ashiato::sync::ReplicationServer server(registry, options);
 
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
-    packet.push_bits(1, 16U);
+    packet.write_bits(ashiato::sync::protocol::client_ack_message, ashiato::sync::protocol::message_bits);
+    packet.write_bits(1, ashiato::sync::protocol::ack_count_bits);
 
     REQUIRE_FALSE(server.process_packet(99, packet));
 
@@ -62,8 +62,8 @@ TEST_CASE("replication server logs server callback failures as errors") {
     REQUIRE(server.add_client(1));
 
     ashiato::BitBuffer ping;
-    ping.push_bits(ashiato::sync::protocol::client_ping_message, 8U);
-    ping.push_bits(7, 32U);
+    ping.write_bits(ashiato::sync::protocol::client_ping_message, ashiato::sync::protocol::message_bits);
+    ping.write_bits(7, 32U);
 
     REQUIRE_FALSE(server.process_packet(registry, 1, ping));
 
@@ -88,8 +88,8 @@ TEST_CASE("replication server can suppress repeated per-peer warning logs") {
     ashiato::sync::ReplicationServer server(registry, options);
 
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
-    packet.push_bits(1, 16U);
+    packet.write_bits(ashiato::sync::protocol::client_ack_message, ashiato::sync::protocol::message_bits);
+    packet.write_bits(1, ashiato::sync::protocol::ack_count_bits);
 
     REQUIRE_FALSE(server.process_packet(99, packet));
     REQUIRE_FALSE(server.process_packet(99, packet));
@@ -166,7 +166,7 @@ TEST_CASE("replication server emits rejected connection callback") {
     ashiato::sync::ReplicationServer server(registry, options);
 
     ashiato::BitBuffer connect;
-    connect.push_bits(ashiato::sync::protocol::client_connect_request_message, 8U);
+    connect.write_bits(ashiato::sync::protocol::client_connect_request_message, ashiato::sync::protocol::message_bits);
     ashiato::sync::protocol::write_string(connect, "token");
 
     REQUIRE(server.process_packet(registry, 99, connect));

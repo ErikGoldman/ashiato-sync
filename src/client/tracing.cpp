@@ -148,6 +148,30 @@ void append_trace_cue_data(
 #endif
 }
 
+void append_trace_cue_value(
+    const SyncTracer* tracer,
+    const SyncSettings& settings,
+    SyncCueTypeId cue_type,
+    const CueValue& value,
+    SyncTraceEvent& event) {
+#ifdef ASHIATO_SYNC_TRACE_COMPONENT_DATA
+    if (tracer == nullptr || !tracer->frame_data_enabled() ||
+        cue_type >= settings.cue_ops.size() || settings.cue_ops[cue_type].trace_value == nullptr) {
+        return;
+    }
+    SyncTraceStringBuilder builder;
+    if (settings.cue_ops[cue_type].trace_value(cue_type, settings.cue_ops[cue_type].user_data, value.data(), builder)) {
+        event.data = std::move(builder.value);
+    }
+#else
+    (void)tracer;
+    (void)settings;
+    (void)cue_type;
+    (void)value;
+    (void)event;
+#endif
+}
+
 void append_trace_data_field(SyncTraceEvent& event, const char* key, const char* value) {
     if (key == nullptr || value == nullptr || value[0] == '\0') {
         return;
@@ -371,7 +395,7 @@ void ReplicationClient::trace_cue_event(
     event.archetype = state.identity.archetype;
     event.cue_type = cue.type;
     append_trace_cue_name(settings, cue.type, event);
-    append_trace_cue_data(tracer_, settings, cue.type, cue.payload, event);
+    append_trace_cue_value(tracer_, settings, cue.type, cue.value, event);
     append_trace_data_field(event, "source", cue_source);
     append_trace_data_field(event, "rollback_reason", rollback_reason);
     tracer_->trace(event);
@@ -396,7 +420,7 @@ void ReplicationClient::trace_cue_event(
     event.archetype = state.identity.archetype;
     event.cue_type = cue.type;
     append_trace_cue_name(settings, cue.type, event);
-    append_trace_cue_data(tracer_, settings, cue.type, cue.payload, event);
+    append_trace_cue_value(tracer_, settings, cue.type, cue.value, event);
     append_trace_data_field(event, "source", cue_source);
     append_trace_data_field(event, "rollback_reason", rollback_reason);
     tracer_->trace(event);
@@ -409,6 +433,32 @@ void ReplicationClient::trace_outgoing_ack_packet(const std::vector<std::uint32_
     }
     SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::PacketLog, client_id_, clock_.predicted_frame());
     event.data = "direction=out,message=client_ack,acks=" + packet_ack_list(acks);
+    tracer_->trace(event);
+}
+
+void ReplicationClient::trace_outgoing_ping_packet(std::uint32_t sequence) const {
+    if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->packet_logs_enabled()) {
+        return;
+    }
+    SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::PacketLog, client_id_, clock_.predicted_frame());
+    event.data = "direction=out,message=client_ping,sequence=" + std::to_string(sequence);
+    tracer_->trace(event);
+}
+
+void ReplicationClient::trace_incoming_pong_packet(
+    std::uint32_t sequence,
+    SyncFrame local_frame,
+    SyncFrame server_receive_frame,
+    SyncFrame server_send_frame) const {
+    if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->packet_logs_enabled()) {
+        return;
+    }
+    SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::PacketLog, client_id_, local_frame);
+    std::ostringstream out;
+    out << "direction=in,message=server_pong,sequence=" << sequence
+        << ",server_receive_frame=" << server_receive_frame
+        << ",server_frame=" << server_send_frame;
+    event.data = out.str();
     tracer_->trace(event);
 }
 
@@ -440,7 +490,8 @@ void ReplicationClient::trace_incoming_update_packet(
     std::uint32_t packet_id,
     SyncFrame input_ack_frame,
     std::uint16_t record_count,
-    bool applied) const {
+    bool applied,
+    const char* apply_failure_reason) const {
     if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->packet_logs_enabled()) {
         return;
     }
@@ -451,8 +502,11 @@ void ReplicationClient::trace_incoming_update_packet(
         << ",server_frame=" << server_frame
         << ",input_ack=" << input_ack_frame
         << ",record_count=" << record_count
-        << ",applied=" << (applied ? "true" : "false")
-        << ",cues=[";
+        << ",applied=" << (applied ? "true" : "false");
+    if (!applied && apply_failure_reason != nullptr && apply_failure_reason[0] != '\0') {
+        out << ",apply_failure=" << apply_failure_reason;
+    }
+    out << ",cues=[";
     const std::vector<std::string>& cue_summaries = cue_runtime_->current_packet_cue_summaries();
     for (std::size_t index = 0; index < cue_summaries.size(); ++index) {
         if (index != 0U) {

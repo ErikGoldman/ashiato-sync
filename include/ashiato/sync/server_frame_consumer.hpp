@@ -64,7 +64,7 @@ private:
         std::vector<Entry> listeners;
     };
 
-    ServerRegistryDirtyFrameSubscription(std::shared_ptr<State> state, std::uint64_t id);
+    ServerRegistryDirtyFrameSubscription(const std::shared_ptr<State>& state, std::uint64_t id);
 
     std::weak_ptr<State> state_;
     std::uint64_t id_ = 0;
@@ -108,7 +108,7 @@ private:
         std::vector<Entry> listeners;
     };
 
-    ServerFrameBatchListenerSubscription(std::shared_ptr<State> state, std::uint64_t id);
+    ServerFrameBatchListenerSubscription(const std::shared_ptr<State>& state, std::uint64_t id);
 
     std::weak_ptr<State> state_;
     std::uint64_t id_ = 0;

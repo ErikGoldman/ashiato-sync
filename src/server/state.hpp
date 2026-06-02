@@ -30,7 +30,7 @@ struct ReplicationServer::QuantizedFrame {
 
 struct ReplicationServer::ClientState {
     ClientId id = invalid_client_id;
-    ClientId peer = invalid_client_id;
+    PeerId peer = invalid_peer_id;
     bool local = false;
     bool ready_for_updates = true;
     double connect_resend_accumulator_seconds = 0.0;
@@ -40,7 +40,7 @@ struct ReplicationServer::ClientState {
 };
 
 struct ReplicationServer::PendingInboundPacket {
-    ClientId client = invalid_client_id;
+    PeerId client = invalid_peer_id;
     ashiato::BitBuffer packet;
 };
 

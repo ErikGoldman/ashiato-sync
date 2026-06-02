@@ -49,7 +49,7 @@ std::uint8_t* mutable_frame_component_data(
     std::size_t component_index);
 std::uint8_t* mutable_frame_component_data(
     const SyncArchetype& archetype,
-    MutableFrameDataView frame,
+    const MutableFrameDataView& frame,
     std::size_t component_index);
 std::uint8_t* unchecked_mutable_frame_component_data(
     const SyncArchetype& archetype,
@@ -57,7 +57,7 @@ std::uint8_t* unchecked_mutable_frame_component_data(
     std::size_t component_index) noexcept;
 std::uint8_t* unchecked_mutable_frame_component_data(
     const SyncArchetype& archetype,
-    MutableFrameDataView frame,
+    const MutableFrameDataView& frame,
     std::size_t component_index) noexcept;
 bool tag_bit_set(std::uint64_t tag_mask, std::size_t tag_index) noexcept;
 bool apply_archetype_tags(

@@ -77,6 +77,10 @@ public:
 
 private:
     bool ready_for(const SyncSettings& settings) const noexcept;
+    void apply_quantized_to_owned_entities(
+        ashiato::Registry& registry,
+        const SyncSettings& settings,
+        const std::uint8_t* quantized) const;
     void ensure_capacity(std::size_t capacity_frames);
     std::uint8_t* frame_bytes(std::size_t slot) noexcept;
     const std::uint8_t* frame_bytes(std::size_t slot) const noexcept;

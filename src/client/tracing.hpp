@@ -61,6 +61,12 @@ void append_trace_cue_data(
     SyncCueTypeId cue_type,
     const ashiato::BitBuffer& payload,
     SyncTraceEvent& event);
+void append_trace_cue_value(
+    const SyncTracer* tracer,
+    const SyncSettings& settings,
+    SyncCueTypeId cue_type,
+    const CueValue& value,
+    SyncTraceEvent& event);
 void append_trace_data_field(SyncTraceEvent& event, const char* key, const char* value);
 void append_trace_cue_name(const SyncSettings& settings, SyncCueTypeId cue_type, SyncTraceEvent& event);
 

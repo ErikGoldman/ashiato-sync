@@ -40,7 +40,7 @@ struct SyncComponentTraits<HeaderApiDefaultNamedComponent> {
     }
 
     static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
-        out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
+        out.write_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
     static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
@@ -58,7 +58,7 @@ struct SyncCueTraits<HeaderApiDefaultNamedCue> {
         const HeaderApiDefaultNamedCue& cue,
         ashiato::BitBuffer& out,
         ashiato::ComponentSerializationContext& context) {
-        SERIALIZE_TRACE(out, cue.value, 8U, "value");
+        ASHIATO_SERIALIZE_TRACE(out, cue.value, 8U, "value");
     }
 
     static bool deserialize(
@@ -142,7 +142,7 @@ TEST_CASE("example network simulator drops queued packets without preserving ban
     link.settings.bandwidth_kbps = 1.0;
 
     ashiato::BitBuffer packet;
-    packet.push_bits(1, 8U);
+    packet.write_bits(1, 8U);
     REQUIRE(link.enqueue(1, packet, 1.0));
     REQUIRE(link.size() == 1U);
 

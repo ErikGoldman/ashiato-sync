@@ -22,13 +22,13 @@ ashiato::BitBuffer make_destroy_packet_for_wire_ids(
     std::uint32_t first_wire_id,
     std::uint16_t count) {
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
-    packet.push_bits(frame, 32U);
-    packet.push_bits(packet_id, ashiato::sync::protocol::server_packet_id_bits);
-    packet.push_bits(0, 32U);
-    packet.push_bits(count, 16U);
+    packet.write_bits(ashiato::sync::protocol::server_update_message, ashiato::sync::protocol::message_bits);
+    packet.write_bits(frame, 32U);
+    packet.write_bits(packet_id, ashiato::sync::protocol::server_packet_id_bits);
+    packet.write_bits(0, 32U);
+    packet.write_bits(count, 16U);
     for (std::uint16_t offset = 0; offset < count; ++offset) {
-        packet.push_bool(true);
+        packet.write_bool(true);
         ashiato::sync::protocol::write_network_entity_id(packet, first_wire_id + offset);
     }
     return packet;
@@ -454,20 +454,20 @@ TEST_CASE("replication client rejects invalid deltas without ACKing") {
     ashiato_sync_tests::configure_test_client_registry(registry, 1);
 
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
-    packet.push_bits(1, 32U);
-    packet.push_bits(1, ashiato::sync::protocol::server_packet_id_bits);
-    packet.push_bits(0, 32U);
-    packet.push_bits(1, 16U);
-    packet.push_bool(false);
+    packet.write_bits(ashiato::sync::protocol::server_update_message, ashiato::sync::protocol::message_bits);
+    packet.write_bits(1, 32U);
+    packet.write_bits(1, ashiato::sync::protocol::server_packet_id_bits);
+    packet.write_bits(0, 32U);
+    packet.write_bits(1, 16U);
+    packet.write_bool(false);
     ashiato::sync::protocol::write_network_entity_id(packet, 1);
-    packet.push_bool(false);
-    packet.push_bits(1, 16U);
-    packet.push_bits(0, ashiato::sync::protocol::bits_for_range(2U));
-    packet.push_bits(17, 32U);
-    packet.push_bool(true);
-    packet.push_bits(10, 8U);
-    packet.push_bits(10, 8U);
+    packet.write_bool(false);
+    packet.write_bits(1, 16U);
+    packet.write_bits(0, ashiato::sync::protocol::bits_for_range(2U));
+    packet.write_bits(17, 32U);
+    packet.write_bool(true);
+    packet.write_bits(10, 8U);
+    packet.write_bits(10, 8U);
 
     ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, {}));
     REQUIRE_FALSE(client.receive(registry, packet));
@@ -486,24 +486,24 @@ TEST_CASE("replication client rejects malformed update packets without ACKing") 
     REQUIRE_FALSE(client.receive(registry, empty));
 
     ashiato::BitBuffer wrong_message;
-    wrong_message.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
+    wrong_message.write_bits(ashiato::sync::protocol::client_ack_message, ashiato::sync::protocol::message_bits);
     REQUIRE_FALSE(client.receive(registry, wrong_message));
 
     ashiato::BitBuffer truncated_header;
-    truncated_header.push_bits(ashiato::sync::protocol::server_update_message, 8U);
-    truncated_header.push_bits(1, 32U);
+    truncated_header.write_bits(ashiato::sync::protocol::server_update_message, ashiato::sync::protocol::message_bits);
+    truncated_header.write_bits(1, 32U);
     REQUIRE_FALSE(client.receive(registry, truncated_header));
 
     ashiato::BitBuffer invalid_archetype;
-    invalid_archetype.push_bits(ashiato::sync::protocol::server_update_message, 8U);
-    invalid_archetype.push_bits(1, 32U);
-    invalid_archetype.push_bits(1, ashiato::sync::protocol::server_packet_id_bits);
-    invalid_archetype.push_bits(0, 32U);
-    invalid_archetype.push_bits(1, 16U);
-    invalid_archetype.push_bool(false);
+    invalid_archetype.write_bits(ashiato::sync::protocol::server_update_message, ashiato::sync::protocol::message_bits);
+    invalid_archetype.write_bits(1, 32U);
+    invalid_archetype.write_bits(1, ashiato::sync::protocol::server_packet_id_bits);
+    invalid_archetype.write_bits(0, 32U);
+    invalid_archetype.write_bits(1, 16U);
+    invalid_archetype.write_bool(false);
     ashiato::sync::protocol::write_network_entity_id(invalid_archetype, 1);
-    invalid_archetype.push_bool(true);
-    invalid_archetype.push_bits(99, 32U);
+    invalid_archetype.write_bool(true);
+    invalid_archetype.write_bits(99, 32U);
     REQUIRE_FALSE(client.receive(registry, invalid_archetype));
 
     REQUIRE(client.pending_ack_count() == 0);
@@ -518,20 +518,20 @@ TEST_CASE("replication client rejects malformed entity records without ACKing") 
 
     auto make_update_prefix = [](std::uint16_t record_count = 1) {
         ashiato::BitBuffer packet;
-        packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
-        packet.push_bits(1, 32U);
-        packet.push_bits(1, ashiato::sync::protocol::server_packet_id_bits);
-        packet.push_bits(0, 32U);
-        packet.push_bits(record_count, 16U);
+        packet.write_bits(ashiato::sync::protocol::server_update_message, ashiato::sync::protocol::message_bits);
+        packet.write_bits(1, 32U);
+        packet.write_bits(1, ashiato::sync::protocol::server_packet_id_bits);
+        packet.write_bits(0, 32U);
+        packet.write_bits(record_count, 16U);
         return packet;
     };
 
     {
         ashiato::BitBuffer packet = make_update_prefix();
-        packet.push_bool(false);
+        packet.write_bool(false);
         ashiato::sync::protocol::write_network_entity_id(packet, 0);
-        packet.push_bool(true);
-        packet.push_bits(0, 32U);
+        packet.write_bool(true);
+        packet.write_bits(0, 32U);
 
         ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, {}));
         REQUIRE_FALSE(client.receive(registry, packet));
@@ -540,13 +540,13 @@ TEST_CASE("replication client rejects malformed entity records without ACKing") 
 
     {
         ashiato::BitBuffer packet = make_update_prefix();
-        packet.push_bool(false);
+        packet.write_bool(false);
         ashiato::sync::protocol::write_network_entity_id(packet, 1);
-        packet.push_bool(true);
-        packet.push_bits(0, 32U);
-        packet.push_bool(false);
-        packet.push_bits(1, 16U);
-        packet.push_bits(2, ashiato::sync::protocol::bits_for_range(2U));
+        packet.write_bool(true);
+        packet.write_bits(0, 32U);
+        packet.write_bool(false);
+        packet.write_bits(1, 16U);
+        packet.write_bits(2, ashiato::sync::protocol::bits_for_range(2U));
 
         ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, {}));
         REQUIRE_FALSE(client.receive(registry, packet));
@@ -555,14 +555,14 @@ TEST_CASE("replication client rejects malformed entity records without ACKing") 
 
     {
         ashiato::BitBuffer packet = make_update_prefix();
-        packet.push_bool(false);
+        packet.write_bool(false);
         ashiato::sync::protocol::write_network_entity_id(packet, 1);
-        packet.push_bool(true);
-        packet.push_bits(0, 32U);
-        packet.push_bool(false);
-        packet.push_bits(1, 16U);
-        packet.push_bits(1, ashiato::sync::protocol::bits_for_range(2U));
-        packet.push_bits(1, 8U);
+        packet.write_bool(true);
+        packet.write_bits(0, 32U);
+        packet.write_bool(false);
+        packet.write_bits(1, 16U);
+        packet.write_bits(1, ashiato::sync::protocol::bits_for_range(2U));
+        packet.write_bits(1, 8U);
 
         ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, {}));
         REQUIRE_FALSE(client.receive(registry, packet));
@@ -659,7 +659,7 @@ TEST_CASE("replication client packs ACKs within the configured MTU") {
 
 TEST_CASE("replication client retains ACKs that cannot fit the configured MTU") {
     ashiato::Registry client_registry;
-    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, ashiato::sync::ReplicationClientOptions{ashiato::sync::ReplicationClientNetworkOptions{3}}));
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, ashiato::sync::ReplicationClientOptions{ashiato::sync::ReplicationClientNetworkOptions{1}}));
     ashiato::Registry server_registry;
     const ashiato::sync::SyncArchetypeId server_archetype = ashiato_sync_tests::define_position_archetype(server_registry);
     const ashiato::Entity server_entity = server_registry.create();
@@ -883,16 +883,20 @@ TEST_CASE("replication client reconciles components when owner visibility change
     const ashiato::Entity server_position =
         ashiato::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
     const ashiato::Entity server_health = ashiato::sync::register_sync_component<Health>(server_registry, "Health");
+    const ashiato::Entity server_public_state =
+        ashiato::sync::register_sync_component<BandwidthProbe>(server_registry, "PublicState");
     const ashiato::sync::SyncArchetypeId server_archetype = ashiato::sync::define_archetype(
         server_registry,
         "OwnedActor",
         {
             {server_position, ashiato::sync::ReplicationAudience::All},
             {server_health, ashiato::sync::ReplicationAudience::Owner},
+            {server_public_state, ashiato::sync::ReplicationAudience::EveryoneExceptOwner},
         });
     const ashiato::Entity server_entity = server_registry.create();
     REQUIRE(server_registry.add<NetworkedPosition>(server_entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
     REQUIRE(server_registry.add<Health>(server_entity, Health{42}) != nullptr);
+    REQUIRE(server_registry.add<BandwidthProbe>(server_entity, BandwidthProbe{7}) != nullptr);
     REQUIRE(ashiato::sync::set_owner(server_registry, server_entity, 1));
 
     std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> packets;
@@ -909,12 +913,15 @@ TEST_CASE("replication client reconciles components when owner visibility change
     const ashiato::Entity client_one_position =
         ashiato::sync::register_sync_component<NetworkedPosition>(client_one_registry, "NetworkedPosition");
     const ashiato::Entity client_one_health = ashiato::sync::register_sync_component<Health>(client_one_registry, "Health");
+    const ashiato::Entity client_one_public_state =
+        ashiato::sync::register_sync_component<BandwidthProbe>(client_one_registry, "PublicState");
     const ashiato::sync::SyncArchetypeId client_one_archetype = ashiato::sync::define_archetype(
         client_one_registry,
         "OwnedActor",
         {
             {client_one_position, ashiato::sync::ReplicationAudience::All},
             {client_one_health, ashiato::sync::ReplicationAudience::Owner},
+            {client_one_public_state, ashiato::sync::ReplicationAudience::EveryoneExceptOwner},
         });
     REQUIRE(client_one_archetype == server_archetype);
     ashiato_sync_tests::configure_test_client_registry(client_one_registry, 1);
@@ -923,12 +930,15 @@ TEST_CASE("replication client reconciles components when owner visibility change
     const ashiato::Entity client_two_position =
         ashiato::sync::register_sync_component<NetworkedPosition>(client_two_registry, "NetworkedPosition");
     const ashiato::Entity client_two_health = ashiato::sync::register_sync_component<Health>(client_two_registry, "Health");
+    const ashiato::Entity client_two_public_state =
+        ashiato::sync::register_sync_component<BandwidthProbe>(client_two_registry, "PublicState");
     const ashiato::sync::SyncArchetypeId client_two_archetype = ashiato::sync::define_archetype(
         client_two_registry,
         "OwnedActor",
         {
             {client_two_position, ashiato::sync::ReplicationAudience::All},
             {client_two_health, ashiato::sync::ReplicationAudience::Owner},
+            {client_two_public_state, ashiato::sync::ReplicationAudience::EveryoneExceptOwner},
         });
     REQUIRE(client_two_archetype == server_archetype);
     ashiato_sync_tests::configure_test_client_registry(client_two_registry, 2);
@@ -956,6 +966,9 @@ TEST_CASE("replication client reconciles components when owner visibility change
     const ashiato::Entity client_two_local = client_two.local_entity(first_allocated_client_entity_network_id(2));
     REQUIRE(client_one_registry.contains<Health>(client_one_local));
     REQUIRE_FALSE(client_two_registry.contains<Health>(client_two_local));
+    REQUIRE_FALSE(client_one_registry.contains<BandwidthProbe>(client_one_local));
+    REQUIRE(client_two_registry.contains<BandwidthProbe>(client_two_local));
+    REQUIRE(client_two_registry.get<BandwidthProbe>(client_two_local).value == 7);
 
     REQUIRE(ashiato::sync::set_owner(server_registry, server_entity, 2));
     packets.clear();
@@ -972,6 +985,9 @@ TEST_CASE("replication client reconciles components when owner visibility change
     REQUIRE_FALSE(client_one_registry.contains<Health>(client_one_local));
     REQUIRE(client_two_registry.contains<Health>(client_two_local));
     REQUIRE(client_two_registry.get<Health>(client_two_local).value == 42);
+    REQUIRE(client_one_registry.contains<BandwidthProbe>(client_one_local));
+    REQUIRE(client_one_registry.get<BandwidthProbe>(client_one_local).value == 7);
+    REQUIRE_FALSE(client_two_registry.contains<BandwidthProbe>(client_two_local));
 }
 
 TEST_CASE("replication client applies synced tags and owner-filtered tag visibility") {

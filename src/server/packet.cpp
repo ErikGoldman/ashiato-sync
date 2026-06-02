@@ -38,12 +38,12 @@ ashiato::BitBuffer make_server_packet(
     const ashiato::BitBuffer& records) {
     ashiato::BitBuffer packet;
     packet.reserve_bytes(mtu_bytes);
-    packet.push_bits(protocol::server_update_message, 8U);
-    packet.push_bits(frame, 32U);
-    packet.push_bits(packet_id, packet_id_bits);
-    packet.push_bits(input_ack_frame, 32U);
-    packet.push_bits(entity_count, 16U);
-    packet.push_buffer_bits(records);
+    packet.write_bits(protocol::server_update_message, protocol::message_bits);
+    packet.write_bits(frame, 32U);
+    packet.write_bits(packet_id, packet_id_bits);
+    packet.write_bits(input_ack_frame, 32U);
+    packet.write_bits(entity_count, 16U);
+    packet.write_buffer_bits(records);
     return packet;
 }
 

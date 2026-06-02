@@ -40,14 +40,14 @@ TEST_CASE("replication server rejects malformed ACK packets") {
     REQUIRE_FALSE(server.process_packet(registry, 1, empty));
 
     ashiato::BitBuffer wrong_message;
-    wrong_message.push_bits(ashiato::sync::protocol::server_update_message, 8U);
-    wrong_message.push_bits(0, 16U);
+    wrong_message.write_bits(ashiato::sync::protocol::server_update_message, ashiato::sync::protocol::message_bits);
+    wrong_message.write_bits(0, ashiato::sync::protocol::ack_count_bits);
     REQUIRE_FALSE(server.process_packet(registry, 1, wrong_message));
 
     ashiato::BitBuffer truncated_record;
-    truncated_record.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
-    truncated_record.push_bits(1, 16U);
-    truncated_record.push_bool(false);
+    truncated_record.write_bits(ashiato::sync::protocol::client_ack_message, ashiato::sync::protocol::message_bits);
+    truncated_record.write_bits(1, ashiato::sync::protocol::ack_count_bits);
+    truncated_record.write_bool(false);
     REQUIRE_FALSE(server.process_packet(registry, 1, truncated_record));
 
     REQUIRE_FALSE(server.process_packet(registry, 99, write_ack_packet(42)));
@@ -61,24 +61,24 @@ TEST_CASE("replication server rejects malformed connect ack and input packets") 
     ashiato::sync::ReplicationServer server(registry);
 
     ashiato::BitBuffer malformed_connect;
-    malformed_connect.push_bits(ashiato::sync::protocol::client_connect_request_message, 8U);
+    malformed_connect.write_bits(ashiato::sync::protocol::client_connect_request_message, ashiato::sync::protocol::message_bits);
     REQUIRE_FALSE(server.process_packet(registry, 10, malformed_connect));
 
     REQUIRE(server.add_client(1));
 
     ashiato::BitBuffer truncated_connect_ack;
-    truncated_connect_ack.push_bits(ashiato::sync::protocol::client_connect_ack_message, 8U);
-    truncated_connect_ack.push_bits(1, 8U);
+    truncated_connect_ack.write_bits(ashiato::sync::protocol::client_connect_ack_message, ashiato::sync::protocol::message_bits);
+    truncated_connect_ack.write_bits(1, ashiato::sync::protocol::client_id_bits - 1U);
     REQUIRE_FALSE(server.process_packet(registry, 1, truncated_connect_ack));
 
     ashiato::BitBuffer wrong_connect_ack;
-    wrong_connect_ack.push_bits(ashiato::sync::protocol::client_connect_ack_message, 8U);
-    wrong_connect_ack.push_unsigned_bits(2, 64U);
+    wrong_connect_ack.write_bits(ashiato::sync::protocol::client_connect_ack_message, ashiato::sync::protocol::message_bits);
+    wrong_connect_ack.write_unsigned_bits(2, 64U);
     REQUIRE_FALSE(server.process_packet(registry, 1, wrong_connect_ack));
 
     ashiato::BitBuffer truncated_input;
-    truncated_input.push_bits(ashiato::sync::protocol::client_input_message, 8U);
-    truncated_input.push_bits(0, 16U);
+    truncated_input.write_bits(ashiato::sync::protocol::client_input_message, ashiato::sync::protocol::message_bits);
+    truncated_input.write_bits(0, ashiato::sync::protocol::ack_count_bits);
     REQUIRE_FALSE(server.process_packet(registry, 1, truncated_input));
 }
 
@@ -226,7 +226,7 @@ TEST_CASE("shared dynamic bandwidth budget splits replay and live before redistr
 
     const ServerUpdatePacket replay_update = read_server_update(replay_payloads.back());
     REQUIRE(replay_server.process_packet(1, write_ack_packet(replay_update.packet_id)));
-    REQUIRE(live_server.bandwidth_stats(1).delivered_bytes_window == 49);
+    REQUIRE(live_server.bandwidth_stats(1).delivered_bytes_window == 48);
 }
 
 TEST_CASE("live replication uses shared bandwidth when replay has nothing to send") {
@@ -617,7 +617,7 @@ TEST_CASE("replication server sends nothing when bandwidth cannot cover a serial
 
     int sends = 0;
     ashiato::sync::ReplicationServerOptions options;
-    options.bandwidth_limit_bytes_per_tick = 20;
+    options.bandwidth_limit_bytes_per_tick = 19;
     options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer&) {
         ++sends;
     };
@@ -639,7 +639,7 @@ TEST_CASE("replication server parallel path releases quantized frames for unsent
 
     std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> packets;
     ashiato::sync::ReplicationServerOptions options;
-    options.bandwidth_limit_bytes_per_tick = 20;
+    options.bandwidth_limit_bytes_per_tick = 19;
     options.serialized_worker_threads = 2;
     options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         packets.emplace_back(client, payload);
@@ -820,8 +820,8 @@ TEST_CASE("replication server filters owner-only serialized components") {
     server.tick(registry, server.options().fixed_dt_seconds);
 
     REQUIRE(sends.size() == 2);
-    REQUIRE(sends[0] == std::pair<ashiato::sync::ClientId, std::size_t>{1, 21});
-    REQUIRE(sends[1] == std::pair<ashiato::sync::ClientId, std::size_t>{2, 25});
+    REQUIRE(sends[0] == std::pair<ashiato::sync::ClientId, std::size_t>{1, 20});
+    REQUIRE(sends[1] == std::pair<ashiato::sync::ClientId, std::size_t>{2, 24});
 }
 
 TEST_CASE("replication server serializes compact synced tag masks per client") {
@@ -860,7 +860,7 @@ TEST_CASE("replication server serializes compact synced tag masks per client") {
     REQUIRE(payloads.size() == 2);
     for (auto sent : payloads) {
         ashiato::BitBuffer packet = sent.second;
-        REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::server_update_message);
+        REQUIRE(static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::server_update_message);
         const auto frame = static_cast<ashiato::sync::SyncFrame>(packet.read_bits(32U));
         packet.read_bits(ashiato::sync::protocol::server_packet_id_bits);
         packet.read_bits(32U);
@@ -888,7 +888,7 @@ TEST_CASE("replication server serializes compact synced tag masks per client") {
     REQUIRE(payloads.size() == 2);
     for (auto sent : payloads) {
         ashiato::BitBuffer packet = sent.second;
-        packet.read_bits(8U);
+        packet.read_bits(ashiato::sync::protocol::message_bits);
         const auto frame = static_cast<ashiato::sync::SyncFrame>(packet.read_bits(32U));
         packet.read_bits(ashiato::sync::protocol::server_packet_id_bits);
         packet.read_bits(32U);
@@ -952,7 +952,7 @@ TEST_CASE("replication server applies sphere priorities and component LOD masks"
 
     REQUIRE(prioritizer_calls == 2);
     REQUIRE(payloads.size() == 1);
-    const ServerUpdatePacket update = read_server_update(payloads[0], 2U);
+    const ServerUpdatePacket update = read_server_update(payloads[0], 3U, sizeof(Health) * 8U);
     REQUIRE(update.entities.size() == 2);
     REQUIRE(update.entities[0].network_id != 0);
     REQUIRE(update.entities[0].components.size() == 1);
@@ -1024,7 +1024,7 @@ TEST_CASE("replication server splits packed updates at the mtu boundary") {
     REQUIRE(payloads.size() == 2);
     for (const ashiato::BitBuffer& payload : payloads) {
         REQUIRE(payload.byte_size() <= options.mtu_bytes);
-        REQUIRE(payload.byte_size() == 21);
+        REQUIRE(payload.byte_size() == 20);
         REQUIRE(read_server_update(payload).entities.size() == 1);
     }
 }

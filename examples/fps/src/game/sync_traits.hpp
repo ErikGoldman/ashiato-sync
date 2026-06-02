@@ -115,11 +115,11 @@ struct SyncComponentTraits<NetworkOwner> {
     }
 
     static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
-        out.push_unsigned_bits(current.client, 64U);
+        out.push_unsigned_bits(current.client, ashiato::sync::protocol::client_id_bits);
     }
 
     static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
-        out.client = static_cast<ClientId>(in.read_unsigned_bits(64U));
+        out.client = static_cast<ClientId>(in.read_unsigned_bits(ashiato::sync::protocol::client_id_bits));
         return true;
     }
 
@@ -341,12 +341,12 @@ struct SyncComponentTraits<FpsDeathInfo> {
     }
 
     static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
-        out.push_unsigned_bits(current.killer, 64U);
+        out.push_unsigned_bits(current.killer, ashiato::sync::protocol::client_id_bits);
         out.push_bits(current.sequence, 32U);
     }
 
     static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
-        out.killer = static_cast<ClientId>(in.read_unsigned_bits(64U));
+        out.killer = static_cast<ClientId>(in.read_unsigned_bits(ashiato::sync::protocol::client_id_bits));
         out.sequence = static_cast<std::uint32_t>(in.read_bits(32U));
         return true;
     }

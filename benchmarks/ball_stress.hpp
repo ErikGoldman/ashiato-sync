@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ashiato/sync/simulated_link.hpp"
+#include "ashiato/sync/serialization.hpp"
 #include "ashiato/sync/sync.hpp"
 
 #include <algorithm>
@@ -44,7 +45,7 @@ struct SyncComponentTraits<stress::BallPosition> {
     }
 
     static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
-        out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
+        out.write_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
     static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
@@ -101,9 +102,9 @@ struct SyncCueTraits<stress::BallBounceCue> {
         const stress::BallBounceCue& cue,
         ashiato::BitBuffer& out,
         ashiato::ComponentSerializationContext& context) {
-        SERIALIZE_TRACE(out, cue.sequence, 32U, "sequence");
-        SERIALIZE_TRACE(out, cue.energy, 8U, "energy");
-        SERIALIZE_BYTES_TRACE(out, reinterpret_cast<const char*>(cue.padding), sizeof(cue.padding), "padding");
+        ASHIATO_SERIALIZE_TRACE(out, cue.sequence, 32U, "sequence");
+        ASHIATO_SERIALIZE_TRACE(out, cue.energy, 8U, "energy");
+        ASHIATO_SERIALIZE_BYTES_TRACE(out, reinterpret_cast<const char*>(cue.padding), sizeof(cue.padding), "padding");
     }
 
     static bool deserialize(
@@ -509,7 +510,7 @@ inline PacketBreakdown classify_packet(
     std::size_t network_entity_id_tier0_bits = protocol::default_network_entity_id_tier0_bits) {
     PacketBreakdown result;
     try {
-        if (packet.remaining_bits() < 8U) {
+        if (packet.remaining_bits() < protocol::message_bits) {
             return result;
         }
         if (wire != nullptr) {
@@ -517,15 +518,15 @@ inline PacketBreakdown classify_packet(
             wire->padding_bits += packet.byte_size() * 8U - packet.bit_size();
             wire->max_packet_bytes = std::max<std::uint64_t>(wire->max_packet_bytes, packet.byte_size());
         }
-        const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
+        const auto message = static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits));
         if (message == protocol::client_ack_message) {
             result.type = PacketType::ClientAck;
             if (wire != nullptr) {
-                if (packet.remaining_bits() < 16U) {
+                if (packet.remaining_bits() < protocol::ack_count_bits) {
                     result = PacketBreakdown{};
                     return result;
                 }
-                const auto ack_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+                const auto ack_count = static_cast<std::uint16_t>(packet.read_bits(protocol::ack_count_bits));
                 packet.skip_bits(static_cast<std::size_t>(ack_count) * protocol::client_ack_record_bits);
                 wire->ack_header_bits += protocol::client_ack_header_bits;
                 wire->ack_records += ack_count;
@@ -671,20 +672,20 @@ inline PacketBreakdown classify_packet(
                     }
                 }
                 const std::uint64_t cue_tail_start = packet.read_offset_bits();
-                const bool has_cues = packet.read_bool();
-                if (has_cues) {
-                    const auto cue_count = static_cast<std::uint16_t>(packet.read_bits(16U));
-                    if (wire != nullptr) {
-                        wire->cue_records += cue_count;
-                    }
-                    for (std::uint16_t cue = 0; cue < cue_count; ++cue) {
-                        packet.skip_bits(32U + 16U + 32U);
-                        const auto payload_bits = static_cast<std::uint16_t>(packet.read_bits(16U));
+                while (packet.read_bool()) {
+                        SyncFrame cue_frame = 0;
+                        packet.skip_bits(32U);
+                        if (!protocol::read_cue_frame(packet, frame, cue_frame)) {
+                            result = PacketBreakdown{};
+                            return result;
+                        }
+                        packet.skip_bits(16U);
+                        constexpr std::size_t payload_bits = 32U + 8U + sizeof(BallBounceCue::padding) * 8U;
                         packet.skip_bits(payload_bits);
                         if (wire != nullptr) {
+                            ++wire->cue_records;
                             wire->cue_payload_bits += payload_bits;
                         }
-                    }
                 }
                 const std::uint64_t cue_tail_bits = packet.read_offset_bits() - cue_tail_start;
                 if (wire != nullptr) {
@@ -703,19 +704,23 @@ inline PacketBreakdown classify_packet(
                 }
             } else {
                 ++result.delta_upserts;
-                const bool uses_delta_baseline = packet.read_bool();
+                bool uses_delta_baseline = false;
+                std::uint64_t baseline_value = 0;
+                if (!serialization::read_varint2_raw(
+                        packet,
+                        protocol::baseline_frame_delta_bits,
+                        32U,
+                        uses_delta_baseline,
+                        baseline_value)) {
+                    result = PacketBreakdown{};
+                    return result;
+                }
                 if (uses_delta_baseline) {
-                    const auto delta = static_cast<std::uint32_t>(packet.read_bits(protocol::baseline_frame_delta_bits));
-                    if (delta > frame) {
-                        result = PacketBreakdown{};
-                        return result;
-                    }
                     if (wire != nullptr) {
                         wire->delta_baseline_bits += 1U + protocol::baseline_frame_delta_bits;
                         ++wire->delta_baseline_relative;
                     }
                 } else {
-                    packet.read_bits(32U);
                     if (wire != nullptr) {
                         wire->delta_baseline_bits += 33U;
                         ++wire->delta_baseline_absolute;
@@ -757,20 +762,20 @@ inline PacketBreakdown classify_packet(
                     }
                 }
                 const std::uint64_t cue_tail_start = packet.read_offset_bits();
-                const bool has_cues = packet.read_bool();
-                if (has_cues) {
-                    const auto cue_count = static_cast<std::uint16_t>(packet.read_bits(16U));
-                    if (wire != nullptr) {
-                        wire->cue_records += cue_count;
-                    }
-                    for (std::uint16_t cue = 0; cue < cue_count; ++cue) {
-                        packet.skip_bits(32U + 16U + 32U);
-                        const auto payload_bits = static_cast<std::uint16_t>(packet.read_bits(16U));
+                while (packet.read_bool()) {
+                        SyncFrame cue_frame = 0;
+                        packet.skip_bits(32U);
+                        if (!protocol::read_cue_frame(packet, frame, cue_frame)) {
+                            result = PacketBreakdown{};
+                            return result;
+                        }
+                        packet.skip_bits(16U);
+                        constexpr std::size_t payload_bits = 32U + 8U + sizeof(BallBounceCue::padding) * 8U;
                         packet.skip_bits(payload_bits);
                         if (wire != nullptr) {
+                            ++wire->cue_records;
                             wire->cue_payload_bits += payload_bits;
                         }
-                    }
                 }
                 const std::uint64_t cue_tail_bits = packet.read_offset_bits() - cue_tail_start;
                 if (wire != nullptr) {

@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdint>
 #include <exception>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -67,7 +68,7 @@ void ReplicationClient::send_pending_packets() {
     for (const ashiato::BitBuffer& packet : drain_packets()) {
         std::uint8_t message = 0;
         ashiato::BitBuffer inspect = packet;
-        message = static_cast<std::uint8_t>(inspect.read_bits(8U));
+        message = static_cast<std::uint8_t>(inspect.read_bits(protocol::message_bits));
         try {
             session_transport_->packet_sender(packet);
         } catch (const std::exception& ex) {
@@ -188,7 +189,7 @@ bool ReplicationClient::receive_connect_response(ashiato::Registry& registry, as
         return true;
     }
 
-    if (!reader.read_bits(64U, client_id_)) {
+    if (!reader.read_bits(protocol::client_id_bits, client_id_)) {
         return false;
     }
     if (client_id_ == invalid_client_id || client_id_ > max_client_entity_network_id_client) {
@@ -252,13 +253,15 @@ bool ReplicationClient::receive_entity_update(
     const bool applied = update_runtime_->apply_update(*this, registry, reader, packet_id, frame, record_count);
 
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+    const std::string& apply_failure_reason = update_runtime_->last_apply_failure_reason();
     trace_incoming_update_packet(
         static_cast<SyncFrame>(std::max(0.0, context.estimated_server_frame)),
         frame,
         packet_id,
         input_ack_frame,
         record_count,
-        applied);
+        applied,
+        applied ? nullptr : apply_failure_reason.c_str());
 #endif
 
     if (!applied) {
@@ -370,6 +373,13 @@ bool ReplicationClient::receive_pong(
         context.local_time_seconds < found->second.local_send_time_seconds) {
         return false;
     }
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+    trace_incoming_pong_packet(
+        sequence,
+        static_cast<SyncFrame>(std::max(0.0, context.estimated_server_frame)),
+        server_receive_frame,
+        server_send_frame);
+#endif
     const double client_send_time_seconds = found->second.local_send_time_seconds;
     session_transport_->pending_pings.erase(found);
     const double server_receive_time_seconds =
@@ -449,7 +459,7 @@ void ReplicationClient::drain_connect_packets(std::vector<ashiato::BitBuffer>& p
 
         ashiato::BitBuffer packet;
         packet.reserve_bytes(options_.network.mtu_bytes);
-        packet.push_bits(protocol::client_connect_request_message, 8U);
+        packet.write_bits(protocol::client_connect_request_message, protocol::message_bits);
         protocol::write_string(packet, options_.session.connect_token);
         if (packet.byte_size() <= options_.network.mtu_bytes) {
             packets.push_back(std::move(packet));
@@ -466,8 +476,8 @@ void ReplicationClient::drain_connect_packets(std::vector<ashiato::BitBuffer>& p
 
         ashiato::BitBuffer packet;
         packet.reserve_bytes(options_.network.mtu_bytes);
-        packet.push_bits(protocol::client_connect_ack_message, 8U);
-        packet.push_unsigned_bits(client_id_, 64U);
+        packet.write_bits(protocol::client_connect_ack_message, protocol::message_bits);
+        packet.write_unsigned_bits(client_id_, protocol::client_id_bits);
         packets.push_back(std::move(packet));
         session_transport_->connect_resend_accumulator_seconds = 0.0;
     }
@@ -490,9 +500,12 @@ void ReplicationClient::drain_ping_packets(std::vector<ashiato::BitBuffer>& pack
 
     ashiato::BitBuffer packet;
     packet.reserve_bytes(options_.network.mtu_bytes);
-    packet.push_bits(protocol::client_ping_message, 8U);
-    packet.push_bits(sequence, 32U);
+    packet.write_bits(protocol::client_ping_message, protocol::message_bits);
+    packet.write_bits(sequence, 32U);
     packets.push_back(std::move(packet));
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+    trace_outgoing_ping_packet(sequence);
+#endif
     session_transport_->sent_initial_ping = true;
     session_transport_->ping_accumulator_seconds = 0.0;
 }

@@ -168,14 +168,15 @@ TEST_CASE("replication replay writer records queued cues in the replay payload")
     ashiato::BitBuffer payload = frames[0].payload;
     REQUIRE(skip_replay_records(payload) == 1U);
     REQUIRE(payload.read_bool());
-    REQUIRE(static_cast<std::uint16_t>(payload.read_bits(16U)) == 1U);
     REQUIRE(static_cast<std::uint32_t>(payload.read_bits(32U)) == 1U);
-    REQUIRE(static_cast<ashiato::sync::SyncFrame>(payload.read_bits(32U)) == 1U);
+    ashiato::sync::SyncFrame cue_frame = 0;
+    REQUIRE(ashiato::sync::protocol::read_cue_frame(payload, frames[0].frame, cue_frame));
+    REQUIRE(cue_frame == 1U);
     REQUIRE(static_cast<ashiato::sync::SyncCueTypeId>(payload.read_bits(16U)) == cue_type);
-    float relevance_seconds = 0.0f;
-    payload.read_bytes(reinterpret_cast<char*>(&relevance_seconds), sizeof(relevance_seconds));
+    const float relevance_seconds = payload.read_float32_le();
     REQUIRE(relevance_seconds == 0.5f);
     REQUIRE_FALSE(payload.read_bool());
     REQUIRE(static_cast<std::uint16_t>(payload.read_bits(16U)) == 16U);
     REQUIRE(static_cast<std::int32_t>(payload.read_bits(16U)) == 42);
+    REQUIRE_FALSE(payload.read_bool());
 }

@@ -72,7 +72,7 @@ public:
         FrameRange predicted;
     };
 
-    explicit ReplicationClientClock(ReplicationClientClockConfig config = {});
+    explicit ReplicationClientClock(const ReplicationClientClockConfig& config = {});
 
     const ReplicationClientClockConfig& config() const noexcept {
         return config_;

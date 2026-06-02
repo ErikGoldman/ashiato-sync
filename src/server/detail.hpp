@@ -2,6 +2,7 @@
 
 #include "ashiato/sync/server.hpp"
 #include "ashiato/sync/tracing.hpp"
+#include "ashiato/sync/wire_format.hpp"
 
 #include <cstdint>
 #include <limits>
@@ -10,7 +11,6 @@ namespace ashiato::sync::server_detail {
 
 constexpr std::uint32_t invalid_replicated_index_or_free_network_id = std::numeric_limits<std::uint32_t>::max();
 constexpr std::size_t max_pending_quantized_frames_per_entity = 64;
-constexpr std::size_t max_cues_per_entity_record = 255;
 constexpr float reference_priority_boost = std::numeric_limits<float>::max() / 2.0f;
 
 #ifdef ASHIATO_SYNC_ENABLE_TRACING

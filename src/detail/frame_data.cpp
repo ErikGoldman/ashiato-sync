@@ -103,7 +103,7 @@ std::uint8_t* mutable_frame_component_data(
 
 std::uint8_t* mutable_frame_component_data(
     const SyncArchetype& archetype,
-    MutableFrameDataView frame,
+    const MutableFrameDataView& frame,
     std::size_t component_index) {
     if (component_index >= 64U ||
         component_index >= archetype.component_offsets.size() ||
@@ -130,7 +130,7 @@ std::uint8_t* unchecked_mutable_frame_component_data(
 
 std::uint8_t* unchecked_mutable_frame_component_data(
     const SyncArchetype& archetype,
-    MutableFrameDataView frame,
+    const MutableFrameDataView& frame,
     std::size_t component_index) noexcept {
     *frame.present_mask |= (std::uint64_t{1} << component_index);
     return frame.bytes + archetype.component_offsets[component_index];

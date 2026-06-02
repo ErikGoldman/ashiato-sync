@@ -58,6 +58,11 @@ target_link_libraries(ashiato_sync
         spdlog::spdlog
 )
 
+target_include_directories(ashiato_sync
+    SYSTEM PUBLIC
+        $<TARGET_PROPERTY:spdlog::spdlog,INTERFACE_INCLUDE_DIRECTORIES>
+)
+
 target_compile_definitions(ashiato_sync
     PUBLIC
         ASHIATO_SYNC_BASELINE_FRAME_DELTA_BITS=${ASHIATO_SYNC_BASELINE_FRAME_DELTA_BITS}
@@ -67,11 +72,8 @@ target_compile_definitions(ashiato_sync
         $<$<BOOL:${ASHIATO_SYNC_TRACE_PACKET_LOGS}>:ASHIATO_SYNC_TRACE_PACKET_LOGS=1>
 )
 
-if(MSVC)
-    target_compile_options(ashiato_sync PRIVATE /W4)
-else()
-    target_compile_options(ashiato_sync PRIVATE -Wall -Wextra -Wpedantic)
-endif()
+ashiato_sync_apply_strict_warnings(ashiato_sync)
+ashiato_sync_apply_static_analysis(ashiato_sync)
 
 if(ASHIATO_SYNC_ENABLE_COVERAGE)
     ashiato_sync_enable_coverage(ashiato_sync)

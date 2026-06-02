@@ -18,6 +18,8 @@ option(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION "Build trace viewer socket au
 option(ASHIATO_SYNC_ENABLE_COVERAGE "Build ashiato-sync targets with coverage instrumentation" OFF)
 option(ASHIATO_SYNC_ENABLE_GPROF "Build ashiato-sync benchmark tools with gprof instrumentation" OFF)
 option(ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS "Build ashiato-sync with buffered interpolation starvation diagnostics" OFF)
+option(ASHIATO_SYNC_ENABLE_CLANG_TIDY "Run clang-tidy while compiling ashiato-sync targets" OFF)
+option(ASHIATO_SYNC_ENABLE_CPPCHECK "Run cppcheck while compiling ashiato-sync targets" OFF)
 option(ASHIATO_SYNC_ENABLE_TRACING "Compatibility alias for ASHIATO_ENABLE_SERIALIZATION_TRACING" OFF)
 option(ASHIATO_SYNC_TRACE_COMPONENT_DATA "Build ashiato-sync tracing support for component data serialization" OFF)
 option(ASHIATO_SYNC_TRACE_PACKET_LOGS "Build ashiato-sync tracing support for packet event logging" OFF)
@@ -56,6 +58,38 @@ if(ASHIATO_SYNC_ENABLE_COVERAGE)
         target_link_options(${target_name} PRIVATE --coverage)
     endfunction()
 endif()
+
+function(ashiato_sync_apply_strict_warnings target_name)
+    if(MSVC)
+        target_compile_options(${target_name} PRIVATE /W4 /WX)
+    else()
+        target_compile_options(${target_name} PRIVATE
+            -Wall
+            -Wextra
+            -Wpedantic
+            -Wshadow
+            -Wconversion
+            -Wsign-conversion
+            -Werror
+        )
+    endif()
+endfunction()
+
+function(ashiato_sync_apply_static_analysis target_name)
+    if(ASHIATO_SYNC_ENABLE_CLANG_TIDY)
+        find_program(ASHIATO_SYNC_CLANG_TIDY_EXECUTABLE NAMES clang-tidy REQUIRED)
+        set_target_properties(${target_name} PROPERTIES
+            CXX_CLANG_TIDY "${ASHIATO_SYNC_CLANG_TIDY_EXECUTABLE};--warnings-as-errors=*"
+        )
+    endif()
+
+    if(ASHIATO_SYNC_ENABLE_CPPCHECK)
+        find_program(ASHIATO_SYNC_CPPCHECK_EXECUTABLE NAMES cppcheck REQUIRED)
+        set_target_properties(${target_name} PROPERTIES
+            CXX_CPPCHECK "${ASHIATO_SYNC_CPPCHECK_EXECUTABLE};--enable=warning,performance,portability;--error-exitcode=1;--inline-suppr;--std=c++17;--suppress=missingIncludeSystem"
+        )
+    endif()
+endfunction()
 
 if(ASHIATO_SYNC_BUILD_FUZZERS)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")

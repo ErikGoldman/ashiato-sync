@@ -210,7 +210,7 @@ TEST_CASE("replication server reuses client-local network ids after each client'
         return ServerUpdatePacket{};
     };
     auto packet_id = [](ashiato::BitBuffer packet) {
-        packet.read_bits(8U);
+        packet.read_bits(ashiato::sync::protocol::message_bits);
         packet.read_bits(32U);
         return static_cast<std::uint32_t>(packet.read_bits(ashiato::sync::protocol::server_packet_id_bits));
     };
@@ -474,7 +474,7 @@ TEST_CASE("replication server records bandwidth savings for ACKed delta updates"
     REQUIRE(start_sync(registry, entity, archetype));
 
     server.tick(registry, server.options().fixed_dt_seconds);
-    REQUIRE(payloads.back().byte_size() == 23);
+    REQUIRE(payloads.back().byte_size() == 22);
     REQUIRE(server.acknowledge_entity(1, entity, read_server_update(payloads.back()).frame));
 
     registry.write<BandwidthProbe>(entity) = BandwidthProbe{105};

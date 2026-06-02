@@ -63,7 +63,7 @@ void setup_server_registry(ashiato::Registry& registry) {
 ashiato::BitBuffer make_client_seed_update() {
     ashiato_sync_tests::Position position{1.0F, 2.0F};
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
+    packet.push_bits(ashiato::sync::protocol::server_update_message, ashiato::sync::protocol::message_bits);
     packet.push_bits(1, 32U);
     packet.push_bits(1, ashiato::sync::protocol::server_packet_id_bits);
     packet.push_bits(0, 32U);
@@ -82,7 +82,7 @@ ashiato::BitBuffer make_client_seed_update() {
 
 ashiato::BitBuffer make_server_connect_response(bool accepted) {
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
+    packet.push_bits(ashiato::sync::protocol::server_connect_response_message, ashiato::sync::protocol::message_bits);
     packet.push_bool(accepted);
     if (accepted) {
         packet.push_unsigned_bits(fuzz_peer, 64U);
@@ -94,7 +94,7 @@ ashiato::BitBuffer make_server_connect_response(bool accepted) {
 
 ashiato::BitBuffer make_server_pong() {
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::server_pong_message, 8U);
+    packet.push_bits(ashiato::sync::protocol::server_pong_message, ashiato::sync::protocol::message_bits);
     packet.push_bits(1, 32U);
     packet.push_bits(5, 32U);
     packet.push_bits(0, ashiato::sync::protocol::frame_subframe_bits);
@@ -105,41 +105,41 @@ ashiato::BitBuffer make_server_pong() {
 
 ashiato::BitBuffer make_client_ack() {
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
-    packet.push_bits(1, 16U);
+    packet.push_bits(ashiato::sync::protocol::client_ack_message, ashiato::sync::protocol::message_bits);
+    packet.push_bits(1, ashiato::sync::protocol::ack_count_bits);
     packet.push_bits(1, ashiato::sync::protocol::server_packet_id_bits);
     return packet;
 }
 
 ashiato::BitBuffer make_client_connect_request() {
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::client_connect_request_message, 8U);
+    packet.push_bits(ashiato::sync::protocol::client_connect_request_message, ashiato::sync::protocol::message_bits);
     ashiato::sync::protocol::write_string(packet, "token");
     return packet;
 }
 
 ashiato::BitBuffer make_client_connect_ack() {
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::client_connect_ack_message, 8U);
+    packet.push_bits(ashiato::sync::protocol::client_connect_ack_message, ashiato::sync::protocol::message_bits);
     packet.push_unsigned_bits(fuzz_peer, 64U);
     return packet;
 }
 
 ashiato::BitBuffer make_client_ping() {
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::client_ping_message, 8U);
+    packet.push_bits(ashiato::sync::protocol::client_ping_message, ashiato::sync::protocol::message_bits);
     packet.push_bits(1, 32U);
     return packet;
 }
 
 ashiato::BitBuffer make_client_input() {
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::client_input_message, 8U);
-    packet.push_bits(0, 16U);
+    packet.push_bits(ashiato::sync::protocol::client_input_message, ashiato::sync::protocol::message_bits);
+    packet.push_bits(0, ashiato::sync::protocol::ack_count_bits);
     packet.push_bits(0, 32U);
-    packet.push_bits(1, 16U);
     packet.push_bool(true);
     packet.push_bits(1, 32U);
+    packet.push_bits(1, ashiato::sync::protocol::input_count_bits);
     packet.push_bool(false);
     packet.push_bits(10, 8U);
     packet.push_bits(20, 8U);

@@ -52,8 +52,8 @@ TEST_CASE("replication client logs malformed server packets as warnings") {
     ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
 
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
-    packet.push_bits(1U, 32U);
+    packet.write_bits(ashiato::sync::protocol::server_update_message, ashiato::sync::protocol::message_bits);
+    packet.write_bits(1U, 32U);
 
     REQUIRE_FALSE(client.receive(registry, packet));
 
@@ -80,8 +80,8 @@ TEST_CASE("replication client can suppress repeated server packet warning logs")
     ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
 
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
-    packet.push_bits(1U, 32U);
+    packet.write_bits(ashiato::sync::protocol::server_update_message, ashiato::sync::protocol::message_bits);
+    packet.write_bits(1U, 32U);
 
     REQUIRE_FALSE(client.receive(registry, packet));
     REQUIRE_FALSE(client.receive(registry, packet));
@@ -128,9 +128,9 @@ TEST_CASE("replication client queued receive packets are processed during tick")
 
     ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, {}));
     ashiato::BitBuffer response;
-    response.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
-    response.push_bits(1U, 1U);
-    response.push_unsigned_bits(1U, 64U);
+    response.write_bits(ashiato::sync::protocol::server_connect_response_message, ashiato::sync::protocol::message_bits);
+    response.write_bits(1U, 1U);
+    response.write_unsigned_bits(1U, ashiato::sync::protocol::client_id_bits);
     client.receive_packet(response);
 
     REQUIRE(client.tick(registry, client.fixed_dt_seconds() * 0.5));
@@ -153,9 +153,9 @@ TEST_CASE("replication client emits connection state callbacks") {
     ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
 
     ashiato::BitBuffer accepted;
-    accepted.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
-    accepted.push_bool(true);
-    accepted.push_unsigned_bits(1U, 64U);
+    accepted.write_bits(ashiato::sync::protocol::server_connect_response_message, ashiato::sync::protocol::message_bits);
+    accepted.write_bool(true);
+    accepted.write_unsigned_bits(1U, ashiato::sync::protocol::client_id_bits);
     REQUIRE(client.receive(registry, accepted));
 
     const ashiato::Entity server_entity{42};
@@ -180,23 +180,23 @@ TEST_CASE("replication client rejects malformed connect responses") {
     REQUIRE(client.connection_state() == ashiato::sync::ReplicationClientConnectionState::Connecting);
 
     ashiato::BitBuffer truncated_accept;
-    truncated_accept.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
-    truncated_accept.push_bool(true);
-    truncated_accept.push_bits(1, 8U);
+    truncated_accept.write_bits(ashiato::sync::protocol::server_connect_response_message, ashiato::sync::protocol::message_bits);
+    truncated_accept.write_bool(true);
+    truncated_accept.write_bits(1, ashiato::sync::protocol::client_id_bits - 1U);
     REQUIRE_FALSE(client.receive(registry, truncated_accept));
     REQUIRE(client.connection_state() == ashiato::sync::ReplicationClientConnectionState::Connecting);
 
     ashiato::BitBuffer truncated_reject;
-    truncated_reject.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
-    truncated_reject.push_bool(false);
-    truncated_reject.push_bits(5, 16U);
+    truncated_reject.write_bits(ashiato::sync::protocol::server_connect_response_message, ashiato::sync::protocol::message_bits);
+    truncated_reject.write_bool(false);
+    truncated_reject.write_bits(5, 16U);
     REQUIRE_FALSE(client.receive(registry, truncated_reject));
     REQUIRE(client.connection_state() == ashiato::sync::ReplicationClientConnectionState::Connecting);
 
     ashiato::BitBuffer invalid_client_id;
-    invalid_client_id.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
-    invalid_client_id.push_bool(true);
-    invalid_client_id.push_unsigned_bits(ashiato::sync::max_client_entity_network_id_client + 1U, 64U);
+    invalid_client_id.write_bits(ashiato::sync::protocol::server_connect_response_message, ashiato::sync::protocol::message_bits);
+    invalid_client_id.write_bool(true);
+    invalid_client_id.write_unsigned_bits(ashiato::sync::invalid_client_id, ashiato::sync::protocol::client_id_bits);
     REQUIRE_FALSE(client.receive(registry, invalid_client_id));
     REQUIRE(client.connection_state() == ashiato::sync::ReplicationClientConnectionState::Connecting);
 
@@ -229,8 +229,8 @@ TEST_CASE("replication client stores rejected connect response errors") {
     ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
 
     ashiato::BitBuffer rejected;
-    rejected.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
-    rejected.push_bool(false);
+    rejected.write_bits(ashiato::sync::protocol::server_connect_response_message, ashiato::sync::protocol::message_bits);
+    rejected.write_bool(false);
     ashiato::sync::protocol::write_string(rejected, "bad token");
 
     REQUIRE(client.receive(registry, rejected));
@@ -251,8 +251,8 @@ TEST_CASE("replication client emits rejected connection callback") {
     ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
 
     ashiato::BitBuffer rejected;
-    rejected.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
-    rejected.push_bool(false);
+    rejected.write_bits(ashiato::sync::protocol::server_connect_response_message, ashiato::sync::protocol::message_bits);
+    rejected.write_bool(false);
     ashiato::sync::protocol::write_string(rejected, "bad token");
 
     REQUIRE(client.receive(registry, rejected));
@@ -419,16 +419,16 @@ TEST_CASE("client connect handshake ACKs accepted id until first update") {
 
     std::vector<ashiato::BitBuffer> packets = client.drain_packets();
     REQUIRE(packets.size() == 1);
-    REQUIRE(static_cast<std::uint8_t>(packets[0].read_bits(8U)) ==
+    REQUIRE(static_cast<std::uint8_t>(packets[0].read_bits(ashiato::sync::protocol::message_bits)) ==
             ashiato::sync::protocol::client_connect_request_message);
     std::string token;
     REQUIRE(ashiato::sync::protocol::read_string(packets[0], token));
     REQUIRE(token == "token");
 
     ashiato::BitBuffer accepted;
-    accepted.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
-    accepted.push_bool(true);
-    accepted.push_unsigned_bits(7, 64U);
+    accepted.write_bits(ashiato::sync::protocol::server_connect_response_message, ashiato::sync::protocol::message_bits);
+    accepted.write_bool(true);
+    accepted.write_unsigned_bits(7, ashiato::sync::protocol::client_id_bits);
     REQUIRE(client.receive(client_registry, accepted));
     REQUIRE(client.client_id() == 7);
     REQUIRE(client.connection_state() == ashiato::sync::ReplicationClientConnectionState::Accepted);
@@ -438,10 +438,10 @@ TEST_CASE("client connect handshake ACKs accepted id until first update") {
     REQUIRE_FALSE(packets.empty());
     bool saw_connect_ack = false;
     for (ashiato::BitBuffer packet : packets) {
-        const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
+        const auto message = static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits));
         if (message == ashiato::sync::protocol::client_connect_ack_message) {
             saw_connect_ack = true;
-            REQUIRE(packet.read_unsigned_bits(64U) == 7);
+            REQUIRE(packet.read_unsigned_bits(ashiato::sync::protocol::client_id_bits) == 7);
         }
     }
     REQUIRE(saw_connect_ack);
@@ -453,7 +453,7 @@ TEST_CASE("client connect handshake ACKs accepted id until first update") {
     REQUIRE(client.tick(client_registry, client.options().session.connect_resend_interval_seconds));
     packets = client.drain_packets();
     for (ashiato::BitBuffer packet : packets) {
-        REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) !=
+        REQUIRE(static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) !=
                 ashiato::sync::protocol::client_connect_ack_message);
     }
 }

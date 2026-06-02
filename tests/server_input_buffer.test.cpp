@@ -1,4 +1,5 @@
 #include "server/input_buffer.hpp"
+#include "test_protocol.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -26,12 +27,9 @@ ashiato::sync::SyncComponentOps byte_input_ops() {
 TEST_CASE("ServerInputBuffer decodes full input frames and selects due inputs") {
     ashiato::sync::server_detail::ServerInputBuffer buffer;
     ashiato::BitBuffer packet;
-    packet.push_bits(0, 32U);
-    packet.push_bits(2, 16U);
-    packet.push_bool(true);
-    packet.push_bits(3, 32U);
-    packet.push_bits(10, 8U);
-    packet.push_bits(11, 8U);
+    ashiato_sync_tests::write_client_input_payload_header(packet, 0, true, 3, 2);
+    packet.write_bits(10, 8U);
+    packet.write_bits(11, 8U);
 
     ashiato::sync::server_detail::ServerInputPacketTrace trace;
     REQUIRE(buffer.process_packet_payload(packet, byte_input_ops(), 4, &trace));
@@ -66,10 +64,8 @@ TEST_CASE("ServerInputBuffer decodes full input frames and selects due inputs") 
 TEST_CASE("ServerInputBuffer accepts missing delta baseline without consuming input frames") {
     ashiato::sync::server_detail::ServerInputBuffer buffer;
     ashiato::BitBuffer packet;
-    packet.push_bits(7, 32U);
-    packet.push_bits(1, 16U);
-    packet.push_bool(false);
-    packet.push_bits(99, 8U);
+    ashiato_sync_tests::write_client_input_payload_header(packet, 7, false, 8, 1);
+    packet.write_bits(99, 8U);
 
     ashiato::sync::server_detail::ServerInputPacketTrace trace;
     REQUIRE(buffer.process_packet_payload(packet, byte_input_ops(), 4, &trace));

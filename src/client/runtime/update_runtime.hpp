@@ -5,6 +5,8 @@
 #include "ashiato/ashiato.hpp"
 
 #include <cstdint>
+#include <limits>
+#include <string>
 #include <vector>
 
 namespace ashiato::sync {
@@ -26,6 +28,7 @@ public:
         std::uint32_t packet_id,
         SyncFrame frame,
         std::uint16_t record_count);
+    const std::string& last_apply_failure_reason() const noexcept;
 
 private:
     using ComponentBaseline = ReplicatedComponentUpdate;
@@ -93,7 +96,12 @@ private:
         detail::BitReader& packet,
         AuthoritativeUpsertRecord& record);
     EntityReferenceContext make_upsert_reference_context(ReplicationClient& client);
-    bool read_cues(detail::BitReader& packet, std::vector<EntityCue>& out);
+    bool read_cues(
+        ReplicationClient& client,
+        const SyncSettings& settings,
+        SyncFrame transmitted_frame,
+        detail::BitReader& packet,
+        std::vector<EntityCue>& out);
     void trace_cues_received(
         ReplicationClient& client,
         const SyncSettings& settings,
@@ -188,9 +196,15 @@ private:
         ashiato::Registry& registry,
         SyncFrame frame,
         ClientEntityNetworkId client_entity_network_id);
+    void begin_apply_record(std::uint16_t record_index);
+    bool fail_apply(const char* reason);
+    bool fail_apply_if_empty(const char* reason);
 
+    static constexpr std::uint16_t invalid_apply_record_index = std::numeric_limits<std::uint16_t>::max();
     std::vector<EntityCue> received_cues_scratch_;
     std::vector<ComponentBaseline> selector_updates_scratch_;
+    std::string last_apply_failure_reason_;
+    std::uint16_t active_apply_record_index_ = invalid_apply_record_index;
 };
 
 }  // namespace client_detail

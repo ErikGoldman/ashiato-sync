@@ -182,8 +182,8 @@ TEST_CASE("replication server resets idle timeout when a client sends packets") 
     REQUIRE(server.has_client(1));
 
     ashiato::BitBuffer ack;
-    ack.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
-    ack.push_bits(0, 16U);
+    ack.write_bits(ashiato::sync::protocol::client_ack_message, ashiato::sync::protocol::message_bits);
+    ack.write_bits(0, ashiato::sync::protocol::ack_count_bits);
     REQUIRE(server.process_packet(registry, 1, ack));
 
     server.tick(registry, server.options().fixed_dt_seconds);
@@ -323,14 +323,14 @@ TEST_CASE("replication server frame consumer receives cues drained for the frame
     ashiato::sync::ReplicationServer server(registry, options);
     TestFrameConsumer consumer([&seen](const ashiato::sync::ServerRegistryDirtyFrame& frame) {
         for (const ashiato::sync::QueuedSyncCue& cue : frame.cues) {
-            ashiato::BitBuffer payload = cue.payload;
+            const TestCue* value = cue.value.has_value() ? static_cast<const TestCue*>(cue.value.data()) : nullptr;
             seen.push_back(SeenCue{
                 cue.entity,
                 cue.frame,
                 cue.type,
                 cue.relevance_seconds,
                 cue.only_replicate_to_owner,
-                static_cast<std::int32_t>(payload.read_bits(16U))});
+                value != nullptr ? value->id : 0});
         }
     });
     auto subscription = server.subscribe_registry_dirty_frame_listener(consumer);
@@ -489,7 +489,7 @@ TEST_CASE("replication server flushes client replication once after fixed-step c
     REQUIRE(server.frame() == 3U);
     REQUIRE(payloads.size() == 1U);
     ashiato::BitBuffer update = payloads.back();
-    REQUIRE(static_cast<std::uint8_t>(update.read_bits(8U)) == ashiato::sync::protocol::server_update_message);
+    REQUIRE(static_cast<std::uint8_t>(update.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::server_update_message);
     REQUIRE(static_cast<ashiato::sync::SyncFrame>(update.read_bits(32U)) == 3U);
 }
 
@@ -579,14 +579,14 @@ TEST_CASE("replication server queued receive packets are processed after clock a
     REQUIRE(server.add_client(1));
 
     ashiato::BitBuffer ping;
-    ping.push_bits(ashiato::sync::protocol::client_ping_message, 8U);
-    ping.push_bits(7U, 32U);
+    ping.write_bits(ashiato::sync::protocol::client_ping_message, ashiato::sync::protocol::message_bits);
+    ping.write_bits(7U, 32U);
     server.receive_packet(1, ping);
 
     REQUIRE(server.tick(registry, 0.5));
     REQUIRE(sent.size() == 1);
     ashiato::BitBuffer pong = sent[0];
-    REQUIRE(static_cast<std::uint8_t>(pong.read_bits(8U)) == ashiato::sync::protocol::server_pong_message);
+    REQUIRE(static_cast<std::uint8_t>(pong.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::server_pong_message);
     REQUIRE(static_cast<std::uint32_t>(pong.read_bits(32U)) == 7U);
     REQUIRE(static_cast<ashiato::sync::SyncFrame>(pong.read_bits(32U)) == 0U);
     const auto server_receive_subframe =

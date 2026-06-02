@@ -16,10 +16,10 @@ server_detail::ServerClientReplicator::ServerClientReplicator()
 server_detail::ServerClientReplicator::~ServerClientReplicator() = default;
 
 void server_detail::ServerClientReplicator::on_server_registry_dirty_frame(const ServerRegistryDirtyFrame& frame) {
-    if (server == nullptr) {
+    if (owner_server == nullptr) {
         return;
     }
-    if (&frame.server != server) {
+    if (&frame.server != owner_server) {
         return;
     }
     ReplicationServer& replication_server = frame.server;
@@ -31,7 +31,7 @@ void server_detail::ServerClientReplicator::on_server_registry_dirty_frame(const
 }
 
 void server_detail::ServerClientReplicator::on_server_frame_batch_complete(const ServerFrameBatch& batch) {
-    if (&batch.server != server) {
+    if (&batch.server != owner_server) {
         return;
     }
     ReplicationServer& replication_server = batch.server;
@@ -73,22 +73,22 @@ server_detail::ServerClientReplicator::EntityStates::try_get(std::uint32_t slot)
     return slot < states.size() ? &states[slot] : nullptr;
 }
 
-void server_detail::ServerClientReplicator::EntityStates::clear(ReplicationServer& server, std::uint32_t slot) {
+void server_detail::ServerClientReplicator::EntityStates::clear(ReplicationServer& replication_server, std::uint32_t slot) {
     ClientEntityState* state = try_get(slot);
     if (state == nullptr) {
         return;
     }
-    server.clear_server_client_entity_state(*state);
+    replication_server.clear_server_client_entity_state(*state);
 }
 
-void server_detail::ServerClientReplicator::EntityStates::clear_all(ReplicationServer& server) {
+void server_detail::ServerClientReplicator::EntityStates::clear_all(ReplicationServer& replication_server) {
     for (ClientEntityState& state : states) {
-        server.clear_server_client_entity_state(state);
+        replication_server.clear_server_client_entity_state(state);
     }
 }
 
 void server_detail::ServerClientReplicator::EntityStates::clear_preserving_network_identity(
-    ReplicationServer& server,
+    ReplicationServer& replication_server,
     std::uint32_t slot) {
     ClientEntityState* state = try_get(slot);
     if (state == nullptr) {
@@ -97,7 +97,7 @@ void server_detail::ServerClientReplicator::EntityStates::clear_preserving_netwo
     const std::uint32_t network_id = state->network_id;
     const std::uint32_t network_version = state->network_version;
     const bool has_network_id = state->has_network_id;
-    server.clear_server_client_entity_state(*state);
+    replication_server.clear_server_client_entity_state(*state);
     state->network_id = network_id;
     state->network_version = network_version;
     state->has_network_id = has_network_id;
@@ -182,7 +182,7 @@ bool server_detail::ServerClientReplicator::DestroyQueue::contains_ack_record(
 }
 
 std::uint32_t server_detail::ServerClientReplicator::NetworkIds::network_id_for(
-    ReplicationServer& server,
+    ReplicationServer& replication_server,
     ServerClientReplicator& client,
     std::uint32_t slot) {
     ClientEntityState* state = client.entities.try_get(slot);
@@ -192,14 +192,14 @@ std::uint32_t server_detail::ServerClientReplicator::NetworkIds::network_id_for(
     if (state->has_network_id) {
         return state->network_id;
     }
-    return allocate_for(server, client, slot);
+    return allocate_for(replication_server, client, slot);
 }
 
 std::uint32_t server_detail::ServerClientReplicator::NetworkIds::allocate_for(
-    ReplicationServer& server,
+    ReplicationServer& replication_server,
     ServerClientReplicator& client,
     std::uint32_t slot) {
-    (void)server;
+    (void)replication_server;
     ClientEntityState* state = client.entities.try_get(slot);
     if (state == nullptr) {
         return 0U;
@@ -227,7 +227,7 @@ std::uint32_t server_detail::ServerClientReplicator::NetworkIds::allocate_for(
     state->network_version = entries[network_id].version;
     state->has_network_id = true;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
-    server.trace_entity_started_syncing(client.id, slot, network_id, state->network_version);
+    replication_server.trace_entity_started_syncing(client.id, slot, network_id, state->network_version);
 #endif
     return network_id;
 }

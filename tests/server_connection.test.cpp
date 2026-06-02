@@ -19,7 +19,7 @@ using namespace ashiato_sync_tests;
 namespace {
 
 std::uint8_t packet_message(ashiato::BitBuffer packet) {
-    return static_cast<std::uint8_t>(packet.read_bits(8U));
+    return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits));
 }
 
 }  // namespace
@@ -28,7 +28,7 @@ TEST_CASE("server connect response resends until client id is ACKed") {
     ashiato::Registry registry;
     define_position_archetype(registry);
 
-    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> sent;
+    std::vector<std::pair<ashiato::sync::PeerId, ashiato::BitBuffer>> sent;
     ashiato::sync::ReplicationServerOptions options;
     options.connect_handler = [](const std::string& token, ashiato::sync::ClientId& client, std::string& error) {
         if (token != "token") {
@@ -38,7 +38,7 @@ TEST_CASE("server connect response resends until client id is ACKed") {
         client = 7;
         return true;
     };
-    options.transport = [&](ashiato::sync::ClientId peer, const ashiato::BitBuffer& packet) {
+    options.transport = [&](ashiato::sync::PeerId peer, const ashiato::BitBuffer& packet) {
         sent.push_back({peer, packet});
     };
     ashiato::sync::ReplicationServer server(registry, options);
@@ -47,22 +47,22 @@ TEST_CASE("server connect response resends until client id is ACKed") {
     REQUIRE(server.has_client(7));
     REQUIRE(sent.size() == 1);
     REQUIRE(sent.back().first == 99);
-    REQUIRE(static_cast<std::uint8_t>(sent.back().second.read_bits(8U)) ==
+    REQUIRE(static_cast<std::uint8_t>(sent.back().second.read_bits(ashiato::sync::protocol::message_bits)) ==
             ashiato::sync::protocol::server_connect_response_message);
     REQUIRE(sent.back().second.read_bool());
-    REQUIRE(sent.back().second.read_unsigned_bits(64U) == 7);
+    REQUIRE(sent.back().second.read_unsigned_bits(ashiato::sync::protocol::client_id_bits) == 7);
 
     sent.clear();
     for (int tick = 0; tick < 16; ++tick) {
         server.tick(registry, server.options().fixed_dt_seconds);
     }
     REQUIRE(sent.size() == 1);
-    REQUIRE(static_cast<std::uint8_t>(sent.back().second.read_bits(8U)) ==
+    REQUIRE(static_cast<std::uint8_t>(sent.back().second.read_bits(ashiato::sync::protocol::message_bits)) ==
             ashiato::sync::protocol::server_connect_response_message);
 
     ashiato::BitBuffer ack;
-    ack.push_bits(ashiato::sync::protocol::client_connect_ack_message, 8U);
-    ack.push_unsigned_bits(7, 64U);
+    ack.write_bits(ashiato::sync::protocol::client_connect_ack_message, ashiato::sync::protocol::message_bits);
+    ack.write_unsigned_bits(7, ashiato::sync::protocol::client_id_bits);
     REQUIRE(server.process_packet(registry, 99, ack));
 
     sent.clear();
@@ -71,7 +71,7 @@ TEST_CASE("server connect response resends until client id is ACKed") {
 
     REQUIRE(server.process_packet(registry, 100, make_connect_request("no")));
     REQUIRE(sent.size() == 1);
-    REQUIRE(static_cast<std::uint8_t>(sent.back().second.read_bits(8U)) ==
+    REQUIRE(static_cast<std::uint8_t>(sent.back().second.read_bits(ashiato::sync::protocol::message_bits)) ==
             ashiato::sync::protocol::server_connect_response_message);
     REQUIRE_FALSE(sent.back().second.read_bool());
     std::string error;
@@ -83,7 +83,7 @@ TEST_CASE("server duplicate connect request from same peer resends existing acce
     ashiato::Registry registry;
     define_position_archetype(registry);
 
-    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> sent;
+    std::vector<std::pair<ashiato::sync::PeerId, ashiato::BitBuffer>> sent;
     ashiato::sync::ReplicationServerOptions options;
     options.connect_handler = [](const std::string&, ashiato::sync::ClientId& client, std::string&) {
         client = 5;
@@ -102,10 +102,10 @@ TEST_CASE("server duplicate connect request from same peer resends existing acce
 
     for (auto& [peer, packet] : sent) {
         REQUIRE(peer == 77);
-        REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) ==
+        REQUIRE(static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) ==
                 ashiato::sync::protocol::server_connect_response_message);
         REQUIRE(packet.read_bool());
-        REQUIRE(packet.read_unsigned_bits(64U) == 5);
+        REQUIRE(packet.read_unsigned_bits(ashiato::sync::protocol::client_id_bits) == 5);
     }
 }
 
@@ -116,7 +116,7 @@ TEST_CASE("server starts client replication only after connect response ACK") {
     REQUIRE(registry.add<Position>(entity, Position{1.0f, 2.0f}) != nullptr);
     REQUIRE(start_sync(registry, entity, archetype));
 
-    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> sent;
+    std::vector<std::pair<ashiato::sync::PeerId, ashiato::BitBuffer>> sent;
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
     options.connect_handler = [](const std::string&, ashiato::sync::ClientId& client, std::string&) {
@@ -131,7 +131,7 @@ TEST_CASE("server starts client replication only after connect response ACK") {
     REQUIRE(server.process_packet(registry, 99, make_connect_request("token")));
     REQUIRE(server.has_client(7));
     REQUIRE(sent.size() == 1);
-    REQUIRE(static_cast<std::uint8_t>(sent.back().second.read_bits(8U)) ==
+    REQUIRE(static_cast<std::uint8_t>(sent.back().second.read_bits(ashiato::sync::protocol::message_bits)) ==
             ashiato::sync::protocol::server_connect_response_message);
 
     sent.clear();
@@ -140,13 +140,13 @@ TEST_CASE("server starts client replication only after connect response ACK") {
     }
     REQUIRE(std::none_of(sent.begin(), sent.end(), [](auto& delivered) {
         ashiato::BitBuffer packet = delivered.second;
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) ==
+        return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) ==
             ashiato::sync::protocol::server_update_message;
     }));
 
     ashiato::BitBuffer ack;
-    ack.push_bits(ashiato::sync::protocol::client_connect_ack_message, 8U);
-    ack.push_unsigned_bits(7, 64U);
+    ack.write_bits(ashiato::sync::protocol::client_connect_ack_message, ashiato::sync::protocol::message_bits);
+    ack.write_unsigned_bits(7, ashiato::sync::protocol::client_id_bits);
     REQUIRE(server.process_packet(registry, 99, ack));
 
     sent.clear();
@@ -160,7 +160,7 @@ TEST_CASE("server starts client replication only after connect response ACK") {
 TEST_CASE("client and server recover when each critical handshake packet is lost once") {
     using TestLink = ashiato::sync::SimulatedLink<ashiato::BitBuffer, ashiato::sync::ClientId>;
 
-    constexpr ashiato::sync::ClientId peer = 99;
+    constexpr ashiato::sync::PeerId peer = 99;
     constexpr ashiato::sync::ClientId accepted_client = 7;
 
     ashiato::Registry server_registry;
@@ -343,13 +343,40 @@ TEST_CASE("replication rejects client ids that cannot fit in client entity netwo
         return true;
     };
     ashiato::sync::ReplicationServer connect_server(registry, options);
-    REQUIRE(connect_server.process_packet(registry, 99, make_connect_request("token")));
+    REQUIRE_FALSE(connect_server.process_packet(registry, 99, make_connect_request("token")));
     REQUIRE_FALSE(connect_server.has_client(ashiato::sync::max_client_entity_network_id_client + 1U));
     REQUIRE(responses.size() == 1);
-    REQUIRE(static_cast<std::uint8_t>(responses[0].read_bits(8U)) ==
+    REQUIRE(static_cast<std::uint8_t>(responses[0].read_bits(ashiato::sync::protocol::message_bits)) ==
             ashiato::sync::protocol::server_connect_response_message);
     REQUIRE_FALSE(responses[0].read_bool());
     std::string error;
     REQUIRE(ashiato::sync::protocol::read_string(responses[0], error));
     REQUIRE(error == "client id out of range");
+}
+
+TEST_CASE("server reuses freed client ids after the client id counter wraps") {
+    ashiato::Registry registry;
+    define_position_archetype(registry);
+
+    std::vector<ashiato::BitBuffer> responses;
+    ashiato::sync::ReplicationServerOptions options;
+    options.transport = [&](ashiato::sync::PeerId peer, const ashiato::BitBuffer& payload) {
+        REQUIRE(peer == 1000U);
+        responses.push_back(payload);
+    };
+    ashiato::sync::ReplicationServer server(registry, options);
+
+    for (std::uint16_t client = 1; client <= ashiato::sync::max_client_entity_network_id_client; ++client) {
+        REQUIRE(server.add_client(static_cast<ashiato::sync::ClientId>(client)));
+    }
+    REQUIRE(server.remove_client(registry, 1));
+
+    REQUIRE(server.process_packet(registry, 1000U, make_connect_request("token")));
+    REQUIRE(server.has_client(1));
+    REQUIRE(responses.size() == 1);
+    ashiato::BitBuffer response = responses[0];
+    REQUIRE(static_cast<std::uint8_t>(response.read_bits(ashiato::sync::protocol::message_bits)) ==
+            ashiato::sync::protocol::server_connect_response_message);
+    REQUIRE(response.read_bool());
+    REQUIRE(response.read_unsigned_bits(ashiato::sync::protocol::client_id_bits) == 1);
 }

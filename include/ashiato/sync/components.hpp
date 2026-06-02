@@ -10,6 +10,9 @@ namespace ashiato::sync {
 void register_components(ashiato::Registry& registry);
 
 const SyncComponentOps* find_component_ops(const ashiato::Registry& registry, ashiato::Entity component);
+const SyncComponentOps* find_component_serializer_ops(
+    const ashiato::Registry& registry,
+    SyncComponentSerializerId serializer);
 bool set_fractional_tick_sampled(ashiato::Registry& registry, ashiato::Entity component, bool enabled = true);
 bool is_fractional_tick_sampled(const ashiato::Registry& registry, ashiato::Entity component);
 
@@ -38,6 +41,16 @@ template <typename T>
 bool set_client_input_component(ashiato::Registry& registry) {
     register_components(registry);
     return set_client_input_component(registry, registry.component<T>());
+}
+
+template <typename T>
+ComponentReplication replicate(
+    ashiato::Registry& registry,
+    SyncComponentSerializerId serializer = invalid_sync_component_serializer_id,
+    ReplicationAudience audience = ReplicationAudience::All,
+    ComponentInterpolation interpolation = ComponentInterpolation::Step) {
+    register_components(registry);
+    return ComponentReplication{registry.component<T>(), audience, interpolation, serializer};
 }
 
 }  // namespace ashiato::sync

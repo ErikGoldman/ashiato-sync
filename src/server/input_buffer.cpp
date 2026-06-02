@@ -1,6 +1,8 @@
 #include "server/input_buffer.hpp"
 
 #include "ashiato/sync/detail/bit_reader.hpp"
+#include "ashiato/sync/protocol.hpp"
+#include "ashiato/sync/serialization.hpp"
 
 #include <algorithm>
 
@@ -42,25 +44,26 @@ bool ServerInputBuffer::process_packet_payload(
     }
     detail::BitReader reader(packet);
     SyncFrame baseline_frame = 0;
-    std::uint16_t input_count = 0;
-    bool first_input_full = false;
+    bool first_input_relative = false;
+    std::uint64_t first_input_value = 0;
     if (!reader.read_bits(32U, baseline_frame) ||
-        !reader.read_bits(16U, input_count) ||
-        !reader.read_bits(1U, first_input_full)) {
+        !serialization::read_varint2_raw(reader, 0U, 32U, first_input_relative, first_input_value)) {
         return false;
     }
-    SyncFrame first_input_frame = input_count == 0U ? 0U : baseline_frame + 1U;
+    SyncFrame first_input_frame = baseline_frame + 1U;
+    const bool first_input_full = !first_input_relative;
     if (first_input_full) {
-        SyncFrame explicit_first_input_frame = 0;
-        if (!reader.read_bits(32U, explicit_first_input_frame)) {
-            return false;
-        }
-        if (input_count != 0U) {
-            first_input_frame = explicit_first_input_frame;
-        }
+        first_input_frame = static_cast<SyncFrame>(first_input_value);
     }
     if (trace != nullptr) {
         trace->baseline_frame = baseline_frame;
+    }
+    std::uint16_t input_count = 0;
+    if (!reader.read_bits(protocol::input_count_bits, input_count)) {
+        return false;
+    }
+    if (input_count > protocol::max_input_count) {
+        return false;
     }
 
     std::vector<std::uint8_t> previous(ops.serialization.quantized_size, 0U);
@@ -86,7 +89,7 @@ bool ServerInputBuffer::process_packet_payload(
             return true;
         }
     }
-    if (input_count == 0U || first_input_frame == 0U) {
+    if (first_input_frame == 0U || input_count == 0U) {
         return true;
     }
 
@@ -99,7 +102,13 @@ bool ServerInputBuffer::process_packet_payload(
         const SyncFrame frame = first_input_frame + static_cast<SyncFrame>(index);
         const std::uint8_t* previous_bytes = index == 0U && first_input_full ? nullptr : previous.data();
         ashiato::ComponentSerializationContext serialization_context;
+        serialization_context.currentFrame = frame;
+        serialization_context.previousFrame = previous_bytes != nullptr ? frame - 1U : 0U;
+        const std::uint64_t before_bits = reader.raw().read_offset_bits();
         if (!ops.serialization.deserialize(reader.raw(), previous_bytes, decoded.data(), serialization_context)) {
+            return false;
+        }
+        if (reader.raw().read_offset_bits() == before_bits) {
             return false;
         }
         if (trace != nullptr) {

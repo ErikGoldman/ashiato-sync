@@ -1,6 +1,6 @@
 # Ashiato Sync
 
-[![CI](https://github.com/ErikGoldman/ashiato-sync/workflows/CI/badge.svg)](https://github.com/ErikGoldman/ashiato-sync/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/endpoint?url=https%3A%2F%2Ferikgoldman.github.io%2Fashiato-sync%2Fci.json)](https://github.com/ErikGoldman/ashiato-sync/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Ferikgoldman.github.io%2Fashiato-sync%2Fcoverage.json)](https://github.com/ErikGoldman/ashiato-sync/actions/workflows/ci.yml)
 [![Benchmarks](https://img.shields.io/badge/benchmarks-results-blue)](https://erikgoldman.github.io/ashiato-sync/benchmarks/)
 
@@ -232,6 +232,90 @@ fixed-step catch-up work; `0` keeps the default unlimited behavior.
   If a referenced entity arrives later, the decoded reference keeps
   `client_entity_network_id` stable and `ReplicationClient::local_entity(id)`
   can resolve it after the entity is created.
+- A component can expose compile-time serializer profiles by nesting default
+  settings, fixed quantized state, and a serializer template inside
+  `SyncComponentTraits<T>`. The default `register_sync_component<T>` path uses
+  `Serializer<Settings>`, while projects can register another serializer
+  instantiation for the same ECS component id and choose it per archetype:
+
+  ```cpp
+  struct Transform {
+      float x = 0.0f;
+      float y = 0.0f;
+      float yaw = 0.0f;
+  };
+
+  namespace ashiato::sync {
+  template <>
+  struct SyncComponentTraits<Transform> {
+      struct Settings {
+          static constexpr bool yaw_only = false;
+          static constexpr float position_resolution = 0.01f;
+      };
+
+      struct Quantized {
+          std::int32_t x = 0;
+          std::int32_t y = 0;
+          std::int32_t yaw = 0;
+      };
+
+      template <typename SettingsT = Settings>
+      struct Serializer {
+          static Quantized quantize(const Transform& value);
+          static Transform dequantize(const Quantized& value);
+
+          static void serialize(
+              const Quantized* previous,
+              const Quantized& current,
+              ashiato::BitBuffer& out,
+              ashiato::ComponentSerializationContext& context);
+
+          static bool deserialize(
+              ashiato::BitBuffer& in,
+              const Quantized* previous,
+              Quantized& out,
+              ashiato::ComponentSerializationContext& context);
+      };
+  };
+  }  // namespace ashiato::sync
+
+  struct ProjectileTransformSettings {
+      static constexpr bool yaw_only = true;
+      static constexpr float position_resolution = 0.05f;
+  };
+
+  ashiato::Registry registry;
+  const ashiato::Entity transform =
+      ashiato::sync::register_sync_component<Transform>(registry, "Transform");
+
+  using TransformSync = ashiato::sync::SyncComponentTraits<Transform>;
+  using ProjectileTransformSerializer =
+      TransformSync::Serializer<ProjectileTransformSettings>;
+
+  const ashiato::sync::SyncComponentSerializerId projectile_serializer =
+      ashiato::sync::register_sync_component_serializer<
+          Transform,
+          ProjectileTransformSerializer>(
+              registry,
+              "Transform.Projectile");
+
+  const ashiato::sync::SyncArchetypeId player =
+      ashiato::sync::define_archetype(
+          registry,
+          "Player",
+          {ashiato::sync::replicate<Transform>(registry)});
+
+  const ashiato::sync::SyncArchetypeId projectile =
+      ashiato::sync::define_archetype(
+          registry,
+          "Projectile",
+          {ashiato::sync::replicate<Transform>(registry, projectile_serializer)});
+  ```
+
+  Use `if constexpr` inside the nested serializer to compile out branches for a
+  settings profile. Profile settings may change precision and wire fields, but
+  all profiles for a component share the same `Quantized` and optional `Error`
+  layout.
 - Call `ReplicationClient::set_entity_mode(registry, client_entity_network_id, mode)`
   to switch an already-known replicated entity immediately. It returns `false`
   for unknown replicated entities and does not create future overrides.

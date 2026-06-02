@@ -72,7 +72,7 @@ private:
     std::unordered_map<ashiato::sync::ClientId, DeathInfo> deaths_;
     std::vector<std::unique_ptr<Session>> sessions_;
 
-    bool begin_session(ashiato::sync::ClientId peer, const sockaddr_in& address, const ashiato::BitBuffer& packet);
+    bool begin_session(ashiato::sync::PeerId peer, const sockaddr_in& address, const ashiato::BitBuffer& packet);
     void on_server_registry_dirty_frame(const ashiato::sync::ServerRegistryDirtyFrame& frame) override;
 };
 

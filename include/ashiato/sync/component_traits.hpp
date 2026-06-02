@@ -49,7 +49,7 @@ struct SyncComponentTraits {
         static_assert(
             std::is_trivially_copyable<Quantized>::value,
             "default SyncComponentTraits serialization requires a trivially copyable quantized state");
-        out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
+        out.write_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
     static bool deserialize(

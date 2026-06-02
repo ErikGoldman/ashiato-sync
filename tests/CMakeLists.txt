@@ -36,6 +36,7 @@ add_executable(ashiato_sync_tests
     server_packet.test.cpp
     server_prioritization.test.cpp
     server_transport.test.cpp
+    serialization_context.test.cpp
     tracing_component_rows.test.cpp
     tracing_events.test.cpp
     tracing_packet_log.test.cpp

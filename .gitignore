@@ -5,3 +5,4 @@ artifacts/
 gmon.out
 .idea/
 fps_replay_frames/
+__pycache__

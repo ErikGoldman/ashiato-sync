@@ -1,5 +1,7 @@
 #include "ashiato/sync/components.hpp"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <utility>
@@ -9,7 +11,61 @@ namespace {
 
 constexpr std::size_t max_archetype_tags = 64;
 constexpr std::size_t max_archetype_components = 63;
-constexpr std::size_t max_archetype_quantized_bytes = 1200;
+
+static_assert(sizeof(SyncRole) == sizeof(std::int32_t), "SyncRole debug field metadata assumes a 32-bit enum");
+static_assert(sizeof(ClientId) == sizeof(std::uint8_t), "ClientId debug field metadata assumes an 8-bit id");
+
+void register_debug_fields(
+    ashiato::Registry& registry,
+    ashiato::Entity component,
+    std::vector<ashiato::ComponentField> fields) {
+    if (!registry.set_component_fields(component, std::move(fields))) {
+        throw std::logic_error("failed to register sync component debug fields");
+    }
+}
+
+void register_sync_settings_debug_fields(ashiato::Registry& registry, ashiato::Entity component) {
+    register_debug_fields(
+        registry,
+        component,
+        {
+            {"role", offsetof(SyncSettings, role), registry.primitive_type(ashiato::PrimitiveType::I32), 1},
+            {"local_client", offsetof(SyncSettings, local_client), registry.primitive_type(ashiato::PrimitiveType::U8), 1},
+            {
+                "input_component.value",
+                offsetof(SyncSettings, input_component) + offsetof(ashiato::Entity, value),
+                registry.primitive_type(ashiato::PrimitiveType::U64),
+                1,
+            },
+            {
+                "fixed_dt_seconds",
+                offsetof(SyncSettings, fixed_dt_seconds),
+                registry.primitive_type(ashiato::PrimitiveType::F64),
+                1,
+            },
+        });
+}
+
+void register_frame_info_debug_fields(ashiato::Registry& registry, ashiato::Entity component) {
+    register_debug_fields(
+        registry,
+        component,
+        {{"frame", offsetof(FrameInfo, frame), registry.primitive_type(ashiato::PrimitiveType::U32), 1}});
+}
+
+void register_sync_authority_debug_fields(ashiato::Registry& registry, ashiato::Entity component) {
+    register_debug_fields(
+        registry,
+        component,
+        {
+            {
+                "authoritative",
+                offsetof(SyncAuthority, authoritative),
+                registry.primitive_type(ashiato::PrimitiveType::Bool),
+                1,
+            },
+        });
+}
 
 bool valid_archetype_id(const SyncSettings& settings, SyncArchetypeId id) {
     return id.value < settings.archetypes.size();
@@ -18,6 +74,13 @@ bool valid_archetype_id(const SyncSettings& settings, SyncArchetypeId id) {
 void validate_component_replication(const ashiato::Registry& registry, const ComponentReplication& replication) {
     if (!replication.component || registry.component_info(replication.component) == nullptr) {
         throw std::invalid_argument("sync archetype references an unregistered component");
+    }
+    if (replication.serializer != invalid_sync_component_serializer_id) {
+        const SyncComponentOps* ops = find_component_serializer_ops(registry, replication.serializer);
+        if (ops == nullptr || ops->serialization.component != replication.component) {
+            throw std::invalid_argument("sync archetype references an invalid component serializer");
+        }
+        return;
     }
     if (find_component_ops(registry, replication.component) == nullptr) {
         throw std::invalid_argument("sync archetype references a component without sync traits");
@@ -34,15 +97,19 @@ void validate_tag_replication(const ashiato::Registry& registry, const SyncTagRe
 }  // namespace
 
 void register_components(ashiato::Registry& registry) {
-    registry.register_component<SyncSettings>("ashiato.sync.SyncSettings");
-    registry.register_component<FrameInfo>("ashiato.sync.FrameInfo");
+    const ashiato::Entity sync_settings = registry.register_component<SyncSettings>("ashiato.sync.SyncSettings");
+    const ashiato::Entity frame_info = registry.register_component<FrameInfo>("ashiato.sync.FrameInfo");
     registry.register_component<CueDispatcher>("ashiato.sync.CueDispatcher");
-    registry.register_component<SyncAuthority>("ashiato.sync.SyncAuthority");
+    const ashiato::Entity sync_authority = registry.register_component<SyncAuthority>("ashiato.sync.SyncAuthority");
     registry.register_component<Replicated>("ashiato.sync.Replicated");
     registry.register_component<NetworkOwner>("ashiato.sync.NetworkOwner");
     registry.register_component<FractionalTickSampled>("ashiato.sync.FractionalTickSampled");
     registry.register_component<NoResim>("ashiato.sync.NoResim");
     registry.register_component<NoSimulate>("ashiato.sync.NoSimulate");
+
+    register_sync_settings_debug_fields(registry, sync_settings);
+    register_frame_info_debug_fields(registry, frame_info);
+    register_sync_authority_debug_fields(registry, sync_authority);
 }
 
 CueDispatcher::CueDispatcher(const CueDispatcher& other) {
@@ -112,6 +179,15 @@ const SyncComponentOps* find_component_ops(const ashiato::Registry& registry, as
     return found != settings.component_ops.end() ? &found->second : nullptr;
 }
 
+const SyncComponentOps* find_component_serializer_ops(
+    const ashiato::Registry& registry,
+    SyncComponentSerializerId serializer) {
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    return serializer.value < settings.component_serializers.size()
+        ? &settings.component_serializers[serializer.value]
+        : nullptr;
+}
+
 bool set_fractional_tick_sampled(ashiato::Registry& registry, ashiato::Entity component, bool enabled) {
     register_components(registry);
     if (!component || registry.component_info(component) == nullptr) {
@@ -127,7 +203,14 @@ bool set_fractional_tick_sampled(ashiato::Registry& registry, ashiato::Entity co
     }
 
     const SyncComponentOps* ops = find_component_ops(registry, component);
-    if (ops == nullptr || ops->interpolate == nullptr) {
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    const bool has_profile_interpolation = std::any_of(
+        settings.component_serializers.begin(),
+        settings.component_serializers.end(),
+        [component](const SyncComponentOps& profile_ops) {
+            return profile_ops.serialization.component == component && profile_ops.interpolate != nullptr;
+        });
+    if ((ops == nullptr || ops->interpolate == nullptr) && !has_profile_interpolation) {
         return false;
     }
 
@@ -180,20 +263,28 @@ SyncArchetypeId define_archetype(ashiato::Registry& registry, SyncArchetypeDesc 
     component_offsets.reserve(desc.components.size());
     std::size_t total_quantized_bytes = 0;
     for (const ComponentReplication& replication : desc.components) {
-        const auto found_ops = settings.component_ops.find(replication.component.value);
-        if (found_ops == settings.component_ops.end()) {
+        const SyncComponentOps* ops = nullptr;
+        if (replication.serializer == invalid_sync_component_serializer_id) {
+            const auto found_ops = settings.component_ops.find(replication.component.value);
+            if (found_ops != settings.component_ops.end()) {
+                ops = &found_ops->second;
+            }
+        } else if (replication.serializer.value < settings.component_serializers.size()) {
+            ops = &settings.component_serializers[replication.serializer.value];
+        }
+        if (ops == nullptr) {
             throw std::invalid_argument("sync archetype references a component without sync traits");
         }
-        if (found_ops->second.serialization.quantized_size == 0 ||
-            found_ops->second.serialization.quantized_size > SyncComponentOps::QuantizedBytes::max_size) {
+        if (ops->serialization.component != replication.component) {
+            throw std::invalid_argument("sync archetype references a serializer for a different component");
+        }
+        if (ops->serialization.quantized_size == 0 ||
+            ops->serialization.quantized_size > SyncComponentOps::QuantizedBytes::max_size) {
             throw std::invalid_argument("sync archetype references a component with invalid quantized size");
         }
         component_offsets.push_back(static_cast<std::uint32_t>(total_quantized_bytes));
-        total_quantized_bytes += found_ops->second.serialization.quantized_size;
-        if (total_quantized_bytes > max_archetype_quantized_bytes) {
-            throw std::invalid_argument("sync archetype quantized state exceeds maximum size");
-        }
-        component_ops.push_back(found_ops->second);
+        total_quantized_bytes += ops->serialization.quantized_size;
+        component_ops.push_back(*ops);
     }
     const SyncArchetypeId id{static_cast<std::uint32_t>(settings.archetypes.size())};
     settings.archetypes.push_back(SyncArchetype{

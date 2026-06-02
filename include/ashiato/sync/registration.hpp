@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
-#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -21,16 +20,16 @@ namespace ashiato::sync {
 
 namespace detail {
 
-template <typename T, typename Traits>
+template <typename T, typename ComponentTraits, typename Serializer>
 struct SyncComponentSerializationTraitsAdapter {
-    using Quantized = typename Traits::Quantized;
+    using Quantized = typename ComponentTraits::Quantized;
 
     static Quantized quantize(const T& value) {
-        return Traits::quantize(value);
+        return Serializer::quantize(value);
     }
 
     static T dequantize(const Quantized& value) {
-        return Traits::dequantize(value);
+        return Serializer::dequantize(value);
     }
 
     static void serialize(
@@ -38,7 +37,7 @@ struct SyncComponentSerializationTraitsAdapter {
         const Quantized& current,
         ashiato::BitBuffer& out,
         ashiato::ComponentSerializationContext& context) {
-        serialize_quantized<Traits, Quantized>(
+        serialize_quantized<Serializer, Quantized>(
             previous,
             current,
             out,
@@ -50,7 +49,7 @@ struct SyncComponentSerializationTraitsAdapter {
         const Quantized* previous,
         Quantized& out,
         ashiato::ComponentSerializationContext& context) {
-        return deserialize_quantized<Traits, Quantized>(
+        return deserialize_quantized<Serializer, Quantized>(
             in,
             previous,
             out,
@@ -58,53 +57,86 @@ struct SyncComponentSerializationTraitsAdapter {
     }
 };
 
+template <typename Traits, typename = void>
+struct SyncComponentDefaultSerializer {
+    using Type = Traits;
+};
+
+template <typename Traits>
+struct SyncComponentDefaultSerializer<
+    Traits,
+    std::void_t<typename Traits::Settings, typename Traits::template Serializer<typename Traits::Settings>>> {
+    using Type = typename Traits::template Serializer<typename Traits::Settings>;
+};
+
+template <typename T, typename Serializer>
+SyncComponentOps make_sync_component_ops(ashiato::Entity component, std::string name) {
+    using Traits = SyncComponentTraits<T>;
+    using Quantized = typename Traits::Quantized;
+    using SerializationTraits = SyncComponentSerializationTraitsAdapter<T, Traits, Serializer>;
+    static_assert(
+        std::is_trivially_copyable<Quantized>::value,
+        "SyncComponentTraits<T>::Quantized must be trivially copyable");
+
+    ashiato::ComponentSerializationOps serialization_ops =
+        ashiato::make_component_serialization_ops<T, SerializationTraits>(std::move(name));
+    serialization_ops.component = component;
+
+    SyncComponentOps ops;
+    ops.serialization = std::move(serialization_ops);
+    ops.references_entities = references_entities<Serializer>::value;
+    if constexpr (has_interpolate<Serializer, Quantized>::value) {
+        ops.interpolate = &interpolate_quantized<Serializer, Quantized>;
+    }
+    if constexpr (has_error_blending<Serializer, Quantized>::value) {
+        using Error = typename Traits::Error;
+        static_assert(
+            std::is_trivially_copyable<Error>::value,
+            "SyncComponentTraits<T>::Error must be trivially copyable");
+        ops.error_size = sizeof(Error);
+        ops.compute_error = &compute_error_quantized<Serializer, Quantized>;
+        ops.apply_error = &apply_error_quantized<Serializer, Quantized>;
+        ops.blend_out_error = &blend_out_error_quantized<Serializer, Quantized>;
+    }
+    if constexpr (has_should_roll_back<Serializer, Quantized>::value) {
+        ops.should_roll_back = &should_roll_back_quantized<Serializer, Quantized>;
+    }
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
+    if constexpr (has_trace_component<Serializer, Quantized>::value) {
+        ops.trace = &trace_component_quantized<Serializer, Quantized>;
+    }
+#endif
+    return ops;
+}
+
 }  // namespace detail
 
 template <typename T>
 ashiato::Entity register_sync_component(ashiato::Registry& registry, std::string name = {}) {
     using Traits = SyncComponentTraits<T>;
-    using Quantized = typename Traits::Quantized;
-    using SerializationTraits = detail::SyncComponentSerializationTraitsAdapter<T, Traits>;
-    static_assert(
-        std::is_trivially_copyable<Quantized>::value,
-        "SyncComponentTraits<T>::Quantized must be trivially copyable");
+    using Serializer = typename detail::SyncComponentDefaultSerializer<Traits>::Type;
 
     register_components(registry);
 
     std::string component_name = name;
     const ashiato::Entity component = registry.register_component<T>(std::move(name));
 
-    ashiato::ComponentSerializationOps serialization_ops =
-        ashiato::make_component_serialization_ops<T, SerializationTraits>(component_name);
-    serialization_ops.component = component;
-
-    SyncComponentOps ops;
-    ops.serialization = std::move(serialization_ops);
-    ops.references_entities = detail::references_entities<Traits>::value;
-    if constexpr (detail::has_interpolate<Traits, Quantized>::value) {
-        ops.interpolate = &detail::interpolate_quantized<Traits, Quantized>;
-    }
-    if constexpr (detail::has_error_blending<Traits, Quantized>::value) {
-        using Error = typename Traits::Error;
-        static_assert(
-            std::is_trivially_copyable<Error>::value,
-            "SyncComponentTraits<T>::Error must be trivially copyable");
-        ops.error_size = sizeof(Error);
-        ops.compute_error = &detail::compute_error_quantized<Traits, Quantized>;
-        ops.apply_error = &detail::apply_error_quantized<Traits, Quantized>;
-        ops.blend_out_error = &detail::blend_out_error_quantized<Traits, Quantized>;
-    }
-    if constexpr (detail::has_should_roll_back<Traits, Quantized>::value) {
-        ops.should_roll_back = &detail::should_roll_back_quantized<Traits, Quantized>;
-    }
-#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
-    if constexpr (detail::has_trace_component<Traits, Quantized>::value) {
-        ops.trace = &detail::trace_component_quantized<Traits, Quantized>;
-    }
-#endif
-
+    SyncComponentOps ops = detail::make_sync_component_ops<T, Serializer>(component, std::move(component_name));
     registry.write<SyncSettings>().component_ops[component.value] = ops;
     return component;
+}
+
+template <typename T, typename Serializer>
+SyncComponentSerializerId register_sync_component_serializer(ashiato::Registry& registry, std::string name = {}) {
+    register_components(registry);
+
+    const ashiato::Entity component = registry.register_component<T>();
+    SyncComponentOps ops = detail::make_sync_component_ops<T, Serializer>(component, std::move(name));
+
+    SyncSettings& settings = registry.write<SyncSettings>();
+    const SyncComponentSerializerId id{static_cast<std::uint32_t>(settings.component_serializers.size())};
+    settings.component_serializers.push_back(std::move(ops));
+    return id;
 }
 
 template <typename T>
@@ -127,20 +159,15 @@ SyncCueTypeId register_sync_cue(ashiato::Registry& registry, std::string name = 
     ops.serialize = [](const void* value, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext& context) {
         detail::serialize_cue_payload<T>(*static_cast<const T*>(value), out, context);
     };
-    ops.deserialize_value = [](SyncCueTypeId, void*, const ashiato::BitBuffer& payload, ashiato::ComponentSerializationContext& context) -> std::shared_ptr<void> {
-        T value{};
-        if (!detail::read_cue_payload(payload, value, context)) {
-            return {};
-        }
-        return std::make_shared<T>(std::move(value));
-    };
-    ops.play = &detail::play_cue_payload<T>;
-    ops.rollback = &detail::rollback_cue_payload<T>;
-    ops.equals = &detail::equal_cue_payloads<T>;
+    ops.deserialize_into = &detail::deserialize_cue_value<T>;
+    ops.play = &detail::play_cue_value<T>;
+    ops.rollback = &detail::rollback_cue_value<T>;
+    ops.equals = &detail::equal_cue_values<T>;
     ops.references_entities = detail::references_entities<SyncCueTraits<T>>::value;
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
     if constexpr (detail::has_trace_cue<SyncCueTraits<T>, T>::value) {
         ops.trace = &detail::trace_cue_payload<T>;
+        ops.trace_value = &detail::trace_cue_value<T>;
     }
 #endif
     settings.cue_ops.push_back(ops);
@@ -229,7 +256,7 @@ bool CueDispatcher::emit(
     queued.type = type;
     queued.relevance_seconds = relevance_seconds;
     queued.only_replicate_to_owner = only_replicate_to_owner;
-    queued.value = std::make_shared<T>(cue);
+    queued.value.emplace<T>(cue);
     return enqueue(std::move(queued));
 }
 
@@ -240,11 +267,18 @@ inline bool CueDispatcher::emit_raw(
     SyncCueTypeId type,
     ashiato::BitBuffer payload,
     float relevance_seconds,
-    bool only_replicate_to_owner) {
+    bool only_replicate_to_owner
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
+    ,
+    std::vector<ashiato::SerializationTraceScope> payload_trace_scopes
+#endif
+) {
     if (!entity || frame == 0U || relevance_seconds < 0.0f) {
         return false;
     }
-    if (type >= settings.cue_ops.size() || settings.cue_ops[type].play == nullptr) {
+    if (type >= settings.cue_ops.size() ||
+        settings.cue_ops[type].deserialize_into == nullptr ||
+        settings.cue_ops[type].play == nullptr) {
         return false;
     }
 
@@ -254,6 +288,9 @@ inline bool CueDispatcher::emit_raw(
     queued.type = type;
     queued.relevance_seconds = relevance_seconds;
     queued.payload = std::move(payload);
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
+    queued.payload_trace_scopes = std::move(payload_trace_scopes);
+#endif
     queued.only_replicate_to_owner = only_replicate_to_owner;
     return enqueue(std::move(queued));
 }

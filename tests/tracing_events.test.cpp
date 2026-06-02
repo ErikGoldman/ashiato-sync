@@ -94,7 +94,7 @@ TEST_CASE("serialization payload tracing is opt-in scoped and client-filtered") 
             "packet");
         capture.set_target(&payload);
         ashiato::sync::ScopedSerializationTraceScope header_scope(&capture, "header");
-        payload.push_bits(0xab, 8U);
+        payload.write_bits(0xab, 8U);
     }
     REQUIRE(events.empty());
 
@@ -111,7 +111,7 @@ TEST_CASE("serialization payload tracing is opt-in scoped and client-filtered") 
             "packet");
         capture.set_target(&payload);
         ashiato::sync::ScopedSerializationTraceScope header_scope(&capture, "header");
-        payload.push_bits(0xab, 8U);
+        payload.write_bits(0xab, 8U);
     }
     REQUIRE(events.empty());
 
@@ -128,11 +128,11 @@ TEST_CASE("serialization payload tracing is opt-in scoped and client-filtered") 
         capture.set_target(&payload);
         {
             ashiato::sync::ScopedSerializationTraceScope header_scope(&capture, "header");
-            payload.push_bits(0xab, 8U);
+            payload.write_bits(0xab, 8U);
         }
         {
             ashiato::sync::ScopedSerializationTraceScope body_scope(&capture, "body");
-            payload.push_bits(0xcdef, 16U);
+            payload.write_bits(0xcdef, 16U);
         }
     }
     REQUIRE(events.size() == 1U);
@@ -164,7 +164,7 @@ TEST_CASE("serialization payload trace macro uses the passed serialization conte
     capture.set_target(&payload);
     ashiato::ComponentSerializationContext context{nullptr, capture.payload_capture()};
     {
-        SERIALIZE_TRACE(payload, 0xab, 8U, "serializer_section");
+        ASHIATO_SERIALIZE_TRACE(payload, 0xab, 8U, "serializer_section");
     }
 
     capture.flush();
@@ -285,7 +285,7 @@ TEST_CASE("client ack and input packets emit serialization payload scopes") {
     REQUIRE(client.tick(client_registry, client.fixed_dt_seconds()));
     std::vector<ashiato::BitBuffer> input_packets = client.drain_packets();
     REQUIRE(std::any_of(input_packets.begin(), input_packets.end(), [](ashiato::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
+        return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_input_message;
     }));
 
     const auto ack_event = std::find_if(client_events.begin(), client_events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
@@ -503,10 +503,20 @@ TEST_CASE("client tracing records clock skew timing decisions") {
 
 TEST_CASE("client input tracing records input components every input tick") {
     ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId replicated_archetype =
+        ashiato_sync_tests::define_position_archetype(registry);
     const ashiato::Entity input_component =
         ashiato::sync::register_sync_component<ashiato_sync_tests::NetworkedPosition>(registry, "NetworkedPosition");
     ashiato_sync_tests::configure_test_client_registry(registry, 1);
     REQUIRE(ashiato::sync::set_client_input_component<ashiato_sync_tests::NetworkedPosition>(registry));
+    const auto& replicated_components =
+        registry.get<ashiato::sync::SyncSettings>().archetypes[replicated_archetype.value].components;
+    REQUIRE(std::none_of(
+        replicated_components.begin(),
+        replicated_components.end(),
+        [input_component](const ashiato::sync::ComponentReplication& replication) {
+            return replication.component == input_component;
+        }));
 
     const ashiato::Entity owned = registry.create();
     REQUIRE(ashiato::sync::set_owner(registry, owned, 1));
@@ -530,6 +540,8 @@ TEST_CASE("client input tracing records input components every input tick") {
             event.frame == 1;
     });
     REQUIRE(input_event != events.end());
+    REQUIRE(input_event->component_name == "NetworkedPosition");
+    REQUIRE(input_event->data.find("x=50,y=60") != std::string::npos);
 }
 
 #ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
@@ -553,7 +565,7 @@ TEST_CASE("packet log tracing records client input baseline and server received 
     REQUIRE(client.tick(client_registry, client.fixed_dt_seconds()));
     std::vector<ashiato::BitBuffer> input_packets = client.drain_packets();
     auto input_packet = std::find_if(input_packets.begin(), input_packets.end(), [](ashiato::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
+        return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_input_message;
     });
     REQUIRE(input_packet != input_packets.end());
     REQUIRE(std::any_of(client_events.begin(), client_events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
@@ -593,10 +605,20 @@ TEST_CASE("packet log tracing records client input baseline and server received 
 
 TEST_CASE("server input tracing records input components and stale input starvation") {
     ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId replicated_archetype =
+        ashiato_sync_tests::define_position_archetype(server_registry);
     const ashiato::Entity server_input_component =
         ashiato::sync::register_sync_component<ashiato_sync_tests::NetworkedPosition>(server_registry, "NetworkedPosition");
     ashiato_sync_tests::configure_test_server_registry(server_registry);
     REQUIRE(ashiato::sync::set_client_input_component<ashiato_sync_tests::NetworkedPosition>(server_registry));
+    const auto& replicated_components =
+        server_registry.get<ashiato::sync::SyncSettings>().archetypes[replicated_archetype.value].components;
+    REQUIRE(std::none_of(
+        replicated_components.begin(),
+        replicated_components.end(),
+        [server_input_component](const ashiato::sync::ComponentReplication& replication) {
+            return replication.component == server_input_component;
+        }));
 
     const ashiato::Entity owned = server_registry.create();
     REQUIRE(ashiato::sync::set_owner(server_registry, owned, 1));
@@ -623,7 +645,7 @@ TEST_CASE("server input tracing records input components and stale input starvat
     REQUIRE(client.tick(client_registry, client.fixed_dt_seconds()));
     std::vector<ashiato::BitBuffer> input_packets = client.drain_packets();
     auto input_packet = std::find_if(input_packets.begin(), input_packets.end(), [](ashiato::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
+        return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_input_message;
     });
     REQUIRE(input_packet != input_packets.end());
 
@@ -639,6 +661,7 @@ TEST_CASE("server input tracing records input components and stale input starvat
             event.server_entity == owned &&
             event.component == server_input_component &&
             event.frame == 1 &&
+            event.component_name == "NetworkedPosition" &&
             event.data.find("x=50,y=60") != std::string::npos;
     }));
     REQUIRE(std::any_of(server_events.begin(), server_events.end(), [&](const ashiato::sync::SyncTraceEvent& event) {
@@ -762,7 +785,7 @@ TEST_CASE("token client bootstraps input packets that server traces after first 
 
     client_packets = client.drain_packets();
     REQUIRE(std::any_of(client_packets.begin(), client_packets.end(), [](ashiato::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_connect_ack_message;
+        return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_connect_ack_message;
     }));
     for (const ashiato::BitBuffer& packet : client_packets) {
         REQUIRE(server.process_packet(server_registry, 1, packet));
@@ -777,7 +800,7 @@ TEST_CASE("token client bootstraps input packets that server traces after first 
 
     client_packets = client.drain_packets();
     const auto input_packet = std::find_if(client_packets.begin(), client_packets.end(), [](ashiato::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
+        return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_input_message;
     });
     REQUIRE(input_packet != client_packets.end());
     REQUIRE(server.process_packet(server_registry, 1, *input_packet));

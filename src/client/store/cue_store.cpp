@@ -21,16 +21,15 @@ EntityPlayedCue* ClientCueStore::find_played(
         played.begin(),
         played.end(),
         [&](const EntityPlayedCue& candidate) {
-            ashiato::ComponentSerializationContext serialization_context{references};
+            (void)references;
             return candidate.entity_index == entity_index &&
                 candidate.frame == cue.frame &&
                 candidate.type == cue.type &&
                 settings.cue_ops[cue.type].equals(
                     cue.type,
                     settings.cue_ops[cue.type].user_data,
-                    candidate.payload,
-                    cue.payload,
-                    serialization_context);
+                    candidate.value.data(),
+                    cue.value.data());
         });
     return found == played.end() ? nullptr : &*found;
 }
@@ -48,15 +47,13 @@ const EntityCue* ClientCueStore::find_authoritative(
         cues.begin(),
         cues.end(),
         [&](const EntityCue& cue) {
-            ashiato::ComponentSerializationContext serialization_context;
             return cue.frame == played_cue.frame &&
                 cue.type == played_cue.type &&
                 settings.cue_ops[cue.type].equals(
                     cue.type,
                     settings.cue_ops[cue.type].user_data,
-                    played_cue.payload,
-                    cue.payload,
-                    serialization_context);
+                    played_cue.value.data(),
+                    cue.value.data());
         });
     return found == cues.end() ? nullptr : &*found;
 }

@@ -223,8 +223,8 @@ TEST_CASE("ball stress simulated transport applies latency and loss") {
     link.settings.loss_percent = 0.0;
 
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
-    packet.push_bits(0, 16U);
+    packet.write_bits(ashiato::sync::protocol::client_ack_message, ashiato::sync::protocol::message_bits);
+    packet.write_bits(0, ashiato::sync::protocol::ack_count_bits);
 
     stress::enqueue_packet(link, stats, 1, packet, 1.0);
     REQUIRE(stats.packets == 1);
@@ -260,8 +260,8 @@ TEST_CASE("ball stress simulated transport applies bounded uniform jitter") {
     link.random_engine().seed(123);
 
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
-    packet.push_bits(0, 16U);
+    packet.write_bits(ashiato::sync::protocol::client_ack_message, ashiato::sync::protocol::message_bits);
+    packet.write_bits(0, ashiato::sync::protocol::ack_count_bits);
 
     stress::enqueue_packet(link, stats, 1, packet, 1.0);
     REQUIRE(link.size() == 1);
@@ -287,11 +287,11 @@ TEST_CASE("ball stress simulated transport delivers by scheduled time under jitt
     link.random_engine().seed(2);
 
     ashiato::BitBuffer first;
-    first.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
-    first.push_bits(1, 16U);
+    first.write_bits(ashiato::sync::protocol::client_ack_message, ashiato::sync::protocol::message_bits);
+    first.write_bits(1, ashiato::sync::protocol::ack_count_bits);
     ashiato::BitBuffer second;
-    second.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
-    second.push_bits(2, 16U);
+    second.write_bits(ashiato::sync::protocol::client_ack_message, ashiato::sync::protocol::message_bits);
+    second.write_bits(2, ashiato::sync::protocol::ack_count_bits);
 
     stress::enqueue_packet(link, stats, 1, first, 1.0);
     stress::enqueue_packet(link, stats, 2, second, 1.0);
@@ -302,35 +302,35 @@ TEST_CASE("ball stress simulated transport delivers by scheduled time under jitt
 
 TEST_CASE("ball stress packet classifier counts update record kinds") {
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
-    packet.push_bits(7, 32U);
-    packet.push_bits(99, ashiato::sync::protocol::server_packet_id_bits);
-    packet.push_bits(0, 32U);
-    packet.push_bits(3, 16U);
+    packet.write_bits(ashiato::sync::protocol::server_update_message, ashiato::sync::protocol::message_bits);
+    packet.write_bits(7, 32U);
+    packet.write_bits(99, ashiato::sync::protocol::server_packet_id_bits);
+    packet.write_bits(0, 32U);
+    packet.write_bits(3, 16U);
 
-    packet.push_bool(false);
+    packet.write_bool(false);
     ashiato::sync::protocol::write_network_entity_id(packet, 100);
-    packet.push_bool(true);
-    packet.push_bits(1, 32U);
-    packet.push_bool(false);
-    packet.push_bits(1, 16U);
-    packet.push_bits(0, ashiato::sync::protocol::bits_for_range(stress::WireFormatStats::slot_count));
-    packet.push_unsigned_bits(3U, 2U);
-    packet.push_bool(false);
+    packet.write_bool(true);
+    packet.write_bits(1, 32U);
+    packet.write_bool(false);
+    packet.write_bits(1, 16U);
+    packet.write_bits(0, ashiato::sync::protocol::bits_for_range(stress::WireFormatStats::slot_count));
+    packet.write_unsigned_bits(3U, 2U);
+    packet.write_bool(false);
 
-    packet.push_bool(false);
+    packet.write_bool(false);
     ashiato::sync::protocol::write_network_entity_id(packet, 101);
-    packet.push_bool(false);
+    packet.write_bool(false);
     ashiato::sync::protocol::write_baseline_frame(packet, 7, 6);
-    packet.push_bool(true);
-    packet.push_bool(false);
-    packet.push_bool(false);
-    packet.push_bool(false);
-    packet.push_bool(false);
-    packet.push_unsigned_bits(1U, 2U);
-    packet.push_bool(false);
+    packet.write_bool(true);
+    packet.write_bool(false);
+    packet.write_bool(false);
+    packet.write_bool(false);
+    packet.write_bool(false);
+    packet.write_unsigned_bits(1U, 2U);
+    packet.write_bool(false);
 
-    packet.push_bool(true);
+    packet.write_bool(true);
     ashiato::sync::protocol::write_network_entity_id(packet, 102);
 
     const stress::PacketBreakdown breakdown = stress::classify_packet(packet);
@@ -344,8 +344,8 @@ TEST_CASE("ball stress packet classifier counts update record kinds") {
     const stress::PacketBreakdown diagnostic_breakdown = stress::classify_packet(packet, &wire);
 
     REQUIRE(diagnostic_breakdown.type == stress::PacketType::ServerUpdate);
-    REQUIRE(wire.packet_bits == 206);
-    REQUIRE(wire.padding_bits == 2);
+    REQUIRE(wire.packet_bits == 201);
+    REQUIRE(wire.padding_bits == 7);
     REQUIRE(wire.server_update_header_bits == ashiato::sync::protocol::server_update_header_bits);
     REQUIRE(wire.server_update_entities == 3);
     REQUIRE(wire.max_server_update_entities_per_packet == 3);
@@ -367,10 +367,10 @@ TEST_CASE("ball stress packet classifier counts update record kinds") {
 
 TEST_CASE("ball stress packet classifier records ACK wire diagnostics") {
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
-    packet.push_bits(2, 16U);
-    packet.push_bits(7, ashiato::sync::protocol::server_packet_id_bits);
-    packet.push_bits(8, ashiato::sync::protocol::server_packet_id_bits);
+    packet.write_bits(ashiato::sync::protocol::client_ack_message, ashiato::sync::protocol::message_bits);
+    packet.write_bits(2, ashiato::sync::protocol::ack_count_bits);
+    packet.write_bits(7, ashiato::sync::protocol::server_packet_id_bits);
+    packet.write_bits(8, ashiato::sync::protocol::server_packet_id_bits);
 
     stress::WireFormatStats wire;
     const stress::PacketBreakdown breakdown = stress::classify_packet(packet, &wire);
@@ -386,12 +386,12 @@ TEST_CASE("ball stress packet classifier records ACK wire diagnostics") {
 
 TEST_CASE("ball stress packet classifier honors custom network id tier width") {
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
-    packet.push_bits(1, 32U);
-    packet.push_bits(1, ashiato::sync::protocol::server_packet_id_bits);
-    packet.push_bits(0, 32U);
-    packet.push_bits(1, 16U);
-    packet.push_bool(true);
+    packet.write_bits(ashiato::sync::protocol::server_update_message, ashiato::sync::protocol::message_bits);
+    packet.write_bits(1, 32U);
+    packet.write_bits(1, ashiato::sync::protocol::server_packet_id_bits);
+    packet.write_bits(0, 32U);
+    packet.write_bits(1, 16U);
+    packet.write_bool(true);
     ashiato::sync::protocol::write_network_entity_id(packet, 255U, 8U);
 
     stress::WireFormatStats wire;

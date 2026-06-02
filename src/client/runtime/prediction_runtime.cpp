@@ -138,7 +138,7 @@ bool ClientPredictionRuntime::run_frame(
     ReplicationClient& client,
     ashiato::Registry& registry,
     SyncFrame frame,
-    ashiato::RunJobsOptions options) {
+    const ashiato::RunJobsOptions& options) {
     if (!apply_pending_rollback(client, registry, options)) {
         return false;
     }
@@ -184,7 +184,7 @@ bool ClientPredictionRuntime::run_catchup(
     ReplicationClient& client,
     ashiato::Registry& registry,
     std::uint32_t predicted_steps_this_tick,
-    ashiato::RunJobsOptions options) {
+    const ashiato::RunJobsOptions& options) {
     if (client.options_.clock.auto_timing_fast_recovery &&
         client.has_predicted_entities() &&
         has_predicted_frame_ &&
@@ -340,7 +340,8 @@ bool ClientPredictionRuntime::blend_resim_errors(
                 return false;
             }
             if (!all_zero(error)) {
-                state.visual.snap_errors.push_back(EntityComponentError{replication.component, std::move(error)});
+                state.visual.snap_errors.push_back(
+                    EntityComponentError{replication.component, replication.serializer, std::move(error)});
             }
         }
         client.sync_entity_memberships(state);
@@ -351,7 +352,7 @@ bool ClientPredictionRuntime::blend_resim_errors(
 bool ClientPredictionRuntime::apply_pending_rollback(
     ReplicationClient& client,
     ashiato::Registry& registry,
-    ashiato::RunJobsOptions options) {
+    const ashiato::RunJobsOptions& options) {
     if (!has_pending_prediction_rollback_) {
         return true;
     }
@@ -396,7 +397,7 @@ bool ClientPredictionRuntime::resimulate_all(
     ashiato::Registry& registry,
     SyncFrame begin_frame,
     SyncFrame current_frame,
-    ashiato::RunJobsOptions options) {
+    const ashiato::RunJobsOptions& options) {
     return resimulate(client, registry, begin_frame, current_frame, options, ResimScope::All);
 }
 
@@ -405,7 +406,7 @@ bool ClientPredictionRuntime::resimulate_affected(
     ashiato::Registry& registry,
     SyncFrame begin_frame,
     SyncFrame current_frame,
-    ashiato::RunJobsOptions options) {
+    const ashiato::RunJobsOptions& options) {
     return resimulate(client, registry, begin_frame, current_frame, options, ResimScope::Affected);
 }
 
@@ -414,7 +415,7 @@ bool ClientPredictionRuntime::resimulate(
     ashiato::Registry& registry,
     SyncFrame begin_frame,
     SyncFrame current_frame,
-    ashiato::RunJobsOptions options,
+    const ashiato::RunJobsOptions& options,
     ResimScope scope) {
     const SyncSettings& settings = registry.get<SyncSettings>();
     bool has_entities_to_resimulate = true;
@@ -489,7 +490,7 @@ bool ClientPredictionRuntime::run_resimulation_frame(
     ashiato::Registry& registry,
     const SyncSettings& settings,
     SyncFrame frame,
-    ashiato::RunJobsOptions options,
+    const ashiato::RunJobsOptions& options,
     ResimScope scope) {
     if (scope == ResimScope::All && !client.apply_frame(registry, frame)) {
         return false;

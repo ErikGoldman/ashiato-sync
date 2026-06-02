@@ -11,7 +11,7 @@ TEST_CASE("ClientAckQueue chunks pending acks by mtu") {
     std::vector<ashiato::BitBuffer> packets;
     std::vector<ashiato::sync::client_detail::ClientAckPacketTrace> traces;
     queue.drain_ack_packets(
-        5,
+        3,
         8,
         packets,
         &traces);
@@ -24,21 +24,21 @@ TEST_CASE("ClientAckQueue chunks pending acks by mtu") {
     REQUIRE(traces[2].acks == std::vector<std::uint32_t>{5});
 
     packets[0].reset_read();
-    REQUIRE(static_cast<std::uint8_t>(packets[0].read_bits(8)) == ashiato::sync::protocol::client_ack_message);
-    REQUIRE(static_cast<std::uint16_t>(packets[0].read_bits(16)) == 2);
-    REQUIRE(static_cast<std::uint32_t>(packets[0].read_bits(8)) == 1);
-    REQUIRE(static_cast<std::uint32_t>(packets[0].read_bits(8)) == 2);
+    REQUIRE(static_cast<std::uint8_t>(packets[0].read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_ack_message);
+    REQUIRE(static_cast<std::uint16_t>(packets[0].read_bits(ashiato::sync::protocol::ack_count_bits)) == 2);
+    REQUIRE(static_cast<std::uint32_t>(packets[0].read_bits(8U)) == 1);
+    REQUIRE(static_cast<std::uint32_t>(packets[0].read_bits(8U)) == 2);
 
     packets[1].reset_read();
-    REQUIRE(static_cast<std::uint8_t>(packets[1].read_bits(8)) == ashiato::sync::protocol::client_ack_message);
-    REQUIRE(static_cast<std::uint16_t>(packets[1].read_bits(16)) == 2);
-    REQUIRE(static_cast<std::uint32_t>(packets[1].read_bits(8)) == 3);
-    REQUIRE(static_cast<std::uint32_t>(packets[1].read_bits(8)) == 4);
+    REQUIRE(static_cast<std::uint8_t>(packets[1].read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_ack_message);
+    REQUIRE(static_cast<std::uint16_t>(packets[1].read_bits(ashiato::sync::protocol::ack_count_bits)) == 2);
+    REQUIRE(static_cast<std::uint32_t>(packets[1].read_bits(8U)) == 3);
+    REQUIRE(static_cast<std::uint32_t>(packets[1].read_bits(8U)) == 4);
 
     packets[2].reset_read();
-    REQUIRE(static_cast<std::uint8_t>(packets[2].read_bits(8)) == ashiato::sync::protocol::client_ack_message);
-    REQUIRE(static_cast<std::uint16_t>(packets[2].read_bits(16)) == 1);
-    REQUIRE(static_cast<std::uint32_t>(packets[2].read_bits(8)) == 5);
+    REQUIRE(static_cast<std::uint8_t>(packets[2].read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_ack_message);
+    REQUIRE(static_cast<std::uint16_t>(packets[2].read_bits(ashiato::sync::protocol::ack_count_bits)) == 1);
+    REQUIRE(static_cast<std::uint32_t>(packets[2].read_bits(8U)) == 5);
 }
 
 TEST_CASE("ClientAckQueue leaves pending acks when mtu cannot fit one ack") {
@@ -47,7 +47,7 @@ TEST_CASE("ClientAckQueue leaves pending acks when mtu cannot fit one ack") {
 
     std::vector<ashiato::BitBuffer> packets;
     queue.drain_ack_packets(
-        3,
+        1,
         8,
         packets,
         nullptr);

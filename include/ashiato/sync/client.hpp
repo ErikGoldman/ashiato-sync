@@ -12,6 +12,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -52,6 +53,7 @@ class ClientInputBuffer;
 
 struct ReplicatedComponentUpdate {
     ashiato::Entity component;
+    SyncComponentSerializerId serializer = invalid_sync_component_serializer_id;
     SyncComponentOps::QuantizedBytes bytes;
 };
 
@@ -286,11 +288,20 @@ private:
 
 namespace detail {
 
+inline void register_predictive_simulation_job_tag(ashiato::Registry& registry) {
+    registry.register_component<PredictiveSimulationJob>("ashiato.sync.PredictiveSimulationJob");
+}
+
 template <typename JobBuilder, bool IsCosmeticJob>
 class ClientJobBuilder {
 public:
-    ClientJobBuilder(ashiato::Registry& registry, JobBuilder builder, std::vector<ashiato::Entity>& jobs)
-        : registry_(&registry), builder_(std::move(builder)), jobs_(&jobs) {}
+    ClientJobBuilder(ashiato::Registry& registry, JobBuilder builder)
+        : registry_(&registry), builder_(std::move(builder)) {}
+
+    ClientJobBuilder& name(std::string value) {
+        builder_.name(std::move(value));
+        return *this;
+    }
 
     ClientJobBuilder& max_threads(std::size_t count) {
         builder_.max_threads(count);
@@ -312,8 +323,10 @@ public:
         const ashiato::Entity job = builder_.each(std::forward<Fn>(fn));
         if constexpr (IsCosmeticJob) {
             registry_->template add<NoResim>(job);
+        } else {
+            register_predictive_simulation_job_tag(*registry_);
+            registry_->template add<PredictiveSimulationJob>(job);
         }
-        jobs_->push_back(job);
         return job;
     }
 
@@ -321,40 +334,35 @@ public:
     auto access_other_entities() const {
         return ClientJobBuilder<decltype(builder_.template access_other_entities<AccessComponents...>()), IsCosmeticJob>(
             *registry_,
-            builder_.template access_other_entities<AccessComponents...>(),
-            *jobs_);
+            builder_.template access_other_entities<AccessComponents...>());
     }
 
     template <typename... OptionalComponents>
     auto optional() const {
         return ClientJobBuilder<decltype(builder_.template optional<OptionalComponents...>()), IsCosmeticJob>(
             *registry_,
-            builder_.template optional<OptionalComponents...>(),
-            *jobs_);
+            builder_.template optional<OptionalComponents...>());
     }
 
     template <typename... StructuralComponents>
     auto structural() const {
         return ClientJobBuilder<decltype(builder_.template structural<StructuralComponents...>()), IsCosmeticJob>(
             *registry_,
-            builder_.template structural<StructuralComponents...>(),
-            *jobs_);
+            builder_.template structural<StructuralComponents...>());
     }
 
     template <typename... Tags>
     auto with_tags() const {
         return ClientJobBuilder<decltype(builder_.template with_tags<Tags...>()), IsCosmeticJob>(
             *registry_,
-            builder_.template with_tags<Tags...>(),
-            *jobs_);
+            builder_.template with_tags<Tags...>());
     }
 
     template <typename... Tags>
     auto without_tags() const {
         return ClientJobBuilder<decltype(builder_.template without_tags<Tags...>()), IsCosmeticJob>(
             *registry_,
-            builder_.template without_tags<Tags...>(),
-            *jobs_);
+            builder_.template without_tags<Tags...>());
     }
 
     template <typename T>
@@ -380,7 +388,6 @@ public:
 private:
     ashiato::Registry* registry_;
     JobBuilder builder_;
-    std::vector<ashiato::Entity>* jobs_;
 };
 
 }  // namespace detail
@@ -442,19 +449,19 @@ public:
         }
         return set_input_bytes(registry, component, &input);
     }
-    bool tick(ashiato::Registry& registry, double dt_seconds, ashiato::RunJobsOptions prediction_options = {});
+    bool tick(ashiato::Registry& registry, double dt_seconds, const ashiato::RunJobsOptions& prediction_options = {});
     void set_packet_sender(std::function<void(const ashiato::BitBuffer&)> sender);
     void receive_packet(ashiato::BitBuffer packet);
     bool receive(ashiato::Registry& registry, ashiato::BitBuffer packet);
     template <typename... Components>
     auto cosmetic_job(ashiato::Registry& registry, int order) {
         auto builder = registry.template job<Components...>(order);
-        return detail::ClientJobBuilder<decltype(builder), true>(registry, std::move(builder), cosmetic_jobs_);
+        return detail::ClientJobBuilder<decltype(builder), true>(registry, std::move(builder));
     }
     template <typename... Components>
     auto simulation_job(ashiato::Registry& registry, int order) {
         auto builder = registry.template job<Components...>(order).template without_tags<const NoSimulate>();
-        return detail::ClientJobBuilder<decltype(builder), false>(registry, std::move(builder), simulation_jobs_);
+        return detail::ClientJobBuilder<decltype(builder), false>(registry, std::move(builder));
     }
     bool apply_frame(ashiato::Registry& registry, SyncFrame buffered_frame);
     bool sample_fractional_tick_frame(
@@ -467,6 +474,7 @@ public:
     std::size_t pending_ack_count() const noexcept;
     bool is_alive_client_entity_network_id(ClientEntityNetworkId client_entity_network_id) const noexcept;
     ashiato::Entity local_entity(ClientEntityNetworkId client_entity_network_id) const;
+    ClientEntityNetworkId client_entity_network_id(ashiato::Entity local) noexcept;
     EntityReferenceStatus resolve_entity_reference(EntityReference& reference) const noexcept;
     ClientId client_id() const noexcept {
         return client_id_;
@@ -637,7 +645,7 @@ private:
     bool run_predicted_frames(
         ashiato::Registry& registry,
         const ReplicationClientClock::FrameRange& frames,
-        ashiato::RunJobsOptions options);
+        const ashiato::RunJobsOptions& options);
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     void trace_local_time_frames(ashiato::Registry& registry, const ReplicationClientClock::FrameRange& frames);
 #endif
@@ -745,6 +753,12 @@ private:
         const char* cue_source = nullptr) const;
 #ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     void trace_outgoing_ack_packet(const std::vector<std::uint32_t>& acks) const;
+    void trace_outgoing_ping_packet(std::uint32_t sequence) const;
+    void trace_incoming_pong_packet(
+        std::uint32_t sequence,
+        SyncFrame local_frame,
+        SyncFrame server_receive_frame,
+        SyncFrame server_send_frame) const;
     void trace_outgoing_input_packet(
         const std::vector<std::uint32_t>& acks,
         SyncFrame baseline_frame,
@@ -756,10 +770,11 @@ private:
         std::uint32_t packet_id,
         SyncFrame input_ack_frame,
         std::uint16_t record_count,
-        bool applied) const;
+        bool applied,
+        const char* apply_failure_reason) const;
 #endif
 #endif
-    void set_client_id(ashiato::Registry& registry, ClientId client) noexcept;
+    void set_client_id(ashiato::Registry& registry, ClientId client);
     void set_connection_state(
         ReplicationClientConnectionState state,
         ClientId client = invalid_client_id,
@@ -774,8 +789,7 @@ private:
 #ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     ReplicationClientInterpolationDiagnostics interpolation_diagnostics_;
 #endif
-    std::vector<ashiato::Entity> simulation_jobs_;
-    std::vector<ashiato::Entity> cosmetic_jobs_;
+    std::vector<ashiato::Entity> resim_job_graph_jobs_;
     ashiato::JobGraph resim_job_graph_;
     bool resim_job_graph_valid_ = false;
     std::unique_ptr<client_detail::ClientEntityStore> entity_store_;
@@ -799,6 +813,475 @@ private:
     SyncTracer* tracer_ = nullptr;
     std::unique_ptr<KTraceDirectoryWriter> trace_writer_;
 #endif
+};
+
+enum class SimulationJobEndpointRole {
+    DedicatedClient,
+    DedicatedServer,
+    ListenServer
+};
+
+enum class SimulationJobKind {
+    Shared,
+    ClientOnly,
+    ServerOnly
+};
+
+struct JobRunContext {
+    SimulationJobEndpointRole endpoint_role = SimulationJobEndpointRole::DedicatedClient;
+    SimulationJobKind job_kind = SimulationJobKind::Shared;
+
+    bool is_dedicated_client() const noexcept {
+        return endpoint_role == SimulationJobEndpointRole::DedicatedClient;
+    }
+
+    bool is_dedicated_server() const noexcept {
+        return endpoint_role == SimulationJobEndpointRole::DedicatedServer;
+    }
+
+    bool is_listen_server() const noexcept {
+        return endpoint_role == SimulationJobEndpointRole::ListenServer;
+    }
+
+    bool is_authority() const noexcept {
+        return endpoint_role != SimulationJobEndpointRole::DedicatedClient;
+    }
+
+    bool is_predicting_client() const noexcept {
+        return endpoint_role == SimulationJobEndpointRole::DedicatedClient && job_kind == SimulationJobKind::Shared;
+    }
+
+    bool is_client_only() const noexcept {
+        return job_kind == SimulationJobKind::ClientOnly;
+    }
+
+    bool is_server_only() const noexcept {
+        return job_kind == SimulationJobKind::ServerOnly;
+    }
+};
+
+namespace detail {
+
+template <typename Fn, typename... Args>
+void invoke_simulation_job_callback(Fn& fn, const JobRunContext& context, ashiato::Entity entity, Args&&... args) {
+    if constexpr (std::is_invocable<Fn&, const JobRunContext&, ashiato::Entity, Args&&...>::value) {
+        fn(context, entity, std::forward<Args>(args)...);
+    } else {
+        fn(entity, std::forward<Args>(args)...);
+    }
+}
+
+template <typename Fn, typename StructuralContext, typename... Args>
+void invoke_structural_simulation_job_callback(
+    Fn& fn,
+    const JobRunContext& context,
+    StructuralContext& structural_context,
+    ashiato::Entity entity,
+    Args&&... args) {
+    if constexpr (std::is_invocable<Fn&, StructuralContext&, const JobRunContext&, ashiato::Entity, Args&&...>::value) {
+        fn(structural_context, context, entity, std::forward<Args>(args)...);
+    } else {
+        fn(structural_context, entity, std::forward<Args>(args)...);
+    }
+}
+
+template <typename Fn, typename ViewType, typename... Args>
+void invoke_view_simulation_job_callback(
+    Fn& fn,
+    ViewType& view,
+    const JobRunContext& context,
+    ashiato::Entity entity,
+    Args&&... args) {
+    if constexpr (std::is_invocable<Fn&, ViewType&, const JobRunContext&, ashiato::Entity, Args&&...>::value) {
+        fn(view, context, entity, std::forward<Args>(args)...);
+    } else if constexpr (std::is_invocable<Fn&, ViewType&, ashiato::Entity, Args&&...>::value) {
+        fn(view, entity, std::forward<Args>(args)...);
+    } else {
+        invoke_simulation_job_callback(fn, context, entity, std::forward<Args>(args)...);
+    }
+}
+
+template <typename Fn, typename First, typename... Rest>
+void invoke_simulation_job_callback(Fn& fn, const JobRunContext& context, First&& first, Rest&&... rest) {
+    using FirstType = typename std::decay<First>::type;
+    if constexpr (std::is_same<FirstType, ashiato::Entity>::value) {
+        invoke_simulation_job_callback(fn, context, first, std::forward<Rest>(rest)...);
+    } else {
+        invoke_structural_simulation_job_callback(fn, context, first, std::forward<Rest>(rest)...);
+    }
+}
+
+template <typename Callback>
+struct SimulationJobCallbackAdapter {
+    std::shared_ptr<Callback> callback;
+    JobRunContext context;
+
+    template <typename... Args>
+    void operator()(ashiato::Entity entity, Args&... args) {
+        invoke_simulation_job_callback(*callback, context, entity, args...);
+    }
+
+    template <typename ViewType, typename... Args>
+    void operator()(ViewType& view, ashiato::Entity entity, Args&... args) {
+        invoke_view_simulation_job_callback(*callback, view, context, entity, args...);
+    }
+
+    template <typename ViewType, typename... StructuralComponents, typename... Args>
+    void operator()(
+        ashiato::Registry::JobStructuralContext<ViewType, StructuralComponents...>& structural_context,
+        ashiato::Entity entity,
+        Args&... args) {
+        invoke_structural_simulation_job_callback(*callback, context, structural_context, entity, args...);
+    }
+};
+
+}  // namespace detail
+
+template <typename... Components>
+struct SimulationJobBaseFactory {
+    static constexpr bool uses_access = false;
+
+    auto make_authority(ashiato::Registry& registry, int order) const {
+        return registry.template job<Components...>(order);
+    }
+
+    auto make_predictive(ashiato::Registry& registry, int order) const {
+        return registry.template job<Components...>(order).template without_tags<const NoSimulate>();
+    }
+};
+
+template <typename PreviousFactory, typename... Tags>
+struct SimulationJobWithTagsFactory {
+    static constexpr bool uses_access = PreviousFactory::uses_access;
+
+    PreviousFactory previous;
+
+    auto make_authority(ashiato::Registry& registry, int order) const {
+        return previous.make_authority(registry, order).template with_tags<Tags...>();
+    }
+
+    auto make_predictive(ashiato::Registry& registry, int order) const {
+        return previous.make_predictive(registry, order).template with_tags<Tags...>();
+    }
+};
+
+template <typename PreviousFactory, typename... Tags>
+struct SimulationJobWithoutTagsFactory {
+    static constexpr bool uses_access = PreviousFactory::uses_access;
+
+    PreviousFactory previous;
+
+    auto make_authority(ashiato::Registry& registry, int order) const {
+        return previous.make_authority(registry, order).template without_tags<Tags...>();
+    }
+
+    auto make_predictive(ashiato::Registry& registry, int order) const {
+        return previous.make_predictive(registry, order).template without_tags<Tags...>();
+    }
+};
+
+template <typename PreviousFactory, typename... AccessComponents>
+struct SimulationJobAccessFactory {
+    static constexpr bool uses_access = true;
+
+    PreviousFactory previous;
+
+    auto make_authority(ashiato::Registry& registry, int order) const {
+        auto builder = previous.make_authority(registry, order);
+        builder.single_thread();
+        return builder.template access_other_entities<AccessComponents...>();
+    }
+
+    auto make_predictive(ashiato::Registry& registry, int order) const {
+        auto builder = previous.make_predictive(registry, order);
+        builder.single_thread();
+        return builder.template access_other_entities<AccessComponents...>();
+    }
+};
+
+template <typename PreviousFactory, typename... OptionalComponents>
+struct SimulationJobOptionalFactory {
+    static constexpr bool uses_access = PreviousFactory::uses_access;
+
+    PreviousFactory previous;
+
+    auto make_authority(ashiato::Registry& registry, int order) const {
+        return previous.make_authority(registry, order).template optional<OptionalComponents...>();
+    }
+
+    auto make_predictive(ashiato::Registry& registry, int order) const {
+        return previous.make_predictive(registry, order).template optional<OptionalComponents...>();
+    }
+};
+
+template <typename PreviousFactory, typename... StructuralComponents>
+struct SimulationJobStructuralFactory {
+    static constexpr bool uses_access = PreviousFactory::uses_access;
+
+    PreviousFactory previous;
+
+    auto make_authority(ashiato::Registry& registry, int order) const {
+        return previous.make_authority(registry, order).template structural<StructuralComponents...>();
+    }
+
+    auto make_predictive(ashiato::Registry& registry, int order) const {
+        return previous.make_predictive(registry, order).template structural<StructuralComponents...>();
+    }
+};
+
+template <typename Builder, typename = void>
+struct has_job_builder_name : std::false_type {};
+
+template <typename Builder>
+struct has_job_builder_name<
+    Builder,
+    typename std::enable_if<std::is_same<
+        decltype(std::declval<Builder&>().name(std::declval<std::string>())),
+        Builder&>::value>::type> : std::true_type {};
+
+template <typename Builder, typename = void>
+struct has_job_builder_max_threads : std::false_type {};
+
+template <typename Builder>
+struct has_job_builder_max_threads<
+    Builder,
+    typename std::enable_if<std::is_same<
+        decltype(std::declval<Builder&>().max_threads(std::declval<std::size_t>())),
+        Builder&>::value>::type> : std::true_type {};
+
+template <typename Builder, typename = void>
+struct has_job_builder_single_thread : std::false_type {};
+
+template <typename Builder>
+struct has_job_builder_single_thread<
+    Builder,
+    typename std::enable_if<std::is_same<
+        decltype(std::declval<Builder&>().single_thread()),
+        Builder&>::value>::type> : std::true_type {};
+
+template <typename Builder, typename = void>
+struct has_job_builder_min_entities_per_thread : std::false_type {};
+
+template <typename Builder>
+struct has_job_builder_min_entities_per_thread<
+    Builder,
+    typename std::enable_if<std::is_same<
+        decltype(std::declval<Builder&>().min_entities_per_thread(std::declval<std::size_t>())),
+        Builder&>::value>::type> : std::true_type {};
+
+template <typename Factory>
+class SimulationJobBuilder {
+public:
+    SimulationJobBuilder(
+        ashiato::Registry& registry,
+        SimulationJobEndpointRole role,
+        SimulationJobKind kind,
+        int order,
+        Factory factory = {})
+        : registry_(&registry), context_{role, kind}, order_(order), factory_(std::move(factory)) {}
+
+    SimulationJobBuilder& name(std::string value) {
+        name_ = std::move(value);
+        return *this;
+    }
+
+    SimulationJobBuilder& max_threads(std::size_t count) {
+        max_threads_ = count;
+        single_thread_ = false;
+        has_threading_option_ = true;
+        return *this;
+    }
+
+    SimulationJobBuilder& single_thread() {
+        single_thread_ = true;
+        has_threading_option_ = true;
+        return *this;
+    }
+
+    SimulationJobBuilder& min_entities_per_thread(std::size_t count) {
+        min_entities_per_thread_ = count;
+        return *this;
+    }
+
+    template <typename... Tags>
+    auto with_tags() const {
+        return rebind(SimulationJobWithTagsFactory<Factory, Tags...>{factory_});
+    }
+
+    template <typename... Tags>
+    auto without_tags() const {
+        return rebind(SimulationJobWithoutTagsFactory<Factory, Tags...>{factory_});
+    }
+
+    template <typename... AccessComponents>
+    auto access_other_entities() const {
+        return rebind(SimulationJobAccessFactory<Factory, AccessComponents...>{factory_});
+    }
+
+    template <typename... OptionalComponents>
+    auto optional() const {
+        return rebind(SimulationJobOptionalFactory<Factory, OptionalComponents...>{factory_});
+    }
+
+    template <typename... StructuralComponents>
+    auto structural() const {
+        return rebind(SimulationJobStructuralFactory<Factory, StructuralComponents...>{factory_});
+    }
+
+    template <typename Fn>
+    ashiato::Entity each(Fn&& fn) {
+        if (!should_register()) {
+            return {};
+        }
+
+        using Callback = typename std::decay<Fn>::type;
+        auto callback = std::make_shared<Callback>(std::forward<Fn>(fn));
+        const JobRunContext context = context_;
+        detail::SimulationJobCallbackAdapter<Callback> wrapped{callback, context};
+
+        if (context_.job_kind == SimulationJobKind::Shared && context_.endpoint_role == SimulationJobEndpointRole::DedicatedClient) {
+            detail::register_predictive_simulation_job_tag(*registry_);
+            auto builder = factory_.make_predictive(*registry_, order_);
+            apply_options(builder);
+            const ashiato::Entity job = builder.each(std::move(wrapped));
+            registry_->template add<PredictiveSimulationJob>(job);
+            return job;
+        }
+
+        auto builder = factory_.make_authority(*registry_, order_);
+        apply_options(builder);
+        const ashiato::Entity job = builder.each(std::move(wrapped));
+        if (context_.job_kind == SimulationJobKind::ClientOnly) {
+            registry_->template add<NoResim>(job);
+        }
+        return job;
+    }
+
+private:
+    bool should_register() const noexcept {
+        switch (context_.job_kind) {
+        case SimulationJobKind::Shared:
+            return true;
+        case SimulationJobKind::ClientOnly:
+            return context_.endpoint_role != SimulationJobEndpointRole::DedicatedServer;
+        case SimulationJobKind::ServerOnly:
+            return context_.endpoint_role != SimulationJobEndpointRole::DedicatedClient;
+        }
+        return false;
+    }
+
+    template <typename Builder>
+    void apply_options(Builder& builder) const {
+        if constexpr (has_job_builder_name<Builder>::value) {
+            if (!name_.empty()) {
+                builder.name(name_);
+            }
+        }
+        if constexpr (Factory::uses_access) {
+            if constexpr (has_job_builder_single_thread<Builder>::value) {
+                builder.single_thread();
+            }
+        } else if constexpr (has_job_builder_single_thread<Builder>::value && has_job_builder_max_threads<Builder>::value) {
+            if (has_threading_option_) {
+                if (single_thread_) {
+                    builder.single_thread();
+                } else {
+                    builder.max_threads(max_threads_);
+                }
+            }
+        } else if constexpr (has_job_builder_single_thread<Builder>::value) {
+            if (has_threading_option_ && single_thread_) {
+                builder.single_thread();
+            }
+        } else if constexpr (has_job_builder_max_threads<Builder>::value) {
+            if (has_threading_option_ && !single_thread_) {
+                builder.max_threads(max_threads_);
+            }
+        }
+        if constexpr (has_job_builder_min_entities_per_thread<Builder>::value) {
+            if (min_entities_per_thread_ > 0U) {
+                builder.min_entities_per_thread(min_entities_per_thread_);
+            }
+        }
+    }
+
+    template <typename NextFactory>
+    SimulationJobBuilder<NextFactory> rebind(NextFactory factory) const {
+        SimulationJobBuilder<NextFactory> next(*registry_, context_.endpoint_role, context_.job_kind, order_, std::move(factory));
+        next.name_ = name_;
+        next.max_threads_ = max_threads_;
+        next.min_entities_per_thread_ = min_entities_per_thread_;
+        next.single_thread_ = single_thread_;
+        next.has_threading_option_ = has_threading_option_;
+        return next;
+    }
+
+    template <typename>
+    friend class SimulationJobBuilder;
+
+    ashiato::Registry* registry_;
+    JobRunContext context_;
+    int order_ = 0;
+    Factory factory_;
+    std::string name_;
+    std::size_t max_threads_ = 1;
+    std::size_t min_entities_per_thread_ = 0;
+    bool single_thread_ = false;
+    bool has_threading_option_ = false;
+};
+class SimulationJobs {
+public:
+    SimulationJobs(ashiato::Registry& registry, SimulationJobEndpointRole role)
+        : registry_(&registry), role_(role) {
+        register_components(registry);
+    }
+
+    ashiato::Registry& registry() const noexcept {
+        return *registry_;
+    }
+
+    SimulationJobEndpointRole endpoint_role() const noexcept {
+        return role_;
+    }
+
+    bool is_dedicated_client() const noexcept {
+        return role_ == SimulationJobEndpointRole::DedicatedClient;
+    }
+
+    bool is_authority() const noexcept {
+        return role_ != SimulationJobEndpointRole::DedicatedClient;
+    }
+
+    template <typename... Components>
+    SimulationJobBuilder<SimulationJobBaseFactory<Components...>> shared(int order) {
+        return SimulationJobBuilder<SimulationJobBaseFactory<Components...>>(
+            *registry_,
+            role_,
+            SimulationJobKind::Shared,
+            order);
+    }
+
+    template <typename... Components>
+    SimulationJobBuilder<SimulationJobBaseFactory<Components...>> client_only(int order) {
+        return SimulationJobBuilder<SimulationJobBaseFactory<Components...>>(
+            *registry_,
+            role_,
+            SimulationJobKind::ClientOnly,
+            order);
+    }
+
+    template <typename... Components>
+    SimulationJobBuilder<SimulationJobBaseFactory<Components...>> server_only(int order) {
+        return SimulationJobBuilder<SimulationJobBaseFactory<Components...>>(
+            *registry_,
+            role_,
+            SimulationJobKind::ServerOnly,
+            order);
+    }
+
+private:
+    ashiato::Registry* registry_;
+    SimulationJobEndpointRole role_;
 };
 
 namespace detail {
@@ -826,8 +1309,6 @@ class ReplicationClientT : public ReplicationClient {
 
 public:
     static constexpr std::size_t network_entity_id_tier0_bits = NetworkEntityIdTier0Bits;
-    static constexpr std::size_t buffered_frame_capacity = BufferedFrameCapacity;
-    static constexpr std::size_t prediction_frame_capacity = PredictionFrameCapacity;
 
     explicit ReplicationClientT(ashiato::Registry& registry, ReplicationClientOptions options = {})
         : ReplicationClient(

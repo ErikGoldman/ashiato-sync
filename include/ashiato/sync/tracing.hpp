@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ashiato/sync/serialization.hpp"
 #include "ashiato/sync/types.hpp"
 
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
@@ -247,75 +248,75 @@ private:
 #define ASHIATO_SYNC_TRACE_SCOPE_WITH_CAPTURE(trace_capture, name) \
     ::ashiato::sync::ScopedSerializationTraceScope ASHIATO_SYNC_TRACE_SCOPE_CONCAT(_ashiato_sync_trace_scope_, __LINE__)((trace_capture), name)
 #define PAYLOAD_TRACE_SCOPE(name) ASHIATO_SYNC_TRACE_SCOPE(name)
-#define SERIALIZE_TRACE(bitbuffer, data, bits, name) \
+#define ASHIATO_SERIALIZE_TRACE(bitbuffer, data, bits, name) \
     do { \
         ASHIATO_SYNC_TRACE_SCOPE(name); \
-        (bitbuffer).push_bits((data), (bits)); \
+        (bitbuffer).write_bits((data), (bits)); \
     } while (false)
-#define SERIALIZE_TRACE_WITH_CONTEXT(trace_context, bitbuffer, data, bits, name) \
+#define ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(trace_context, bitbuffer, data, bits, name) \
     do { \
         ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(trace_context, name); \
-        (bitbuffer).push_bits((data), (bits)); \
+        (bitbuffer).write_bits((data), (bits)); \
     } while (false)
-#define SERIALIZE_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, data, bits, name) \
+#define ASHIATO_SERIALIZE_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, data, bits, name) \
     do { \
         ASHIATO_SYNC_TRACE_SCOPE_WITH_CAPTURE(trace_capture, name); \
-        (bitbuffer).push_bits((data), (bits)); \
+        (bitbuffer).write_bits((data), (bits)); \
     } while (false)
-#define SERIALIZE_UNSIGNED_TRACE(bitbuffer, data, bits, name) \
+#define ASHIATO_SERIALIZE_UNSIGNED_TRACE(bitbuffer, data, bits, name) \
     do { \
         ASHIATO_SYNC_TRACE_SCOPE(name); \
-        (bitbuffer).push_unsigned_bits((data), (bits)); \
+        (bitbuffer).write_unsigned_bits((data), (bits)); \
     } while (false)
-#define SERIALIZE_UNSIGNED_TRACE_WITH_CONTEXT(trace_context, bitbuffer, data, bits, name) \
+#define ASHIATO_SERIALIZE_UNSIGNED_TRACE_WITH_CONTEXT(trace_context, bitbuffer, data, bits, name) \
     do { \
         ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(trace_context, name); \
-        (bitbuffer).push_unsigned_bits((data), (bits)); \
+        (bitbuffer).write_unsigned_bits((data), (bits)); \
     } while (false)
-#define SERIALIZE_UNSIGNED_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, data, bits, name) \
+#define ASHIATO_SERIALIZE_UNSIGNED_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, data, bits, name) \
     do { \
         ASHIATO_SYNC_TRACE_SCOPE_WITH_CAPTURE(trace_capture, name); \
-        (bitbuffer).push_unsigned_bits((data), (bits)); \
+        (bitbuffer).write_unsigned_bits((data), (bits)); \
     } while (false)
-#define SERIALIZE_BOOL_TRACE(bitbuffer, data, name) \
+#define ASHIATO_SERIALIZE_BOOL_TRACE(bitbuffer, data, name) \
     do { \
         ASHIATO_SYNC_TRACE_SCOPE(name); \
-        (bitbuffer).push_bool((data)); \
+        (bitbuffer).write_bool((data)); \
     } while (false)
-#define SERIALIZE_BOOL_TRACE_WITH_CONTEXT(trace_context, bitbuffer, data, name) \
+#define ASHIATO_SERIALIZE_BOOL_TRACE_WITH_CONTEXT(trace_context, bitbuffer, data, name) \
     do { \
         ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(trace_context, name); \
-        (bitbuffer).push_bool((data)); \
+        (bitbuffer).write_bool((data)); \
     } while (false)
-#define SERIALIZE_BOOL_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, data, name) \
+#define ASHIATO_SERIALIZE_BOOL_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, data, name) \
     do { \
         ASHIATO_SYNC_TRACE_SCOPE_WITH_CAPTURE(trace_capture, name); \
-        (bitbuffer).push_bool((data)); \
+        (bitbuffer).write_bool((data)); \
     } while (false)
-#define SERIALIZE_BYTES_TRACE(bitbuffer, data, bytes, name) \
+#define ASHIATO_SERIALIZE_BYTES_TRACE(bitbuffer, data, bytes, name) \
     do { \
         ASHIATO_SYNC_TRACE_SCOPE(name); \
-        (bitbuffer).push_bytes((data), (bytes)); \
+        (bitbuffer).write_bytes((data), (bytes)); \
     } while (false)
-#define SERIALIZE_BYTES_TRACE_WITH_CONTEXT(trace_context, bitbuffer, data, bytes, name) \
+#define ASHIATO_SERIALIZE_BYTES_TRACE_WITH_CONTEXT(trace_context, bitbuffer, data, bytes, name) \
     do { \
         ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(trace_context, name); \
-        (bitbuffer).push_bytes((data), (bytes)); \
+        (bitbuffer).write_bytes((data), (bytes)); \
     } while (false)
-#define SERIALIZE_BYTES_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, data, bytes, name) \
+#define ASHIATO_SERIALIZE_BYTES_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, data, bytes, name) \
     do { \
         ASHIATO_SYNC_TRACE_SCOPE_WITH_CAPTURE(trace_capture, name); \
-        (bitbuffer).push_bytes((data), (bytes)); \
+        (bitbuffer).write_bytes((data), (bytes)); \
     } while (false)
-#define SERIALIZE_BUFFER_TRACE_WITH_CONTEXT(trace_context, bitbuffer, source, name) \
+#define ASHIATO_SERIALIZE_BUFFER_TRACE_WITH_CONTEXT(trace_context, bitbuffer, source, name) \
     do { \
         ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(trace_context, name); \
-        (bitbuffer).push_buffer_bits((source)); \
+        (bitbuffer).write_buffer_bits((source)); \
     } while (false)
-#define SERIALIZE_BUFFER_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, source, name) \
+#define ASHIATO_SERIALIZE_BUFFER_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, source, name) \
     do { \
         ASHIATO_SYNC_TRACE_SCOPE_WITH_CAPTURE(trace_capture, name); \
-        (bitbuffer).push_buffer_bits((source)); \
+        (bitbuffer).write_buffer_bits((source)); \
     } while (false)
 #define ASHIATO_SYNC_TRACE_SCOPE_CONCAT(a, b) ASHIATO_SYNC_TRACE_SCOPE_CONCAT_INNER(a, b)
 #define ASHIATO_SYNC_TRACE_SCOPE_CONCAT_INNER(a, b) a##b
@@ -562,63 +563,359 @@ std::unique_ptr<KTraceDirectoryWriter> make_trace_writer(const TraceOptions& opt
 #define ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(trace_context, name) ((void)0)
 #define ASHIATO_SYNC_TRACE_SCOPE_WITH_CAPTURE(trace_capture, name) ((void)0)
 #define PAYLOAD_TRACE_SCOPE(name) ((void)0)
-#define SERIALIZE_TRACE(bitbuffer, data, bits, name) \
+#define ASHIATO_SERIALIZE_TRACE(bitbuffer, data, bits, name) \
     do { \
-        (bitbuffer).push_bits((data), (bits)); \
+        (bitbuffer).write_bits((data), (bits)); \
     } while (false)
-#define SERIALIZE_TRACE_WITH_CONTEXT(trace_context, bitbuffer, data, bits, name) \
+#define ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(trace_context, bitbuffer, data, bits, name) \
     do { \
-        (bitbuffer).push_bits((data), (bits)); \
+        (bitbuffer).write_bits((data), (bits)); \
     } while (false)
-#define SERIALIZE_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, data, bits, name) \
+#define ASHIATO_SERIALIZE_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, data, bits, name) \
     do { \
-        (bitbuffer).push_bits((data), (bits)); \
+        (bitbuffer).write_bits((data), (bits)); \
     } while (false)
-#define SERIALIZE_UNSIGNED_TRACE(bitbuffer, data, bits, name) \
+#define ASHIATO_SERIALIZE_UNSIGNED_TRACE(bitbuffer, data, bits, name) \
     do { \
-        (bitbuffer).push_unsigned_bits((data), (bits)); \
+        (bitbuffer).write_unsigned_bits((data), (bits)); \
     } while (false)
-#define SERIALIZE_UNSIGNED_TRACE_WITH_CONTEXT(trace_context, bitbuffer, data, bits, name) \
+#define ASHIATO_SERIALIZE_UNSIGNED_TRACE_WITH_CONTEXT(trace_context, bitbuffer, data, bits, name) \
     do { \
-        (bitbuffer).push_unsigned_bits((data), (bits)); \
+        (bitbuffer).write_unsigned_bits((data), (bits)); \
     } while (false)
-#define SERIALIZE_UNSIGNED_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, data, bits, name) \
+#define ASHIATO_SERIALIZE_UNSIGNED_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, data, bits, name) \
     do { \
-        (bitbuffer).push_unsigned_bits((data), (bits)); \
+        (bitbuffer).write_unsigned_bits((data), (bits)); \
     } while (false)
-#define SERIALIZE_BOOL_TRACE(bitbuffer, data, name) \
+#define ASHIATO_SERIALIZE_BOOL_TRACE(bitbuffer, data, name) \
     do { \
-        (bitbuffer).push_bool((data)); \
+        (bitbuffer).write_bool((data)); \
     } while (false)
-#define SERIALIZE_BOOL_TRACE_WITH_CONTEXT(trace_context, bitbuffer, data, name) \
+#define ASHIATO_SERIALIZE_BOOL_TRACE_WITH_CONTEXT(trace_context, bitbuffer, data, name) \
     do { \
-        (bitbuffer).push_bool((data)); \
+        (bitbuffer).write_bool((data)); \
     } while (false)
-#define SERIALIZE_BOOL_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, data, name) \
+#define ASHIATO_SERIALIZE_BOOL_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, data, name) \
     do { \
-        (bitbuffer).push_bool((data)); \
+        (bitbuffer).write_bool((data)); \
     } while (false)
-#define SERIALIZE_BYTES_TRACE(bitbuffer, data, bytes, name) \
+#define ASHIATO_SERIALIZE_BYTES_TRACE(bitbuffer, data, bytes, name) \
     do { \
-        (bitbuffer).push_bytes((data), (bytes)); \
+        (bitbuffer).write_bytes((data), (bytes)); \
     } while (false)
-#define SERIALIZE_BYTES_TRACE_WITH_CONTEXT(trace_context, bitbuffer, data, bytes, name) \
+#define ASHIATO_SERIALIZE_BYTES_TRACE_WITH_CONTEXT(trace_context, bitbuffer, data, bytes, name) \
     do { \
-        (bitbuffer).push_bytes((data), (bytes)); \
+        (bitbuffer).write_bytes((data), (bytes)); \
     } while (false)
-#define SERIALIZE_BYTES_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, data, bytes, name) \
+#define ASHIATO_SERIALIZE_BYTES_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, data, bytes, name) \
     do { \
-        (bitbuffer).push_bytes((data), (bytes)); \
+        (bitbuffer).write_bytes((data), (bytes)); \
     } while (false)
-#define SERIALIZE_BUFFER_TRACE_WITH_CONTEXT(trace_context, bitbuffer, source, name) \
+#define ASHIATO_SERIALIZE_BUFFER_TRACE_WITH_CONTEXT(trace_context, bitbuffer, source, name) \
     do { \
-        (bitbuffer).push_buffer_bits((source)); \
+        (bitbuffer).write_buffer_bits((source)); \
     } while (false)
-#define SERIALIZE_BUFFER_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, source, name) \
+#define ASHIATO_SERIALIZE_BUFFER_TRACE_WITH_CAPTURE(trace_capture, bitbuffer, source, name) \
     do { \
-        (bitbuffer).push_buffer_bits((source)); \
+        (bitbuffer).write_buffer_bits((source)); \
     } while (false)
 #ifndef BEGIN_TRACE_SCOPE
 #define BEGIN_TRACE_SCOPE(name) ((void)0)
 #endif
 #endif
+
+#define ASHIATO_SYNC_QUANTIZED_FLOAT_CONFIG_(min_value, max_value, resolution_value) \
+    ::ashiato::sync::serialization::QuantizedFloatConfig{ \
+        static_cast<float>(min_value), \
+        static_cast<float>(max_value), \
+        static_cast<float>(resolution_value)}
+#define ASHIATO_SYNC_QUANTIZED_INT_CONFIG_(min_value, max_value) \
+    ::ashiato::sync::serialization::QuantizedIntConfig{ \
+        static_cast<std::int64_t>(min_value), \
+        static_cast<std::int64_t>(max_value)}
+#define ASHIATO_SYNC_VARIABLE_QUANTIZED_FLOAT_CONFIG_(short_min, short_max, long_min, long_max, resolution_value) \
+    ::ashiato::sync::serialization::VariableQuantizedFloatConfig{ \
+        ASHIATO_SYNC_QUANTIZED_FLOAT_CONFIG_(short_min, short_max, resolution_value), \
+        ASHIATO_SYNC_QUANTIZED_FLOAT_CONFIG_(long_min, long_max, resolution_value)}
+#define ASHIATO_SYNC_VARIABLE_QUANTIZED_INT_CONFIG_(short_min, short_max, long_min, long_max) \
+    ::ashiato::sync::serialization::VariableQuantizedIntConfig{ \
+        ASHIATO_SYNC_QUANTIZED_INT_CONFIG_(short_min, short_max), \
+        ASHIATO_SYNC_QUANTIZED_INT_CONFIG_(long_min, long_max)}
+#define ASHIATO_SYNC_VARINT2_CONFIG_(short_min, short_max, full_min, full_max) \
+    ::ashiato::sync::serialization::VarInt2Config{ \
+        ASHIATO_SYNC_QUANTIZED_INT_CONFIG_(short_min, short_max), \
+        ASHIATO_SYNC_QUANTIZED_INT_CONFIG_(full_min, full_max)}
+#define ASHIATO_SYNC_VARINT3_CONFIG_(short_min, short_max, medium_min, medium_max, full_min, full_max) \
+    ::ashiato::sync::serialization::VarInt3Config{ \
+        ASHIATO_SYNC_QUANTIZED_INT_CONFIG_(short_min, short_max), \
+        ASHIATO_SYNC_QUANTIZED_INT_CONFIG_(medium_min, medium_max), \
+        ASHIATO_SYNC_QUANTIZED_INT_CONFIG_(full_min, full_max)}
+
+#define SERIALIZE_QUANTIZED_FLOAT(value, bitbuffer, min_value, max_value, resolution_value, name) \
+    do { \
+        ASHIATO_SYNC_TRACE_SCOPE(name); \
+        ::ashiato::sync::serialization::serialize_quantized_float( \
+            (bitbuffer), \
+            static_cast<float>(value), \
+            ASHIATO_SYNC_QUANTIZED_FLOAT_CONFIG_(min_value, max_value, resolution_value)); \
+    } while (false)
+#define SERIALIZE_QUANTIZED_FLOAT_WITH_CONTEXT(trace_context, value, bitbuffer, min_value, max_value, resolution_value, name) \
+    do { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(trace_context, name); \
+        ::ashiato::sync::serialization::serialize_quantized_float( \
+            (bitbuffer), \
+            static_cast<float>(value), \
+            ASHIATO_SYNC_QUANTIZED_FLOAT_CONFIG_(min_value, max_value, resolution_value)); \
+    } while (false)
+#define SERIALIZE_QUANTIZED_FLOAT_WITH_CAPTURE(trace_capture, value, bitbuffer, min_value, max_value, resolution_value, name) \
+    do { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CAPTURE(trace_capture, name); \
+        ::ashiato::sync::serialization::serialize_quantized_float( \
+            (bitbuffer), \
+            static_cast<float>(value), \
+            ASHIATO_SYNC_QUANTIZED_FLOAT_CONFIG_(min_value, max_value, resolution_value)); \
+    } while (false)
+#define DESERIALIZE_QUANTIZED_FLOAT(bitbuffer, min_value, max_value, resolution_value, name) \
+    ([&]() -> float { \
+        ASHIATO_SYNC_TRACE_SCOPE(name); \
+        return ::ashiato::sync::serialization::deserialize_quantized_float( \
+            (bitbuffer), \
+            ASHIATO_SYNC_QUANTIZED_FLOAT_CONFIG_(min_value, max_value, resolution_value)); \
+    }())
+#define DESERIALIZE_QUANTIZED_FLOAT_WITH_CONTEXT(trace_context, bitbuffer, min_value, max_value, resolution_value, name) \
+    ([&]() -> float { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(trace_context, name); \
+        return ::ashiato::sync::serialization::deserialize_quantized_float( \
+            (bitbuffer), \
+            ASHIATO_SYNC_QUANTIZED_FLOAT_CONFIG_(min_value, max_value, resolution_value)); \
+    }())
+#define DESERIALIZE_QUANTIZED_FLOAT_WITH_CAPTURE(trace_capture, bitbuffer, min_value, max_value, resolution_value, name) \
+    ([&]() -> float { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CAPTURE(trace_capture, name); \
+        return ::ashiato::sync::serialization::deserialize_quantized_float( \
+            (bitbuffer), \
+            ASHIATO_SYNC_QUANTIZED_FLOAT_CONFIG_(min_value, max_value, resolution_value)); \
+    }())
+
+#define SERIALIZE_QUANTIZED_INT(value, bitbuffer, min_value, max_value, name) \
+    do { \
+        ASHIATO_SYNC_TRACE_SCOPE(name); \
+        ::ashiato::sync::serialization::serialize_quantized_int( \
+            (bitbuffer), \
+            static_cast<std::int64_t>(value), \
+            ASHIATO_SYNC_QUANTIZED_INT_CONFIG_(min_value, max_value)); \
+    } while (false)
+#define SERIALIZE_QUANTIZED_INT_WITH_CONTEXT(trace_context, value, bitbuffer, min_value, max_value, name) \
+    do { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(trace_context, name); \
+        ::ashiato::sync::serialization::serialize_quantized_int( \
+            (bitbuffer), \
+            static_cast<std::int64_t>(value), \
+            ASHIATO_SYNC_QUANTIZED_INT_CONFIG_(min_value, max_value)); \
+    } while (false)
+#define SERIALIZE_QUANTIZED_INT_WITH_CAPTURE(trace_capture, value, bitbuffer, min_value, max_value, name) \
+    do { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CAPTURE(trace_capture, name); \
+        ::ashiato::sync::serialization::serialize_quantized_int( \
+            (bitbuffer), \
+            static_cast<std::int64_t>(value), \
+            ASHIATO_SYNC_QUANTIZED_INT_CONFIG_(min_value, max_value)); \
+    } while (false)
+#define DESERIALIZE_QUANTIZED_INT(bitbuffer, min_value, max_value, name) \
+    ([&]() -> std::int64_t { \
+        ASHIATO_SYNC_TRACE_SCOPE(name); \
+        return ::ashiato::sync::serialization::deserialize_quantized_int( \
+            (bitbuffer), \
+            ASHIATO_SYNC_QUANTIZED_INT_CONFIG_(min_value, max_value)); \
+    }())
+#define DESERIALIZE_QUANTIZED_INT_WITH_CONTEXT(trace_context, bitbuffer, min_value, max_value, name) \
+    ([&]() -> std::int64_t { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(trace_context, name); \
+        return ::ashiato::sync::serialization::deserialize_quantized_int( \
+            (bitbuffer), \
+            ASHIATO_SYNC_QUANTIZED_INT_CONFIG_(min_value, max_value)); \
+    }())
+#define DESERIALIZE_QUANTIZED_INT_WITH_CAPTURE(trace_capture, bitbuffer, min_value, max_value, name) \
+    ([&]() -> std::int64_t { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CAPTURE(trace_capture, name); \
+        return ::ashiato::sync::serialization::deserialize_quantized_int( \
+            (bitbuffer), \
+            ASHIATO_SYNC_QUANTIZED_INT_CONFIG_(min_value, max_value)); \
+    }())
+
+#define SERIALIZE_VARIABLE_QUANTIZED_FLOAT(value, bitbuffer, short_min, short_max, long_min, long_max, resolution_value, name) \
+    do { \
+        ASHIATO_SYNC_TRACE_SCOPE(name); \
+        ::ashiato::sync::serialization::serialize_variable_quantized_float( \
+            (bitbuffer), \
+            static_cast<float>(value), \
+            ASHIATO_SYNC_VARIABLE_QUANTIZED_FLOAT_CONFIG_(short_min, short_max, long_min, long_max, resolution_value)); \
+    } while (false)
+#define SERIALIZE_VARIABLE_QUANTIZED_FLOAT_WITH_CONTEXT(trace_context, value, bitbuffer, short_min, short_max, long_min, long_max, resolution_value, name) \
+    do { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(trace_context, name); \
+        ::ashiato::sync::serialization::serialize_variable_quantized_float( \
+            (bitbuffer), \
+            static_cast<float>(value), \
+            ASHIATO_SYNC_VARIABLE_QUANTIZED_FLOAT_CONFIG_(short_min, short_max, long_min, long_max, resolution_value)); \
+    } while (false)
+#define SERIALIZE_VARIABLE_QUANTIZED_FLOAT_WITH_CAPTURE(trace_capture, value, bitbuffer, short_min, short_max, long_min, long_max, resolution_value, name) \
+    do { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CAPTURE(trace_capture, name); \
+        ::ashiato::sync::serialization::serialize_variable_quantized_float( \
+            (bitbuffer), \
+            static_cast<float>(value), \
+            ASHIATO_SYNC_VARIABLE_QUANTIZED_FLOAT_CONFIG_(short_min, short_max, long_min, long_max, resolution_value)); \
+    } while (false)
+#define DESERIALIZE_VARIABLE_QUANTIZED_FLOAT(bitbuffer, short_min, short_max, long_min, long_max, resolution_value, name) \
+    ([&]() -> float { \
+        ASHIATO_SYNC_TRACE_SCOPE(name); \
+        return ::ashiato::sync::serialization::deserialize_variable_quantized_float( \
+            (bitbuffer), \
+            ASHIATO_SYNC_VARIABLE_QUANTIZED_FLOAT_CONFIG_(short_min, short_max, long_min, long_max, resolution_value)); \
+    }())
+#define DESERIALIZE_VARIABLE_QUANTIZED_FLOAT_WITH_CONTEXT(trace_context, bitbuffer, short_min, short_max, long_min, long_max, resolution_value, name) \
+    ([&]() -> float { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(trace_context, name); \
+        return ::ashiato::sync::serialization::deserialize_variable_quantized_float( \
+            (bitbuffer), \
+            ASHIATO_SYNC_VARIABLE_QUANTIZED_FLOAT_CONFIG_(short_min, short_max, long_min, long_max, resolution_value)); \
+    }())
+#define DESERIALIZE_VARIABLE_QUANTIZED_FLOAT_WITH_CAPTURE(trace_capture, bitbuffer, short_min, short_max, long_min, long_max, resolution_value, name) \
+    ([&]() -> float { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CAPTURE(trace_capture, name); \
+        return ::ashiato::sync::serialization::deserialize_variable_quantized_float( \
+            (bitbuffer), \
+            ASHIATO_SYNC_VARIABLE_QUANTIZED_FLOAT_CONFIG_(short_min, short_max, long_min, long_max, resolution_value)); \
+    }())
+
+#define SERIALIZE_VARIABLE_QUANTIZED_INT(value, bitbuffer, short_min, short_max, long_min, long_max, name) \
+    do { \
+        ASHIATO_SYNC_TRACE_SCOPE(name); \
+        ::ashiato::sync::serialization::serialize_variable_quantized_int( \
+            (bitbuffer), \
+            static_cast<std::int64_t>(value), \
+            ASHIATO_SYNC_VARIABLE_QUANTIZED_INT_CONFIG_(short_min, short_max, long_min, long_max)); \
+    } while (false)
+#define SERIALIZE_VARIABLE_QUANTIZED_INT_WITH_CONTEXT(trace_context, value, bitbuffer, short_min, short_max, long_min, long_max, name) \
+    do { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(trace_context, name); \
+        ::ashiato::sync::serialization::serialize_variable_quantized_int( \
+            (bitbuffer), \
+            static_cast<std::int64_t>(value), \
+            ASHIATO_SYNC_VARIABLE_QUANTIZED_INT_CONFIG_(short_min, short_max, long_min, long_max)); \
+    } while (false)
+#define SERIALIZE_VARIABLE_QUANTIZED_INT_WITH_CAPTURE(trace_capture, value, bitbuffer, short_min, short_max, long_min, long_max, name) \
+    do { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CAPTURE(trace_capture, name); \
+        ::ashiato::sync::serialization::serialize_variable_quantized_int( \
+            (bitbuffer), \
+            static_cast<std::int64_t>(value), \
+            ASHIATO_SYNC_VARIABLE_QUANTIZED_INT_CONFIG_(short_min, short_max, long_min, long_max)); \
+    } while (false)
+#define DESERIALIZE_VARIABLE_QUANTIZED_INT(bitbuffer, short_min, short_max, long_min, long_max, name) \
+    ([&]() -> std::int64_t { \
+        ASHIATO_SYNC_TRACE_SCOPE(name); \
+        return ::ashiato::sync::serialization::deserialize_variable_quantized_int( \
+            (bitbuffer), \
+            ASHIATO_SYNC_VARIABLE_QUANTIZED_INT_CONFIG_(short_min, short_max, long_min, long_max)); \
+    }())
+#define DESERIALIZE_VARIABLE_QUANTIZED_INT_WITH_CONTEXT(trace_context, bitbuffer, short_min, short_max, long_min, long_max, name) \
+    ([&]() -> std::int64_t { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(trace_context, name); \
+        return ::ashiato::sync::serialization::deserialize_variable_quantized_int( \
+            (bitbuffer), \
+            ASHIATO_SYNC_VARIABLE_QUANTIZED_INT_CONFIG_(short_min, short_max, long_min, long_max)); \
+    }())
+#define DESERIALIZE_VARIABLE_QUANTIZED_INT_WITH_CAPTURE(trace_capture, bitbuffer, short_min, short_max, long_min, long_max, name) \
+    ([&]() -> std::int64_t { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CAPTURE(trace_capture, name); \
+        return ::ashiato::sync::serialization::deserialize_variable_quantized_int( \
+            (bitbuffer), \
+            ASHIATO_SYNC_VARIABLE_QUANTIZED_INT_CONFIG_(short_min, short_max, long_min, long_max)); \
+    }())
+
+#define SERIALIZE_VARINT(value, bitbuffer, min_value, max_value, name) \
+    SERIALIZE_QUANTIZED_INT(value, bitbuffer, min_value, max_value, name)
+#define SERIALIZE_VARINT_WITH_CONTEXT(trace_context, value, bitbuffer, min_value, max_value, name) \
+    SERIALIZE_QUANTIZED_INT_WITH_CONTEXT(trace_context, value, bitbuffer, min_value, max_value, name)
+#define SERIALIZE_VARINT_WITH_CAPTURE(trace_capture, value, bitbuffer, min_value, max_value, name) \
+    SERIALIZE_QUANTIZED_INT_WITH_CAPTURE(trace_capture, value, bitbuffer, min_value, max_value, name)
+#define DESERIALIZE_VARINT(bitbuffer, min_value, max_value, name) \
+    DESERIALIZE_QUANTIZED_INT(bitbuffer, min_value, max_value, name)
+#define DESERIALIZE_VARINT_WITH_CONTEXT(trace_context, bitbuffer, min_value, max_value, name) \
+    DESERIALIZE_QUANTIZED_INT_WITH_CONTEXT(trace_context, bitbuffer, min_value, max_value, name)
+#define DESERIALIZE_VARINT_WITH_CAPTURE(trace_capture, bitbuffer, min_value, max_value, name) \
+    DESERIALIZE_QUANTIZED_INT_WITH_CAPTURE(trace_capture, bitbuffer, min_value, max_value, name)
+#define SERIALIZE_VARINT2(value, bitbuffer, short_min, short_max, full_min, full_max, name) \
+    do { \
+        ASHIATO_SYNC_TRACE_SCOPE(name); \
+        ::ashiato::sync::serialization::serialize_varint2( \
+            (bitbuffer), \
+            static_cast<std::int64_t>(value), \
+            ASHIATO_SYNC_VARINT2_CONFIG_(short_min, short_max, full_min, full_max)); \
+    } while (false)
+#define SERIALIZE_VARINT2_WITH_CONTEXT(trace_context, value, bitbuffer, short_min, short_max, full_min, full_max, name) \
+    do { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(trace_context, name); \
+        ::ashiato::sync::serialization::serialize_varint2( \
+            (bitbuffer), \
+            static_cast<std::int64_t>(value), \
+            ASHIATO_SYNC_VARINT2_CONFIG_(short_min, short_max, full_min, full_max)); \
+    } while (false)
+#define SERIALIZE_VARINT2_WITH_CAPTURE(trace_capture, value, bitbuffer, short_min, short_max, full_min, full_max, name) \
+    do { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CAPTURE(trace_capture, name); \
+        ::ashiato::sync::serialization::serialize_varint2( \
+            (bitbuffer), \
+            static_cast<std::int64_t>(value), \
+            ASHIATO_SYNC_VARINT2_CONFIG_(short_min, short_max, full_min, full_max)); \
+    } while (false)
+#define DESERIALIZE_VARINT2(bitbuffer, short_min, short_max, full_min, full_max, name) \
+    ([&]() -> std::int64_t { \
+        ASHIATO_SYNC_TRACE_SCOPE(name); \
+        return ::ashiato::sync::serialization::deserialize_varint2( \
+            (bitbuffer), \
+            ASHIATO_SYNC_VARINT2_CONFIG_(short_min, short_max, full_min, full_max)); \
+    }())
+#define DESERIALIZE_VARINT2_WITH_CONTEXT(trace_context, bitbuffer, short_min, short_max, full_min, full_max, name) \
+    ([&]() -> std::int64_t { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(trace_context, name); \
+        return ::ashiato::sync::serialization::deserialize_varint2( \
+            (bitbuffer), \
+            ASHIATO_SYNC_VARINT2_CONFIG_(short_min, short_max, full_min, full_max)); \
+    }())
+#define DESERIALIZE_VARINT2_WITH_CAPTURE(trace_capture, bitbuffer, short_min, short_max, full_min, full_max, name) \
+    ([&]() -> std::int64_t { \
+        ASHIATO_SYNC_TRACE_SCOPE_WITH_CAPTURE(trace_capture, name); \
+        return ::ashiato::sync::serialization::deserialize_varint2( \
+            (bitbuffer), \
+            ASHIATO_SYNC_VARINT2_CONFIG_(short_min, short_max, full_min, full_max)); \
+    }())
+#define SERIALIZE_VARINT3(value, bitbuffer, short_min, short_max, medium_min, medium_max, full_min, full_max, name) \
+    do { \
+        ASHIATO_SYNC_TRACE_SCOPE(name); \
+        ::ashiato::sync::serialization::serialize_varint3( \
+            (bitbuffer), \
+            static_cast<std::int64_t>(value), \
+            ASHIATO_SYNC_VARINT3_CONFIG_(short_min, short_max, medium_min, medium_max, full_min, full_max)); \
+    } while (false)
+#define DESERIALIZE_VARINT3(bitbuffer, short_min, short_max, medium_min, medium_max, full_min, full_max, name) \
+    ([&]() -> std::int64_t { \
+        ASHIATO_SYNC_TRACE_SCOPE(name); \
+        return ::ashiato::sync::serialization::deserialize_varint3( \
+            (bitbuffer), \
+            ASHIATO_SYNC_VARINT3_CONFIG_(short_min, short_max, medium_min, medium_max, full_min, full_max)); \
+    }())
+#define SERIALIZE_VARIABLE_VARINT(value, bitbuffer, short_min, short_max, long_min, long_max, name) \
+    SERIALIZE_VARINT2(value, bitbuffer, short_min, short_max, long_min, long_max, name)
+#define SERIALIZE_VARIABLE_VARINT_WITH_CONTEXT(trace_context, value, bitbuffer, short_min, short_max, long_min, long_max, name) \
+    SERIALIZE_VARINT2_WITH_CONTEXT(trace_context, value, bitbuffer, short_min, short_max, long_min, long_max, name)
+#define SERIALIZE_VARIABLE_VARINT_WITH_CAPTURE(trace_capture, value, bitbuffer, short_min, short_max, long_min, long_max, name) \
+    SERIALIZE_VARINT2_WITH_CAPTURE(trace_capture, value, bitbuffer, short_min, short_max, long_min, long_max, name)
+#define DESERIALIZE_VARIABLE_VARINT(bitbuffer, short_min, short_max, long_min, long_max, name) \
+    DESERIALIZE_VARINT2(bitbuffer, short_min, short_max, long_min, long_max, name)
+#define DESERIALIZE_VARIABLE_VARINT_WITH_CONTEXT(trace_context, bitbuffer, short_min, short_max, long_min, long_max, name) \
+    DESERIALIZE_VARINT2_WITH_CONTEXT(trace_context, bitbuffer, short_min, short_max, long_min, long_max, name)
+#define DESERIALIZE_VARIABLE_VARINT_WITH_CAPTURE(trace_capture, bitbuffer, short_min, short_max, long_min, long_max, name) \
+    DESERIALIZE_VARINT2_WITH_CAPTURE(trace_capture, bitbuffer, short_min, short_max, long_min, long_max, name)

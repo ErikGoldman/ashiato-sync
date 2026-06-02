@@ -29,9 +29,6 @@
 namespace ashiato::sync {
 namespace {
 
-constexpr std::size_t max_pending_quantized_frames_per_entity = 64;
-constexpr std::size_t max_cues_per_entity_record = server_detail::max_cues_per_entity_record;
-
 struct ServerFixedStepAdvance {
     std::uint32_t steps = 0;
     std::uint64_t dropped_steps = 0;
@@ -160,6 +157,101 @@ void append_trace_cue_data(
 #endif
 }
 
+#ifdef ASHIATO_SYNC_TRACE_COMPONENT_DATA
+void push_trace_payload_bits_range(
+    ashiato::BitBuffer& out,
+    const ashiato::BitBuffer& source,
+    std::uint64_t begin_bits,
+    std::uint64_t end_bits) {
+    const std::uint64_t source_bits = static_cast<std::uint64_t>(source.bit_size());
+    begin_bits = std::min(begin_bits, source_bits);
+    end_bits = std::min(end_bits, source_bits);
+    if (end_bits <= begin_bits) {
+        return;
+    }
+
+    ashiato::BitBuffer reader = source;
+    reader.skip_bits(static_cast<std::size_t>(begin_bits));
+    reader.read_buffer_bits(out, static_cast<std::size_t>(end_bits - begin_bits));
+}
+
+void push_trace_payload_scope_children(
+    ScopedSerializationTraceCapture& capture,
+    ashiato::BitBuffer& out,
+    const ashiato::BitBuffer& source,
+    const std::vector<ashiato::SerializationTraceScope>& scopes,
+    std::uint32_t parent,
+    std::uint64_t begin_bits,
+    std::uint64_t end_bits) {
+    std::uint64_t cursor_bits = begin_bits;
+    for (const ashiato::SerializationTraceScope& scope : scopes) {
+        if (scope.parent != parent) {
+            continue;
+        }
+
+        const std::uint64_t scope_begin_bits = std::max(scope.begin_bits, begin_bits);
+        const std::uint64_t scope_end_bits = std::min(scope.end_bits, end_bits);
+        if (scope_end_bits <= scope_begin_bits) {
+            continue;
+        }
+        if (scope_begin_bits > cursor_bits) {
+            push_trace_payload_bits_range(out, source, cursor_bits, scope_begin_bits);
+        }
+        {
+            ScopedSerializationTraceScope payload_scope(&capture, scope.name.c_str());
+            push_trace_payload_scope_children(capture, out, source, scopes, scope.id, scope_begin_bits, scope_end_bits);
+        }
+        cursor_bits = std::max(cursor_bits, scope_end_bits);
+    }
+
+    if (end_bits > cursor_bits) {
+        push_trace_payload_bits_range(out, source, cursor_bits, end_bits);
+    }
+}
+
+void push_buffer_bits_with_replayed_trace(
+    ScopedSerializationTraceCapture& capture,
+    ashiato::BitBuffer& out,
+    const ashiato::BitBuffer& source,
+    const std::vector<ashiato::SerializationTraceScope>& scopes,
+    const char* name) {
+    ScopedSerializationTraceScope payload_scope(&capture, name);
+    if (scopes.empty()) {
+        out.write_buffer_bits(source);
+        return;
+    }
+
+    const std::uint64_t source_bits = static_cast<std::uint64_t>(source.bit_size());
+    std::uint64_t cursor_bits = 0;
+    bool copied_root_scope = false;
+    for (const ashiato::SerializationTraceScope& scope : scopes) {
+        if (scope.parent != UINT32_MAX) {
+            continue;
+        }
+
+        const std::uint64_t scope_begin_bits = std::min(scope.begin_bits, source_bits);
+        const std::uint64_t scope_end_bits = std::min(scope.end_bits, source_bits);
+        if (scope_end_bits <= scope_begin_bits) {
+            continue;
+        }
+        if (scope_begin_bits > cursor_bits) {
+            push_trace_payload_bits_range(out, source, cursor_bits, scope_begin_bits);
+        }
+        push_trace_payload_scope_children(capture, out, source, scopes, scope.id, scope_begin_bits, scope_end_bits);
+        cursor_bits = std::max(cursor_bits, scope_end_bits);
+        copied_root_scope = true;
+    }
+
+    if (!copied_root_scope) {
+        push_trace_payload_scope_children(capture, out, source, scopes, UINT32_MAX, 0, source_bits);
+        return;
+    }
+    if (source_bits > cursor_bits) {
+        push_trace_payload_bits_range(out, source, cursor_bits, source_bits);
+    }
+}
+#endif
+
 void append_trace_data_field(SyncTraceEvent& event, const char* key, const char* value) {
     if (key == nullptr || value == nullptr || value[0] == '\0') {
         return;
@@ -206,10 +298,10 @@ std::uint64_t visible_tag_mask(
     ClientId client) {
     std::uint64_t mask = 0;
     const NetworkOwner* owner = registry.try_get<NetworkOwner>(entity);
+    const ClientId owner_client = owner != nullptr ? owner->client : invalid_client_id;
     for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
         const SyncTagReplication& replication = archetype.tags[tag_index];
-        if (replication.audience == ReplicationAudience::Owner &&
-            (owner == nullptr || owner->client != client)) {
+        if (!replication_audience_matches(replication.audience, owner_client, client)) {
             continue;
         }
         if (registry.has(entity, replication.tag)) {
@@ -265,9 +357,9 @@ void ReplicationServer::set_log_level(LogLevel level) {
 }
 
 ServerRegistryDirtyFrameSubscription::ServerRegistryDirtyFrameSubscription(
-    std::shared_ptr<State> state,
+    const std::shared_ptr<State>& state,
     std::uint64_t id)
-    : state_(std::move(state)),
+    : state_(state),
       id_(id) {}
 
 ServerRegistryDirtyFrameSubscription::ServerRegistryDirtyFrameSubscription(
@@ -312,9 +404,9 @@ bool ServerRegistryDirtyFrameSubscription::active() const noexcept {
 }
 
 ServerFrameBatchListenerSubscription::ServerFrameBatchListenerSubscription(
-    std::shared_ptr<State> state,
+    const std::shared_ptr<State>& state,
     std::uint64_t id)
-    : state_(std::move(state)),
+    : state_(state),
       id_(id) {}
 
 ServerFrameBatchListenerSubscription::ServerFrameBatchListenerSubscription(
@@ -401,13 +493,27 @@ bool ReplicationServer::add_client(ClientId client) {
     return add_client_for_peer(client, client, true);
 }
 
+ClientId ReplicationServer::find_next_available_client_id() const {
+    ClientId candidate = next_connect_client_id_;
+    for (std::uint16_t attempts = 0; attempts < max_client_entity_network_id_client; ++attempts) {
+        if (candidate != invalid_client_id && client_to_index_.find(candidate) == client_to_index_.end()) {
+            return candidate;
+        }
+        candidate =
+            candidate >= max_client_entity_network_id_client
+                ? ClientId{1}
+                : static_cast<ClientId>(candidate + 1U);
+    }
+    return invalid_client_id;
+}
+
 bool ReplicationServer::add_client_state(ClientState state) {
     if (state.id == invalid_client_id ||
         state.id > max_client_entity_network_id_client ||
         client_to_index_.find(state.id) != client_to_index_.end()) {
         return false;
     }
-    if (!state.local && (state.peer == invalid_client_id || peer_to_index_.find(state.peer) != peer_to_index_.end())) {
+    if (!state.local && (state.peer == invalid_peer_id || peer_to_index_.find(state.peer) != peer_to_index_.end())) {
         return false;
     }
 
@@ -416,7 +522,7 @@ bool ReplicationServer::add_client_state(ClientState state) {
     }
 
     const ClientId client = state.id;
-    const ClientId peer = state.peer;
+    const PeerId peer = state.peer;
     const bool local = state.local;
     const bool ready_for_updates = state.ready_for_updates;
     const std::size_t index = clients_.size();
@@ -425,7 +531,10 @@ bool ReplicationServer::add_client_state(ClientState state) {
     if (!local) {
         peer_to_index_[peer] = index;
     }
-    next_connect_client_id_ = std::max(next_connect_client_id_, client + 1U);
+    if (client >= next_connect_client_id_) {
+        next_connect_client_id_ =
+            client >= max_client_entity_network_id_client ? ClientId{1} : static_cast<ClientId>(client + 1U);
+    }
     if (!local) {
         ++observability_stats_.client_connects_accepted;
         log_info("client_connected", "peer=" + std::to_string(peer) +
@@ -455,7 +564,7 @@ bool ReplicationServer::add_client_state(ClientState state) {
     return true;
 }
 
-void ReplicationServer::notify_connection_event(ReplicationServerConnectionEvent event) {
+void ReplicationServer::notify_connection_event(const ReplicationServerConnectionEvent& event) {
     if (options_.connection_event_handler) {
         options_.connection_event_handler(event);
     }
@@ -471,16 +580,16 @@ void ReplicationServer::create_client_replicator(ClientState& client) {
     client.replication->bandwidth = std::make_shared<ReplicationBandwidthBudget>(options_.bandwidth);
     client.replication->bandwidth_participant =
         client.replication->bandwidth->attach_participant(ReplicationBandwidthParticipantOptions{1U, 0});
-    client.replication->server = this;
+    client.replication->owner_server = this;
     client.replication->initialize_marking_all_dirty(*this, frame_);
     client.replication->registry_dirty_frame_subscription = subscribe_registry_dirty_frame_listener(*client.replication);
     client.replication->frame_batch_subscription = subscribe_frame_batch_listener(*client.replication);
 }
 
-bool ReplicationServer::add_client_for_peer(ClientId peer, ClientId client, bool ready_for_updates) {
+bool ReplicationServer::add_client_for_peer(PeerId peer, ClientId client, bool ready_for_updates) {
     if (client == invalid_client_id ||
         client > max_client_entity_network_id_client ||
-        peer == invalid_client_id ||
+        peer == invalid_peer_id ||
         client_to_index_.find(client) != client_to_index_.end() ||
         peer_to_index_.find(peer) != peer_to_index_.end()) {
         return false;
@@ -494,7 +603,7 @@ bool ReplicationServer::add_client_for_peer(ClientId peer, ClientId client, bool
     return add_client_state(std::move(state));
 }
 
-void ReplicationServer::set_local_client_id(ashiato::Registry& registry, ClientId client) noexcept {
+void ReplicationServer::set_local_client_id(ashiato::Registry& registry, ClientId client) {
     local_client_ = client;
     registry.write<SyncSettings>().local_client = client;
 }
@@ -503,23 +612,17 @@ ClientId ReplicationServer::add_local_client(ashiato::Registry& registry) {
     if (local_client_ != invalid_client_id) {
         return invalid_client_id;
     }
-    while (next_connect_client_id_ != invalid_client_id &&
-           next_connect_client_id_ <= max_client_entity_network_id_client &&
-           client_to_index_.find(next_connect_client_id_) != client_to_index_.end()) {
-        ++next_connect_client_id_;
-    }
-    if (next_connect_client_id_ == invalid_client_id ||
-        next_connect_client_id_ > max_client_entity_network_id_client) {
+    const ClientId local_client = find_next_available_client_id();
+    if (local_client == invalid_client_id) {
         return invalid_client_id;
     }
 
     ClientState state;
-    state.id = next_connect_client_id_;
-    state.peer = invalid_client_id;
+    state.id = local_client;
+    state.peer = invalid_peer_id;
     state.local = true;
     state.ready_for_updates = true;
     state.connect_resend_accumulator_seconds = options_.connect_resend_interval_seconds;
-    const ClientId local_client = state.id;
     if (!add_client_state(std::move(state))) {
         return invalid_client_id;
     }
@@ -640,6 +743,35 @@ void ReplicationServer::trace_incoming_ack_packet(ServerClientReplicator& client
     tracer_->trace(event);
 }
 
+void ReplicationServer::trace_incoming_ping_packet(ClientState& client, std::uint32_t sequence) const {
+    if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->packet_logs_enabled()) {
+        return;
+    }
+    SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::PacketLog, client.id, frame_);
+    event.data = "direction=in,message=client_ping,client=" + std::to_string(client.id) +
+        ",sequence=" + std::to_string(sequence);
+    tracer_->trace(event);
+}
+
+void ReplicationServer::trace_outgoing_pong_packet(
+    ClientState& client,
+    std::uint32_t sequence,
+    SyncFrame server_receive_frame,
+    SyncFrame server_send_frame) const {
+    if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->packet_logs_enabled()) {
+        return;
+    }
+    SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::PacketLog, client.id, server_send_frame);
+    std::ostringstream out;
+    out << "direction=out,message=server_pong,client=" << client.id
+        << ",peer=" << client.peer
+        << ",sequence=" << sequence
+        << ",server_receive_frame=" << server_receive_frame
+        << ",server_frame=" << server_send_frame;
+    event.data = out.str();
+    tracer_->trace(event);
+}
+
 void ReplicationServer::trace_incoming_input_packet(
     ClientState& client,
     const std::vector<std::uint32_t>& acks,
@@ -739,10 +871,8 @@ void ReplicationServer::append_packet_ack_cues(
     const SyncSettings& settings,
     const ClientEntityState& state,
     PacketAckRecord& record) const {
-    const std::size_t cue_count = std::min(state.pending_cues.size(), max_cues_per_entity_record);
-    record.cues.reserve(cue_count);
-    for (std::size_t index = 0; index < cue_count; ++index) {
-        const ClientEntityState::PendingCue& cue = state.pending_cues[index];
+    record.cues.reserve(state.pending_cues.size());
+    for (const ClientEntityState::PendingCue& cue : state.pending_cues) {
         PacketAckRecord::CueSummary summary;
         summary.frame = cue.frame;
         summary.type = cue.type;
@@ -770,7 +900,7 @@ bool ReplicationServer::remove_client(ashiato::Registry& registry, ClientId clie
     }
 
     const std::size_t index = found->second;
-    const ClientId removed_peer = clients_[index].peer;
+    const PeerId removed_peer = clients_[index].peer;
     const ClientId removed_id = clients_[index].id;
     const bool removed_local = clients_[index].local;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
@@ -830,6 +960,28 @@ std::vector<ClientId> ReplicationServer::client_ids() const {
         ids.push_back(client.id);
     }
     return ids;
+}
+
+ClientEntityNetworkId ReplicationServer::client_entity_network_id(ClientId client, ashiato::Entity entity) const noexcept {
+    const auto found_client = client_to_index_.find(client);
+    const auto found_replicated = entity_to_replicated_index_.find(entity.value);
+    if (found_client == client_to_index_.end() ||
+        found_client->second >= clients_.size() ||
+        found_replicated == entity_to_replicated_index_.end()) {
+        return invalid_client_entity_network_id;
+    }
+
+    const ClientState& client_state = clients_[found_client->second];
+    if (client_state.replication == nullptr) {
+        return invalid_client_entity_network_id;
+    }
+
+    const ServerClientReplicator& replication = *client_state.replication;
+    const ClientEntityState* state = replication.entities.try_get(found_replicated->second);
+    if (state == nullptr || !state->has_network_id) {
+        return invalid_client_entity_network_id;
+    }
+    return make_client_entity_network_id(client_state.id, state->network_id, state->network_version);
 }
 
 ReplicationServer::ClientInputStats ReplicationServer::input_stats(ClientId client) const noexcept {
@@ -995,10 +1147,16 @@ void ReplicationServer::rediscover_replicated_entities(ashiato::Registry& regist
     });
 
     dirty.each_added<Replicated>([&](ashiato::Entity entity, const void* value) {
+        if (value == nullptr) {
+            return;
+        }
         upsert_replicated(registry, entity, static_cast<const Replicated*>(value)->archetype);
     });
 
     dirty.each_dirty<Replicated>([&](ashiato::Entity entity, const void* value) {
+        if (value == nullptr) {
+            return;
+        }
         upsert_replicated(registry, entity, static_cast<const Replicated*>(value)->archetype);
     });
 }
@@ -1210,11 +1368,11 @@ bool ReplicationServer::acknowledge_entity(ClientId client, ashiato::Entity enti
     return client_state.replication->acknowledge_entity(*this, replicated_found->second, frame);
 }
 
-void ReplicationServer::receive_packet(ClientId client, ashiato::BitBuffer packet) {
-    inbound_packets_.push_back(PendingInboundPacket{client, std::move(packet)});
+void ReplicationServer::receive_packet(PeerId peer, ashiato::BitBuffer packet) {
+    inbound_packets_.push_back(PendingInboundPacket{peer, std::move(packet)});
 }
 
-bool ReplicationServer::process_packet(ClientId client, ashiato::BitBuffer packet) {
+bool ReplicationServer::process_packet(PeerId client, ashiato::BitBuffer packet) {
     const bool previous_processing = processing_client_packet_;
     const bool previous_server_error_logged = server_error_logged_;
     processing_client_packet_ = true;
@@ -1227,7 +1385,7 @@ bool ReplicationServer::process_packet(ClientId client, ashiato::BitBuffer packe
     try {
         detail::BitReader reader(packet);
         std::uint8_t message = 0;
-        if (!reader.read_bits(8U, message)) {
+        if (!reader.read_bits(protocol::message_bits, message)) {
             log_client_packet_warning(client, 0, "missing_message_id", "packet_missing_message_id");
             return finish(false);
         }
@@ -1265,7 +1423,7 @@ bool ReplicationServer::process_packet(ClientId client, ashiato::BitBuffer packe
     }
 }
 
-bool ReplicationServer::process_packet(ashiato::Registry& registry, ClientId client, ashiato::BitBuffer packet) {
+bool ReplicationServer::process_packet(ashiato::Registry& registry, PeerId client, ashiato::BitBuffer packet) {
     const bool previous_processing = processing_client_packet_;
     const bool previous_server_error_logged = server_error_logged_;
     processing_client_packet_ = true;
@@ -1278,7 +1436,7 @@ bool ReplicationServer::process_packet(ashiato::Registry& registry, ClientId cli
     try {
         detail::BitReader reader(packet);
         std::uint8_t message = 0;
-        if (!reader.read_bits(8U, message)) {
+        if (!reader.read_bits(protocol::message_bits, message)) {
             log_client_packet_warning(client, 0, "missing_message_id", "packet_missing_message_id");
             return finish(false);
         }
@@ -1306,7 +1464,7 @@ bool ReplicationServer::process_packet(ashiato::Registry& registry, ClientId cli
     }
 }
 
-bool ReplicationServer::process_connect_request_packet(ClientId peer, ashiato::BitBuffer& packet) {
+bool ReplicationServer::process_connect_request_packet(PeerId peer, ashiato::BitBuffer& packet) {
     std::string token;
     if (!protocol::read_string(packet, token)) {
         log_client_packet_warning(peer, protocol::client_connect_request_message, "malformed_connect_request", "malformed_connect_request");
@@ -1321,7 +1479,7 @@ bool ReplicationServer::process_connect_request_packet(ClientId peer, ashiato::B
         return true;
     }
 
-    ClientId accepted_client = next_connect_client_id_;
+    ClientId accepted_client = find_next_available_client_id();
     std::string error;
     bool accepted = true;
     if (options_.connect_handler) {
@@ -1334,13 +1492,14 @@ bool ReplicationServer::process_connect_request_packet(ClientId peer, ashiato::B
     }
     if (!accepted || accepted_client == invalid_client_id ||
         accepted_client > max_client_entity_network_id_client) {
-        if (accepted && error.empty() && accepted_client > max_client_entity_network_id_client) {
+        if (accepted && error.empty() &&
+            (accepted_client == invalid_client_id || accepted_client > max_client_entity_network_id_client)) {
             error = "client id out of range";
         }
         ashiato::BitBuffer response;
         response.reserve_bytes(options_.mtu_bytes);
-        response.push_bits(protocol::server_connect_response_message, 8U);
-        response.push_bool(false);
+        response.write_bits(protocol::server_connect_response_message, protocol::message_bits);
+        response.write_bool(false);
         protocol::write_string(response, error);
         if (options_.transport) {
             try {
@@ -1400,7 +1559,7 @@ bool ReplicationServer::process_message_from_connected_client(
 bool ReplicationServer::process_connection_request_ack_packet(ClientState& client, ashiato::BitBuffer& packet) {
     detail::BitReader reader(packet);
     ClientId acked_client = invalid_client_id;
-    if (!reader.read_bits(64U, acked_client)) {
+    if (!reader.read_bits(protocol::client_id_bits, acked_client)) {
         log_client_packet_warning(client.peer, protocol::client_connect_ack_message, "truncated_connect_ack", "truncated_connect_ack");
         return false;
     }
@@ -1431,12 +1590,15 @@ bool ReplicationServer::process_ping_packet(ClientState& client, ashiato::BitBuf
         log_client_packet_warning(client.peer, protocol::client_ping_message, "truncated_ping", "truncated_ping");
         return false;
     }
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+    trace_incoming_ping_packet(client, sequence);
+#endif
     const double subframe = tick_accumulator_seconds_ / options_.fixed_dt_seconds;
     const auto server_receive_subframe = static_cast<std::uint16_t>(std::clamp(
         static_cast<std::uint32_t>(std::floor(subframe * static_cast<double>(protocol::frame_subframe_scale))),
         std::uint32_t{0},
         protocol::frame_subframe_scale - 1U));
-    send_pong(client.peer, sequence, frame_, server_receive_subframe);
+    send_pong(client, sequence, frame_, server_receive_subframe);
     return true;
 }
 
@@ -1503,7 +1665,7 @@ ReplicationServer::ClientUpdateAckResult ReplicationServer::process_client_acks_
     const std::size_t packet_id_bits = configured_packet_id_bits(options_);
     detail::BitReader reader(packet);
     std::uint16_t ack_count = 0;
-    if (!reader.read_bits(16U, ack_count)) {
+    if (!reader.read_bits(protocol::ack_count_bits, ack_count)) {
         return ClientUpdateAckResult{};
     }
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
@@ -1584,7 +1746,7 @@ void ReplicationServer::log_info(const char* event, const std::string& fields) c
 }
 
 void ReplicationServer::log_client_packet_warning(
-    ClientId peer,
+    PeerId peer,
     std::uint8_t message,
     const char* reason_code,
     const char* reason_detail) {
@@ -1617,7 +1779,7 @@ void ReplicationServer::log_client_packet_warning(
     }
 }
 
-void ReplicationServer::log_server_error(ClientId peer, const char* event, const char* reason) {
+void ReplicationServer::log_server_error(PeerId peer, const char* event, const char* reason) {
     if (processing_client_packet_) {
         server_error_logged_ = true;
     }
@@ -1628,7 +1790,7 @@ void ReplicationServer::log_server_error(ClientId peer, const char* event, const
 }
 
 void ReplicationServer::log_entity_update_exceeds_mtu(
-    ClientId peer,
+    PeerId peer,
     ClientId client,
     ashiato::Entity entity,
     SyncArchetypeId archetype,
@@ -1684,7 +1846,7 @@ void ReplicationServer::push_client_inputs_to_ashiato(ashiato::Registry& registr
     const SyncFrame input_frame_num = frame_;
     std::unordered_map<ClientId, server_detail::ServerInputForFrame> input_for_frame_cache;
 
-    registry.view<const NetworkOwner>().each([this, &input_for_frame_cache, input_frame_num, &ops, &settings, &registry]
+    registry.view<const NetworkOwner>().each([this, &input_for_frame_cache, input_frame_num, &ops, &registry, &settings]
           (ashiato::Entity entity, const NetworkOwner& owner) {
         const auto found_client = client_to_index_.find(owner.client);
         if (found_client == client_to_index_.end()) {
@@ -1817,7 +1979,7 @@ void ReplicationServer::disconnect_timed_out_clients(ashiato::Registry& registry
         }
         if (client.idle_seconds >= options_.idle_client_timeout_seconds) {
             const ClientId client_id = client.id;
-            const ClientId peer = client.peer;
+            const PeerId peer = client.peer;
             ++observability_stats_.clients_timed_out;
             log_info("client_timed_out", "peer=" + std::to_string(client.peer) +
                 " client=" + std::to_string(client.id));
@@ -1970,6 +2132,7 @@ bool ReplicationServer::play_local_cue(
     if (local_client_ == invalid_client_id ||
         cue.type >= settings.cue_ops.size() ||
         settings.cue_ops[cue.type].play == nullptr ||
+        settings.cue_ops[cue.type].deserialize_into == nullptr ||
         !registry.alive(cue.entity)) {
         return false;
     }
@@ -2012,26 +2175,47 @@ bool ReplicationServer::play_local_cue(
         return data.server->replicated_[slot].entity;
     };
 
-    ashiato::BitBuffer payload = cue.payload;
-    if (cue.value) {
-        if (!cue.value || settings.cue_ops[cue.type].serialize == nullptr) {
+    CueValue decoded_value = cue.value;
+    if (settings.cue_ops[cue.type].references_entities && cue.value.has_value()) {
+        if (settings.cue_ops[cue.type].serialize == nullptr) {
             return false;
         }
-        payload.clear();
+        ashiato::BitBuffer payload;
+        ashiato::ComponentSerializationContext serialization_context{&reference_context};
+        serialization_context.currentFrame = cue.frame;
+        serialization_context.previousFrame = 0U;
+        settings.cue_ops[cue.type].serialize(cue.value.data(), payload, serialization_context);
+        if (!settings.cue_ops[cue.type].deserialize_into(
+                cue.type,
+                settings.cue_ops[cue.type].user_data,
+                payload,
+                decoded_value,
+                serialization_context)) {
+            return false;
+        }
+    } else if (!decoded_value.has_value()) {
+        ashiato::BitBuffer payload = cue.payload;
         EntityReferenceContext* references = settings.cue_ops[cue.type].references_entities ? &reference_context : nullptr;
         ashiato::ComponentSerializationContext serialization_context{references};
-        settings.cue_ops[cue.type].serialize(cue.value.get(), payload, serialization_context);
+        serialization_context.currentFrame = cue.frame;
+        serialization_context.previousFrame = 0U;
+        if (!settings.cue_ops[cue.type].deserialize_into(
+                cue.type,
+                settings.cue_ops[cue.type].user_data,
+                payload,
+                decoded_value,
+                serialization_context)) {
+            return false;
+        }
     }
-    ashiato::ComponentSerializationContext playback_context{&reference_context};
     return settings.cue_ops[cue.type].play(
         cue.type,
         settings.cue_ops[cue.type].user_data,
         registry,
         cue.entity,
-        payload,
+        decoded_value.data(),
         0.0f,
-        cue.frame,
-        playback_context);
+        cue.frame);
 }
 
 void ReplicationServer::capture_queued_cues(
@@ -2059,11 +2243,11 @@ void ReplicationServer::capture_queued_cues(
             const ashiato::BitBuffer* trace_payload = &cue.payload;
             ashiato::BitBuffer serialized_trace_payload;
             if (tracer_->frame_data_enabled() &&
-                cue.value &&
+                cue.value.has_value() &&
                 cue.type < settings.cue_ops.size() &&
                 settings.cue_ops[cue.type].serialize != nullptr) {
                 ashiato::ComponentSerializationContext serialization_context;
-                settings.cue_ops[cue.type].serialize(cue.value.get(), serialized_trace_payload, serialization_context);
+                settings.cue_ops[cue.type].serialize(cue.value.data(), serialized_trace_payload, serialization_context);
                 trace_payload = &serialized_trace_payload;
             }
             append_trace_cue_data(tracer_, settings, cue.type, *trace_payload, event);
@@ -2107,10 +2291,10 @@ void ReplicationServer::attach_cue_to_clients(
             continue;
         }
         ashiato::BitBuffer payload = cue.payload;
-        if (cue.value) {
-            if (!cue.value) {
-                continue;
-            }
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
+        std::vector<ashiato::SerializationTraceScope> payload_trace_scopes = cue.payload_trace_scopes;
+#endif
+        if (cue.value.has_value()) {
             struct ReferenceContextData {
                 ReplicationServer* server = nullptr;
                 ServerClientReplicator* client = nullptr;
@@ -2165,29 +2349,44 @@ void ReplicationServer::attach_cue_to_clients(
             ashiato::ComponentSerializationContext serialization_context{
                 references,
                 cue_serialization_capture.payload_capture()};
+            serialization_context.currentFrame = cue.frame;
+            serialization_context.previousFrame = 0U;
             {
                 ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(cue_serialization_capture, settings.cue_ops[cue.type].name.c_str());
-                settings.cue_ops[cue.type].serialize(cue.value.get(), payload, serialization_context);
+                settings.cue_ops[cue.type].serialize(cue.value.data(), payload, serialization_context);
             }
             if (cue_serialization_capture.active()) {
+                cue_serialization_capture.finish();
                 SyncTraceEvent& event = cue_serialization_capture.event();
                 event.payload_bits = payload.bit_size();
                 event.wire_bits = payload.bit_size();
                 append_trace_data_field(event, "payload_bits", static_cast<std::uint64_t>(payload.bit_size()));
                 append_trace_data_field(event, "payload_bytes", static_cast<std::uint64_t>(payload.byte_size()));
+#ifdef ASHIATO_SYNC_TRACE_COMPONENT_DATA
+                payload_trace_scopes = event.payload_scopes;
+#endif
                 cue_serialization_capture.flush();
             }
 #else
             ashiato::ComponentSerializationContext serialization_context{references};
-            settings.cue_ops[cue.type].serialize(cue.value.get(), payload, serialization_context);
+            serialization_context.currentFrame = cue.frame;
+            serialization_context.previousFrame = 0U;
+            settings.cue_ops[cue.type].serialize(cue.value.data(), payload, serialization_context);
 #endif
         }
-        state->pending_cues.push_back(ClientEntityState::PendingCue{
-            cue.frame,
-            expire_frame,
-            cue.type,
-            cue.relevance_seconds,
-            payload});
+        if (payload.bit_size() > protocol::max_cue_payload_bits) {
+            continue;
+        }
+        ClientEntityState::PendingCue pending_cue;
+        pending_cue.frame = cue.frame;
+        pending_cue.expire_frame = expire_frame;
+        pending_cue.type = cue.type;
+        pending_cue.relevance_seconds = cue.relevance_seconds;
+        pending_cue.payload = std::move(payload);
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
+        pending_cue.payload_trace_scopes = std::move(payload_trace_scopes);
+#endif
+        state->pending_cues.push_back(std::move(pending_cue));
         client.mark_dirty(*this, slot, frame_);
     }
 }
@@ -2270,7 +2469,7 @@ void ReplicationServer::mark_owner_visibility_dirty(const SyncSettings& settings
         replicated.component_dirty_generations.resize(sync_slot_count(archetype), 1U);
     }
     for (const SyncTagReplication& replication : archetype.tags) {
-        if (replication.audience == ReplicationAudience::Owner) {
+        if (replication.audience != ReplicationAudience::All) {
             ++replicated.component_dirty_generations[0];
             if (replicated.component_dirty_generations[0] == 0) {
                 replicated.component_dirty_generations[0] = 1;
@@ -2279,7 +2478,7 @@ void ReplicationServer::mark_owner_visibility_dirty(const SyncSettings& settings
         }
     }
     for (std::size_t index = 0; index < archetype.components.size(); ++index) {
-        if (archetype.components[index].audience == ReplicationAudience::Owner) {
+        if (archetype.components[index].audience != ReplicationAudience::All) {
             const std::size_t dirty_index = index + 1U;
             ++replicated.component_dirty_generations[dirty_index];
             if (replicated.component_dirty_generations[dirty_index] == 0) {
@@ -2304,7 +2503,7 @@ bool ReplicationServer::archetype_is_same_frame_cacheable(const SyncArchetype& a
 }
 
 bool server_detail::ServerClientReplicator::UpdateWriter::serialize_entity(
-    ReplicationServer& server,
+    ReplicationServer& replication_server,
     const ashiato::Registry& registry,
     const SyncSettings& settings,
     ServerClientReplicator& client,
@@ -2312,16 +2511,16 @@ bool server_detail::ServerClientReplicator::UpdateWriter::serialize_entity(
     SyncFrame frame,
     std::uint64_t component_mask,
     SerializedEntity& out) {
-    if (slot >= server.replicated_slot_count() || client.entities.try_get(slot) == nullptr) {
+    if (slot >= replication_server.replicated_slot_count() || client.entities.try_get(slot) == nullptr) {
         return false;
     }
 
-    const SyncArchetypeId archetype = server.replicated_slot_archetype(slot);
+    const SyncArchetypeId archetype = replication_server.replicated_slot_archetype(slot);
     if (archetype.value >= settings.archetypes.size()) {
         return false;
     }
 
-    const std::uint32_t quantized_frame = server.quantized_frame_for_client(
+    const std::uint32_t quantized_frame = replication_server.quantized_frame_for_client(
         registry,
         settings,
         client,
@@ -2335,7 +2534,7 @@ bool server_detail::ServerClientReplicator::UpdateWriter::serialize_entity(
 
     out.quantized_frame = quantized_frame;
     write_entity_record(
-        server,
+        replication_server,
         registry,
         settings,
         client,
@@ -2380,6 +2579,7 @@ std::uint32_t ReplicationServer::find_or_create_quantized_frame(
     }
 
     const NetworkOwner* owner = registry.try_get<NetworkOwner>(replicated.entity);
+    const ClientId owner_client = owner != nullptr ? owner->client : invalid_client_id;
     const ClientEntityState* entity_state = client.entities.try_get(slot);
     const QuantizedFrame* baseline_quantized_frame = nullptr;
     if (entity_state != nullptr &&
@@ -2402,8 +2602,7 @@ std::uint32_t ReplicationServer::find_or_create_quantized_frame(
     }
     for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
         const ComponentReplication& replication = archetype.components[component_index];
-        if (replication.audience == ReplicationAudience::Owner &&
-            (owner == nullptr || owner->client != client.id)) {
+        if (!replication_audience_matches(replication.audience, owner_client, client.id)) {
             continue;
         }
 
@@ -2490,7 +2689,7 @@ std::uint32_t ReplicationServer::find_or_create_quantized_frame(
 }
 
 void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
-    ReplicationServer& server,
+    ReplicationServer& replication_server,
     const ashiato::Registry& registry,
     const SyncSettings& settings,
     ServerClientReplicator& client,
@@ -2507,27 +2706,27 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
     if (entity_state == nullptr) {
         return;
     }
-    const QuantizedFrameData* quantized_data = server.quantized_frame_data(quantized_frame_id);
+    const QuantizedFrameData* quantized_data = replication_server.quantized_frame_data(quantized_frame_id);
     if (quantized_data == nullptr) {
         return;
     }
-    const SyncFrame quantized_frame = server.quantized_frame_frame(quantized_frame_id);
-    const SyncArchetypeId quantized_archetype = server.quantized_frame_archetype(quantized_frame_id);
+    const SyncFrame quantized_frame = replication_server.quantized_frame_frame(quantized_frame_id);
+    const SyncArchetypeId quantized_archetype = replication_server.quantized_frame_archetype(quantized_frame_id);
     bool delta = entity_state->baseline != server_detail::invalid_quantized_frame_id &&
-        server.quantized_frame_active(entity_state->baseline) &&
-        server.quantized_frame_archetype(entity_state->baseline) == quantized_archetype;
+        replication_server.quantized_frame_active(entity_state->baseline) &&
+        replication_server.quantized_frame_archetype(entity_state->baseline) == quantized_archetype;
     if (delta) {
-        const QuantizedFrameData* baseline_data = server.quantized_frame_data(entity_state->baseline);
+        const QuantizedFrameData* baseline_data = replication_server.quantized_frame_data(entity_state->baseline);
         delta = baseline_data != nullptr && baseline_data->present_mask == quantized_data->present_mask;
     }
 
-    const std::uint32_t network_id = client.network_id_for(server, slot);
+    const std::uint32_t network_id = client.network_id_for(replication_server, slot);
     if (network_id == 0U) {
         return;
     }
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     ScopedSerializationTraceCapture serialization_capture(
-        server.server_tracer(),
+        replication_server.server_tracer(),
         SyncTracePayloadSource::Network,
         SyncTraceRole::Server,
         client.id,
@@ -2537,7 +2736,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
     serialization_capture.set_target(&out);
     if (serialization_capture.active()) {
         SyncTraceEvent& event = serialization_capture.event();
-        event.server_entity = server.replicated_slot_entity(slot);
+        event.server_entity = replication_server.replicated_slot_entity(slot);
         event.wire_network_id = network_id;
         event.network_version = entity_state->network_version;
         event.client_network_id = make_client_entity_network_id(client.id, network_id, entity_state->network_version);
@@ -2555,13 +2754,14 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
         ReplicationServer* server = nullptr;
         ServerClientReplicator* client = nullptr;
         std::uint32_t source_slot = 0;
-    } reference_context_data{&server, &client, slot};
+    } reference_context_data{&replication_server, &client, slot};
     EntityReferenceContext reference_context;
     bool reference_context_initialized = false;
     auto references_for_component = [&]() -> EntityReferenceContext* {
         if (!reference_context_initialized) {
             reference_context.userContext = &reference_context_data;
-            reference_context.network_entity_id_tier0_bits = server.options().protocol.network_entity_id_tier0_bits;
+            reference_context.network_entity_id_tier0_bits =
+                replication_server.options().protocol.network_entity_id_tier0_bits;
             reference_context.server_network_id_for_entity = [](void* userContext, ashiato::Entity entity) {
                 ReferenceContextData& data = *static_cast<ReferenceContextData*>(userContext);
                 const std::uint32_t reference_slot = data.server->replicated_slot_for_entity(entity);
@@ -2579,25 +2779,104 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
         }
         return &reference_context;
     };
+    auto write_pending_cues =
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    [
+        entity_state,
+        &serialization_capture,
+        &out,
+        quantized_frame,
+        &replication_server,
+        &client,
+        slot,
+        network_id,
+        quantized_archetype,
+        &settings]
+#else
+    [
+        entity_state,
+        &out,
+        quantized_frame]
+#endif
+    () {
+        for (const ClientEntityState::PendingCue& cue : entity_state->pending_cues) {
+            ASHIATO_SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, out, true, "has_cue");
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+            const std::size_t cue_wire_begin_bits = out.bit_size();
+#endif
+            {
+                ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "cue");
+                {
+                    ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "frame");
+                    protocol::write_cue_frame(out, quantized_frame, cue.frame);
+                }
+                ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, out, cue.type, 16U, "type");
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
+                if (!cue.payload_trace_scopes.empty()) {
+                    push_buffer_bits_with_replayed_trace(
+                        serialization_capture,
+                        out,
+                        cue.payload,
+                        cue.payload_trace_scopes,
+                        "payload");
+                } else
+#endif
+                {
+                    ASHIATO_SERIALIZE_BUFFER_TRACE_WITH_CONTEXT(serialization_capture, out, cue.payload, "payload");
+                }
+            }
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+            if (replication_server.server_tracer() != nullptr && replication_server.server_tracer()->enabled()) {
+                const std::size_t wire_bits = out.bit_size() - cue_wire_begin_bits;
+                SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::CueSent, client.id, cue.frame);
+                event.server_entity = replication_server.replicated_slot_entity(slot);
+                event.wire_network_id = network_id;
+                event.network_version = entity_state->network_version;
+                event.client_network_id = make_client_entity_network_id(client.id, network_id, entity_state->network_version);
+                event.archetype = quantized_archetype;
+                event.cue_type = cue.type;
+                event.wire_bits = wire_bits;
+                event.payload_bits = cue.payload.bit_size();
+                append_trace_cue_name(settings, cue.type, event);
+                append_trace_cue_data(replication_server.server_tracer(), settings, cue.type, cue.payload, event);
+                append_trace_data_field(event, "source", "server");
+                append_trace_data_field(event, "payload_kind", "cue");
+                append_trace_data_field(event, "payload_bits", static_cast<std::uint64_t>(cue.payload.bit_size()));
+                append_trace_data_field(event, "payload_bytes", static_cast<std::uint64_t>(cue.payload.byte_size()));
+                append_trace_data_field(event, "wire_bits", static_cast<std::uint64_t>(wire_bits));
+                append_trace_data_field(event, "wire_bytes", static_cast<std::uint64_t>(protocol::bytes_for_bits(wire_bits)));
+                replication_server.server_tracer()->trace(event);
+            }
+#endif
+        }
+        ASHIATO_SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, out, false, "has_cue");
+    };
 
     {
         ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "entity_header");
         {
             ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "network_id");
-            protocol::write_network_entity_id(out, network_id, server.options().protocol.network_entity_id_tier0_bits);
+            protocol::write_network_entity_id(
+                out,
+                network_id,
+                replication_server.options().protocol.network_entity_id_tier0_bits);
         }
-        SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, out, !delta, "full_state");
+        ASHIATO_SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, out, !delta, "full_state");
         if (!delta) {
-            SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, out, quantized_archetype.value, 32U, "archetype");
+            ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, out, quantized_archetype.value, 32U, "archetype");
         } else {
             ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "baseline_frame");
-            protocol::write_baseline_frame(out, quantized_frame, server.quantized_frame_frame(entity_state->baseline));
+            protocol::write_baseline_frame(
+                out,
+                quantized_frame,
+                replication_server.quantized_frame_frame(entity_state->baseline));
         }
     }
 
     const SyncArchetype& archetype = settings.archetypes[quantized_archetype.value];
     if (delta) {
-        const QuantizedFrameData* baseline_quantized_frame = server.quantized_frame_data(entity_state->baseline);
+        const QuantizedFrameData* baseline_quantized_frame =
+            replication_server.quantized_frame_data(entity_state->baseline);
         if (baseline_quantized_frame == nullptr) {
             return;
         }
@@ -2609,17 +2888,17 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
             const bool tags_changed =
                 (quantized_data->tag_mask & tag_bit_mask) !=
                 (baseline_quantized_frame->tag_mask & tag_bit_mask);
-            SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, out, tags_changed, "tags_changed");
+            ASHIATO_SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, out, tags_changed, "tags_changed");
             if (tags_changed) {
                 changed_mask |= sync_slot_bit(0);
             }
         } else {
-            SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, out, false, "tags_changed");
+            ASHIATO_SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, out, false, "tags_changed");
         }
         for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
             if (!frame_has_component(*quantized_data, component_index) ||
                 (component_mask & (std::uint64_t{1} << component_index)) == 0U) {
-                SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, out, false, "component_changed");
+                ASHIATO_SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, out, false, "component_changed");
                 continue;
             }
             const std::size_t offset = archetype.component_offsets[component_index];
@@ -2633,7 +2912,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
                     (*quantized_data).bytes.data() + offset,
                     baseline_quantized_frame->bytes.data() + offset,
                     size) != 0;
-            SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, out, component_changed, "component_changed");
+            ASHIATO_SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, out, component_changed, "component_changed");
             if (component_changed) {
                 changed_mask |= sync_slot_bit(component_index + 1U);
             }
@@ -2641,7 +2920,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
         if ((changed_mask & sync_slot_bit(0)) != 0U) {
             {
                 ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "tag_mask");
-                SERIALIZE_UNSIGNED_TRACE_WITH_CONTEXT(
+                ASHIATO_SERIALIZE_UNSIGNED_TRACE_WITH_CONTEXT(
                     serialization_capture,
                     out,
                     quantized_data->tag_mask,
@@ -2649,17 +2928,17 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
                     "value");
             }
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
-            if (server.server_tracer() != nullptr && server.server_tracer()->enabled()) {
+            if (replication_server.server_tracer() != nullptr && replication_server.server_tracer()->enabled()) {
                 for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
                     SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::TagSent, client.id, quantized_frame);
-                    event.server_entity = server.replicated_slot_entity(slot);
+                    event.server_entity = replication_server.replicated_slot_entity(slot);
                     event.wire_network_id = network_id;
                     event.network_version = entity_state->network_version;
                     event.client_network_id = make_client_entity_network_id(client.id, network_id, entity_state->network_version);
                     event.archetype = quantized_archetype;
                     event.tag = archetype.tags[tag_index].tag;
                     event.remove = ((*quantized_data).tag_mask & (std::uint64_t{1} << tag_index)) == 0U;
-                    server.server_tracer()->trace(event);
+                    replication_server.server_tracer()->trace(event);
                 }
             }
 #endif
@@ -2678,11 +2957,14 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
                 throw std::logic_error("replicated quantized frame component bytes are missing");
             }
             EntityReferenceContext* references = ops.references_entities ? references_for_component() : nullptr;
+            const SyncFrame baseline_frame = replication_server.quantized_frame_frame(entity_state->baseline);
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
             ashiato::ComponentSerializationContext serialization_context{references, serialization_capture.payload_capture()};
 #else
             ashiato::ComponentSerializationContext serialization_context{references};
 #endif
+            serialization_context.currentFrame = quantized_frame;
+            serialization_context.previousFrame = baseline_frame;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
             const std::size_t component_wire_begin_bits = out.bit_size();
 #endif
@@ -2693,10 +2975,10 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
                 ops.serialization.serialize(previous, current, out, serialization_context);
             }
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
-            if (server.server_tracer() != nullptr && server.server_tracer()->enabled()) {
+            if (replication_server.server_tracer() != nullptr && replication_server.server_tracer()->enabled()) {
                 const std::size_t wire_bits = out.bit_size() - component_wire_begin_bits;
                 SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::ComponentSent, client.id, quantized_frame);
-                event.server_entity = server.replicated_slot_entity(slot);
+                event.server_entity = replication_server.replicated_slot_entity(slot);
                 event.wire_network_id = network_id;
                 event.network_version = entity_state->network_version;
                 event.client_network_id = make_client_entity_network_id(client.id, network_id, entity_state->network_version);
@@ -2704,60 +2986,15 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
                 event.component = archetype.components[component_index].component;
                 event.wire_bits = wire_bits;
                 event.payload_bits = wire_bits;
-                append_trace_component_data(server.server_tracer(), archetype, component_index, current, event);
+                append_trace_component_data(replication_server.server_tracer(), archetype, component_index, current, event);
                 append_trace_data_field(event, "payload_kind", "component");
                 append_trace_data_field(event, "wire_bits", static_cast<std::uint64_t>(wire_bits));
                 append_trace_data_field(event, "wire_bytes", static_cast<std::uint64_t>(protocol::bytes_for_bits(wire_bits)));
-                server.server_tracer()->trace(event);
+                replication_server.server_tracer()->trace(event);
             }
 #endif
         }
-        const std::size_t cue_count = std::min(entity_state->pending_cues.size(), max_cues_per_entity_record);
-        SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, out, cue_count != 0U, "has_cues");
-        if (cue_count != 0U) {
-            SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, out, static_cast<std::int64_t>(cue_count), 16U, "cue_count");
-            for (std::size_t cue_index = 0; cue_index < cue_count; ++cue_index) {
-                const ClientEntityState::PendingCue& cue = entity_state->pending_cues[cue_index];
-#ifdef ASHIATO_SYNC_ENABLE_TRACING
-                const std::size_t cue_wire_begin_bits = out.bit_size();
-#endif
-                {
-                    ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "cue");
-                    SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, out, cue.frame, 32U, "frame");
-                    SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, out, cue.type, 16U, "type");
-                    SERIALIZE_TRACE_WITH_CONTEXT(
-                        serialization_capture,
-                        out,
-                        static_cast<std::int64_t>(cue.payload.bit_size()),
-                        16U,
-                        "payload_bits");
-                    SERIALIZE_BUFFER_TRACE_WITH_CONTEXT(serialization_capture, out, cue.payload, "payload");
-                }
-#ifdef ASHIATO_SYNC_ENABLE_TRACING
-                if (server.server_tracer() != nullptr && server.server_tracer()->enabled()) {
-                    const std::size_t wire_bits = out.bit_size() - cue_wire_begin_bits;
-                    SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::CueSent, client.id, cue.frame);
-                    event.server_entity = server.replicated_slot_entity(slot);
-                    event.wire_network_id = network_id;
-                    event.network_version = entity_state->network_version;
-                    event.client_network_id = make_client_entity_network_id(client.id, network_id, entity_state->network_version);
-                    event.archetype = quantized_archetype;
-                    event.cue_type = cue.type;
-                    event.wire_bits = wire_bits;
-                    event.payload_bits = cue.payload.bit_size();
-                    append_trace_cue_name(settings, cue.type, event);
-                    append_trace_cue_data(server.server_tracer(), settings, cue.type, cue.payload, event);
-                    append_trace_data_field(event, "source", "server");
-                    append_trace_data_field(event, "payload_kind", "cue");
-                    append_trace_data_field(event, "payload_bits", static_cast<std::uint64_t>(cue.payload.bit_size()));
-                    append_trace_data_field(event, "payload_bytes", static_cast<std::uint64_t>(cue.payload.byte_size()));
-                    append_trace_data_field(event, "wire_bits", static_cast<std::uint64_t>(wire_bits));
-                    append_trace_data_field(event, "wire_bytes", static_cast<std::uint64_t>(protocol::bytes_for_bits(wire_bits)));
-                    server.server_tracer()->trace(event);
-                }
-#endif
-            }
-        }
+        write_pending_cues();
         (void)registry;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
         store_serialization_event();
@@ -2785,11 +3022,11 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
     const bool use_presence_mask = sync_slots < slot_list_bits;
     {
         ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "presence");
-        SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, out, use_presence_mask, "uses_mask");
+        ASHIATO_SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, out, use_presence_mask, "uses_mask");
         if (use_presence_mask) {
-            SERIALIZE_UNSIGNED_TRACE_WITH_CONTEXT(serialization_capture, out, present_sync_slots, sync_slots, "mask");
+            ASHIATO_SERIALIZE_UNSIGNED_TRACE_WITH_CONTEXT(serialization_capture, out, present_sync_slots, sync_slots, "mask");
         } else {
-            SERIALIZE_TRACE_WITH_CONTEXT(
+            ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(
                 serialization_capture,
                 out,
                 static_cast<std::int64_t>(component_count),
@@ -2802,9 +3039,9 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
         {
             ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "tag_mask");
             if (!use_presence_mask) {
-                SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, out, 0, sync_slot_bits, "slot");
+                ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, out, 0, sync_slot_bits, "slot");
             }
-            SERIALIZE_UNSIGNED_TRACE_WITH_CONTEXT(
+            ASHIATO_SERIALIZE_UNSIGNED_TRACE_WITH_CONTEXT(
                 serialization_capture,
                 out,
                 (*quantized_data).tag_mask,
@@ -2812,17 +3049,17 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
                 "value");
         }
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
-        if (server.server_tracer() != nullptr && server.server_tracer()->enabled()) {
+        if (replication_server.server_tracer() != nullptr && replication_server.server_tracer()->enabled()) {
             for (std::size_t tag_index = 0; tag_index < archetype.tags.size(); ++tag_index) {
                 SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::TagSent, client.id, quantized_frame);
-                event.server_entity = server.replicated_slot_entity(slot);
+                event.server_entity = replication_server.replicated_slot_entity(slot);
                 event.wire_network_id = network_id;
                 event.network_version = entity_state->network_version;
                 event.client_network_id = make_client_entity_network_id(client.id, network_id, entity_state->network_version);
                 event.archetype = quantized_archetype;
                 event.tag = archetype.tags[tag_index].tag;
                 event.remove = ((*quantized_data).tag_mask & (std::uint64_t{1} << tag_index)) == 0U;
-                server.server_tracer()->trace(event);
+                replication_server.server_tracer()->trace(event);
             }
         }
 #endif
@@ -2842,7 +3079,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
         }
 
         if (!use_presence_mask) {
-            SERIALIZE_TRACE_WITH_CONTEXT(
+            ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(
                 serialization_capture,
                 out,
                 static_cast<std::int64_t>(component_index + 1U),
@@ -2855,6 +3092,8 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
 #else
         ashiato::ComponentSerializationContext serialization_context{references};
 #endif
+        serialization_context.currentFrame = quantized_frame;
+        serialization_context.previousFrame = 0U;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
         const std::size_t component_wire_begin_bits = out.bit_size();
 #endif
@@ -2865,10 +3104,10 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
             ops.serialization.serialize(nullptr, current, out, serialization_context);
         }
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
-        if (server.server_tracer() != nullptr && server.server_tracer()->enabled()) {
+        if (replication_server.server_tracer() != nullptr && replication_server.server_tracer()->enabled()) {
             const std::size_t wire_bits = out.bit_size() - component_wire_begin_bits;
             SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::ComponentSent, client.id, quantized_frame);
-            event.server_entity = server.replicated_slot_entity(slot);
+            event.server_entity = replication_server.replicated_slot_entity(slot);
             event.wire_network_id = network_id;
             event.network_version = entity_state->network_version;
             event.client_network_id = make_client_entity_network_id(client.id, network_id, entity_state->network_version);
@@ -2876,61 +3115,16 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
             event.component = archetype.components[component_index].component;
             event.wire_bits = wire_bits;
             event.payload_bits = wire_bits;
-            append_trace_component_data(server.server_tracer(), archetype, component_index, current, event);
+            append_trace_component_data(replication_server.server_tracer(), archetype, component_index, current, event);
             append_trace_data_field(event, "payload_kind", "component");
             append_trace_data_field(event, "wire_bits", static_cast<std::uint64_t>(wire_bits));
             append_trace_data_field(event, "wire_bytes", static_cast<std::uint64_t>(protocol::bytes_for_bits(wire_bits)));
-            server.server_tracer()->trace(event);
+            replication_server.server_tracer()->trace(event);
         }
 #endif
     }
 
-    const std::size_t cue_count = std::min(entity_state->pending_cues.size(), max_cues_per_entity_record);
-    SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, out, cue_count != 0U, "has_cues");
-    if (cue_count != 0U) {
-        SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, out, static_cast<std::int64_t>(cue_count), 16U, "cue_count");
-        for (std::size_t cue_index = 0; cue_index < cue_count; ++cue_index) {
-            const ClientEntityState::PendingCue& cue = entity_state->pending_cues[cue_index];
-#ifdef ASHIATO_SYNC_ENABLE_TRACING
-            const std::size_t cue_wire_begin_bits = out.bit_size();
-#endif
-            {
-                ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "cue");
-                SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, out, cue.frame, 32U, "frame");
-                SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, out, cue.type, 16U, "type");
-                SERIALIZE_TRACE_WITH_CONTEXT(
-                    serialization_capture,
-                    out,
-                    static_cast<std::int64_t>(cue.payload.bit_size()),
-                    16U,
-                    "payload_bits");
-                SERIALIZE_BUFFER_TRACE_WITH_CONTEXT(serialization_capture, out, cue.payload, "payload");
-            }
-#ifdef ASHIATO_SYNC_ENABLE_TRACING
-            if (server.server_tracer() != nullptr && server.server_tracer()->enabled()) {
-                const std::size_t wire_bits = out.bit_size() - cue_wire_begin_bits;
-                SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::CueSent, client.id, cue.frame);
-                event.server_entity = server.replicated_slot_entity(slot);
-                event.wire_network_id = network_id;
-                event.network_version = entity_state->network_version;
-                event.client_network_id = make_client_entity_network_id(client.id, network_id, entity_state->network_version);
-                event.archetype = quantized_archetype;
-                event.cue_type = cue.type;
-                event.wire_bits = wire_bits;
-                event.payload_bits = cue.payload.bit_size();
-                append_trace_cue_name(settings, cue.type, event);
-                append_trace_cue_data(server.server_tracer(), settings, cue.type, cue.payload, event);
-                append_trace_data_field(event, "source", "server");
-                append_trace_data_field(event, "payload_kind", "cue");
-                append_trace_data_field(event, "payload_bits", static_cast<std::uint64_t>(cue.payload.bit_size()));
-                append_trace_data_field(event, "payload_bytes", static_cast<std::uint64_t>(cue.payload.byte_size()));
-                append_trace_data_field(event, "wire_bits", static_cast<std::uint64_t>(wire_bits));
-                append_trace_data_field(event, "wire_bytes", static_cast<std::uint64_t>(protocol::bytes_for_bits(wire_bits)));
-                server.server_tracer()->trace(event);
-            }
-#endif
-        }
-    }
+    write_pending_cues();
 
     (void)registry;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING

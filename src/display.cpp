@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 
 namespace ashiato::sync {
 namespace {
@@ -73,10 +74,10 @@ void FractionalTickSampler::capture_server_frame(ashiato::Registry& registry) {
         entity.sample.frame = next.frame;
         entity.sample.components_.reserve(archetype.components.size());
         const NetworkOwner* owner = registry.try_get<NetworkOwner>(slot.entity);
+        const ClientId owner_client = owner != nullptr ? owner->client : invalid_client_id;
         for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
             const ComponentReplication& replication = archetype.components[component_index];
-            if (replication.audience == ReplicationAudience::Owner &&
-                (owner == nullptr || owner->client != server_->local_client_)) {
+            if (!replication_audience_matches(replication.audience, owner_client, server_->local_client_)) {
                 continue;
             }
             if (!registry.has<FractionalTickSampled>(replication.component)) {
@@ -92,6 +93,7 @@ void FractionalTickSampler::capture_server_frame(ashiato::Registry& registry) {
             }
             ReplicatedComponentUpdate update;
             update.component = replication.component;
+            update.serializer = replication.serializer;
             update.bytes.resize(ops.serialization.quantized_size);
             ops.serialization.quantize(value, update.bytes.data());
             entity.sample.components_.push_back(std::move(update));
@@ -165,15 +167,20 @@ void FractionalTickSampler::rebuild_from_server(const ashiato::Registry& registr
                 found_replication->interpolation != ComponentInterpolation::Interpolate) {
                 continue;
             }
-            const auto found_ops = settings.component_ops.find(component.component.value);
-            if (found_ops == settings.component_ops.end() || found_ops->second.interpolate == nullptr ||
-                component.bytes.size() != found_ops->second.serialization.quantized_size ||
-                previous_component->bytes.size() != found_ops->second.serialization.quantized_size) {
+            const std::size_t component_index =
+                static_cast<std::size_t>(std::distance(archetype.components.begin(), found_replication));
+            if (component_index >= archetype.component_ops.size()) {
+                continue;
+            }
+            const SyncComponentOps& ops = archetype.component_ops[component_index];
+            if (ops.interpolate == nullptr ||
+                component.bytes.size() != ops.serialization.quantized_size ||
+                previous_component->bytes.size() != ops.serialization.quantized_size) {
                 continue;
             }
             SyncComponentOps::QuantizedBytes blended;
-            blended.resize(found_ops->second.serialization.quantized_size);
-            if (found_ops->second.interpolate(
+            blended.resize(ops.serialization.quantized_size);
+            if (ops.interpolate(
                     previous_component->bytes.data(),
                     component.bytes.data(),
                     alpha,

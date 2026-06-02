@@ -63,7 +63,7 @@ ClientFixedStepAdvance consume_client_fixed_steps(
 
 }  // namespace
 
-ReplicationClientClock::ReplicationClientClock(ReplicationClientClockConfig config)
+ReplicationClientClock::ReplicationClientClock(const ReplicationClientClockConfig& config)
     : config_(detail::validate_client_clock_config(config)),
       buffered_frame_lag_(config.buffered_frame_lag) {
     stats_.desired_buffered_frame_lag = config_.buffered_frame_lag;
@@ -492,10 +492,11 @@ void ReplicationClientClock::record_buffered_timing(
         const bool large_fast_recovery_gap = config_.auto_timing_fast_recovery &&
             ((current < target && target - current >= min_gap) ||
              (current > target && current - target >= min_gap));
-        if (current < target &&
-            (large_fast_recovery_gap || observed_downstream > 0.0 || measured >= static_cast<float>(current))) {
-            buffered_frame_lag_ = fast_recovery_step(current, target);
-        } else if (current > target && (large_fast_recovery_gap || measured <= static_cast<float>(current))) {
+        const bool should_increase_lag = current < target &&
+            (large_fast_recovery_gap || observed_downstream > 0.0 || measured >= static_cast<float>(current));
+        const bool should_decrease_lag =
+            current > target && (large_fast_recovery_gap || measured <= static_cast<float>(current));
+        if (should_increase_lag || should_decrease_lag) {
             buffered_frame_lag_ = fast_recovery_step(current, target);
         }
         stats_.current_buffered_frame_lag = buffered_frame_lag_;

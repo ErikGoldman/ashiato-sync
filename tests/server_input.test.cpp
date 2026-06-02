@@ -48,7 +48,7 @@ TEST_CASE("replication server decodes client input, upserts owned entities, and 
     REQUIRE(client.tick(client_registry, client.fixed_dt_seconds()));
     std::vector<ashiato::BitBuffer> input_packets = client.drain_packets();
     auto input_packet = std::find_if(input_packets.begin(), input_packets.end(), [](ashiato::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
+        return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_input_message;
     });
     REQUIRE(input_packet != input_packets.end());
 
@@ -70,12 +70,12 @@ TEST_CASE("replication server decodes client input, upserts owned entities, and 
     REQUIRE(client.receive(client_registry, updates[0]));
     std::vector<ashiato::BitBuffer> post_ack_packets = client.drain_packets();
     auto post_ack_packet = std::find_if(post_ack_packets.begin(), post_ack_packets.end(), [](ashiato::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_ack_message;
+        return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_ack_message;
     });
     REQUIRE(post_ack_packet != post_ack_packets.end());
     ashiato::BitBuffer ack_packet = *post_ack_packet;
-    REQUIRE(static_cast<std::uint8_t>(ack_packet.read_bits(8U)) == ashiato::sync::protocol::client_ack_message);
-    REQUIRE(static_cast<std::uint16_t>(ack_packet.read_bits(16U)) == 1);
+    REQUIRE(static_cast<std::uint8_t>(ack_packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_ack_message);
+    REQUIRE(static_cast<std::uint16_t>(ack_packet.read_bits(ashiato::sync::protocol::ack_count_bits)) == 1);
     ack_packet.read_bits(ashiato::sync::protocol::server_packet_id_bits);
 }
 
@@ -145,7 +145,7 @@ TEST_CASE("replication server phased tick replicates post-input simulation state
     REQUIRE(client.tick(client_registry, client.fixed_dt_seconds()));
     std::vector<ashiato::BitBuffer> input_packets = client.drain_packets();
     auto input_packet = std::find_if(input_packets.begin(), input_packets.end(), [](ashiato::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
+        return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_input_message;
     });
     REQUIRE(input_packet != input_packets.end());
 
@@ -156,7 +156,7 @@ TEST_CASE("replication server phased tick replicates post-input simulation state
     REQUIRE(server_registry.get<ashiato_sync_tests::Position>(owned).y == 1.0f);
     REQUIRE(updates.size() == 1);
     ashiato::BitBuffer update_header = updates[0];
-    REQUIRE(static_cast<std::uint8_t>(update_header.read_bits(8U)) == ashiato::sync::protocol::server_update_message);
+    REQUIRE(static_cast<std::uint8_t>(update_header.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::server_update_message);
     update_header.read_bits(32U);
     update_header.read_bits(ashiato::sync::protocol::server_packet_id_bits);
     REQUIRE(static_cast<ashiato::sync::SyncFrame>(update_header.read_bits(32U)) == 1);
@@ -180,19 +180,10 @@ TEST_CASE("replication server skips old explicit input frames and keeps useful f
     REQUIRE(server.add_client(1));
 
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::client_input_message, 8U);
-    packet.push_bits(0, 16U);
-    packet.push_bits(2, 32U);
-    packet.push_bits(4, 16U);
-    packet.push_bool(true);
-    packet.push_bits(1, 32U);
-    packet.push_bool(false);
-    packet.push_bits(10, 8U);
-    packet.push_bits(10, 8U);
+    write_client_input_packet_header(packet, 2, true, 1, 4);
+    write_networked_position_input_frame(packet, false, 10, 10);
     for (int frame = 2; frame <= 4; ++frame) {
-        packet.push_bool(true);
-        packet.push_bits(1, 8U);
-        packet.push_bits(1, 8U);
+        write_networked_position_input_frame(packet, true, 1, 1);
     }
 
     REQUIRE(server.process_packet(server_registry, 1, packet));
@@ -212,24 +203,35 @@ TEST_CASE("replication server accepts input packets with stale piggybacked ACKs"
     REQUIRE(server.add_client(1));
 
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::client_input_message, 8U);
-    packet.push_bits(1, 16U);
-    packet.push_bits(42, ashiato::sync::protocol::server_packet_id_bits);
-    packet.push_bits(2, 32U);
-    packet.push_bits(4, 16U);
-    packet.push_bool(true);
-    packet.push_bits(1, 32U);
-    packet.push_bool(false);
-    packet.push_bits(10, 8U);
-    packet.push_bits(10, 8U);
+    write_client_input_packet_header(packet, 2, true, 1, 4, {42});
+    write_networked_position_input_frame(packet, false, 10, 10);
     for (int frame = 2; frame <= 4; ++frame) {
-        packet.push_bool(true);
-        packet.push_bits(1, 8U);
-        packet.push_bits(1, 8U);
+        write_networked_position_input_frame(packet, true, 1, 1);
     }
 
     REQUIRE(server.process_packet(server_registry, 1, packet));
     REQUIRE(server.input_stats(1).latest_received_input_frame == 4);
+}
+
+TEST_CASE("replication server ignores trailing bits after explicit input count") {
+    ashiato::Registry server_registry;
+    ashiato_sync_tests::define_position_archetype(server_registry);
+    ashiato::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
+    ashiato_sync_tests::configure_test_server_registry(server_registry);
+    REQUIRE(ashiato::sync::set_client_input_component<NetworkedPosition>(server_registry));
+
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [](ashiato::sync::ClientId, const ashiato::BitBuffer&) {};
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
+    REQUIRE(server.add_client(1));
+
+    ashiato::BitBuffer packet;
+    write_client_input_packet_header(packet, 0, true, 1, 1);
+    write_networked_position_input_frame(packet, false, 10, 10);
+    write_networked_position_input_frame(packet, true, 1, 1);
+
+    REQUIRE(server.process_packet(server_registry, 1, packet));
+    REQUIRE(server.input_stats(1).latest_received_input_frame == 1);
 }
 
 TEST_CASE("replication server applies future client inputs only when their frame is due and counts starvation") {
@@ -263,7 +265,7 @@ TEST_CASE("replication server applies future client inputs only when their frame
     }
     std::vector<ashiato::BitBuffer> input_packets = client.drain_packets();
     auto input_packet = std::find_if(input_packets.begin(), input_packets.end(), [](ashiato::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
+        return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_input_message;
     });
     REQUIRE(input_packet != input_packets.end());
     REQUIRE(read_client_input_header(*input_packet).input_count == 3);
@@ -320,7 +322,7 @@ TEST_CASE("replication server treats received client input frames as immutable")
     REQUIRE(client.tick(client_registry, client.fixed_dt_seconds()));
     std::vector<ashiato::BitBuffer> first_packets = client.drain_packets();
     auto first_input = std::find_if(first_packets.begin(), first_packets.end(), [](ashiato::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
+        return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_input_message;
     });
     REQUIRE(first_input != first_packets.end());
     REQUIRE(server.process_packet(server_registry, 1, *first_input));
@@ -329,7 +331,7 @@ TEST_CASE("replication server treats received client input frames as immutable")
     REQUIRE(client.tick(client_registry, client.fixed_dt_seconds()));
     std::vector<ashiato::BitBuffer> refreshed_packets = client.drain_packets();
     auto refreshed_input = std::find_if(refreshed_packets.begin(), refreshed_packets.end(), [](ashiato::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
+        return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_input_message;
     });
     REQUIRE(refreshed_input != refreshed_packets.end());
     REQUIRE(server.process_packet(server_registry, 1, *refreshed_input));
@@ -363,7 +365,7 @@ TEST_CASE("two token clients move owned players with fresh input frames every ti
     REQUIRE(ashiato::sync::set_owner(server_registry, second_owned, 2));
     REQUIRE(start_sync(server_registry, second_owned, server_archetype));
 
-    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> server_packets;
+    std::vector<std::pair<ashiato::sync::PeerId, ashiato::BitBuffer>> server_packets;
     ashiato::sync::ReplicationServerOptions server_options;
     server_options.transport = [&](ashiato::sync::ClientId peer, const ashiato::BitBuffer& packet) {
         server_packets.push_back({peer, packet});
@@ -406,7 +408,7 @@ TEST_CASE("two token clients move owned players with fresh input frames every ti
         }
     };
     auto deliver_server_packets = [&](ashiato::sync::ClientId peer, ashiato::sync::ReplicationClient& client, ashiato::Registry& registry) {
-        std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> remaining;
+        std::vector<std::pair<ashiato::sync::PeerId, ashiato::BitBuffer>> remaining;
         for (const auto& sent : server_packets) {
             if (sent.first == peer) {
                 REQUIRE(client.receive(registry, sent.second));
@@ -418,7 +420,7 @@ TEST_CASE("two token clients move owned players with fresh input frames every ti
     };
     auto has_input_packet = [](const std::vector<ashiato::BitBuffer>& packets) {
         return std::any_of(packets.begin(), packets.end(), [](ashiato::BitBuffer packet) {
-            return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
+            return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_input_message;
         });
     };
 
@@ -523,7 +525,7 @@ TEST_CASE("client input packets reserve room for input when server ack backlog i
     REQUIRE(ashiato::sync::set_owner(server_registry, owned, 1));
     REQUIRE(start_sync(server_registry, owned, server_archetype));
 
-    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> server_packets;
+    std::vector<std::pair<ashiato::sync::PeerId, ashiato::BitBuffer>> server_packets;
     ashiato::sync::ReplicationServerOptions server_options;
     server_options.transport = [&](ashiato::sync::ClientId peer, const ashiato::BitBuffer& packet) {
         server_packets.push_back({peer, packet});
@@ -548,7 +550,7 @@ TEST_CASE("client input packets reserve room for input when server ack backlog i
     client_options.network.mtu_bytes = 18;
     ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, client_options));
 
-    constexpr ashiato::sync::ClientId peer = 101;
+    constexpr ashiato::sync::PeerId peer = 101;
     const NetworkedPosition input{5.0f, 0.0f};
     REQUIRE(client.set_input(client_registry, input));
 
@@ -558,7 +560,7 @@ TEST_CASE("client input packets reserve room for input when server ack backlog i
         }
     };
     auto deliver_server_packets = [&]() {
-        std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> remaining;
+        std::vector<std::pair<ashiato::sync::PeerId, ashiato::BitBuffer>> remaining;
         for (const auto& sent : server_packets) {
             if (sent.first == peer) {
                 REQUIRE(client.receive(client_registry, sent.second));
@@ -589,7 +591,7 @@ TEST_CASE("client input packets reserve room for input when server ack backlog i
     }
     packets = client.drain_packets();
     const auto input_packet = std::find_if(packets.begin(), packets.end(), [](ashiato::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
+        return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_input_message;
     });
     REQUIRE(input_packet != packets.end());
 
@@ -631,7 +633,7 @@ TEST_CASE("client fills input frame gap when prediction starts from a later serv
     REQUIRE(client.tick(client_registry, client.fixed_dt_seconds()));
     std::vector<ashiato::BitBuffer> initial_packets = client.drain_packets();
     auto initial_input = std::find_if(initial_packets.begin(), initial_packets.end(), [](ashiato::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
+        return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_input_message;
     });
     REQUIRE(initial_input != initial_packets.end());
     REQUIRE(read_client_input_header(*initial_input).input_count == 2);
@@ -651,7 +653,7 @@ TEST_CASE("client fills input frame gap when prediction starts from a later serv
     REQUIRE(client.tick(client_registry, client.fixed_dt_seconds()));
     std::vector<ashiato::BitBuffer> resumed_packets = client.drain_packets();
     auto resumed_input = std::find_if(resumed_packets.begin(), resumed_packets.end(), [](ashiato::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
+        return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_input_message;
     });
     REQUIRE(resumed_input != resumed_packets.end());
     const ClientInputPacket resumed_header = read_client_input_header(*resumed_input);
@@ -718,7 +720,7 @@ TEST_CASE("auto timing initializes prediction and buffered playback quickly unde
 
         downstream.deliver_ready(now, [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
             ashiato::BitBuffer copy = packet;
-            const auto message = static_cast<std::uint8_t>(copy.read_bits(8U));
+            const auto message = static_cast<std::uint8_t>(copy.read_bits(ashiato::sync::protocol::message_bits));
             if (message == ashiato::sync::protocol::server_update_message && first_update_tick < 0) {
                 first_update_tick = tick;
             }
@@ -834,7 +836,7 @@ TEST_CASE("auto timing recovers prediction and buffered playback quickly after p
 
         downstream.deliver_ready(now, [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
             ashiato::BitBuffer copy = packet;
-            const auto message = static_cast<std::uint8_t>(copy.read_bits(8U));
+            const auto message = static_cast<std::uint8_t>(copy.read_bits(ashiato::sync::protocol::message_bits));
             if (message == ashiato::sync::protocol::server_update_message &&
                 tick >= loss_end_tick &&
                 first_post_loss_update_tick < 0) {

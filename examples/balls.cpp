@@ -225,8 +225,8 @@ namespace ashiato::sync {
 template <>
 struct SyncCueTraits<BallBounceCue> {
     static void serialize(const BallBounceCue& cue, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext& context) {
-        SERIALIZE_TRACE(out, cue.sequence, 32U, "sequence");
-        SERIALIZE_BYTES_TRACE(out, reinterpret_cast<const char*>(&cue.strength), sizeof(cue.strength), "strength");
+        ASHIATO_SERIALIZE_TRACE(out, cue.sequence, 32U, "sequence");
+        ASHIATO_SERIALIZE_BYTES_TRACE(out, reinterpret_cast<const char*>(&cue.strength), sizeof(cue.strength), "strength");
     }
 
     static bool deserialize(ashiato::BitBuffer& in, BallBounceCue& out, ashiato::ComponentSerializationContext& context) {
@@ -787,7 +787,7 @@ void update_server_world(
 void send_hello(SocketHandle client_socket, const sockaddr_in& server_address) {
     ashiato::BitBuffer hello;
     hello.push_bits(example_client_hello_message, 8U);
-    hello.push_unsigned_bits(client_id, 64U);
+    hello.push_unsigned_bits(client_id, ashiato::sync::protocol::client_id_bits);
     send_packet(client_socket, server_address, hello);
 }
 
@@ -1372,9 +1372,10 @@ int main(int argc, char** argv) {
         sockaddr_in sender{};
         while (receive_packet(server_socket, received, &sender)) {
             ashiato::BitBuffer read = received;
-            const auto message = static_cast<std::uint8_t>(read.read_bits(8U));
-            if (message == example_client_hello_message) {
-                const auto id = static_cast<ashiato::sync::ClientId>(read.read_unsigned_bits(64U));
+            if (read.remaining_bits() >= 8U &&
+                static_cast<std::uint8_t>(read.read_bits(8U)) == example_client_hello_message) {
+                const auto id = static_cast<ashiato::sync::ClientId>(
+                    read.read_unsigned_bits(ashiato::sync::protocol::client_id_bits));
                 if (id == client_id) {
                     client_address = sender;
                     client_connected = true;
@@ -1409,8 +1410,8 @@ int main(int argc, char** argv) {
 
         while (receive_packet(client_socket, received)) {
             ashiato::BitBuffer read = received;
-            if (read.remaining_bits() >= 40U &&
-                static_cast<std::uint8_t>(read.read_bits(8U)) == ashiato::sync::protocol::server_update_message) {
+            if (read.remaining_bits() >= ashiato::sync::protocol::message_bits + 32U &&
+                static_cast<std::uint8_t>(read.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::server_update_message) {
                 stats.frame = static_cast<ashiato::sync::SyncFrame>(read.read_bits(32U));
             }
             client.receive_packet(received);

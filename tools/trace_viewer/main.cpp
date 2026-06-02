@@ -60,7 +60,6 @@ constexpr float packet_time_us_pitch = 0.0035f;
 constexpr float packet_column_width = 300.0f;
 constexpr float packet_column_gap = 140.0f;
 constexpr float packet_marker_size = 13.0f;
-constexpr float packet_lane_spacing = 20.0f;
 constexpr float pill_width = 14.0f;
 constexpr float pill_height = 14.0f;
 constexpr float timeline_header_height = 24.0f;
@@ -110,6 +109,50 @@ bool operator!=(const SelectedPacketChip& lhs, const SelectedPacketChip& rhs) {
     return !(lhs == rhs);
 }
 
+struct EventVisualKey {
+    int source_index = -1;
+    ClientEntityNetworkId network_id = invalid_client_entity_network_id;
+    ashiato::Entity component{};
+    SyncFrame frame = 0;
+    KTraceRunId run = 0;
+};
+
+bool operator==(const EventVisualKey& lhs, const EventVisualKey& rhs) {
+    return lhs.source_index == rhs.source_index &&
+        lhs.network_id == rhs.network_id &&
+        lhs.component == rhs.component &&
+        lhs.frame == rhs.frame &&
+        lhs.run == rhs.run;
+}
+
+struct EventVisualKeyHash {
+    std::size_t operator()(const EventVisualKey& key) const noexcept {
+        std::uint64_t mixed = key.network_id ^ (std::uint64_t{static_cast<std::uint32_t>(key.source_index)} << 32U);
+        mixed ^= key.component.value + 0x9e3779b97f4a7c15ULL + (mixed << 6U) + (mixed >> 2U);
+        mixed ^= std::uint64_t{key.frame} + 0x9e3779b97f4a7c15ULL + (mixed << 6U) + (mixed >> 2U);
+        mixed ^= std::uint64_t{key.run} + 0x9e3779b97f4a7c15ULL + (mixed << 6U) + (mixed >> 2U);
+        return std::hash<std::uint64_t>{}(mixed);
+    }
+};
+
+struct PacketVisualKey {
+    int source_index = -1;
+    std::uint32_t record_index = 0;
+};
+
+bool operator==(const PacketVisualKey& lhs, const PacketVisualKey& rhs) {
+    return lhs.source_index == rhs.source_index && lhs.record_index == rhs.record_index;
+}
+
+struct PacketVisualKeyHash {
+    std::size_t operator()(const PacketVisualKey& key) const noexcept {
+        const std::uint64_t mixed =
+            std::uint64_t{static_cast<std::uint32_t>(key.source_index)} << 32U |
+            std::uint64_t{key.record_index};
+        return std::hash<std::uint64_t>{}(mixed);
+    }
+};
+
 struct SourceMetrics {
     SyncFrame min_frame = 0;
     SyncFrame max_frame = 0;
@@ -141,9 +184,12 @@ struct PacketEventInfo {
     std::string server_frame;
     std::string input_frames;
     std::string input_ack;
+    std::string applied;
+    std::string apply_failure;
     bool server_side = false;
     bool send = false;
     int lane = 0;
+    float lane_offset = 0.0f;
     int flow_index = -1;
 };
 
@@ -177,10 +223,11 @@ enum class PayloadAggregateSortColumn {
     Name,
     Count,
     TotalBits,
+    BandwidthBps,
     AvgBits,
     MaxBits,
+    TotalExclusiveBits,
     AvgExclusiveBits,
-    MaxExclusiveBits
 };
 
 enum class PayloadSourceFilter {
@@ -211,6 +258,9 @@ struct PayloadPacketInfo {
     std::uint32_t record_index = 0;
     SyncFrame frame = 0;
     ClientId client = invalid_client_id;
+    ClientEntityNetworkId network_id = invalid_client_entity_network_id;
+    ashiato::Entity component{};
+    ashiato::Entity server_entity{};
     SyncTracePayloadSource payload_source = SyncTracePayloadSource::Network;
     std::uint8_t payload_tag_bits = 0;
     std::string source;
@@ -240,6 +290,19 @@ struct PayloadBandwidthBucket {
     std::uint64_t begin_us = 0;
     std::uint64_t end_us = 0;
     std::uint64_t total_bits = 0;
+};
+
+struct PayloadSummary {
+    std::uint64_t total_bits = 0;
+    std::uint64_t duration_us = 0;
+    std::uint64_t packets = 0;
+};
+
+struct PayloadClientSummary {
+    SyncTracePayloadSource payload_source = SyncTracePayloadSource::Network;
+    ClientId client = invalid_client_id;
+    std::uint64_t total_bits = 0;
+    std::uint64_t packets = 0;
 };
 
 struct DirectoryPickerEntry {
@@ -411,6 +474,8 @@ struct ViewerState {
 #endif
     std::unordered_set<EntityExpansionKey, EntityExpansionKeyHash> expanded_entities;
     std::unordered_set<ComponentExpansionKey, ComponentExpansionKeyHash> expanded_components;
+    std::unordered_map<EventVisualKey, float, EventVisualKeyHash> event_hover_alpha;
+    std::unordered_map<PacketVisualKey, float, PacketVisualKeyHash> packet_hover_alpha;
 #if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
     std::uint32_t screenshot_counter = 0;
     bool screenshot_requested = false;
@@ -420,6 +485,8 @@ struct ViewerState {
     bool details_dirty = true;
     bool packet_details_dirty = true;
     bool packet_log_dirty = false;
+    bool scroll_selected_frame_into_view = false;
+    bool scroll_selected_packet_into_view = false;
     TraceLoadState loader;
 };
 
@@ -448,6 +515,15 @@ struct AutomationInput {
 
 bool directory_contains_ktrace_files(const std::filesystem::path& path);
 void load_directory(ViewerState& state);
+void update_source_metrics(ViewerState& state, int source_index);
+void move_selection_to(ViewerState& state, const SelectedCell& selected);
+void select_packet_event(ViewerState& state, const PacketEventInfo& event);
+void jump_selected_frame_to_event_log(ViewerState& state);
+void jump_selected_frame_to_payload(ViewerState& state);
+void jump_selected_packet_to_frame(ViewerState& state);
+void jump_selected_packet_to_payload(ViewerState& state);
+void jump_selected_payload_to_frame(ViewerState& state);
+void jump_selected_payload_to_event_log(ViewerState& state);
 
 struct RunRenderItem {
     const KTraceFrameRun* run = nullptr;
@@ -1270,10 +1346,28 @@ ClientId parse_packet_client(const PacketKeyValues& values, const KTraceSourceHi
     return source.role == SyncTraceRole::Client ? source.client : invalid_client_id;
 }
 
+ClientEntityNetworkId trace_event_network_key(const SyncTraceEvent& event) {
+    if (event.role == SyncTraceRole::Server && event.server_entity) {
+        return event.server_entity.value;
+    }
+    if (event.client_network_id != invalid_client_entity_network_id) {
+        return event.client_network_id;
+    }
+    if (event.client != invalid_client_id && event.wire_network_id != 0U) {
+        return make_client_entity_network_id(event.client, event.wire_network_id, event.network_version);
+    }
+    if (event.server_entity) {
+        return event.server_entity.value;
+    }
+    return invalid_client_entity_network_id;
+}
+
 std::string packet_match_key(const PacketEventInfo& event) {
     std::ostringstream out;
     out << event.client << "|" << event.message << "|";
     if (event.message == "server_update") {
+        out << event.sequence;
+    } else if (event.message == "client_ping" || event.message == "server_pong") {
         out << event.sequence;
     } else if (event.message == "client_input") {
         out << event.acks << "|" << event.baseline << "|" << event.input_frames;
@@ -1291,6 +1385,40 @@ bool packet_endpoints_match(const PacketEventInfo& send, const PacketEventInfo& 
         return false;
     }
     return packet_match_key(send) == packet_match_key(receive);
+}
+
+std::string packet_marker_label(const PacketEventInfo& event) {
+    if (event.message == "client_input") {
+        return event.input_frames.empty() || event.input_frames == "none"
+            ? std::to_string(event.frame)
+            : event.input_frames;
+    }
+    if (event.message == "server_update") {
+        return event.server_frame.empty() ? std::to_string(event.frame) : event.server_frame;
+    }
+    return {};
+}
+
+bool packet_message_is_ping_or_pong(const PacketEventInfo& event) {
+    return event.message == "ping" ||
+        event.message == "pong" ||
+        event.message == "client_ping" ||
+        event.message == "server_pong";
+}
+
+bool packet_update_apply_failed(const PacketEventInfo& event) {
+    return !event.send && event.message == "server_update" && event.applied == "false";
+}
+
+float packet_marker_width_estimate(const PacketEventInfo& event) {
+    if (event.send && (event.message == "client_input" || event.message == "server_update")) {
+        const std::string label = packet_marker_label(event);
+        return std::max(34.0f, static_cast<float>(label.size()) * 7.5f + 12.0f);
+    }
+    if (event.send && packet_message_is_ping_or_pong(event)) {
+        return 18.0f;
+    }
+    return packet_marker_size;
 }
 
 void assign_packet_lanes(ViewerState& state) {
@@ -1311,6 +1439,7 @@ void assign_packet_lanes(ViewerState& state) {
     ClientId active_client = invalid_client_id;
     bool active_server_side = false;
     std::vector<std::uint64_t> lane_times;
+    std::vector<float> lane_widths;
     const std::uint64_t min_gap_us = static_cast<std::uint64_t>(packet_marker_size / packet_time_us_pitch) + 1U;
     for (int event_index : order) {
         PacketEventInfo& event = state.packet_events[static_cast<std::size_t>(event_index)];
@@ -1318,6 +1447,7 @@ void assign_packet_lanes(ViewerState& state) {
             active_client = event.client;
             active_server_side = event.server_side;
             lane_times.clear();
+            lane_widths.clear();
         }
         int selected_lane = 0;
         for (; selected_lane < static_cast<int>(lane_times.size()); ++selected_lane) {
@@ -1327,10 +1457,20 @@ void assign_packet_lanes(ViewerState& state) {
         }
         if (selected_lane == static_cast<int>(lane_times.size())) {
             lane_times.push_back(event.absolute_us);
+            lane_widths.push_back(packet_marker_width_estimate(event));
         } else {
             lane_times[static_cast<std::size_t>(selected_lane)] = event.absolute_us;
+            lane_widths[static_cast<std::size_t>(selected_lane)] =
+                std::max(lane_widths[static_cast<std::size_t>(selected_lane)], packet_marker_width_estimate(event));
         }
         event.lane = selected_lane;
+        event.lane_offset = 0.0f;
+        for (int lane = 0; lane < selected_lane; ++lane) {
+            event.lane_offset += lane_widths[static_cast<std::size_t>(lane)] * 0.5f + 7.0f;
+        }
+        if (selected_lane != 0) {
+            event.lane_offset += packet_marker_width_estimate(event) * 0.5f;
+        }
     }
 }
 
@@ -1396,6 +1536,8 @@ void rebuild_packet_log_rows(ViewerState& state) {
             event.server_frame = packet_value(values, "server_frame");
             event.input_frames = packet_value(values, "input_frames");
             event.input_ack = packet_value(values, "input_ack");
+            event.applied = packet_value(values, "applied");
+            event.apply_failure = packet_value(values, "apply_failure");
             event.server_side = source.role == SyncTraceRole::Server;
             event.send = event.direction == "out";
             state.packet_events.push_back(std::move(event));
@@ -1603,6 +1745,37 @@ std::string format_compact_bits(std::uint64_t bits) {
         out << bits;
     }
     return out.str();
+}
+
+std::uint64_t bits_per_second(std::uint64_t bits, std::uint64_t duration_us) {
+    if (bits == 0U || duration_us == 0U) {
+        return 0U;
+    }
+    const double bps = (static_cast<double>(bits) * 1000000.0) / static_cast<double>(duration_us);
+    if (bps >= static_cast<double>(std::numeric_limits<std::uint64_t>::max())) {
+        return std::numeric_limits<std::uint64_t>::max();
+    }
+    return static_cast<std::uint64_t>(std::llround(bps));
+}
+
+std::string format_bps(std::uint64_t bps) {
+    std::ostringstream out;
+    if (bps >= 1000U * 1000U * 1000U) {
+        out << std::fixed << std::setprecision(2) << (static_cast<double>(bps) / 1000000000.0) << "gbps";
+    } else if (bps >= 1000U * 1000U) {
+        out << std::fixed << std::setprecision(2) << (static_cast<double>(bps) / 1000000.0) << "mbps";
+    } else if (bps >= 1000U) {
+        out << std::fixed << std::setprecision(2) << (static_cast<double>(bps) / 1000.0) << "kbps";
+    } else {
+        out << bps << " bps";
+    }
+    return out.str();
+}
+
+std::string payload_summary_owner_label(SyncTracePayloadSource source, ClientId client) {
+    return source == SyncTracePayloadSource::Replay
+        ? "replay"
+        : "client " + std::to_string(client);
 }
 
 const char* payload_source_filter_label(PayloadSourceFilter filter) {
@@ -1867,6 +2040,58 @@ bool payload_packet_matches_chart_filter(const ViewerState& state, const Payload
         payload_packet_matches_scope_filter(state, packet);
 }
 
+std::uint64_t payload_filter_duration_us(const ViewerState& state) {
+    if (state.payload_time_filter_enabled && state.payload_filter_end_us > state.payload_filter_begin_us) {
+        return state.payload_filter_end_us - state.payload_filter_begin_us;
+    }
+    return state.payload_max_us >= state.payload_min_us
+        ? state.payload_max_us - state.payload_min_us + 1U
+        : 0U;
+}
+
+PayloadSummary payload_filtered_summary(const ViewerState& state) {
+    PayloadSummary summary;
+    summary.duration_us = payload_filter_duration_us(state);
+    for (int packet_index : state.payload_filtered_packets) {
+        if (packet_index < 0 || packet_index >= static_cast<int>(state.payload_packets.size())) {
+            continue;
+        }
+        const PayloadPacketInfo& packet = state.payload_packets[static_cast<std::size_t>(packet_index)];
+        summary.total_bits += packet.wire_bits;
+        ++summary.packets;
+    }
+    return summary;
+}
+
+std::vector<PayloadClientSummary> payload_filtered_client_summaries(const ViewerState& state) {
+    std::vector<PayloadClientSummary> summaries;
+    for (int packet_index : state.payload_filtered_packets) {
+        if (packet_index < 0 || packet_index >= static_cast<int>(state.payload_packets.size())) {
+            continue;
+        }
+        const PayloadPacketInfo& packet = state.payload_packets[static_cast<std::size_t>(packet_index)];
+        auto found = std::find_if(summaries.begin(), summaries.end(), [&](const PayloadClientSummary& summary) {
+            return summary.payload_source == packet.payload_source && summary.client == packet.client;
+        });
+        if (found == summaries.end()) {
+            PayloadClientSummary summary;
+            summary.payload_source = packet.payload_source;
+            summary.client = packet.client;
+            summaries.push_back(summary);
+            found = summaries.end() - 1;
+        }
+        found->total_bits += packet.wire_bits;
+        ++found->packets;
+    }
+    std::sort(summaries.begin(), summaries.end(), [](const PayloadClientSummary& lhs, const PayloadClientSummary& rhs) {
+        if (lhs.payload_source != rhs.payload_source) {
+            return static_cast<unsigned>(lhs.payload_source) < static_cast<unsigned>(rhs.payload_source);
+        }
+        return lhs.client < rhs.client;
+    });
+    return summaries;
+}
+
 void rebuild_payload_filtered_packets(ViewerState& state) {
     state.payload_filtered_packets.clear();
     state.payload_filtered_packets.reserve(state.payload_packets.size());
@@ -1963,6 +2188,7 @@ std::uint64_t payload_row_average_exclusive_bits(const PayloadAggregateRow& row)
 int compare_payload_rows_by_sort_column(
     const PayloadAggregateRow& lhs,
     const PayloadAggregateRow& rhs,
+    std::uint64_t duration_us,
     PayloadAggregateSortColumn column) {
     auto compare_u64 = [](std::uint64_t lhs_value, std::uint64_t rhs_value) {
         if (lhs_value < rhs_value) {
@@ -1978,14 +2204,18 @@ int compare_payload_rows_by_sort_column(
         return compare_u64(lhs.count, rhs.count);
     case PayloadAggregateSortColumn::TotalBits:
         return compare_u64(lhs.total_bits, rhs.total_bits);
+    case PayloadAggregateSortColumn::BandwidthBps:
+        return compare_u64(
+            bits_per_second(lhs.total_bits, duration_us),
+            bits_per_second(rhs.total_bits, duration_us));
     case PayloadAggregateSortColumn::AvgBits:
         return compare_u64(payload_row_average_bits(lhs), payload_row_average_bits(rhs));
     case PayloadAggregateSortColumn::MaxBits:
         return compare_u64(lhs.max_bits, rhs.max_bits);
+    case PayloadAggregateSortColumn::TotalExclusiveBits:
+        return compare_u64(lhs.total_exclusive_bits, rhs.total_exclusive_bits);
     case PayloadAggregateSortColumn::AvgExclusiveBits:
         return compare_u64(payload_row_average_exclusive_bits(lhs), payload_row_average_exclusive_bits(rhs));
-    case PayloadAggregateSortColumn::MaxExclusiveBits:
-        return compare_u64(lhs.max_exclusive_bits, rhs.max_exclusive_bits);
     case PayloadAggregateSortColumn::Name:
     default:
         return lhs.path.compare(rhs.path);
@@ -1993,14 +2223,79 @@ int compare_payload_rows_by_sort_column(
 }
 
 void sort_payload_aggregate_rows(ViewerState& state) {
+    const std::uint64_t duration_us = payload_filter_duration_us(state);
     if (state.payload_hierarchy_view) {
-        std::sort(state.payload_rows.begin(), state.payload_rows.end(), [](const PayloadAggregateRow& lhs, const PayloadAggregateRow& rhs) {
-            return lhs.path < rhs.path;
-        });
+        struct RowRange {
+            int begin = 0;
+            int end = 0;
+        };
+        auto compare_rows = [&](const PayloadAggregateRow& lhs, const PayloadAggregateRow& rhs) {
+            int comparison = compare_payload_rows_by_sort_column(lhs, rhs, duration_us, state.payload_row_sort_column);
+            if (comparison == 0 && state.payload_row_sort_column != PayloadAggregateSortColumn::Name) {
+                comparison = lhs.name.compare(rhs.name);
+            }
+            if (comparison == 0) {
+                comparison = lhs.path.compare(rhs.path);
+            }
+            return state.payload_row_sort_ascending ? comparison < 0 : comparison > 0;
+        };
+        auto sort_range = [&](auto&& self, int begin, int end, int depth) -> void {
+            std::vector<RowRange> siblings;
+            for (int index = begin; index < end;) {
+                const int row_depth = state.payload_rows[static_cast<std::size_t>(index)].depth;
+                if (row_depth < depth) {
+                    ++index;
+                    continue;
+                }
+                if (row_depth > depth) {
+                    const int nested_begin = index;
+                    do {
+                        ++index;
+                    } while (index < end && state.payload_rows[static_cast<std::size_t>(index)].depth >= row_depth);
+                    self(self, nested_begin, index, row_depth);
+                    continue;
+                }
+                int next = index + 1;
+                while (next < end && state.payload_rows[static_cast<std::size_t>(next)].depth > row_depth) {
+                    ++next;
+                }
+                self(self, index + 1, next, row_depth + 1);
+                siblings.push_back(RowRange{index, next});
+                index = next;
+            }
+            std::stable_sort(siblings.begin(), siblings.end(), [&](const RowRange& lhs, const RowRange& rhs) {
+                return compare_rows(
+                    state.payload_rows[static_cast<std::size_t>(lhs.begin)],
+                    state.payload_rows[static_cast<std::size_t>(rhs.begin)]);
+            });
+            std::vector<PayloadAggregateRow> sorted;
+            sorted.reserve(static_cast<std::size_t>(end - begin));
+            for (const RowRange& sibling : siblings) {
+                for (int index = sibling.begin; index < sibling.end; ++index) {
+                    sorted.push_back(std::move(state.payload_rows[static_cast<std::size_t>(index)]));
+                }
+            }
+            if (static_cast<int>(sorted.size()) == end - begin) {
+                std::move(sorted.begin(), sorted.end(), state.payload_rows.begin() + begin);
+            }
+        };
+        const auto min_depth = std::min_element(
+            state.payload_rows.begin(),
+            state.payload_rows.end(),
+            [](const PayloadAggregateRow& lhs, const PayloadAggregateRow& rhs) {
+                return lhs.depth < rhs.depth;
+            });
+        if (min_depth != state.payload_rows.end()) {
+            sort_range(
+                sort_range,
+                0,
+                static_cast<int>(state.payload_rows.size()),
+                min_depth->depth);
+        }
         return;
     }
     std::sort(state.payload_rows.begin(), state.payload_rows.end(), [&](const PayloadAggregateRow& lhs, const PayloadAggregateRow& rhs) {
-        int comparison = compare_payload_rows_by_sort_column(lhs, rhs, state.payload_row_sort_column);
+        int comparison = compare_payload_rows_by_sort_column(lhs, rhs, duration_us, state.payload_row_sort_column);
         if (comparison == 0 && state.payload_row_sort_column != PayloadAggregateSortColumn::Name) {
             comparison = lhs.name.compare(rhs.name);
         }
@@ -2126,6 +2421,9 @@ void rebuild_payload_rows(ViewerState& state) {
             packet.record_index = record_index;
             packet.frame = trace.frame;
             packet.client = client;
+            packet.network_id = trace_event_network_key(trace);
+            packet.component = trace.component;
+            packet.server_entity = trace.server_entity;
             packet.payload_source = trace.payload_source;
             packet.payload_tag_bits = trace.payload_tag_bits;
             packet.source = source_label(source);
@@ -2202,6 +2500,350 @@ void ensure_payload_view(ViewerState& state) {
     ensure_payload_rows(state);
     if (state.payload_view_dirty) {
         rebuild_payload_view(state);
+    }
+}
+
+bool packet_input_range_contains(const std::string& range, SyncFrame frame) {
+    if (range.empty() || range == "none") {
+        return false;
+    }
+    const std::size_t dash = range.find('-');
+    try {
+        if (dash == std::string::npos) {
+            return static_cast<SyncFrame>(std::stoul(range)) == frame;
+        }
+        const SyncFrame first = static_cast<SyncFrame>(std::stoul(range.substr(0, dash)));
+        const SyncFrame last = static_cast<SyncFrame>(std::stoul(range.substr(dash + 1U)));
+        return first <= frame && frame <= last;
+    } catch (...) {
+        return false;
+    }
+}
+
+SyncFrame packet_input_range_first_frame(const std::string& range, SyncFrame fallback) {
+    if (range.empty() || range == "none") {
+        return fallback;
+    }
+    const std::size_t dash = range.find('-');
+    try {
+        return static_cast<SyncFrame>(std::stoul(dash == std::string::npos ? range : range.substr(0, dash)));
+    } catch (...) {
+        return fallback;
+    }
+}
+
+SyncFrame packet_event_primary_payload_frame(const PacketEventInfo& event) {
+    if (event.message == "server_update" && !event.server_frame.empty()) {
+        try {
+            return static_cast<SyncFrame>(std::stoul(event.server_frame));
+        } catch (...) {
+            return event.frame;
+        }
+    }
+    if (event.message == "client_input") {
+        return packet_input_range_first_frame(event.input_frames, event.frame);
+    }
+    return event.frame;
+}
+
+bool packet_event_contains_frame(const PacketEventInfo& event, SyncFrame frame) {
+    if (event.message == "server_update") {
+        if (!event.server_frame.empty()) {
+            try {
+                return static_cast<SyncFrame>(std::stoul(event.server_frame)) == frame;
+            } catch (...) {
+                return event.frame == frame;
+            }
+        }
+        return event.frame == frame;
+    }
+    if (event.message == "client_input") {
+        return packet_input_range_contains(event.input_frames, frame);
+    }
+    return event.frame == frame;
+}
+
+std::string payload_message(const PayloadPacketInfo& packet) {
+    const PacketKeyValues fields = parse_packet_data(packet.data);
+    return packet_value(fields, "message");
+}
+
+bool payload_matches_frame_selection(const PayloadPacketInfo& packet, const SelectedCell& selected) {
+    if (packet.source_index != selected.source_index || packet.frame != selected.frame) {
+        return false;
+    }
+    if (selected.network_id != invalid_client_entity_network_id &&
+        packet.network_id != invalid_client_entity_network_id &&
+        packet.network_id != selected.network_id) {
+        return false;
+    }
+    return !selected.component || !packet.component || packet.component == selected.component;
+}
+
+int find_payload_packet_for_selected_frame(ViewerState& state) {
+    ensure_payload_rows(state);
+    int best_index = -1;
+    int best_score = std::numeric_limits<int>::max();
+    for (int index = 0; index < static_cast<int>(state.payload_packets.size()); ++index) {
+        const PayloadPacketInfo& packet = state.payload_packets[static_cast<std::size_t>(index)];
+        if (!payload_matches_frame_selection(packet, state.selected)) {
+            continue;
+        }
+        int score = 0;
+        if (state.selected.component && packet.component != state.selected.component) {
+            score += 10;
+        }
+        const std::string message = payload_message(packet);
+        if (message == "server_update_record" || message == "client_input") {
+            score -= 1;
+        }
+        if (score < best_score) {
+            best_score = score;
+            best_index = index;
+        }
+    }
+    return best_index;
+}
+
+bool packet_event_matches_payload(const PacketEventInfo& event, const PayloadPacketInfo& packet) {
+    if (event.source_index != packet.source_index || event.client != packet.client) {
+        return false;
+    }
+    const std::string message = payload_message(packet);
+    if (message == "server_update_record") {
+        return event.message == "server_update" && packet_event_contains_frame(event, packet.frame);
+    }
+    if (message == "client_input") {
+        return event.message == "client_input" && packet_event_contains_frame(event, packet.frame);
+    }
+    if (message == "client_ack") {
+        return event.message == "client_ack" && event.frame == packet.frame;
+    }
+    return event.message == message && packet_event_contains_frame(event, packet.frame);
+}
+
+int find_packet_event_for_payload_packet(ViewerState& state, const PayloadPacketInfo& packet) {
+    ensure_packet_log_rows(state);
+    int best_index = -1;
+    std::uint64_t best_delta = std::numeric_limits<std::uint64_t>::max();
+    for (int index = 0; index < static_cast<int>(state.packet_events.size()); ++index) {
+        const PacketEventInfo& event = state.packet_events[static_cast<std::size_t>(index)];
+        if (!packet_event_matches_payload(event, packet)) {
+            continue;
+        }
+        const std::uint64_t delta = event.absolute_us >= packet.absolute_us
+            ? event.absolute_us - packet.absolute_us
+            : packet.absolute_us - event.absolute_us;
+        if (best_index < 0 || delta < best_delta) {
+            best_index = index;
+            best_delta = delta;
+        }
+    }
+    return best_index;
+}
+
+int find_packet_event_for_selected_frame(ViewerState& state) {
+    const int payload_index = find_payload_packet_for_selected_frame(state);
+    if (payload_index >= 0) {
+        const int event_index = find_packet_event_for_payload_packet(
+            state,
+            state.payload_packets[static_cast<std::size_t>(payload_index)]);
+        if (event_index >= 0) {
+            return event_index;
+        }
+    }
+    ensure_packet_log_rows(state);
+    int best_index = -1;
+    for (int index = 0; index < static_cast<int>(state.packet_events.size()); ++index) {
+        const PacketEventInfo& event = state.packet_events[static_cast<std::size_t>(index)];
+        if (event.source_index == state.selected.source_index && packet_event_contains_frame(event, state.selected.frame)) {
+            best_index = index;
+            break;
+        }
+    }
+    return best_index;
+}
+
+bool payload_matches_packet_event(const PayloadPacketInfo& packet, const PacketEventInfo& event) {
+    if (packet.source_index != event.source_index || packet.client != event.client) {
+        return false;
+    }
+    const std::string message = payload_message(packet);
+    if (event.message == "server_update") {
+        return message == "server_update_record" && packet_event_contains_frame(event, packet.frame);
+    }
+    if (event.message == "client_input") {
+        return message == "client_input" && packet_event_contains_frame(event, packet.frame);
+    }
+    return message == event.message && packet_event_contains_frame(event, packet.frame);
+}
+
+const PacketEventInfo* packet_navigation_event(const ViewerState& state) {
+    const PacketEventInfo* event = selected_packet_event(state);
+    if (event == nullptr || event->send ||
+        event->flow_index < 0 ||
+        event->flow_index >= static_cast<int>(state.packet_flows.size())) {
+        return event;
+    }
+    const PacketFlow& flow = state.packet_flows[static_cast<std::size_t>(event->flow_index)];
+    if (flow.send_event < 0 || flow.send_event >= static_cast<int>(state.packet_events.size())) {
+        return event;
+    }
+    return &state.packet_events[static_cast<std::size_t>(flow.send_event)];
+}
+
+int find_payload_packet_for_packet_event(ViewerState& state, const PacketEventInfo& event) {
+    ensure_payload_rows(state);
+    int best_index = -1;
+    std::uint64_t best_delta = std::numeric_limits<std::uint64_t>::max();
+    for (int index = 0; index < static_cast<int>(state.payload_packets.size()); ++index) {
+        const PayloadPacketInfo& packet = state.payload_packets[static_cast<std::size_t>(index)];
+        if (!payload_matches_packet_event(packet, event)) {
+            continue;
+        }
+        const std::uint64_t delta = event.absolute_us >= packet.absolute_us
+            ? event.absolute_us - packet.absolute_us
+            : packet.absolute_us - event.absolute_us;
+        if (best_index < 0 || delta < best_delta) {
+            best_index = index;
+            best_delta = delta;
+        }
+    }
+    return best_index;
+}
+
+bool select_frame_cell(ViewerState& state, int source_index, SyncFrame frame, ClientEntityNetworkId network_id, ashiato::Entity component) {
+    if (source_index < 0 || source_index >= static_cast<int>(state.history.sources.size())) {
+        return false;
+    }
+    const KTraceSourceHistory& source = state.history.sources[static_cast<std::size_t>(source_index)];
+    for (const KTraceEntityRow& entity : source.entities) {
+        if (network_id != invalid_client_entity_network_id && entity.client_network_id != network_id) {
+            continue;
+        }
+        for (const KTraceComponentRow& row : entity.components) {
+            if (component && row.component != component) {
+                continue;
+            }
+            for (KTraceRunId run_id = 0; run_id < row.runs.size(); ++run_id) {
+                const KTraceFrameRun& run = row.runs[static_cast<std::size_t>(run_id)];
+                const auto found = std::find_if(run.frames.begin(), run.frames.end(), [frame](const KTraceFrameCell& cell) {
+                    return cell.frame == frame;
+                });
+                if (found != run.frames.end()) {
+                    state.expanded_entities.insert(EntityExpansionKey{source_index, entity.client_network_id});
+                    state.expanded_components.insert(ComponentExpansionKey{source_index, entity.client_network_id, row.component});
+                    update_source_metrics(state, source_index);
+                    move_selection_to(state, SelectedCell{source_index, entity.client_network_id, row.component, found->frame, run_id, found->event_indices});
+                    state.selected_source = source_index;
+                    state.selected_source_dirty = true;
+                    state.mode = ViewerMode::Frames;
+                    state.scroll_selected_frame_into_view = true;
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+void select_payload_packet(ViewerState& state, int packet_index) {
+    if (packet_index < 0 || packet_index >= static_cast<int>(state.payload_packets.size())) {
+        return;
+    }
+    state.selected_payload_packet = packet_index;
+    state.payload_source_filter = PayloadSourceFilter::All;
+    state.payload_direction_filter = PayloadDirectionFilter::All;
+    state.payload_filter_enabled = false;
+    state.payload_filter[0] = '\0';
+    state.payload_time_filter_enabled = false;
+    clear_selected_payload_scope(state);
+    state.payload_view_dirty = true;
+    state.mode = ViewerMode::Payloads;
+}
+
+void select_packet_event_by_index(ViewerState& state, int event_index) {
+    if (event_index < 0 || event_index >= static_cast<int>(state.packet_events.size())) {
+        return;
+    }
+    const PacketEventInfo& event = state.packet_events[static_cast<std::size_t>(event_index)];
+    select_packet_event(state, event);
+    for (int client_index = 0; client_index < static_cast<int>(state.packet_clients.size()); ++client_index) {
+        if (state.packet_clients[static_cast<std::size_t>(client_index)].client == event.client) {
+            state.selected_packet_client = client_index;
+            break;
+        }
+    }
+    state.mode = ViewerMode::EventLog;
+    state.scroll_selected_packet_into_view = true;
+}
+
+void jump_selected_frame_to_event_log(ViewerState& state) {
+    const int event_index = find_packet_event_for_selected_frame(state);
+    if (event_index >= 0) {
+        select_packet_event_by_index(state, event_index);
+    } else {
+        state.status = "no packet log record matched the selected frame";
+        state.status_is_error = false;
+    }
+}
+
+void jump_selected_frame_to_payload(ViewerState& state) {
+    const int packet_index = find_payload_packet_for_selected_frame(state);
+    if (packet_index >= 0) {
+        select_payload_packet(state, packet_index);
+    } else {
+        state.status = "no bandwidth payload matched the selected frame";
+        state.status_is_error = false;
+    }
+}
+
+void jump_selected_packet_to_frame(ViewerState& state) {
+    const PacketEventInfo* event = packet_navigation_event(state);
+    if (event == nullptr ||
+        !select_frame_cell(state, event->source_index, packet_event_primary_payload_frame(*event), invalid_client_entity_network_id, ashiato::Entity{})) {
+        state.status = "no frame row matched the selected packet event";
+        state.status_is_error = false;
+    }
+}
+
+void jump_selected_packet_to_payload(ViewerState& state) {
+    const PacketEventInfo* event = packet_navigation_event(state);
+    const int packet_index = event != nullptr ? find_payload_packet_for_packet_event(state, *event) : -1;
+    if (packet_index >= 0) {
+        select_payload_packet(state, packet_index);
+    } else {
+        state.status = "no bandwidth payload matched the selected packet event";
+        state.status_is_error = false;
+    }
+}
+
+void jump_selected_payload_to_frame(ViewerState& state) {
+    ensure_payload_rows(state);
+    if (state.selected_payload_packet < 0 ||
+        state.selected_payload_packet >= static_cast<int>(state.payload_packets.size())) {
+        return;
+    }
+    const PayloadPacketInfo& packet = state.payload_packets[static_cast<std::size_t>(state.selected_payload_packet)];
+    if (!select_frame_cell(state, packet.source_index, packet.frame, packet.network_id, packet.component)) {
+        state.status = "no frame row matched the selected bandwidth payload";
+        state.status_is_error = false;
+    }
+}
+
+void jump_selected_payload_to_event_log(ViewerState& state) {
+    ensure_payload_rows(state);
+    if (state.selected_payload_packet < 0 ||
+        state.selected_payload_packet >= static_cast<int>(state.payload_packets.size())) {
+        return;
+    }
+    const PayloadPacketInfo& packet = state.payload_packets[static_cast<std::size_t>(state.selected_payload_packet)];
+    const int event_index = find_packet_event_for_payload_packet(state, packet);
+    if (event_index >= 0) {
+        select_packet_event_by_index(state, event_index);
+    } else {
+        state.status = "no packet log record matched the selected bandwidth payload";
+        state.status_is_error = false;
     }
 }
 
@@ -2546,6 +3188,39 @@ void draw_run_drop_link(
         clip_max);
 }
 
+ImU32 color_with_alpha(ImU32 color, float alpha) {
+    ImVec4 value = ImGui::ColorConvertU32ToFloat4(color);
+    value.w *= std::clamp(alpha, 0.0f, 1.0f);
+    return ImGui::ColorConvertFloat4ToU32(value);
+}
+
+template <typename Key, typename Hash>
+float update_hover_alpha(std::unordered_map<Key, float, Hash>& alphas, const Key& key, bool hovered) {
+    const float dt = std::clamp(ImGui::GetIO().DeltaTime, 0.0f, 1.0f / 15.0f);
+    const float in_speed = 10.0f;
+    const float out_speed = 7.0f;
+    float current = 0.0f;
+    auto found = alphas.find(key);
+    if (found != alphas.end()) {
+        current = found->second;
+    }
+    const float target = hovered ? 1.0f : 0.0f;
+    const float step = dt * (hovered ? in_speed : out_speed);
+    if (current < target) {
+        current = std::min(target, current + step);
+    } else if (current > target) {
+        current = std::max(target, current - step);
+    }
+    if (!hovered && current <= 0.001f) {
+        if (found != alphas.end()) {
+            alphas.erase(found);
+        }
+        return 0.0f;
+    }
+    alphas[key] = current;
+    return current;
+}
+
 void draw_cell(
     ImDrawList* draw,
     const KTraceSourceHistory& source,
@@ -2589,6 +3264,14 @@ void draw_cell(
 
     const ImVec2 mouse = ImGui::GetMousePos();
     const bool hovered = mouse.x >= min.x && mouse.x <= max.x && mouse.y >= min.y && mouse.y <= max.y;
+    const EventVisualKey visual_key{source_index, entity.client_network_id, component, cell.frame, run};
+    const std::string popup_id = "frame_context##" +
+        std::to_string(source_index) + ":" +
+        std::to_string(entity.client_network_id) + ":" +
+        std::to_string(component.value) + ":" +
+        std::to_string(cell.frame) + ":" +
+        std::to_string(run);
+    const float hover_alpha = update_hover_alpha(state.event_hover_alpha, visual_key, hovered);
     const bool selected = state.selected.source_index == source_index &&
         state.selected.network_id == entity.client_network_id &&
         state.selected.component == component &&
@@ -2597,10 +3280,22 @@ void draw_cell(
         state.selected.event_indices == cell.event_indices;
     if (selected) {
         draw->AddRect(ImVec2(min.x - 2.0f, min.y - 2.0f), ImVec2(max.x + 2.0f, max.y + 2.0f), IM_COL32(255, 230, 155, 255), 0.0f, 0, 2.0f);
-    } else if (hovered) {
-        draw->AddRect(ImVec2(min.x - 1.0f, min.y - 1.0f), ImVec2(max.x + 1.0f, max.y + 1.0f), IM_COL32(230, 238, 255, 210), 0.0f, 0, 1.0f);
+    } else if (hover_alpha > 0.0f) {
+        draw->AddRectFilled(
+            ImVec2(min.x - 3.0f, min.y - 3.0f),
+            ImVec2(max.x + 3.0f, max.y + 3.0f),
+            color_with_alpha(IM_COL32(205, 226, 255, 82), hover_alpha),
+            3.0f);
+        draw->AddRect(
+            ImVec2(min.x - 1.5f, min.y - 1.5f),
+            ImVec2(max.x + 1.5f, max.y + 1.5f),
+            color_with_alpha(IM_COL32(235, 245, 255, 210), hover_alpha),
+            2.0f,
+            0,
+            1.2f);
     }
     if (hovered) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         ImGui::SetTooltip("%s frame %u", visual.label, cell.frame);
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             SelectedCell selected{source_index, entity.client_network_id, component, cell.frame, run, cell.event_indices};
@@ -2609,6 +3304,23 @@ void draw_cell(
                 state.details_dirty = true;
             }
         }
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            SelectedCell selected{source_index, entity.client_network_id, component, cell.frame, run, cell.event_indices};
+            if (state.selected != selected) {
+                state.selected = selected;
+                state.details_dirty = true;
+            }
+            ImGui::OpenPopup(popup_id.c_str());
+        }
+    }
+    if (ImGui::BeginPopup(popup_id.c_str())) {
+        if (ImGui::MenuItem("See in event viewer")) {
+            jump_selected_frame_to_event_log(state);
+        }
+        if (ImGui::MenuItem("See in bandwidth viewer")) {
+            jump_selected_frame_to_payload(state);
+        }
+        ImGui::EndPopup();
     }
 }
 
@@ -3157,6 +3869,8 @@ void reset_loaded_trace(ViewerState& state) {
     state.selected_packet = {};
     state.expanded_entities.clear();
     state.expanded_components.clear();
+    state.event_hover_alpha.clear();
+    state.packet_hover_alpha.clear();
     state.details_dirty = true;
     state.packet_details_dirty = true;
     state.cached_details.clear();
@@ -3186,6 +3900,8 @@ void reset_loaded_trace(ViewerState& state) {
     state.payload_view_dirty = true;
     state.server_entities_by_network_id.clear();
     state.packet_log_dirty = false;
+    state.scroll_selected_frame_into_view = false;
+    state.scroll_selected_packet_into_view = false;
     state.selected_source = 0;
     state.selected_source_dirty = true;
 }
@@ -3826,8 +4542,7 @@ float packet_event_x(float column_x, const PacketEventInfo& event) {
     const float base = event.server_side
         ? column_x + packet_column_width - 42.0f
         : column_x + 28.0f;
-    const float lane_offset = static_cast<float>(event.lane) * packet_lane_spacing;
-    return event.server_side ? base - lane_offset : base + lane_offset;
+    return event.server_side ? base - event.lane_offset : base + event.lane_offset;
 }
 
 bool packet_event_matches_selection(const PacketEventInfo& event, const SelectedPacketChip& selected) {
@@ -3837,6 +4552,25 @@ bool packet_event_matches_selection(const PacketEventInfo& event, const Selected
 bool packet_event_hit(const ImVec2& center, const ImVec2& mouse) {
     const ImVec2 min(center.x - packet_marker_size * 0.5f, center.y - packet_marker_size * 0.5f);
     const ImVec2 max(center.x + packet_marker_size * 0.5f, center.y + packet_marker_size * 0.5f);
+    return mouse.x >= min.x && mouse.x <= max.x && mouse.y >= min.y && mouse.y <= max.y;
+}
+
+ImVec2 packet_marker_size_for_event(const PacketEventInfo& event) {
+    if (event.send && (event.message == "client_input" || event.message == "server_update")) {
+        const std::string label = packet_marker_label(event);
+        const ImVec2 text_size = ImGui::CalcTextSize(label.c_str());
+        return ImVec2(std::max(34.0f, text_size.x + 12.0f), 18.0f);
+    }
+    if (event.send && packet_message_is_ping_or_pong(event)) {
+        return ImVec2(18.0f, 18.0f);
+    }
+    return ImVec2(packet_marker_size, packet_marker_size);
+}
+
+bool packet_event_hit(const PacketEventInfo& event, const ImVec2& center, const ImVec2& mouse) {
+    const ImVec2 size = packet_marker_size_for_event(event);
+    const ImVec2 min(center.x - size.x * 0.5f, center.y - size.y * 0.5f);
+    const ImVec2 max(center.x + size.x * 0.5f, center.y + size.y * 0.5f);
     return mouse.x >= min.x && mouse.x <= max.x && mouse.y >= min.y && mouse.y <= max.y;
 }
 
@@ -3913,9 +4647,15 @@ void draw_packet_marker(
     if (center.y + packet_marker_size < clip_min.y || center.y - packet_marker_size > clip_max.y) {
         return;
     }
-    const ImVec2 min(center.x - packet_marker_size * 0.5f, center.y - packet_marker_size * 0.5f);
-    const ImVec2 max(center.x + packet_marker_size * 0.5f, center.y + packet_marker_size * 0.5f);
+    const ImVec2 marker_size = packet_marker_size_for_event(event);
+    const ImVec2 min(center.x - marker_size.x * 0.5f, center.y - marker_size.y * 0.5f);
+    const ImVec2 max(center.x + marker_size.x * 0.5f, center.y + marker_size.y * 0.5f);
     const bool selected = packet_event_matches_selection(event, state.selected_packet);
+    const PacketVisualKey visual_key{event.source_index, event.record_index};
+    const std::string popup_id = "packet_context##" +
+        std::to_string(event.source_index) + ":" +
+        std::to_string(event.record_index);
+    const float hover_alpha = update_hover_alpha(state.packet_hover_alpha, visual_key, hovered);
     if (selected) {
         draw->AddRectFilled(
             ImVec2(min.x - 5.0f, min.y - 5.0f),
@@ -3931,10 +4671,55 @@ void draw_packet_marker(
             0,
             1.4f);
     }
-    const ImU32 fill = event.send ? IM_COL32(53, 132, 246, 255) : IM_COL32(51, 177, 103, 255);
-    draw->AddRectFilled(min, max, fill, 2.0f);
-    if (!event.send) {
-        draw->AddRectFilled(ImVec2(min.x + 4.0f, min.y + 4.0f), ImVec2(max.x - 4.0f, max.y - 4.0f), IM_COL32(205, 255, 222, 210), 1.0f);
+    if (event.send && packet_message_is_ping_or_pong(event)) {
+        const ImVec2 top(center.x, min.y);
+        const ImVec2 left(min.x, max.y);
+        const ImVec2 right(max.x, max.y);
+        draw->AddTriangleFilled(top, right, left, IM_COL32(145, 96, 232, 255));
+        draw->AddTriangle(top, right, left, IM_COL32(226, 210, 255, 235), 1.4f);
+    } else if (!event.send) {
+        if (packet_update_apply_failed(event)) {
+            draw->AddRectFilled(min, max, IM_COL32(255, 177, 184, 255), 2.0f);
+            draw->AddRect(min, max, IM_COL32(160, 63, 73, 230), 2.0f, 0, 1.2f);
+            const char* warning_text = "!";
+            const ImVec2 warning_size = ImGui::CalcTextSize(warning_text);
+            draw->AddText(
+                ImVec2(center.x - warning_size.x * 0.5f, center.y - warning_size.y * 0.5f - 0.5f),
+                IM_COL32(105, 28, 36, 255),
+                warning_text);
+        } else {
+            draw->AddRectFilled(min, max, IM_COL32(51, 177, 103, 255), 2.0f);
+            draw->AddRectFilled(ImVec2(min.x + 4.0f, min.y + 4.0f), ImVec2(max.x - 4.0f, max.y - 4.0f), IM_COL32(205, 255, 222, 210), 1.0f);
+        }
+    } else if (event.message == "client_input" || event.message == "server_update") {
+        const bool server_update = event.message == "server_update";
+        const ImU32 fill = server_update ? IM_COL32(246, 248, 252, 255) : IM_COL32(53, 132, 246, 255);
+        const ImU32 border = server_update ? IM_COL32(180, 190, 205, 255) : IM_COL32(141, 190, 255, 230);
+        const ImU32 text = server_update ? IM_COL32(32, 38, 48, 255) : IM_COL32(250, 252, 255, 255);
+        draw->AddRectFilled(min, max, fill, 3.0f);
+        draw->AddRect(min, max, border, 3.0f, 0, 1.1f);
+        const std::string label = packet_marker_label(event);
+        const ImVec2 text_size = ImGui::CalcTextSize(label.c_str());
+        draw->AddText(
+            ImVec2(center.x - text_size.x * 0.5f, center.y - text_size.y * 0.5f - 0.5f),
+            text,
+            label.c_str());
+    } else {
+        draw->AddRectFilled(min, max, IM_COL32(53, 132, 246, 255), 2.0f);
+    }
+    if (hover_alpha > 0.0f && !selected) {
+        draw->AddRectFilled(
+            ImVec2(min.x - 4.0f, min.y - 4.0f),
+            ImVec2(max.x + 4.0f, max.y + 4.0f),
+            color_with_alpha(IM_COL32(205, 226, 255, 82), hover_alpha),
+            4.0f);
+        draw->AddRect(
+            ImVec2(min.x - 2.0f, min.y - 2.0f),
+            ImVec2(max.x + 2.0f, max.y + 2.0f),
+            color_with_alpha(IM_COL32(235, 245, 255, 220), hover_alpha),
+            3.0f,
+            0,
+            1.2f);
     }
     if (selected) {
         draw->AddRect(ImVec2(min.x - 4.0f, min.y - 4.0f), ImVec2(max.x + 4.0f, max.y + 4.0f), IM_COL32(255, 218, 112, 255), 3.0f, 0, 2.6f);
@@ -3942,10 +4727,8 @@ void draw_packet_marker(
     } else if (highlighted) {
         draw->AddRect(ImVec2(min.x - 1.5f, min.y - 1.5f), ImVec2(max.x + 1.5f, max.y + 1.5f), IM_COL32(255, 218, 112, 155), 2.0f, 0, 1.2f);
     }
-    if (hovered && !selected) {
-        draw->AddRect(ImVec2(min.x - 1.0f, min.y - 1.0f), ImVec2(max.x + 1.0f, max.y + 1.0f), IM_COL32(230, 238, 255, 210), 2.0f, 0, 1.0f);
-    }
     if (hovered) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         if (event.message == "client_input") {
             ImGui::BeginTooltip();
             ImGui::SetWindowFontScale(1.25f);
@@ -3969,6 +4752,12 @@ void draw_packet_marker(
             ImGui::SetWindowFontScale(1.0f);
             ImGui::Separator();
             ImGui::Text("Server frame %s", server_frame.c_str());
+            if (packet_update_apply_failed(event)) {
+                ImGui::TextColored(ImVec4(0.98f, 0.52f, 0.56f, 1.0f), "Applied false");
+                if (!event.apply_failure.empty()) {
+                    ImGui::Text("Reason %s", event.apply_failure.c_str());
+                }
+            }
             ImGui::Text(
                 "%s %s at %.3fms",
                 event.send ? "sent" : "received",
@@ -3985,6 +4774,19 @@ void draw_packet_marker(
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             select_packet_event(state, event);
         }
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            select_packet_event(state, event);
+            ImGui::OpenPopup(popup_id.c_str());
+        }
+    }
+    if (ImGui::BeginPopup(popup_id.c_str())) {
+        if (ImGui::MenuItem("See in frame viewer")) {
+            jump_selected_packet_to_frame(state);
+        }
+        if (ImGui::MenuItem("See in bandwidth viewer")) {
+            jump_selected_packet_to_payload(state);
+        }
+        ImGui::EndPopup();
     }
 }
 
@@ -4067,6 +4869,19 @@ void render_event_log(ViewerState& state) {
     ImGui::BeginChild("packet_event_log", ImVec2(0.0f, -180.0f), true);
     float scroll_y = ImGui::GetScrollY();
     const float max_scroll_y = std::max(0.0f, height - ImGui::GetWindowHeight());
+    if (state.scroll_selected_packet_into_view) {
+        const int selected_event = selected_packet_event_index(state);
+        if (selected_event >= 0 &&
+            std::find(client_timeline.event_indices.begin(), client_timeline.event_indices.end(), selected_event) != client_timeline.event_indices.end()) {
+            const PacketEventInfo& event = state.packet_events[static_cast<std::size_t>(selected_event)];
+            const float target_y =
+                timeline_header_height + 32.0f + static_cast<float>(event.relative_us) * packet_time_us_pitch -
+                ImGui::GetWindowHeight() * 0.5f;
+            scroll_y = std::clamp(target_y, 0.0f, max_scroll_y);
+            ImGui::SetScrollY(scroll_y);
+            state.scroll_selected_packet_into_view = false;
+        }
+    }
     if (scroll_y > max_scroll_y) {
         scroll_y = max_scroll_y;
         ImGui::SetScrollY(scroll_y);
@@ -4139,7 +4954,7 @@ void render_event_log(ViewerState& state) {
             if (center.y + packet_marker_size < clip_min.y || center.y - packet_marker_size > clip_max.y) {
                 continue;
             }
-            if (packet_event_hit(center, mouse)) {
+            if (packet_event_hit(event, center, mouse)) {
                 hovered_event_index = event_index;
             }
         }
@@ -4242,6 +5057,23 @@ void render_timeline(ViewerState& state, int source_index) {
         state,
         max_scroll_x,
         max_scroll_y);
+    if (state.scroll_selected_frame_into_view && state.selected.source_index == source_index) {
+        const std::vector<TimelineNavCell> cells = collect_timeline_nav_cells(state, source, source_index);
+        const auto found = std::find_if(cells.begin(), cells.end(), [&](const TimelineNavCell& cell) {
+            return cell.selected == state.selected;
+        });
+        if (found != cells.end()) {
+            const float target_x =
+                label_width + static_cast<float>(state.selected.frame - min_frame) * frame_pitch -
+                ImGui::GetContentRegionAvail().x * 0.5f;
+            const float target_y =
+                timeline_header_height + static_cast<float>(found->row) * row_height -
+                ImGui::GetWindowHeight() * 0.5f;
+            ImGui::SetScrollX(std::clamp(target_x, 0.0f, max_scroll_x));
+            ImGui::SetScrollY(std::clamp(target_y, 0.0f, max_scroll_y));
+        }
+        state.scroll_selected_frame_into_view = false;
+    }
     const float scroll_x = ImGui::GetScrollX();
     float scroll_y = ImGui::GetScrollY();
     if (scroll_y > max_scroll_y) {
@@ -4728,6 +5560,9 @@ const char* detail_source_label(const KTraceRecord& record, const char* source) 
     if (event.role == SyncTraceRole::Server) {
         return "server";
     }
+    if (event.type == SyncTraceEventType::PacketLog) {
+        return source;
+    }
     switch (event.mode) {
     case ReplicationClientMode::Predict:
         return "client predicted";
@@ -5138,7 +5973,7 @@ void set_payload_name_filter(ViewerState& state, const std::string& text) {
 }
 
 void render_payload_bandwidth_chart(ViewerState& state) {
-    const float row_h = 34.0f;
+    const float row_h = 48.0f;
     const float left_w = 92.0f;
     const float bucket_w = 14.0f;
     const float chart_h = 190.0f;
@@ -5201,6 +6036,12 @@ void render_payload_bandwidth_chart(ViewerState& state) {
         [](std::uint64_t value, const StackedPayloadBucket& bucket) {
             return std::max(value, bucket.incoming_bits + bucket.outgoing_bits + bucket.unknown_bits);
         });
+    const PayloadSummary summary = payload_filtered_summary(state);
+    const std::vector<PayloadClientSummary> client_summaries = payload_filtered_client_summaries(state);
+    const std::uint64_t summary_bps = bits_per_second(summary.total_bits, summary.duration_us);
+    const std::string summary_text = "all clients " + format_compact_bits(summary.total_bits) +
+        " | " + format_bps(summary_bps) +
+        " | " + std::to_string(summary.packets) + " packets";
 
     ImGui::BeginChild("payload_bandwidth", ImVec2(0.0f, chart_h), true, ImGuiWindowFlags_HorizontalScrollbar);
     const ImVec2 canvas = ImGui::GetCursorScreenPos();
@@ -5209,19 +6050,36 @@ void render_payload_bandwidth_chart(ViewerState& state) {
     ImDrawList* draw = ImGui::GetWindowDrawList();
     draw->AddRectFilled(canvas, ImVec2(canvas.x + width, canvas.y + height), IM_COL32(18, 22, 28, 255));
     draw->AddText(ImVec2(canvas.x + 8.0f, canvas.y + 7.0f), IM_COL32(160, 172, 190, 255), "bandwidth");
+    draw->AddText(ImVec2(canvas.x + left_w, canvas.y + 7.0f), IM_COL32(220, 228, 240, 245), summary_text.c_str());
 
     const ImVec2 mouse = ImGui::GetMousePos();
     int hovered_bucket = -1;
     for (int lane_index = 0; lane_index < static_cast<int>(lanes.size()); ++lane_index) {
         const PayloadLane& lane = lanes[static_cast<std::size_t>(lane_index)];
-        const std::string lane_label = lane.source == SyncTracePayloadSource::Replay
-            ? "replay"
-            : "client " + std::to_string(lane.client);
+        const std::string lane_label = payload_summary_owner_label(lane.source, lane.client);
+        std::string lane_summary_text;
+        const auto summary_found = std::find_if(
+            client_summaries.begin(),
+            client_summaries.end(),
+            [&](const PayloadClientSummary& client_summary) {
+                return client_summary.payload_source == lane.source && client_summary.client == lane.client;
+            });
+        if (summary_found != client_summaries.end()) {
+            lane_summary_text = format_compact_bits(summary_found->total_bits);
+            lane_summary_text += " | " + format_bps(bits_per_second(summary_found->total_bits, summary.duration_us));
+            lane_summary_text += " | " + std::to_string(summary_found->packets) + " packets";
+        }
         const float row_y = canvas.y + 28.0f + static_cast<float>(lane_index) * row_h;
         draw->AddText(
-            ImVec2(canvas.x + 8.0f, row_y + 8.0f),
+            ImVec2(canvas.x + 8.0f, row_y + 20.0f),
             IM_COL32(226, 234, 245, 235),
             lane_label.c_str());
+        if (!lane_summary_text.empty()) {
+            draw->AddText(
+                ImVec2(canvas.x + left_w + 4.0f, row_y + 4.0f),
+                IM_COL32(200, 211, 228, 245),
+                lane_summary_text.c_str());
+        }
         draw->AddLine(ImVec2(canvas.x + left_w, row_y + row_h), ImVec2(canvas.x + width, row_y + row_h), IM_COL32(75, 86, 105, 100), 1.0f);
     }
     for (int bucket_index = 0; bucket_index < static_cast<int>(stacked_buckets.size()); ++bucket_index) {
@@ -5235,7 +6093,7 @@ void render_payload_bandwidth_chart(ViewerState& state) {
         const float x0 = canvas.x + left_w + static_cast<float>(bucket_offset) * bucket_w + 2.0f;
         const float x1 = x0 + bucket_w - 4.0f;
         const float row_y = canvas.y + 28.0f + static_cast<float>(bucket.lane_index) * row_h;
-        const float bar_h = max_bits == 0U ? 1.0f : std::max(2.0f, (static_cast<float>(total_bits) / static_cast<float>(max_bits)) * (row_h - 8.0f));
+        const float bar_h = max_bits == 0U ? 1.0f : std::max(2.0f, (static_cast<float>(total_bits) / static_cast<float>(max_bits)) * (row_h - 24.0f));
         const float bottom_y = row_y + row_h - 4.0f;
         const ImVec2 min(x0, bottom_y - bar_h);
         const ImVec2 max(x1, bottom_y);
@@ -5434,8 +6292,25 @@ int payload_packet_position(const ViewerState& state, const std::vector<int>& pa
     return found == packets.end() ? -1 : static_cast<int>(std::distance(packets.begin(), found));
 }
 
+void move_selected_payload_packet(ViewerState& state, const std::vector<int>& packets, int direction) {
+    if (packets.empty() || direction == 0) {
+        return;
+    }
+    const int packet_position = payload_packet_position(state, packets);
+    const int packet_count = static_cast<int>(packets.size());
+    int next = 0;
+    if (direction < 0) {
+        next = packet_position <= 0 ? packet_count - 1 : packet_position - 1;
+    } else {
+        next = packet_position < 0 || packet_position + 1 >= packet_count ? 0 : packet_position + 1;
+    }
+    state.selected_payload_packet = packets[static_cast<std::size_t>(next)];
+    refresh_selected_payload_scope_instance(state);
+}
+
 void render_payload_rows_table(ViewerState& state) {
     const float table_height = std::max(170.0f, ImGui::GetContentRegionAvail().y * 0.42f);
+    const std::uint64_t duration_us = payload_filter_duration_us(state);
     ImGui::BeginChild("payload_rows", ImVec2(0.0f, table_height), true);
     if (state.payload_rows.empty()) {
         ImGui::TextColored(ImVec4(0.95f, 0.96f, 0.98f, 1.0f), "No payload rows match the active filters.");
@@ -5444,14 +6319,11 @@ void render_payload_rows_table(ViewerState& state) {
             ImGuiTableFlags_Borders |
             ImGuiTableFlags_Resizable |
             ImGuiTableFlags_ScrollY |
-            ImGuiTableFlags_SizingFixedFit;
-        if (!state.payload_hierarchy_view) {
-            table_flags |= ImGuiTableFlags_Sortable;
-        }
-        if (ImGui::BeginTable("payload_table", 7, table_flags)) {
-            const ImGuiTableColumnFlags sortable_flags = state.payload_hierarchy_view ? ImGuiTableColumnFlags_NoSort : ImGuiTableColumnFlags_None;
-            const ImGuiTableColumnFlags numeric_sort_flags = sortable_flags |
-                (state.payload_hierarchy_view ? ImGuiTableColumnFlags_None : ImGuiTableColumnFlags_PreferSortDescending);
+            ImGuiTableFlags_SizingFixedFit |
+            ImGuiTableFlags_Sortable;
+        if (ImGui::BeginTable("payload_table", 8, table_flags)) {
+            const ImGuiTableColumnFlags sortable_flags = ImGuiTableColumnFlags_None;
+            const ImGuiTableColumnFlags numeric_sort_flags = sortable_flags | ImGuiTableColumnFlags_PreferSortDescending;
             ImGui::TableSetupColumn(
                 state.payload_hierarchy_view ? "Hierarchy" : "Name",
                 sortable_flags |
@@ -5467,21 +6339,26 @@ void render_payload_rows_table(ViewerState& state) {
                     (state.payload_row_sort_column == PayloadAggregateSortColumn::TotalBits ? ImGuiTableColumnFlags_DefaultSort : ImGuiTableColumnFlags_None),
                 74.0f,
                 static_cast<ImGuiID>(PayloadAggregateSortColumn::TotalBits));
+            ImGui::TableSetupColumn(
+                "Bandwidth/s",
+                numeric_sort_flags |
+                    ImGuiTableColumnFlags_WidthFixed |
+                    (state.payload_row_sort_column == PayloadAggregateSortColumn::BandwidthBps ? ImGuiTableColumnFlags_DefaultSort : ImGuiTableColumnFlags_None),
+                92.0f,
+                static_cast<ImGuiID>(PayloadAggregateSortColumn::BandwidthBps));
             ImGui::TableSetupColumn("Avg", numeric_sort_flags | ImGuiTableColumnFlags_WidthFixed, 70.0f, static_cast<ImGuiID>(PayloadAggregateSortColumn::AvgBits));
             ImGui::TableSetupColumn("Max", numeric_sort_flags | ImGuiTableColumnFlags_WidthFixed, 70.0f, static_cast<ImGuiID>(PayloadAggregateSortColumn::MaxBits));
+            ImGui::TableSetupColumn("Total (excl)", numeric_sort_flags | ImGuiTableColumnFlags_WidthFixed, 96.0f, static_cast<ImGuiID>(PayloadAggregateSortColumn::TotalExclusiveBits));
             ImGui::TableSetupColumn("Avg (excl)", numeric_sort_flags | ImGuiTableColumnFlags_WidthFixed, 86.0f, static_cast<ImGuiID>(PayloadAggregateSortColumn::AvgExclusiveBits));
-            ImGui::TableSetupColumn("Max (excl)", numeric_sort_flags | ImGuiTableColumnFlags_WidthFixed, 86.0f, static_cast<ImGuiID>(PayloadAggregateSortColumn::MaxExclusiveBits));
             ImGui::TableHeadersRow();
-            if (!state.payload_hierarchy_view) {
-                if (ImGuiTableSortSpecs* sort_specs = ImGui::TableGetSortSpecs()) {
-                    if (sort_specs->SpecsDirty && sort_specs->SpecsCount > 0) {
-                        const ImGuiTableColumnSortSpecs& spec = sort_specs->Specs[0];
-                        state.payload_row_sort_column = static_cast<PayloadAggregateSortColumn>(spec.ColumnUserID);
-                        state.payload_row_sort_ascending = spec.SortDirection == ImGuiSortDirection_Ascending;
-                        sort_payload_aggregate_rows(state);
-                        sync_selected_payload_row(state);
-                        sort_specs->SpecsDirty = false;
-                    }
+            if (ImGuiTableSortSpecs* sort_specs = ImGui::TableGetSortSpecs()) {
+                if (sort_specs->SpecsDirty && sort_specs->SpecsCount > 0) {
+                    const ImGuiTableColumnSortSpecs& spec = sort_specs->Specs[0];
+                    state.payload_row_sort_column = static_cast<PayloadAggregateSortColumn>(spec.ColumnUserID);
+                    state.payload_row_sort_ascending = spec.SortDirection == ImGuiSortDirection_Ascending;
+                    sort_payload_aggregate_rows(state);
+                    sync_selected_payload_row(state);
+                    sort_specs->SpecsDirty = false;
                 }
             }
             if (state.payload_hierarchy_view && !state.selected_payload_scope_path.empty()) {
@@ -5526,11 +6403,14 @@ void render_payload_rows_table(ViewerState& state) {
                 ImGui::TextUnformatted("-");
                 ImGui::TableSetColumnIndex(6);
                 ImGui::TextUnformatted("-");
+                ImGui::TableSetColumnIndex(7);
+                ImGui::TextUnformatted("-");
             }
             for (int row_index = 0; row_index < static_cast<int>(state.payload_rows.size()); ++row_index) {
                 const PayloadAggregateRow& row = state.payload_rows[static_cast<std::size_t>(row_index)];
                 const std::uint64_t avg = payload_row_average_bits(row);
                 const std::uint64_t avg_exclusive = payload_row_average_exclusive_bits(row);
+                const std::uint64_t bandwidth_bps = bits_per_second(row.total_bits, duration_us);
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 const bool selected = state.selected_payload_scope_path == row.path;
@@ -5547,13 +6427,15 @@ void render_payload_rows_table(ViewerState& state) {
                 ImGui::TableSetColumnIndex(2);
                 ImGui::TextUnformatted(format_compact_bits(row.total_bits).c_str());
                 ImGui::TableSetColumnIndex(3);
-                ImGui::TextUnformatted(format_compact_bits(avg).c_str());
+                ImGui::TextUnformatted(format_bps(bandwidth_bps).c_str());
                 ImGui::TableSetColumnIndex(4);
-                ImGui::TextUnformatted(format_compact_bits(row.max_bits).c_str());
+                ImGui::TextUnformatted(format_compact_bits(avg).c_str());
                 ImGui::TableSetColumnIndex(5);
-                ImGui::TextUnformatted(format_compact_bits(avg_exclusive).c_str());
+                ImGui::TextUnformatted(format_compact_bits(row.max_bits).c_str());
                 ImGui::TableSetColumnIndex(6);
-                ImGui::TextUnformatted(format_compact_bits(row.max_exclusive_bits).c_str());
+                ImGui::TextUnformatted(format_compact_bits(row.total_exclusive_bits).c_str());
+                ImGui::TableSetColumnIndex(7);
+                ImGui::TextUnformatted(format_compact_bits(avg_exclusive).c_str());
             }
             ImGui::EndTable();
         }
@@ -5562,17 +6444,22 @@ void render_payload_rows_table(ViewerState& state) {
 }
 
 void render_payload_packet_nav(ViewerState& state, const std::vector<int>& packets) {
+    if (!ImGui::GetIO().WantTextInput) {
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true)) {
+            move_selected_payload_packet(state, packets, -1);
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true)) {
+            move_selected_payload_packet(state, packets, 1);
+        }
+    }
+
     const int packet_position = payload_packet_position(state, packets);
     if (ImGui::Button("Previous") && !packets.empty()) {
-        const int previous = packet_position <= 0 ? static_cast<int>(packets.size()) - 1 : packet_position - 1;
-        state.selected_payload_packet = packets[static_cast<std::size_t>(previous)];
-        refresh_selected_payload_scope_instance(state);
+        move_selected_payload_packet(state, packets, -1);
     }
     ImGui::SameLine();
     if (ImGui::Button("Next") && !packets.empty()) {
-        const int next = packet_position < 0 || packet_position + 1 >= static_cast<int>(packets.size()) ? 0 : packet_position + 1;
-        state.selected_payload_packet = packets[static_cast<std::size_t>(next)];
-        refresh_selected_payload_scope_instance(state);
+        move_selected_payload_packet(state, packets, 1);
     }
     ImGui::SameLine();
     ImGui::Text(
@@ -5605,6 +6492,9 @@ void render_payload_packet_view(ViewerState& state, const std::vector<int>& pack
         packet.frame,
         static_cast<double>(packet.absolute_us - state.payload_min_us) / 1000.0,
         format_bits(packet.wire_bits).c_str());
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+        ImGui::OpenPopup("payload_packet_context");
+    }
     ImGui::Separator();
 
     ImDrawList* draw = ImGui::GetWindowDrawList();
@@ -5621,6 +6511,18 @@ void render_payload_packet_view(ViewerState& state, const std::vector<int>& pack
     const float height = static_cast<float>(max_depth + 1) * row_h + 8.0f;
     ImGui::InvisibleButton("##payload_packet_canvas", ImVec2(available_w, height));
     const bool packet_canvas_hovered = ImGui::IsItemHovered();
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+        ImGui::OpenPopup("payload_packet_context");
+    }
+    if (ImGui::BeginPopup("payload_packet_context")) {
+        if (ImGui::MenuItem("See in frame viewer")) {
+            jump_selected_payload_to_frame(state);
+        }
+        if (ImGui::MenuItem("See in event viewer")) {
+            jump_selected_payload_to_event_log(state);
+        }
+        ImGui::EndPopup();
+    }
     const ImVec2 mouse = ImGui::GetMousePos();
     bool clicked_bar = false;
     for (int scope_index = 0; scope_index < static_cast<int>(packet.scopes.size()); ++scope_index) {
@@ -5720,6 +6622,13 @@ void render_details(ViewerState& state) {
             static_cast<double>(event->relative_us) / 1000.0);
         ImGui::SetWindowFontScale(1.0f);
         ImGui::Separator();
+        if (packet_update_apply_failed(*event)) {
+            ImGui::TextColored(ImVec4(0.98f, 0.52f, 0.56f, 1.0f), "Applied false");
+            if (!event->apply_failure.empty()) {
+                ImGui::Text("Reason %s", event->apply_failure.c_str());
+            }
+            ImGui::Separator();
+        }
         const std::string details_text = build_record_details_text(state.cached_details);
         render_selectable_detail_text("##event_detail_text", details_text);
         ImGui::EndChild();

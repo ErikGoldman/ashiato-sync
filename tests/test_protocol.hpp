@@ -3,6 +3,8 @@
 #include "test_components.hpp"
 #include "test_setup.hpp"
 
+#include "ashiato/sync/serialization.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -58,9 +60,49 @@ struct ClientInputPacket {
     bool first_input_full = false;
 };
 
+inline void write_client_input_payload_header(
+    ashiato::BitBuffer& packet,
+    ashiato::sync::SyncFrame baseline_frame,
+    bool first_input_full,
+    ashiato::sync::SyncFrame first_input_frame,
+    std::uint16_t input_count) {
+    REQUIRE(input_count <= ashiato::sync::protocol::max_input_count);
+    packet.write_bits(baseline_frame, 32U);
+    ashiato::sync::serialization::serialize_varint2_raw(
+        packet,
+        !first_input_full,
+        0U,
+        0U,
+        first_input_frame,
+        32U);
+    packet.write_bits(input_count, ashiato::sync::protocol::input_count_bits);
+}
+
+inline void write_client_input_packet_header(
+    ashiato::BitBuffer& packet,
+    ashiato::sync::SyncFrame baseline_frame,
+    bool first_input_full,
+    ashiato::sync::SyncFrame first_input_frame,
+    std::uint16_t input_count,
+    const std::vector<std::uint32_t>& acks = {}) {
+    REQUIRE(acks.size() <= ashiato::sync::protocol::max_ack_count);
+    packet.write_bits(ashiato::sync::protocol::client_input_message, ashiato::sync::protocol::message_bits);
+    packet.write_bits(static_cast<std::uint16_t>(acks.size()), ashiato::sync::protocol::ack_count_bits);
+    for (std::uint32_t ack : acks) {
+        packet.write_bits(ack, ashiato::sync::protocol::server_packet_id_bits);
+    }
+    write_client_input_payload_header(packet, baseline_frame, first_input_full, first_input_frame, input_count);
+}
+
+inline void write_networked_position_input_frame(ashiato::BitBuffer& packet, bool delta, std::int32_t x, std::int32_t y) {
+    packet.write_bool(delta);
+    packet.write_bits(x, 8U);
+    packet.write_bits(y, 8U);
+}
+
 inline std::vector<AckRecord> read_acks(ashiato::BitBuffer packet) {
-    REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_ack_message);
-    const auto count = static_cast<std::uint16_t>(packet.read_bits(16U));
+    REQUIRE(static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_ack_message);
+    const auto count = static_cast<std::uint16_t>(packet.read_bits(ashiato::sync::protocol::ack_count_bits));
     std::vector<AckRecord> records;
     records.reserve(count);
     for (std::uint16_t index = 0; index < count; ++index) {
@@ -72,21 +114,26 @@ inline std::vector<AckRecord> read_acks(ashiato::BitBuffer packet) {
 }
 
 inline ClientInputPacket read_client_input_header(ashiato::BitBuffer packet) {
-    REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message);
+    REQUIRE(static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_input_message);
     ClientInputPacket input;
-    input.ack_count = static_cast<std::uint16_t>(packet.read_bits(16U));
+    input.ack_count = static_cast<std::uint16_t>(packet.read_bits(ashiato::sync::protocol::ack_count_bits));
     for (std::uint16_t index = 0; index < input.ack_count; ++index) {
         packet.read_bits(ashiato::sync::protocol::server_packet_id_bits);
     }
     input.baseline_frame = static_cast<ashiato::sync::SyncFrame>(packet.read_bits(32U));
-    input.input_count = static_cast<std::uint16_t>(packet.read_bits(16U));
-    input.first_input_full = packet.read_bool();
-    input.first_input_frame = input.input_count == 0U ? 0U : input.baseline_frame + 1U;
+    bool first_input_relative = false;
+    std::uint64_t first_input_value = 0;
+    REQUIRE(ashiato::sync::serialization::read_varint2_raw(packet, 0U, 32U, first_input_relative, first_input_value));
+    input.first_input_full = !first_input_relative;
+    input.first_input_frame = packet.remaining_bits() == 0U ? 0U : input.baseline_frame + 1U;
     if (input.first_input_full) {
-        const auto explicit_first_input_frame = static_cast<ashiato::sync::SyncFrame>(packet.read_bits(32U));
-        if (input.input_count != 0U) {
-            input.first_input_frame = explicit_first_input_frame;
-        }
+        input.first_input_frame = packet.remaining_bits() == 0U
+            ? 0U
+            : static_cast<ashiato::sync::SyncFrame>(first_input_value);
+    }
+    input.input_count = static_cast<std::uint16_t>(packet.read_bits(ashiato::sync::protocol::input_count_bits));
+    if (input.input_count == 0U) {
+        input.first_input_frame = 0U;
     }
     return input;
 }
@@ -146,10 +193,10 @@ bool record_ping_sample(
         packets = client.drain_packets();
     }
     for (ashiato::BitBuffer packet : packets) {
-        if (packet.remaining_bits() < 8U) {
+        if (packet.remaining_bits() < ashiato::sync::protocol::message_bits) {
             continue;
         }
-        const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
+        const auto message = static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits));
         if (message != ashiato::sync::protocol::client_ping_message) {
             continue;
         }
@@ -157,13 +204,13 @@ bool record_ping_sample(
         const auto send_frame = static_cast<ashiato::sync::SyncFrame>(
             std::floor(client.local_time_seconds() / client.fixed_dt_seconds()));
         ashiato::BitBuffer pong;
-        pong.push_bits(ashiato::sync::protocol::server_pong_message, 8U);
-        pong.push_bits(sequence, 32U);
+        pong.write_bits(ashiato::sync::protocol::server_pong_message, ashiato::sync::protocol::message_bits);
+        pong.write_bits(sequence, 32U);
         const auto server_frame = static_cast<ashiato::sync::SyncFrame>((send_frame + local_frame) / 2U);
-        pong.push_bits(server_frame, 32U);
-        pong.push_bits(0U, ashiato::sync::protocol::frame_subframe_bits);
-        pong.push_bits(server_frame, 32U);
-        pong.push_bits(0U, ashiato::sync::protocol::frame_subframe_bits);
+        pong.write_bits(server_frame, 32U);
+        pong.write_bits(0U, ashiato::sync::protocol::frame_subframe_bits);
+        pong.write_bits(server_frame, 32U);
+        pong.write_bits(0U, ashiato::sync::protocol::frame_subframe_bits);
         return receive_at_local_frame(client, registry, std::move(pong), local_frame);
     }
     return false;
@@ -175,10 +222,10 @@ struct PingPacket {
 };
 
 inline bool read_ping_packet(ashiato::BitBuffer packet, PingPacket& out) {
-    if (packet.remaining_bits() < 8U) {
+    if (packet.remaining_bits() < ashiato::sync::protocol::message_bits) {
         return false;
     }
-    const auto message = static_cast<std::uint8_t>(packet.read_bits(8U));
+    const auto message = static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits));
     if (message != ashiato::sync::protocol::client_ping_message || packet.remaining_bits() < 32U) {
         return false;
     }
@@ -212,18 +259,18 @@ bool receive_pong(
     const PingPacket& ping,
     ashiato::sync::SyncFrame local_frame) {
     ashiato::BitBuffer pong;
-    pong.push_bits(ashiato::sync::protocol::server_pong_message, 8U);
-    pong.push_bits(ping.sequence, 32U);
+    pong.write_bits(ashiato::sync::protocol::server_pong_message, ashiato::sync::protocol::message_bits);
+    pong.write_bits(ping.sequence, 32U);
     const auto server_frame = static_cast<ashiato::sync::SyncFrame>((ping.send_frame + local_frame) / 2U);
-    pong.push_bits(server_frame, 32U);
-    pong.push_bits(0U, ashiato::sync::protocol::frame_subframe_bits);
-    pong.push_bits(server_frame, 32U);
-    pong.push_bits(0U, ashiato::sync::protocol::frame_subframe_bits);
+    pong.write_bits(server_frame, 32U);
+    pong.write_bits(0U, ashiato::sync::protocol::frame_subframe_bits);
+    pong.write_bits(server_frame, 32U);
+    pong.write_bits(0U, ashiato::sync::protocol::frame_subframe_bits);
     return receive_at_local_frame(client, registry, std::move(pong), local_frame);
 }
 
 inline ClientUpdatePacket read_update(ashiato::BitBuffer packet, std::size_t sync_slot_count = 2U) {
-    REQUIRE(static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::server_update_message);
+    REQUIRE(static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::server_update_message);
     ClientUpdatePacket update;
     update.frame = static_cast<ashiato::sync::SyncFrame>(packet.read_bits(32U));
     packet.read_bits(ashiato::sync::protocol::server_packet_id_bits);
@@ -267,8 +314,8 @@ inline ClientUpdatePacket read_update(ashiato::BitBuffer packet, std::size_t syn
                         packet.read_bool();
                     }
                 }
-                const bool has_cues = packet.read_bool();
-                REQUIRE_FALSE(has_cues);
+                const bool has_cue = packet.read_bool();
+                REQUIRE_FALSE(has_cue);
             } else {
                 REQUIRE(ashiato::sync::protocol::read_baseline_frame(packet, update.frame, record.baseline_frame));
                 const bool tag_changed = packet.read_bool();
@@ -279,8 +326,8 @@ inline ClientUpdatePacket read_update(ashiato::BitBuffer packet, std::size_t syn
                         packet.read_bool();
                     }
                 }
-                const bool has_cues = packet.read_bool();
-                REQUIRE_FALSE(has_cues);
+                const bool has_cue = packet.read_bool();
+                REQUIRE_FALSE(has_cue);
             }
         }
         update.records.push_back(record);
@@ -329,22 +376,22 @@ inline ashiato::BitBuffer make_position_packet(
     std::uint32_t packet_id = 0U,
     ashiato::sync::SyncFrame input_ack_frame = 0U) {
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
-    packet.push_bits(frame, 32U);
-    packet.push_bits(packet_id == 0U ? frame : packet_id, ashiato::sync::protocol::server_packet_id_bits);
-    packet.push_bits(input_ack_frame, 32U);
-    packet.push_bits(static_cast<std::uint16_t>(records.size()), 16U);
+    packet.write_bits(ashiato::sync::protocol::server_update_message, ashiato::sync::protocol::message_bits);
+    packet.write_bits(frame, 32U);
+    packet.write_bits(packet_id == 0U ? frame : packet_id, ashiato::sync::protocol::server_packet_id_bits);
+    packet.write_bits(input_ack_frame, 32U);
+    packet.write_bits(static_cast<std::uint16_t>(records.size()), 16U);
     for (const auto& record : records) {
-        packet.push_bool(false);
+        packet.write_bool(false);
         ashiato::sync::protocol::write_network_entity_id(packet, test_network_id(record.first));
-        packet.push_bool(true);
-        packet.push_bits(0, 32U);
-        packet.push_bool(false);
-        packet.push_bits(1, 16U);
-        packet.push_bits(1, ashiato::sync::protocol::bits_for_range(sync_slot_count));
+        packet.write_bool(true);
+        packet.write_bits(0, 32U);
+        packet.write_bool(false);
+        packet.write_bits(1, 16U);
+        packet.write_bits(1, ashiato::sync::protocol::bits_for_range(sync_slot_count));
 
-        packet.push_bytes(reinterpret_cast<const char*>(&record.second), sizeof(Position));
-        packet.push_bool(false);
+        packet.write_bytes(reinterpret_cast<const char*>(&record.second), sizeof(Position));
+        packet.write_bool(false);
     }
     return packet;
 }
@@ -355,32 +402,32 @@ inline ashiato::BitBuffer make_predicted_position_packet(
     PredictedPosition position,
     std::uint32_t packet_id = 0U) {
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
-    packet.push_bits(frame, 32U);
-    packet.push_bits(packet_id == 0U ? frame : packet_id, ashiato::sync::protocol::server_packet_id_bits);
-    packet.push_bits(0, 32U);
-    packet.push_bits(1, 16U);
-    packet.push_bool(false);
+    packet.write_bits(ashiato::sync::protocol::server_update_message, ashiato::sync::protocol::message_bits);
+    packet.write_bits(frame, 32U);
+    packet.write_bits(packet_id == 0U ? frame : packet_id, ashiato::sync::protocol::server_packet_id_bits);
+    packet.write_bits(0, 32U);
+    packet.write_bits(1, 16U);
+    packet.write_bool(false);
     ashiato::sync::protocol::write_network_entity_id(packet, test_network_id(server_entity));
-    packet.push_bool(true);
-    packet.push_bits(0, 32U);
-    packet.push_bool(false);
-    packet.push_bits(1, 16U);
-    packet.push_bits(1, ashiato::sync::protocol::bits_for_range(2U));
-    packet.push_bits(static_cast<std::int32_t>(position.x * 10.0f), 16U);
-    packet.push_bits(static_cast<std::int32_t>(position.y * 10.0f), 16U);
-    packet.push_bool(false);
+    packet.write_bool(true);
+    packet.write_bits(0, 32U);
+    packet.write_bool(false);
+    packet.write_bits(1, 16U);
+    packet.write_bits(1, ashiato::sync::protocol::bits_for_range(2U));
+    packet.write_bits(static_cast<std::int32_t>(position.x * 10.0f), 16U);
+    packet.write_bits(static_cast<std::int32_t>(position.y * 10.0f), 16U);
+    packet.write_bool(false);
     return packet;
 }
 
 inline ashiato::BitBuffer make_destroy_packet(ashiato::sync::SyncFrame frame, ashiato::Entity server_entity) {
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::server_update_message, 8U);
-    packet.push_bits(frame, 32U);
-    packet.push_bits(frame, ashiato::sync::protocol::server_packet_id_bits);
-    packet.push_bits(0, 32U);
-    packet.push_bits(1, 16U);
-    packet.push_bool(true);
+    packet.write_bits(ashiato::sync::protocol::server_update_message, ashiato::sync::protocol::message_bits);
+    packet.write_bits(frame, 32U);
+    packet.write_bits(frame, ashiato::sync::protocol::server_packet_id_bits);
+    packet.write_bits(0, 32U);
+    packet.write_bits(1, 16U);
+    packet.write_bool(true);
     ashiato::sync::protocol::write_network_entity_id(packet, test_network_id(server_entity));
     return packet;
 }
@@ -410,7 +457,7 @@ struct ServerUpdatePacket {
 
 inline ashiato::BitBuffer make_connect_request(const std::string& token) {
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::client_connect_request_message, 8U);
+    packet.write_bits(ashiato::sync::protocol::client_connect_request_message, ashiato::sync::protocol::message_bits);
     ashiato::sync::protocol::write_string(packet, token);
     return packet;
 }
@@ -422,7 +469,7 @@ inline ServerUpdatePacket read_server_update(
     std::size_t network_entity_id_tier0_bits =
         ashiato::sync::protocol::default_network_entity_id_tier0_bits) {
     ServerUpdatePacket update;
-    update.message = static_cast<std::uint8_t>(packet.read_bits(8U));
+    update.message = static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits));
     update.frame = static_cast<ashiato::sync::SyncFrame>(packet.read_bits(32U));
     update.packet_id = static_cast<std::uint32_t>(packet.read_bits(ashiato::sync::protocol::server_packet_id_bits));
     update.input_ack_frame = static_cast<ashiato::sync::SyncFrame>(packet.read_bits(32U));
@@ -471,12 +518,12 @@ inline ServerUpdatePacket read_server_update(
                 const std::size_t payload_bits =
                     record.component_index == 1 ? component_one_payload_bits : sizeof(Health) * 8U;
                 for (std::size_t bit = 0; bit < payload_bits; ++bit) {
-                    record.payload.push_bool(packet.read_bool());
+                    record.payload.write_bool(packet.read_bool());
                 }
                 entity.components.push_back(std::move(record));
             }
-            const bool has_cues = packet.read_bool();
-            REQUIRE_FALSE(has_cues);
+            const bool has_cue = packet.read_bool();
+            REQUIRE_FALSE(has_cue);
         } else {
             REQUIRE(ashiato::sync::protocol::read_baseline_frame(packet, update.frame, entity.baseline_frame));
             const bool tag_changed = packet.read_bool();
@@ -493,12 +540,12 @@ inline ServerUpdatePacket read_server_update(
                 const std::size_t payload_bits =
                     record.component_index == 1 ? component_one_payload_bits : sizeof(Health) * 8U;
                 for (std::size_t bit = 0; bit < payload_bits; ++bit) {
-                    record.payload.push_bool(packet.read_bool());
+                    record.payload.write_bool(packet.read_bool());
                 }
                 entity.components.push_back(std::move(record));
             }
-            const bool has_cues = packet.read_bool();
-            REQUIRE_FALSE(has_cues);
+            const bool has_cue = packet.read_bool();
+            REQUIRE_FALSE(has_cue);
         }
         update.entities.push_back(std::move(entity));
     }
@@ -507,7 +554,7 @@ inline ServerUpdatePacket read_server_update(
 
 inline NetworkedPayload read_first_networked_payload(const ashiato::BitBuffer& packet) {
     const ServerUpdatePacket update = read_server_update(packet);
-    REQUIRE(update.message == 1);
+    REQUIRE(update.message == ashiato::sync::protocol::server_update_message);
     REQUIRE(update.entities.size() == 1);
     REQUIRE(update.entities[0].components.size() == 1);
     return read_networked_payload(update.entities[0].components[0].payload);
@@ -515,9 +562,9 @@ inline NetworkedPayload read_first_networked_payload(const ashiato::BitBuffer& p
 
 inline ashiato::BitBuffer write_ack_packet(std::uint32_t packet_id) {
     ashiato::BitBuffer packet;
-    packet.push_bits(ashiato::sync::protocol::client_ack_message, 8U);
-    packet.push_bits(1, 16U);
-    packet.push_bits(packet_id, ashiato::sync::protocol::server_packet_id_bits);
+    packet.write_bits(ashiato::sync::protocol::client_ack_message, ashiato::sync::protocol::message_bits);
+    packet.write_bits(1, ashiato::sync::protocol::ack_count_bits);
+    packet.write_bits(packet_id, ashiato::sync::protocol::server_packet_id_bits);
     return packet;
 }
 

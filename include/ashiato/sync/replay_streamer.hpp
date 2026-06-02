@@ -60,10 +60,10 @@ public:
         ashiato::Registry& registry,
         ReplicationServer& server,
         ReplicationReplayStreamSession& session,
-        ReplicationReplayNetworkSessionOptions options) const;
+        const ReplicationReplayNetworkSessionOptions& options) const;
     bool attach_network_session_bandwidth(
         ReplicationServer& replay_server,
-        ReplicationReplayNetworkSessionOptions options) const;
+        const ReplicationReplayNetworkSessionOptions& options) const;
     bool tick_session(
         ReplicationReplayStreamSession& session,
         ashiato::Registry& registry,
@@ -91,6 +91,7 @@ private:
     bool apply_cues(
         ashiato::Registry& registry,
         const SyncSettings& settings,
+        SyncFrame replay_frame,
         ashiato::BitBuffer& payload,
         EntityReferenceContext& references,
         ReplicationReplayStreamSession& session) const;

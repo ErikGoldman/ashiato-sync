@@ -62,55 +62,62 @@ bool read_cue_payload(const ashiato::BitBuffer& payload, T& out, ashiato::Compon
 }
 
 template <typename T>
-bool play_cue_payload(
+bool deserialize_cue_value(
+    SyncCueTypeId,
+    void*,
+    ashiato::BitBuffer& payload,
+    CueValue& out,
+    ashiato::ComponentSerializationContext& context) {
+    static_assert(
+        has_context_cue_deserialize<T>::value,
+        "SyncCueTraits must implement deserialize(in, out, ComponentSerializationContext&)");
+    T value{};
+    if (!SyncCueTraits<T>::deserialize(payload, value, context)) {
+        return false;
+    }
+    out.emplace<T>(std::move(value));
+    return true;
+}
+
+template <typename T>
+bool play_cue_value(
     SyncCueTypeId,
     void*,
     ashiato::Registry& registry,
     ashiato::Entity owner,
-    const ashiato::BitBuffer& payload,
+    const void* value,
     float late_seconds,
-    SyncFrame frame,
-    ashiato::ComponentSerializationContext& context) {
-    T value{};
-    if (!read_cue_payload(payload, value, context)) {
+    SyncFrame frame) {
+    if (value == nullptr) {
         return false;
     }
     if constexpr (has_frame_cue_play<T>::value) {
-        return SyncCueTraits<T>::play(registry, owner, value, late_seconds, frame);
+        return SyncCueTraits<T>::play(registry, owner, *static_cast<const T*>(value), late_seconds, frame);
     } else {
         (void)frame;
-        return SyncCueTraits<T>::play(registry, owner, value, late_seconds);
+        return SyncCueTraits<T>::play(registry, owner, *static_cast<const T*>(value), late_seconds);
     }
 }
 
 template <typename T>
-bool rollback_cue_payload(
+bool rollback_cue_value(
     SyncCueTypeId,
     void*,
     ashiato::Registry& registry,
     ashiato::Entity owner,
-    const ashiato::BitBuffer& payload,
-    ashiato::ComponentSerializationContext& context) {
-    T value{};
-    if (!read_cue_payload(payload, value, context)) {
+    const void* value) {
+    if (value == nullptr) {
         return false;
     }
-    return SyncCueTraits<T>::rollback(registry, owner, value);
+    return SyncCueTraits<T>::rollback(registry, owner, *static_cast<const T*>(value));
 }
 
 template <typename T>
-bool equal_cue_payloads(
-    SyncCueTypeId,
-    void*,
-    const ashiato::BitBuffer& lhs_payload,
-    const ashiato::BitBuffer& rhs_payload,
-    ashiato::ComponentSerializationContext& context) {
-    T lhs{};
-    T rhs{};
-    if (!read_cue_payload(lhs_payload, lhs, context) || !read_cue_payload(rhs_payload, rhs, context)) {
-        return lhs_payload == rhs_payload;
+bool equal_cue_values(SyncCueTypeId, void*, const void* lhs, const void* rhs) {
+    if (lhs == nullptr || rhs == nullptr) {
+        return lhs == rhs;
     }
-    return SyncCueTraits<T>::equals_cue(lhs, rhs);
+    return SyncCueTraits<T>::equals_cue(*static_cast<const T*>(lhs), *static_cast<const T*>(rhs));
 }
 
 template <typename Traits, typename Quantized, typename = void>
@@ -379,6 +386,15 @@ bool trace_cue_payload(SyncCueTypeId, void*, const ashiato::BitBuffer& payload, 
         return false;
     }
     SyncCueTraits<T>::trace(value, out);
+    return true;
+}
+
+template <typename T>
+bool trace_cue_value(SyncCueTypeId, void*, const void* value, SyncTraceStringBuilder& out) {
+    if (value == nullptr) {
+        return false;
+    }
+    SyncCueTraits<T>::trace(*static_cast<const T*>(value), out);
     return true;
 }
 #endif

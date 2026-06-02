@@ -125,6 +125,9 @@ bool ClientFrameRingStore::read(std::uint32_t entity_index, SyncFrame frame, Ent
     out.baseline.present_mask = frame_view.baseline.present_mask;
     out.baseline.bytes.resize(frame_view.baseline.byte_count);
     if (frame_view.baseline.byte_count != 0U) {
+        if (frame_view.baseline.bytes == nullptr) {
+            return false;
+        }
         std::memcpy(out.baseline.bytes.data(), frame_view.baseline.bytes, frame_view.baseline.byte_count);
     }
     return true;
@@ -137,6 +140,9 @@ void ClientFrameRingStore::write(std::uint32_t entity_index, const EntityBuffere
     *frame.baseline.tag_mask = sample.baseline.tag_mask;
     *frame.baseline.present_mask = sample.baseline.present_mask;
     if (frame.baseline.byte_count != 0U) {
+        if (frame.baseline.bytes == nullptr) {
+            throw std::logic_error("frame payload storage is unavailable");
+        }
         if (!sample.baseline.bytes.empty()) {
             std::memcpy(frame.baseline.bytes, sample.baseline.bytes.data(), sample.baseline.bytes.size());
         }

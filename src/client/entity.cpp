@@ -137,6 +137,11 @@ ashiato::Entity ReplicationClient::local_entity(ClientEntityNetworkId client_ent
     return state != nullptr ? state->identity.local : ashiato::Entity{};
 }
 
+ClientEntityNetworkId ReplicationClient::client_entity_network_id(ashiato::Entity local) noexcept {
+    const EntityState* state = find_entity_state_for_local(local);
+    return state != nullptr ? state->identity.client_entity_network_id : invalid_client_entity_network_id;
+}
+
 bool ReplicationClient::is_alive_client_entity_network_id(ClientEntityNetworkId client_entity_network_id) const noexcept {
     const EntityState* state = find_entity_state(client_entity_network_id);
     return state != nullptr && state->identity.local;

@@ -52,9 +52,9 @@ sockaddr_in make_address(const std::string& host, std::uint16_t port) {
     return address;
 }
 
-ashiato::sync::ClientId peer_id(const sockaddr_in& address) {
-    return (static_cast<ashiato::sync::ClientId>(ntohs(address.sin_port)) << 32U) |
-        static_cast<ashiato::sync::ClientId>(ntohl(address.sin_addr.s_addr));
+ashiato::sync::PeerId peer_id(const sockaddr_in& address) {
+    return (static_cast<ashiato::sync::PeerId>(ntohs(address.sin_port)) << 32U) |
+        static_cast<ashiato::sync::PeerId>(ntohl(address.sin_addr.s_addr));
 }
 
 bool receive_packet(SocketHandle socket, ashiato::BitBuffer& packet, sockaddr_in* sender) {

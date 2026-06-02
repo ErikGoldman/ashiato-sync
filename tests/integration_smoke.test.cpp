@@ -19,7 +19,7 @@ using namespace ashiato_sync_tests;
 namespace {
 
 std::uint8_t packet_message(ashiato::BitBuffer packet) {
-    return static_cast<std::uint8_t>(packet.read_bits(8U));
+    return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits));
 }
 
 struct SmokeClient {

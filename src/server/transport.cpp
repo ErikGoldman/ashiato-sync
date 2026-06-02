@@ -52,9 +52,9 @@ void ReplicationServer::send_connect_response(ClientState& client) {
     }
     ashiato::BitBuffer packet;
     packet.reserve_bytes(options_.mtu_bytes);
-    packet.push_bits(protocol::server_connect_response_message, 8U);
-    packet.push_bool(true);
-    packet.push_unsigned_bits(client.id, 64U);
+    packet.write_bits(protocol::server_connect_response_message, protocol::message_bits);
+    packet.write_bool(true);
+    packet.write_unsigned_bits(client.id, protocol::client_id_bits);
     try {
         options_.transport(client.peer, packet);
     } catch (const std::exception& ex) {
@@ -65,7 +65,7 @@ void ReplicationServer::send_connect_response(ClientState& client) {
 }
 
 void ReplicationServer::send_pong(
-    ClientId peer,
+    ClientState& client,
     std::uint32_t sequence,
     SyncFrame server_receive_frame,
     std::uint16_t server_receive_subframe) {
@@ -79,16 +79,19 @@ void ReplicationServer::send_pong(
         protocol::frame_subframe_scale - 1U));
     ashiato::BitBuffer packet;
     packet.reserve_bytes(options_.mtu_bytes);
-    packet.push_bits(protocol::server_pong_message, 8U);
-    packet.push_bits(sequence, 32U);
-    packet.push_bits(server_receive_frame, 32U);
-    packet.push_bits(server_receive_subframe, protocol::frame_subframe_bits);
-    packet.push_bits(frame_, 32U);
-    packet.push_bits(server_subframe, protocol::frame_subframe_bits);
+    packet.write_bits(protocol::server_pong_message, protocol::message_bits);
+    packet.write_bits(sequence, 32U);
+    packet.write_bits(server_receive_frame, 32U);
+    packet.write_bits(server_receive_subframe, protocol::frame_subframe_bits);
+    packet.write_bits(frame_, 32U);
+    packet.write_bits(server_subframe, protocol::frame_subframe_bits);
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+    trace_outgoing_pong_packet(client, sequence, server_receive_frame, frame_);
+#endif
     try {
-        options_.transport(peer, packet);
+        options_.transport(client.peer, packet);
     } catch (const std::exception& ex) {
-        log_server_error(peer, "transport_error_pong", ex.what());
+        log_server_error(client.peer, "transport_error_pong", ex.what());
         throw;
     }
 }

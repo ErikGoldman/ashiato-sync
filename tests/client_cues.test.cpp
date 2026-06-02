@@ -12,22 +12,38 @@
 using namespace ashiato_sync_tests;
 
 namespace {
+struct RuntimeTestCue {
+    std::int32_t id = 0;
+};
+
+bool deserialize_runtime_test_cue(
+    ashiato::sync::SyncCueTypeId,
+    void*,
+    ashiato::BitBuffer& payload,
+    ashiato::sync::CueValue& out,
+    ashiato::ComponentSerializationContext&) {
+    out.emplace<RuntimeTestCue>(RuntimeTestCue{static_cast<std::int32_t>(payload.read_bits(16U))});
+    return true;
+}
+
 bool play_runtime_test_cue(
     ashiato::sync::SyncCueTypeId,
     void*,
     ashiato::Registry& registry,
     ashiato::Entity owner,
-    const ashiato::BitBuffer& payload,
+    const void* value,
     float late_seconds,
-    ashiato::sync::SyncFrame frame,
-    ashiato::ComponentSerializationContext&) {
-    ashiato::BitBuffer copy = payload;
+    ashiato::sync::SyncFrame frame) {
+    const RuntimeTestCue* cue = static_cast<const RuntimeTestCue*>(value);
+    if (cue == nullptr) {
+        return false;
+    }
     if (!registry.contains<CuePlayback>(owner)) {
         registry.add<CuePlayback>(owner);
     }
     CuePlayback& playback = registry.write<CuePlayback>(owner);
     ++playback.plays;
-    playback.last_id = static_cast<std::int32_t>(copy.read_bits(16U));
+    playback.last_id = cue->id;
     playback.last_late_seconds = late_seconds;
     playback.last_frame = frame;
     return true;
@@ -38,8 +54,7 @@ bool rollback_runtime_test_cue(
     void*,
     ashiato::Registry& registry,
     ashiato::Entity owner,
-    const ashiato::BitBuffer&,
-    ashiato::ComponentSerializationContext&) {
+    const void*) {
     if (!registry.contains<CuePlayback>(owner)) {
         registry.add<CuePlayback>(owner);
     }
@@ -50,10 +65,11 @@ bool rollback_runtime_test_cue(
 bool equal_runtime_test_cue(
     ashiato::sync::SyncCueTypeId,
     void*,
-    const ashiato::BitBuffer& lhs,
-    const ashiato::BitBuffer& rhs,
-    ashiato::ComponentSerializationContext&) {
-    return lhs == rhs;
+    const void* lhs,
+    const void* rhs) {
+    const RuntimeTestCue* left = static_cast<const RuntimeTestCue*>(lhs);
+    const RuntimeTestCue* right = static_cast<const RuntimeTestCue*>(rhs);
+    return left != nullptr && right != nullptr && left->id == right->id;
 }
 }
 
@@ -61,6 +77,7 @@ TEST_CASE("runtime cue ops register by key and raw cues enqueue") {
     ashiato::Registry registry;
     ashiato::sync::SyncCueOps ops;
     ops.name = "RuntimeCue";
+    ops.deserialize_into = &deserialize_runtime_test_cue;
     ops.play = &play_runtime_test_cue;
     ops.rollback = &rollback_runtime_test_cue;
     ops.equals = &equal_runtime_test_cue;
@@ -74,7 +91,7 @@ TEST_CASE("runtime cue ops register by key and raw cues enqueue") {
 
     const ashiato::Entity entity = registry.create();
     ashiato::BitBuffer payload;
-    payload.push_bits(44, 16U);
+    payload.write_bits(44, 16U);
     REQUIRE(registry.write<ashiato::sync::CueDispatcher>().emit_raw(
         registry.get<ashiato::sync::SyncSettings>(),
         3,
@@ -150,6 +167,49 @@ TEST_CASE("replicated snap cues play once with late time and stop resending afte
     packets.clear();
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(packets.empty());
+}
+
+TEST_CASE("replicated snap cues are sentinel-delimited without the old count cap") {
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato_sync_tests::define_position_archetype(server_registry);
+    ashiato::sync::register_sync_cue<TestCue>(server_registry);
+    const ashiato::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
+
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+    constexpr int cue_count = 20;
+    for (int cue_index = 0; cue_index < cue_count; ++cue_index) {
+        REQUIRE(ashiato_sync_tests::emit_test_cue(
+            server_registry,
+            server_entity,
+            1,
+            TestCue{cue_index},
+            1.0f));
+    }
+    server.tick(server_registry, server.options().fixed_dt_seconds);
+    REQUIRE(packets.size() == 1);
+
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype == server_archetype);
+    client_registry.register_component<CuePlayback>("CuePlayback");
+    ashiato::sync::register_sync_cue<TestCue>(client_registry);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
+
+    REQUIRE(receive_at_local_frame(client, client_registry, packets[0], 10));
+    const ashiato::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
+    REQUIRE(client_registry.contains<CuePlayback>(local));
+    REQUIRE(client_registry.get<CuePlayback>(local).plays == cue_count);
+    REQUIRE(client_registry.get<CuePlayback>(local).last_id == cue_count - 1);
 }
 
 TEST_CASE("buffered cues play once when their target frame applies") {

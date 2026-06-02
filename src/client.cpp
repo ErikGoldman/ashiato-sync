@@ -91,6 +91,45 @@ std::uint32_t frame_range_count(const ReplicationClientClock::FrameRange& range)
     return range.empty() || range.last < range.first ? 0U : range.last - range.first + 1U;
 }
 
+const SyncComponentOps* find_update_component_ops(
+    const SyncSettings& settings,
+    SyncArchetypeId archetype,
+    ashiato::Entity component,
+    SyncComponentSerializerId serializer) {
+    if (archetype.value < settings.archetypes.size()) {
+        const SyncArchetype& definition = settings.archetypes[archetype.value];
+        for (std::size_t component_index = 0; component_index < definition.components.size(); ++component_index) {
+            if (component_index < definition.component_ops.size() &&
+                definition.components[component_index].component == component) {
+                return &definition.component_ops[component_index];
+            }
+        }
+    }
+    if (serializer.value < settings.component_serializers.size() &&
+        settings.component_serializers[serializer.value].serialization.component == component) {
+        return &settings.component_serializers[serializer.value];
+    }
+    const auto found_ops = settings.component_ops.find(component.value);
+    return found_ops != settings.component_ops.end() ? &found_ops->second : nullptr;
+}
+
+bool dequantize_component_update(
+    const SyncSettings& settings,
+    SyncArchetypeId archetype,
+    const ReplicatedComponentUpdate& update,
+    void* out) {
+    const SyncComponentOps* ops =
+        find_update_component_ops(settings, archetype, update.component, update.serializer);
+    if (ops == nullptr || ops->serialization.dequantize == nullptr) {
+        return false;
+    }
+    if (update.bytes.size() != ops->serialization.quantized_size) {
+        return false;
+    }
+    ops->serialization.dequantize(update.bytes.data(), out);
+    return true;
+}
+
 }  // namespace
 
 struct ReplicationClient::RegistryFrameApplyInfo {
@@ -120,16 +159,7 @@ bool ReplicatedEntityUpdateView::try_get(
     }
 
     const SyncSettings& settings = registry.get<SyncSettings>();
-    const auto found_ops = settings.component_ops.find(component.value);
-    if (found_ops == settings.component_ops.end() || found_ops->second.serialization.dequantize == nullptr) {
-        return false;
-    }
-
-    if (found->bytes.size() != found_ops->second.serialization.quantized_size) {
-        return false;
-    }
-    found_ops->second.serialization.dequantize(found->bytes.data(), out);
-    return true;
+    return dequantize_component_update(settings, archetype, *found, out);
 }
 
 bool ReplicatedEntityUpdateView::has_tag(const ashiato::Registry& registry, ashiato::Entity tag) const {
@@ -168,16 +198,7 @@ bool FractionalTickSample::try_get_sampled_value(
     }
 
     const SyncSettings& settings = registry.get<SyncSettings>();
-    const auto found_ops = settings.component_ops.find(component.value);
-    if (found_ops == settings.component_ops.end() || found_ops->second.serialization.dequantize == nullptr) {
-        return false;
-    }
-
-    if (found->bytes.size() != found_ops->second.serialization.quantized_size) {
-        return false;
-    }
-    found_ops->second.serialization.dequantize(found->bytes.data(), out);
-    return true;
+    return dequantize_component_update(settings, invalid_sync_archetype_id, *found, out);
 }
 
 ReplicationClient::ReplicationClient(ashiato::Registry& registry, ReplicationClientOptions options)
@@ -240,7 +261,7 @@ void ReplicationClient::set_log_level(LogLevel level) {
     }
 }
 
-void ReplicationClient::set_client_id(ashiato::Registry& registry, ClientId client) noexcept {
+void ReplicationClient::set_client_id(ashiato::Registry& registry, ClientId client) {
     client_id_ = client;
     SyncSettings& settings = registry.write<SyncSettings>();
     settings.local_client = client;
@@ -284,7 +305,7 @@ bool ReplicationClient::receive(ashiato::Registry& registry, ashiato::BitBuffer 
     try {
         detail::BitReader reader(packet);
         std::uint8_t message = 0;
-        if (!reader.read_bits(8U, message)) {
+        if (!reader.read_bits(protocol::message_bits, message)) {
             log_server_packet_warning(0, "missing_message_id", "packet_missing_message_id");
             return false;
         }
@@ -488,7 +509,10 @@ void ReplicationClient::receive_packet(ashiato::BitBuffer packet) {
     session_transport_->inbound_packets.push_back(std::move(packet));
 }
 
-bool ReplicationClient::tick(ashiato::Registry& registry, double dt_seconds, ashiato::RunJobsOptions prediction_options) {
+bool ReplicationClient::tick(
+    ashiato::Registry& registry,
+    double dt_seconds,
+    const ashiato::RunJobsOptions& prediction_options) {
     if (dt_seconds < 0.0 || !std::isfinite(dt_seconds)) {
         return false;
     }
@@ -545,7 +569,7 @@ void ReplicationClient::apply_buffered_frames_to_ashiato(
 bool ReplicationClient::run_predicted_frames(
     ashiato::Registry& registry,
     const ReplicationClientClock::FrameRange& frames,
-    ashiato::RunJobsOptions options) {
+    const ashiato::RunJobsOptions& options) {
     for (SyncFrame frame = frames.first; !frames.empty() && frame <= frames.last; ++frame) {
         const SyncSettings& settings = registry.get<SyncSettings>();
         (void)record_input_frame(registry, settings, frame);
@@ -598,10 +622,8 @@ const FractionalTickSampleBuffer& ReplicationClient::fractional_tick_frame(const
     if (display_dt > 0.0f) {
         blend_snap_errors(registry.get<SyncSettings>(), display_dt);
     }
-    if (sample_fractional_tick_frame(registry, clock_.display_target_frame(), fractional_tick_scratch_)) {
-        fractional_tick_frame_.entities.swap(fractional_tick_scratch_.entities);
-        fractional_tick_scratch_.clear();
-    } else if (fractional_tick_frame_.entities.empty()) {
+    if (sample_fractional_tick_frame(registry, clock_.display_target_frame(), fractional_tick_scratch_) ||
+        fractional_tick_frame_.entities.empty()) {
         fractional_tick_frame_.entities.swap(fractional_tick_scratch_.entities);
         fractional_tick_scratch_.clear();
     }
@@ -1212,8 +1234,12 @@ bool ReplicationClient::apply_snap_sample(
                         }
                     } else if (found_error == state.visual.snap_errors.end()) {
                         state.visual.snap_errors.push_back(
-                            client_detail::EntityComponentError{replication.component, std::move(error)});
+                            client_detail::EntityComponentError{
+                                replication.component,
+                                replication.serializer,
+                                std::move(error)});
                     } else {
+                        found_error->serializer = replication.serializer;
                         found_error->bytes = std::move(error);
                     }
                 }
@@ -1413,8 +1439,19 @@ bool ReplicationClient::has_predicted_entities() const noexcept {
 }
 
 const ashiato::JobGraph& ReplicationClient::resim_job_graph(ashiato::Registry& registry) {
-    if (!resim_job_graph_valid_) {
-        resim_job_graph_ = registry.compile_job_graph(simulation_jobs_);
+    register_components(registry);
+    detail::register_predictive_simulation_job_tag(registry);
+
+    std::vector<ashiato::Entity> predictive_jobs;
+    registry.view<>()
+        .with_tags({registry.job_tag(), registry.component<PredictiveSimulationJob>()})
+        .each([&predictive_jobs](ashiato::Entity job) {
+            predictive_jobs.push_back(job);
+        });
+
+    if (!resim_job_graph_valid_ || predictive_jobs != resim_job_graph_jobs_) {
+        resim_job_graph_jobs_ = std::move(predictive_jobs);
+        resim_job_graph_ = registry.compile_job_graph(resim_job_graph_jobs_);
         resim_job_graph_valid_ = true;
     }
     return resim_job_graph_;
@@ -1430,9 +1467,10 @@ void ReplicationClient::blend_snap_errors(const SyncSettings& settings, float dt
         EntityState& state = entity_store_->state_unchecked(entity_index);
 
         for (client_detail::EntityComponentError& error : state.visual.snap_errors) {
-            const auto found_ops = settings.component_ops.find(error.component.value);
-            if (found_ops == settings.component_ops.end() || found_ops->second.blend_out_error == nullptr ||
-                !found_ops->second.blend_out_error(error.bytes, dt_seconds, error.bytes)) {
+            const SyncComponentOps* ops =
+                find_update_component_ops(settings, state.identity.archetype, error.component, error.serializer);
+            if (ops == nullptr || ops->blend_out_error == nullptr ||
+                !ops->blend_out_error(error.bytes, dt_seconds, error.bytes)) {
                 error.bytes.clear();
             }
         }

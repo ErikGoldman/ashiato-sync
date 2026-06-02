@@ -68,12 +68,12 @@ struct SyncComponentTraits<benchmarks::DeltaPosition> {
 
     static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         if (previous == nullptr) {
-            out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
+            out.write_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
             return;
         }
 
-        out.push_bits(current.x - previous->x, 8U);
-        out.push_bits(current.y - previous->y, 8U);
+        out.write_bits(current.x - previous->x, 8U);
+        out.write_bits(current.y - previous->y, 8U);
     }
 
     static bool deserialize(ashiato::BitBuffer& in, const Quantized* previous, Quantized& out, ashiato::ComponentSerializationContext&) {
@@ -115,12 +115,12 @@ struct SyncComponentTraits<benchmarks::LargePayload> {
 
     static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         if (previous == nullptr) {
-            out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
+            out.write_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
             return;
         }
 
         for (int index = 0; index < 8; ++index) {
-            out.push_bits(current.values[index] - previous->values[index], 8U);
+            out.write_bits(current.values[index] - previous->values[index], 8U);
         }
     }
 
@@ -152,7 +152,7 @@ struct SyncComponentTraits<benchmarks::TinyFlags> {
 
     static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
         const std::uint8_t base = previous == nullptr ? 0U : previous->bits;
-        out.push_bits(static_cast<std::int32_t>(current.bits ^ base), 4U);
+        out.write_bits(static_cast<std::int32_t>(current.bits ^ base), 4U);
     }
 
     static bool deserialize(ashiato::BitBuffer& in, const Quantized* previous, Quantized& out, ashiato::ComponentSerializationContext&) {
@@ -406,13 +406,13 @@ inline void ack_packets(
     const std::vector<std::pair<ClientId, ashiato::BitBuffer>>& packets) {
     for (const auto& sent : packets) {
         ashiato::BitBuffer packet = sent.second;
-        benchmark::DoNotOptimize(packet.read_bits(8U));
+        benchmark::DoNotOptimize(packet.read_bits(ashiato::sync::protocol::message_bits));
         benchmark::DoNotOptimize(packet.read_bits(32U));
         const auto packet_id = static_cast<std::uint32_t>(packet.read_bits(protocol::server_packet_id_bits));
         ashiato::BitBuffer ack;
-        ack.push_bits(protocol::client_ack_message, 8U);
-        ack.push_bits(1, 16U);
-        ack.push_bits(packet_id, protocol::server_packet_id_bits);
+        ack.write_bits(protocol::client_ack_message, ashiato::sync::protocol::message_bits);
+        ack.write_bits(1, protocol::ack_count_bits);
+        ack.write_bits(packet_id, protocol::server_packet_id_bits);
         benchmark::DoNotOptimize(server.process_packet(registry, sent.first, ack));
     }
 }

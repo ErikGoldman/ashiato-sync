@@ -748,8 +748,8 @@ void BM_BitBufferUnalignedBytes(benchmark::State& state) {
     for (auto _ : state) {
         ashiato::BitBuffer buffer;
         buffer.reserve_bytes(static_cast<std::size_t>(byte_count) + 1U);
-        buffer.push_bool(true);
-        buffer.push_bytes(bytes.data(), bytes.size());
+        buffer.write_bool(true);
+        buffer.write_bytes(bytes.data(), bytes.size());
         benchmark::DoNotOptimize(buffer.byte_size());
     }
 
@@ -760,9 +760,9 @@ void BM_BitBufferUnalignedReadUnsigned(benchmark::State& state) {
     const int bit_count = static_cast<int>(state.range(0));
     ashiato::BitBuffer source;
     source.reserve_bytes(static_cast<std::size_t>(bit_count + 8));
-    source.push_bool(true);
+    source.write_bool(true);
     for (int index = 0; index < bit_count; ++index) {
-        source.push_unsigned_bits(0xfedcba9876543210ULL + static_cast<std::uint64_t>(index), 64U);
+        source.write_unsigned_bits(0xfedcba9876543210ULL + static_cast<std::uint64_t>(index), 64U);
     }
 
     std::uint64_t sum = 0;
@@ -783,13 +783,13 @@ void BM_BitBufferAppendBits(benchmark::State& state) {
     ashiato::BitBuffer source;
     source.reserve_bytes(ashiato::sync::protocol::bytes_for_bits(static_cast<std::size_t>(bit_count)));
     for (int bit = 0; bit < bit_count; ++bit) {
-        source.push_bool((bit & 1) != 0);
+        source.write_bool((bit & 1) != 0);
     }
 
     for (auto _ : state) {
         ashiato::BitBuffer destination;
         destination.reserve_bytes(source.byte_size());
-        destination.push_buffer_bits(source);
+        destination.write_buffer_bits(source);
         benchmark::DoNotOptimize(destination.byte_size());
     }
 
@@ -847,7 +847,7 @@ void BM_ServerProcessInputPacket(benchmark::State& state) {
     }
     std::vector<ashiato::BitBuffer> packets = client.drain_packets();
     auto input_packet = std::find_if(packets.begin(), packets.end(), [](ashiato::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
+        return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_input_message;
     });
     if (input_packet == packets.end()) {
         state.SkipWithError("client did not emit input packet");
@@ -904,7 +904,7 @@ void BM_ServerTickInputUpsert(benchmark::State& state) {
     server.add_client(1);
     for (const ashiato::BitBuffer& packet : packets) {
         ashiato::BitBuffer copy = packet;
-        if (static_cast<std::uint8_t>(copy.read_bits(8U)) == ashiato::sync::protocol::client_input_message) {
+        if (static_cast<std::uint8_t>(copy.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_input_message) {
             benchmark::DoNotOptimize(server.process_packet(registry, 1, packet));
         }
     }

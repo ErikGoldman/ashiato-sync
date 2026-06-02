@@ -20,12 +20,12 @@ bool receive_pong_with_server_frame(
     ashiato::sync::SyncFrame local_frame,
     ashiato::sync::SyncFrame server_frame) {
     ashiato::BitBuffer pong;
-    pong.push_bits(ashiato::sync::protocol::server_pong_message, 8U);
-    pong.push_bits(ping.sequence, 32U);
-    pong.push_bits(server_frame, 32U);
-    pong.push_bits(0U, ashiato::sync::protocol::frame_subframe_bits);
-    pong.push_bits(server_frame, 32U);
-    pong.push_bits(0U, ashiato::sync::protocol::frame_subframe_bits);
+    pong.write_bits(ashiato::sync::protocol::server_pong_message, ashiato::sync::protocol::message_bits);
+    pong.write_bits(ping.sequence, 32U);
+    pong.write_bits(server_frame, 32U);
+    pong.write_bits(0U, ashiato::sync::protocol::frame_subframe_bits);
+    pong.write_bits(server_frame, 32U);
+    pong.write_bits(0U, ashiato::sync::protocol::frame_subframe_bits);
     return receive_at_local_frame(client, registry, std::move(pong), local_frame);
 }
 
@@ -68,7 +68,7 @@ TEST_CASE("server update lag fast recovery pre-fills future input frames") {
     REQUIRE(client.timing_stats().measured_prediction_lead_frames == Catch::Approx(15.0f));
     std::vector<ashiato::BitBuffer> packets = client.drain_packets();
     auto input_packet = std::find_if(packets.begin(), packets.end(), [](ashiato::BitBuffer packet) {
-        return static_cast<std::uint8_t>(packet.read_bits(8U)) == ashiato::sync::protocol::client_input_message;
+        return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) == ashiato::sync::protocol::client_input_message;
     });
     REQUIRE(input_packet != packets.end());
     const ClientInputPacket input = read_client_input_header(*input_packet);
@@ -289,8 +289,8 @@ TEST_CASE("frame-aware receive failures do not update timing stats") {
     const ashiato::sync::ReplicationClientTimingStats baseline = client.timing_stats();
 
     ashiato::BitBuffer truncated_header;
-    truncated_header.push_bits(ashiato::sync::protocol::server_update_message, 8U);
-    truncated_header.push_bits(2, 32U);
+    truncated_header.write_bits(ashiato::sync::protocol::server_update_message, ashiato::sync::protocol::message_bits);
+    truncated_header.write_bits(2, 32U);
     REQUIRE_FALSE(receive_at_local_frame(client, client_registry, truncated_header, 4));
     REQUIRE(client.timing_stats().sample_count == baseline.sample_count);
     REQUIRE(client.timing_stats().buffered_time_dilation == Catch::Approx(baseline.buffered_time_dilation));
@@ -410,9 +410,9 @@ TEST_CASE("client tick caps predicted backlog when configured") {
     const ashiato::Entity server_entity{42};
 
     ashiato::BitBuffer accepted;
-    accepted.push_bits(ashiato::sync::protocol::server_connect_response_message, 8U);
-    accepted.push_bool(true);
-    accepted.push_unsigned_bits(1, 64U);
+    accepted.write_bits(ashiato::sync::protocol::server_connect_response_message, ashiato::sync::protocol::message_bits);
+    accepted.write_bool(true);
+    accepted.write_unsigned_bits(1, 64U);
     REQUIRE(client.receive(client_registry, accepted));
     REQUIRE(client.connection_state() == ashiato::sync::ReplicationClientConnectionState::Accepted);
 

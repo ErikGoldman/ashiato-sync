@@ -14,6 +14,78 @@ using ashiato_sync_tests::Secret;
 using ashiato_sync_tests::Visible;
 using ashiato_sync_tests::read_networked_payload;
 
+namespace {
+
+struct ProfiledTransform {
+    int x = 0;
+    int y = 0;
+};
+
+struct ProfiledTransformXOnlySettings {
+    static constexpr bool x_only = true;
+};
+
+}  // namespace
+
+namespace ashiato::sync {
+
+template <>
+struct SyncComponentTraits<ProfiledTransform> {
+    struct Settings {
+        static constexpr bool x_only = false;
+    };
+
+    struct Quantized {
+        std::int32_t x = 0;
+        std::int32_t y = 0;
+    };
+
+    template <typename SettingsT = Settings>
+    struct Serializer {
+        static Quantized quantize(const ProfiledTransform& value) {
+            return Quantized{value.x, value.y};
+        }
+
+        static ProfiledTransform dequantize(const Quantized& value) {
+            return ProfiledTransform{value.x, value.y};
+        }
+
+        static void serialize(
+            const Quantized*,
+            const Quantized& current,
+            ashiato::BitBuffer& out,
+            ashiato::ComponentSerializationContext&) {
+            out.write_bits(current.x, 8U);
+            if constexpr (!SettingsT::x_only) {
+                out.write_bits(current.y, 8U);
+            }
+        }
+
+        static bool deserialize(
+            ashiato::BitBuffer& in,
+            const Quantized*,
+            Quantized& out,
+            ashiato::ComponentSerializationContext&) {
+            if (in.remaining_bits() < 8U) {
+                return false;
+            }
+            out.x = static_cast<std::int32_t>(in.read_bits(8U));
+            if constexpr (SettingsT::x_only) {
+                out.y = 0;
+                return true;
+            } else {
+                if (in.remaining_bits() < 8U) {
+                    return false;
+                }
+                out.y = static_cast<std::int32_t>(in.read_bits(8U));
+                return true;
+            }
+        }
+    };
+};
+
+}  // namespace ashiato::sync
+
 static_assert(
     std::is_nothrow_move_constructible<ashiato::sync::SyncSettings>::value,
     "SyncSettings must satisfy Ashiato component storage requirements");
@@ -34,6 +106,39 @@ TEST_CASE("sync components register into the Ashiato registry") {
     REQUIRE(settings.local_client == ashiato::sync::invalid_client_id);
     REQUIRE(settings.archetypes.empty());
     REQUIRE(registry.get<ashiato::sync::SyncAuthority>().is_authoritative());
+}
+
+TEST_CASE("sync singleton components expose debug fields") {
+    ashiato::Registry registry;
+
+    ashiato::sync::register_components(registry);
+
+    const std::vector<ashiato::ComponentField>* settings_fields =
+        registry.component_fields(registry.component<ashiato::sync::SyncSettings>());
+    REQUIRE(settings_fields != nullptr);
+    REQUIRE(settings_fields->size() == 4U);
+    CHECK((*settings_fields)[0].name == "role");
+    CHECK((*settings_fields)[0].type == registry.primitive_type(ashiato::PrimitiveType::I32));
+    CHECK((*settings_fields)[1].name == "local_client");
+    CHECK((*settings_fields)[1].type == registry.primitive_type(ashiato::PrimitiveType::U8));
+    CHECK((*settings_fields)[2].name == "input_component.value");
+    CHECK((*settings_fields)[2].type == registry.primitive_type(ashiato::PrimitiveType::U64));
+    CHECK((*settings_fields)[3].name == "fixed_dt_seconds");
+    CHECK((*settings_fields)[3].type == registry.primitive_type(ashiato::PrimitiveType::F64));
+
+    const std::vector<ashiato::ComponentField>* frame_fields =
+        registry.component_fields(registry.component<ashiato::sync::FrameInfo>());
+    REQUIRE(frame_fields != nullptr);
+    REQUIRE(frame_fields->size() == 1U);
+    CHECK((*frame_fields)[0].name == "frame");
+    CHECK((*frame_fields)[0].type == registry.primitive_type(ashiato::PrimitiveType::U32));
+
+    const std::vector<ashiato::ComponentField>* authority_fields =
+        registry.component_fields(registry.component<ashiato::sync::SyncAuthority>());
+    REQUIRE(authority_fields != nullptr);
+    REQUIRE(authority_fields->size() == 1U);
+    CHECK((*authority_fields)[0].name == "authoritative");
+    CHECK((*authority_fields)[0].type == registry.primitive_type(ashiato::PrimitiveType::Bool));
 }
 
 TEST_CASE("fractional tick sample marker is stored as a component entity tag") {
@@ -224,6 +329,57 @@ TEST_CASE("sync component traits provide type-erased quantization and serializat
     REQUIRE(registry.contains<NetworkedPosition>(entity));
     REQUIRE(registry.remove(entity, position_component));
     REQUIRE_FALSE(registry.contains<NetworkedPosition>(entity));
+}
+
+TEST_CASE("sync component serializers support compile-time settings profiles per archetype") {
+    ashiato::Registry registry;
+    const ashiato::Entity transform =
+        ashiato::sync::register_sync_component<ProfiledTransform>(registry, "ProfiledTransform");
+    using TransformSync = ashiato::sync::SyncComponentTraits<ProfiledTransform>;
+    using XOnlySerializer = TransformSync::Serializer<ProfiledTransformXOnlySettings>;
+    const ashiato::sync::SyncComponentSerializerId x_only =
+        ashiato::sync::register_sync_component_serializer<ProfiledTransform, XOnlySerializer>(
+            registry,
+            "ProfiledTransform.XOnly");
+
+    const ashiato::sync::SyncArchetypeId full_archetype = ashiato::sync::define_archetype(
+        registry,
+        "Full",
+        {ashiato::sync::replicate<ProfiledTransform>(registry)});
+    const ashiato::sync::SyncArchetypeId x_only_archetype = ashiato::sync::define_archetype(
+        registry,
+        "XOnly",
+        {ashiato::sync::replicate<ProfiledTransform>(registry, x_only)});
+
+    const ashiato::sync::SyncSettings& settings = registry.get<ashiato::sync::SyncSettings>();
+    REQUIRE(settings.archetypes[full_archetype.value].components[0].component == transform);
+    REQUIRE(settings.archetypes[x_only_archetype.value].components[0].component == transform);
+    REQUIRE(settings.archetypes[x_only_archetype.value].components[0].serializer == x_only);
+
+    const ProfiledTransform value{3, 9};
+    std::array<std::uint8_t, sizeof(TransformSync::Quantized)> quantized{};
+    const ashiato::sync::SyncComponentOps& full_ops =
+        settings.archetypes[full_archetype.value].component_ops[0];
+    const ashiato::sync::SyncComponentOps& x_only_ops =
+        settings.archetypes[x_only_archetype.value].component_ops[0];
+    full_ops.serialization.quantize(&value, quantized.data());
+
+    ashiato::ComponentSerializationContext context;
+    ashiato::BitBuffer full_payload;
+    full_ops.serialization.serialize(nullptr, quantized.data(), full_payload, context);
+    REQUIRE(full_payload.bit_size() == 16U);
+
+    ashiato::BitBuffer x_only_payload;
+    x_only_ops.serialization.serialize(nullptr, quantized.data(), x_only_payload, context);
+    REQUIRE(x_only_payload.bit_size() == 8U);
+
+    x_only_payload.reset_read();
+    std::array<std::uint8_t, sizeof(TransformSync::Quantized)> decoded{};
+    REQUIRE(x_only_ops.serialization.deserialize(x_only_payload, nullptr, decoded.data(), context));
+    ProfiledTransform dequantized;
+    x_only_ops.serialization.dequantize(decoded.data(), &dequantized);
+    REQUIRE(dequantized.x == 3);
+    REQUIRE(dequantized.y == 0);
 }
 
 TEST_CASE("replication configuration is a direct Ashiato component") {

@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <utility>
 #include <vector>
@@ -409,7 +410,7 @@ TEST_CASE("ktrace stream reader exposes header metadata and streams records") {
     REQUIRE(header.version == ashiato::sync::ktrace_format_version);
     REQUIRE(header.role == ashiato::sync::SyncTraceRole::Client);
     REQUIRE(header.client == client_id);
-    REQUIRE(header.data_offset > 0U);
+    REQUIRE(header.data_offset == 31U);
     REQUIRE(header.file_size == std::filesystem::file_size(client_path));
     REQUIRE(reader.position() == header.data_offset);
 
@@ -427,6 +428,50 @@ TEST_CASE("ktrace stream reader exposes header metadata and streams records") {
     REQUIRE(record.event.type == ashiato::sync::SyncTraceEventType::ComponentReceived);
     REQUIRE(record.event.frame == 8);
 
+    REQUIRE_FALSE(reader.read_next(record));
+}
+
+TEST_CASE("ktrace stream reader accepts short client id headers from recent captures") {
+    const std::string directory = "/tmp/ashiato_sync_ktrace_short_client_header_test";
+    std::filesystem::remove_all(directory);
+
+    const ashiato::sync::ClientId client_id = 4;
+    const ashiato::Entity local_entity{77};
+    const ashiato::Entity component{88};
+
+    {
+        ashiato::sync::KTraceDirectoryWriter writer({directory, 64, 32, true});
+
+        ashiato::sync::SyncTraceEvent received;
+        received.type = ashiato::sync::SyncTraceEventType::ComponentReceived;
+        received.role = ashiato::sync::SyncTraceRole::Client;
+        received.client = client_id;
+        received.frame = 11;
+        received.local_entity = local_entity;
+        received.component = component;
+        writer.tracer().trace(received);
+        writer.close();
+    }
+
+    const std::filesystem::path client_path = std::filesystem::path(directory) / "4.ktrace";
+    std::ifstream in(client_path, std::ios::binary);
+    std::vector<char> bytes(
+        (std::istreambuf_iterator<char>(in)),
+        std::istreambuf_iterator<char>());
+    REQUIRE(bytes.size() > 31U);
+    bytes.erase(bytes.begin() + 20, bytes.begin() + 27);
+    std::ofstream out(client_path, std::ios::binary | std::ios::trunc);
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    out.close();
+
+    ashiato::sync::KTraceStreamReader reader(client_path.string());
+    REQUIRE(reader.header().client == client_id);
+    REQUIRE(reader.header().data_offset == 24U);
+
+    ashiato::sync::KTraceRecord record;
+    REQUIRE(reader.read_next(record));
+    REQUIRE(record.event.type == ashiato::sync::SyncTraceEventType::ComponentReceived);
+    REQUIRE(record.event.frame == 11);
     REQUIRE_FALSE(reader.read_next(record));
 }
 

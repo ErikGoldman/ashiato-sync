@@ -65,7 +65,7 @@ public:
     };
 
     explicit ReplicationServer(ashiato::Registry& registry, ReplicationServerOptions options = {});
-    ~ReplicationServer();
+    ~ReplicationServer() override;
     ReplicationServer(const ReplicationServer& other) = delete;
     ReplicationServer& operator=(const ReplicationServer& other) = delete;
     ReplicationServer(ReplicationServer&& other) noexcept = delete;
@@ -98,15 +98,16 @@ public:
     bool has_client(ClientId client) const;
     std::size_t client_count() const noexcept;
     std::vector<ClientId> client_ids() const;
+    ClientEntityNetworkId client_entity_network_id(ClientId client, ashiato::Entity entity) const noexcept;
 
     void rediscover_all_replicated_entities(ashiato::Registry& registry);
     bool is_replicated(ashiato::Entity entity) const;
     std::size_t replicated_count() const noexcept;
 
     bool acknowledge_entity(ClientId client, ashiato::Entity entity, SyncFrame frame);
-    void receive_packet(ClientId client, ashiato::BitBuffer packet);
-    bool process_packet(ClientId client, ashiato::BitBuffer packet);
-    bool process_packet(ashiato::Registry& registry, ClientId client, ashiato::BitBuffer packet);
+    void receive_packet(PeerId peer, ashiato::BitBuffer packet);
+    bool process_packet(PeerId peer, ashiato::BitBuffer packet);
+    bool process_packet(ashiato::Registry& registry, PeerId peer, ashiato::BitBuffer packet);
     template <typename T>
     bool set_local_input(ashiato::Registry& registry, const T& input) {
         register_components(registry);
@@ -193,7 +194,7 @@ public:
     ReplicationSendResult flush_client_updates(ashiato::Registry& registry, server_detail::ServerClientReplicator& client);
     std::size_t charged_packet_bytes(std::size_t payload_bytes) const noexcept;
     void log_entity_update_exceeds_mtu(
-        ClientId peer,
+        PeerId peer,
         ClientId client,
         ashiato::Entity entity,
         SyncArchetypeId archetype,
@@ -266,7 +267,7 @@ private:
     void advance_client_idle_timers(double dt_seconds);
     void resend_pending_connect_responses(double dt_seconds);
     void disconnect_timed_out_clients(ashiato::Registry& registry);
-    void set_local_client_id(ashiato::Registry& registry, ClientId client) noexcept;
+    void set_local_client_id(ashiato::Registry& registry, ClientId client);
     std::uint32_t find_or_create_quantized_frame(
         const ashiato::Registry& registry,
         const SyncSettings& settings,
@@ -282,7 +283,7 @@ private:
         bool packet_valid = false;
         bool all_acknowledged = false;
     };
-    bool process_connect_request_packet(ClientId peer, ashiato::BitBuffer& packet);
+    bool process_connect_request_packet(PeerId peer, ashiato::BitBuffer& packet);
     bool process_message_from_connected_client(
         ashiato::Registry& registry,
         ClientState& client,
@@ -302,8 +303,8 @@ private:
     bool process_input_with_acks_packet(ashiato::Registry& registry, ClientState& client, ashiato::BitBuffer& packet);
     void detach_client_bandwidth_participant(ServerClientReplicator& replication);
     void log_info(const char* event, const std::string& fields) const;
-    void log_client_packet_warning(ClientId peer, std::uint8_t message, const char* reason_code, const char* reason_detail);
-    void log_server_error(ClientId peer, const char* event, const char* reason);
+    void log_client_packet_warning(PeerId peer, std::uint8_t message, const char* reason_code, const char* reason_detail);
+    void log_server_error(PeerId peer, const char* event, const char* reason);
     void push_client_inputs_to_ashiato(ashiato::Registry& registry);
     void acknowledge_cues(ClientEntityState& state, SyncFrame frame);
     bool same_quantized_frame_components(
@@ -316,13 +317,14 @@ private:
         std::uint16_t entity_count,
         const ashiato::BitBuffer& records,
         const std::vector<PacketAckRecord>& ack_records);
-    bool add_client_for_peer(ClientId peer, ClientId client, bool ready_for_updates);
+    bool add_client_for_peer(PeerId peer, ClientId client, bool ready_for_updates);
     bool add_client_state(ClientState state);
-    void notify_connection_event(ReplicationServerConnectionEvent event);
+    ClientId find_next_available_client_id() const;
+    void notify_connection_event(const ReplicationServerConnectionEvent& event);
     void create_client_replicator(ClientState& client);
     void send_connect_response(ClientState& client);
     void send_pong(
-        ClientId peer,
+        ClientState& client,
         std::uint32_t sequence,
         SyncFrame server_receive_frame,
         std::uint16_t server_receive_subframe);
@@ -344,6 +346,12 @@ private:
         const SyncComponentOps& ops);
 #ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     void trace_incoming_ack_packet(ServerClientReplicator& client, const std::vector<std::uint32_t>& acks) const;
+    void trace_incoming_ping_packet(ClientState& client, std::uint32_t sequence) const;
+    void trace_outgoing_pong_packet(
+        ClientState& client,
+        std::uint32_t sequence,
+        SyncFrame server_receive_frame,
+        SyncFrame server_send_frame) const;
     void trace_incoming_input_packet(
         ClientState& client,
         const std::vector<std::uint32_t>& acks,
@@ -372,7 +380,7 @@ private:
     std::unordered_map<std::uint32_t, std::uint32_t> entity_index_to_replicated_index_;
     std::vector<ClientState> clients_;
     std::unordered_map<ClientId, std::size_t> client_to_index_;
-    std::unordered_map<ClientId, std::size_t> peer_to_index_;
+    std::unordered_map<PeerId, std::size_t> peer_to_index_;
     ashiato::RegistryDirtyFrameBroadcaster registry_dirty_frame_broadcaster_;
     ashiato::RegistryDirtyFrameBroadcastSubscription server_dirty_frame_subscription_;
     std::shared_ptr<ServerRegistryDirtyFrameSubscription::State> registry_dirty_frame_listeners_;
@@ -381,7 +389,7 @@ private:
     std::vector<ServerDestroyedReplicatedSlot> post_tick_destroyed_slots_;
     std::shared_ptr<spdlog::logger> logger_;
     ObservabilityStats observability_stats_;
-    std::unordered_map<ClientId, std::uint32_t> warning_logs_by_peer_;
+    std::unordered_map<PeerId, std::uint32_t> warning_logs_by_peer_;
     mutable bool processing_client_packet_ = false;
     mutable bool server_error_logged_ = false;
     std::size_t active_replicated_count_ = 0;

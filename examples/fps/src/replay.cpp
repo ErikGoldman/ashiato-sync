@@ -107,7 +107,7 @@ struct FpsReplayServer::Session {
     Session(
         const FpsReplayRecorder& recorder,
         SocketHandle socket,
-        ashiato::sync::ClientId peer,
+        ashiato::sync::PeerId peer,
         const sockaddr_in& peer_address,
         ashiato::sync::ClientId victim_client,
         ashiato::sync::ReplicationServer* source_server,
@@ -135,7 +135,7 @@ struct FpsReplayServer::Session {
             accepted = victim_client;
             return true;
         };
-        options.transport = [this](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
+        options.transport = [this](ashiato::sync::PeerId, const ashiato::BitBuffer& packet) {
             send_packet(this->socket, address, packet);
         };
         server = std::make_unique<ashiato::sync::ReplicationServer>(registry, options);
@@ -145,11 +145,11 @@ struct FpsReplayServer::Session {
         (void)server->process_packet(registry, peer, connect_packet);
     }
 
-    void receive(ashiato::sync::ClientId peer, ashiato::BitBuffer packet) {
+    void receive(ashiato::sync::PeerId peer, ashiato::BitBuffer packet) {
         ashiato::BitBuffer copy = packet;
         std::uint8_t message = 0U;
-        if (copy.remaining_bits() >= 8U) {
-            message = static_cast<std::uint8_t>(copy.read_bits(8U));
+        if (copy.remaining_bits() >= ashiato::sync::protocol::message_bits) {
+            message = static_cast<std::uint8_t>(copy.read_bits(ashiato::sync::protocol::message_bits));
         }
         const bool ack = message == ashiato::sync::protocol::client_connect_ack_message;
         const bool processed = server->process_packet(registry, peer, std::move(packet));
@@ -315,12 +315,13 @@ void FpsReplayServer::on_server_registry_dirty_frame(const ashiato::sync::Server
 }
 
 bool FpsReplayServer::begin_session(
-    ashiato::sync::ClientId peer,
+    ashiato::sync::PeerId peer,
     const sockaddr_in& address,
     const ashiato::BitBuffer& packet) {
     ashiato::BitBuffer copy = packet;
-    if (copy.remaining_bits() < 8U ||
-        static_cast<std::uint8_t>(copy.read_bits(8U)) != ashiato::sync::protocol::client_connect_request_message) {
+    if (copy.remaining_bits() < ashiato::sync::protocol::message_bits ||
+        static_cast<std::uint8_t>(copy.read_bits(ashiato::sync::protocol::message_bits)) !=
+            ashiato::sync::protocol::client_connect_request_message) {
         return false;
     }
     std::string token;
@@ -356,13 +357,13 @@ void FpsReplayServer::tick(double dt_seconds) {
     ashiato::BitBuffer packet;
     sockaddr_in sender{};
     while (receive_packet(socket_, packet, &sender)) {
-        const ashiato::sync::ClientId peer = peer_id(sender);
+        const ashiato::sync::PeerId peer = peer_id(sender);
         ashiato::sync::ClientId requested_client = ashiato::sync::invalid_client_id;
         bool requests_newer_death = false;
         {
             ashiato::BitBuffer copy = packet;
-            if (copy.remaining_bits() >= 8U &&
-                static_cast<std::uint8_t>(copy.read_bits(8U)) ==
+            if (copy.remaining_bits() >= ashiato::sync::protocol::message_bits &&
+                static_cast<std::uint8_t>(copy.read_bits(ashiato::sync::protocol::message_bits)) ==
                     ashiato::sync::protocol::client_connect_request_message) {
                 std::string token;
                 if (ashiato::sync::protocol::read_string(copy, token) &&

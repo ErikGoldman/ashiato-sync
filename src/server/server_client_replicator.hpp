@@ -34,6 +34,9 @@ struct ClientEntityState {
         SyncCueTypeId type = 0;
         float relevance_seconds = 0.0f;
         ashiato::BitBuffer payload;
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
+        std::vector<ashiato::SerializationTraceScope> payload_trace_scopes;
+#endif
     };
 
     std::uint32_t baseline = invalid_quantized_frame_id;
@@ -123,9 +126,9 @@ struct ServerClientReplicator final : ServerRegistryDirtyFrameListener, ServerFr
         std::size_t size() const noexcept;
         ClientEntityState* try_get(std::uint32_t slot) noexcept;
         const ClientEntityState* try_get(std::uint32_t slot) const noexcept;
-        void clear(ReplicationServer& server, std::uint32_t slot);
-        void clear_all(ReplicationServer& server);
-        void clear_preserving_network_identity(ReplicationServer& server, std::uint32_t slot);
+        void clear(ReplicationServer& replication_server, std::uint32_t slot);
+        void clear_all(ReplicationServer& replication_server);
+        void clear_preserving_network_identity(ReplicationServer& replication_server, std::uint32_t slot);
         void expire_pending_cues(SyncFrame frame);
     };
 
@@ -152,8 +155,8 @@ struct ServerClientReplicator final : ServerRegistryDirtyFrameListener, ServerFr
         std::vector<Entry> entries;
         std::uint32_t free_network_id = 0;
 
-        std::uint32_t network_id_for(ReplicationServer& server, ServerClientReplicator& client, std::uint32_t slot);
-        std::uint32_t allocate_for(ReplicationServer& server, ServerClientReplicator& client, std::uint32_t slot);
+        std::uint32_t network_id_for(ReplicationServer& replication_server, ServerClientReplicator& client, std::uint32_t slot);
+        std::uint32_t allocate_for(ReplicationServer& replication_server, ServerClientReplicator& client, std::uint32_t slot);
         void free(std::uint32_t network_id);
         bool mark_pending_destroy(std::uint32_t network_id);
         Entry* try_get(std::uint32_t network_id) noexcept;
@@ -164,10 +167,10 @@ struct ServerClientReplicator final : ServerRegistryDirtyFrameListener, ServerFr
         std::uint32_t next_packet_id = 1;
         std::vector<PendingPacketAck> pending_packet_acks;
 
-        bool acknowledge_packet(ReplicationServer& server, ServerClientReplicator& client, std::uint32_t packet_id);
-        void cleanup_packet_acks(ReplicationServer& server, ServerClientReplicator& client);
-        std::uint32_t allocate_packet_id(ReplicationServer& server, ServerClientReplicator& client);
-        void enforce_pending_packet_ack_limit(ReplicationServer& server, ServerClientReplicator& client);
+        bool acknowledge_packet(ReplicationServer& replication_server, ServerClientReplicator& client, std::uint32_t packet_id);
+        void cleanup_packet_acks(ReplicationServer& replication_server, ServerClientReplicator& client);
+        std::uint32_t allocate_packet_id(ReplicationServer& replication_server, ServerClientReplicator& client);
+        void enforce_pending_packet_ack_limit(ReplicationServer& replication_server, ServerClientReplicator& client);
         void track_packet_ack(
             ServerClientReplicator& client,
             std::uint32_t packet_id,
@@ -177,18 +180,18 @@ struct ServerClientReplicator final : ServerRegistryDirtyFrameListener, ServerFr
 
     private:
         bool client_acknowledged_destroy(
-            ReplicationServer& server,
+            ReplicationServer& replication_server,
             ServerClientReplicator& client,
             ashiato::Entity entity,
             SyncFrame frame);
         bool packet_ack_record_pending(
-            const ReplicationServer& server,
+            const ReplicationServer& replication_server,
             const ServerClientReplicator& client,
             const PacketAckRecord& record) const;
     };
 
     ClientId id = invalid_client_id;
-    ClientId peer = invalid_client_id;
+    PeerId peer = invalid_peer_id;
     std::uint64_t epoch = 0;
     SyncFrame input_ack_frame = 0;
     ClientDirtyQueue dirty_queue;
@@ -199,7 +202,7 @@ struct ServerClientReplicator final : ServerRegistryDirtyFrameListener, ServerFr
     ReplicationBandwidthParticipantId bandwidth_participant = invalid_bandwidth_participant_id;
     AckTracker ack_tracker;
     std::unique_ptr<UpdateScheduler> update_scheduler;
-    ReplicationServer* server = nullptr;
+    ReplicationServer* owner_server = nullptr;
     ServerRegistryDirtyFrameSubscription registry_dirty_frame_subscription;
     ServerFrameBatchListenerSubscription frame_batch_subscription;
 
@@ -230,7 +233,7 @@ struct ServerClientReplicator final : ServerRegistryDirtyFrameListener, ServerFr
 
 struct ServerClientReplicator::UpdateWriter {
     bool serialize_entity(
-        ReplicationServer& server,
+        ReplicationServer& replication_server,
         const ashiato::Registry& registry,
         const SyncSettings& settings,
         ServerClientReplicator& client,
@@ -241,7 +244,7 @@ struct ServerClientReplicator::UpdateWriter {
 
 private:
     void write_entity_record(
-        ReplicationServer& server,
+        ReplicationServer& replication_server,
         const ashiato::Registry& registry,
         const SyncSettings& settings,
         ServerClientReplicator& client,
@@ -261,7 +264,7 @@ private:
 
 struct ServerClientReplicator::UpdateScheduler {
     ReplicationServer::ReplicationSendResult send_client(
-        ReplicationServer& server,
+        ReplicationServer& replication_server,
         ashiato::Registry& registry,
         const SyncSettings& settings,
         ServerClientReplicator& replication,
@@ -270,7 +273,7 @@ struct ServerClientReplicator::UpdateScheduler {
 private:
     void cleanup_dirty_queue(ServerClientReplicator& replication);
     void refresh_priority_if_due(
-        ReplicationServer& server,
+        ReplicationServer& replication_server,
         ServerClientReplicator& replication,
         std::uint32_t slot,
         ClientDirtyQueue::Entry& entry);

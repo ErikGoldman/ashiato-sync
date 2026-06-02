@@ -3,6 +3,7 @@
 #include "detail/frame_data.hpp"
 
 #include "ashiato/sync/components.hpp"
+#include "ashiato/sync/protocol.hpp"
 #include "ashiato/sync/server.hpp"
 #include "ashiato/sync/tracing.hpp"
 
@@ -26,6 +27,15 @@ constexpr std::uint32_t invalid_replay_slot = std::numeric_limits<std::uint32_t>
 
 struct ReplayReferenceContextData {
     ReplicationServer* server = nullptr;
+};
+
+struct PendingReplayCueEntry {
+    std::uint32_t owner_replay_id = 0;
+    SyncFrame frame = 0;
+    SyncCueTypeId type = 0;
+    float relevance_seconds = 0.0f;
+    bool only_replicate_to_owner = false;
+    ashiato::BitBuffer payload;
 };
 
 std::uint32_t replay_network_id_for_entity(void* userContext, ashiato::Entity entity) {
@@ -87,13 +97,16 @@ void append_cue_entries(
     const SyncSettings& settings,
     ReplicationServer& server,
     EntityReferenceContext& reference_context,
-    std::vector<ashiato::BitBuffer>& out,
+    std::vector<PendingReplayCueEntry>& out,
     SyncFrame sync_frame
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     ,
     SyncTracer* serialization_tracer
 #endif
 ) {
+#ifndef ASHIATO_SYNC_ENABLE_TRACING
+    (void)sync_frame;
+#endif
     const std::size_t count = std::min<std::size_t>(cues.size, std::numeric_limits<std::uint16_t>::max());
     for (std::size_t index = 0; index < count; ++index) {
         const QueuedSyncCue& cue = cues.data[index];
@@ -101,10 +114,7 @@ void append_cue_entries(
             continue;
         }
         ashiato::BitBuffer payload = cue.payload;
-        if (cue.value) {
-            if (!cue.value) {
-                continue;
-            }
+        if (cue.value.has_value()) {
             payload.clear();
             EntityReferenceContext* references = settings.cue_ops[cue.type].references_entities ? &reference_context : nullptr;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
@@ -127,9 +137,11 @@ void append_cue_entries(
             ashiato::ComponentSerializationContext serialization_context{
                 references,
                 cue_serialization_capture.payload_capture()};
+            serialization_context.currentFrame = cue.frame;
+            serialization_context.previousFrame = 0U;
             {
                 ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(cue_serialization_capture, settings.cue_ops[cue.type].name.c_str());
-                settings.cue_ops[cue.type].serialize(cue.value.get(), payload, serialization_context);
+                settings.cue_ops[cue.type].serialize(cue.value.data(), payload, serialization_context);
             }
             if (cue_serialization_capture.active()) {
                 SyncTraceEvent& event = cue_serialization_capture.event();
@@ -141,50 +153,53 @@ void append_cue_entries(
             }
 #else
             ashiato::ComponentSerializationContext serialization_context{references};
-            settings.cue_ops[cue.type].serialize(cue.value.get(), payload, serialization_context);
+            serialization_context.currentFrame = cue.frame;
+            serialization_context.previousFrame = 0U;
+            settings.cue_ops[cue.type].serialize(cue.value.data(), payload, serialization_context);
 #endif
         }
         const std::uint32_t slot = server.replicated_slot_for_entity(cue.entity);
-        ashiato::BitBuffer entry;
-        entry.push_bits(
+        out.push_back(PendingReplayCueEntry{
             slot == invalid_replay_slot ? 0 : replay_id_for_slot(slot),
-            32U);
-        entry.push_bits(cue.frame, 32U);
-        entry.push_bits(cue.type, 16U);
-        entry.push_bytes(reinterpret_cast<const char*>(&cue.relevance_seconds), sizeof(cue.relevance_seconds));
-        entry.push_bool(cue.only_replicate_to_owner);
-        entry.push_bits(static_cast<std::int64_t>(std::min<std::size_t>(
-                          payload.bit_size(),
-                          std::numeric_limits<std::uint16_t>::max())),
-            16U);
-        entry.push_buffer_bits(payload);
-        out.push_back(std::move(entry));
+            cue.frame,
+            cue.type,
+            cue.relevance_seconds,
+            cue.only_replicate_to_owner,
+            std::move(payload)});
     }
 }
 
 void write_cue_entries(
-    const std::vector<ashiato::BitBuffer>& cues,
+    const std::vector<PendingReplayCueEntry>& cues,
+    SyncFrame sync_frame,
     ashiato::BitBuffer& out
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     ,
     ScopedSerializationTraceCapture* serialization_capture
 #endif
 ) {
-    const std::size_t count = std::min<std::size_t>(cues.size(), std::numeric_limits<std::uint16_t>::max());
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     ScopedSerializationTraceScope cue_entries_scope(serialization_capture, "cue_entries");
 #endif
-    SERIALIZE_BOOL_TRACE_WITH_CAPTURE(serialization_capture, out, count != 0U, "has_cue_entries");
-    if (count == 0U) {
-        return;
-    }
-    SERIALIZE_TRACE_WITH_CAPTURE(serialization_capture, out, static_cast<std::int64_t>(count), 16U, "cue_entry_count");
-    for (std::size_t index = 0; index < count; ++index) {
+    for (const PendingReplayCueEntry& cue : cues) {
+        ASHIATO_SERIALIZE_BOOL_TRACE_WITH_CAPTURE(serialization_capture, out, true, "has_cue");
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
         ScopedSerializationTraceScope cue_entry_scope(serialization_capture, "cue_entry");
 #endif
-        SERIALIZE_BUFFER_TRACE_WITH_CAPTURE(serialization_capture, out, cues[index], "payload");
+        ashiato::BitBuffer entry;
+        entry.write_bits(cue.owner_replay_id, 32U);
+        protocol::write_cue_frame(entry, sync_frame, cue.frame);
+        entry.write_bits(cue.type, 16U);
+        entry.write_float32_le(cue.relevance_seconds);
+        entry.write_bool(cue.only_replicate_to_owner);
+        entry.write_bits(static_cast<std::int64_t>(std::min<std::size_t>(
+                         cue.payload.bit_size(),
+                         std::numeric_limits<std::uint16_t>::max())),
+            16U);
+        entry.write_buffer_bits(cue.payload);
+        ASHIATO_SERIALIZE_BUFFER_TRACE_WITH_CAPTURE(serialization_capture, out, entry, "payload");
     }
+    ASHIATO_SERIALIZE_BOOL_TRACE_WITH_CAPTURE(serialization_capture, out, false, "has_cue");
 }
 
 }  // namespace
@@ -194,7 +209,7 @@ struct ReplicationReplayWriter::State {
     std::vector<std::uint32_t> slots;
     std::vector<std::uint32_t> pending_slots;
     std::vector<ServerDestroyedReplicatedSlot> pending_destroyed_slots;
-    std::vector<ashiato::BitBuffer> pending_cues;
+    std::vector<PendingReplayCueEntry> pending_cues;
     QuantizedFrameData scratch;
     bool has_written = false;
     SyncFrame last_full_frame = 0;
@@ -328,7 +343,7 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
     }
 #endif
     const std::size_t record_count_offset = payload.bit_size();
-    SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, 0, 16U, "record_count");
+    ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, 0, 16U, "record_count");
     std::uint16_t record_count = 0;
     std::vector<std::uint8_t> emitted_destroyed_slots;
 
@@ -343,8 +358,8 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
             }
             {
                 ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "destroy_record");
-                SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, payload, true, "destroy");
-                SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, replay_id_for_slot(destroyed.slot), 32U, "entity");
+                ASHIATO_SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, payload, true, "destroy");
+                ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, replay_id_for_slot(destroyed.slot), 32U, "entity");
             }
             if (destroyed.slot < emitted_destroyed_slots.size()) {
                 emitted_destroyed_slots[destroyed.slot] = std::uint8_t{1};
@@ -371,8 +386,8 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
             ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(
                 serialization_capture,
                 active ? "entity_record_header" : "destroy_record");
-            SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, payload, !active, "destroy");
-            SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, replay_id_for_slot(slot), 32U, "entity");
+            ASHIATO_SERIALIZE_BOOL_TRACE_WITH_CONTEXT(serialization_capture, payload, !active, "destroy");
+            ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, replay_id_for_slot(slot), 32U, "entity");
         }
         if (!active) {
             ++record_count;
@@ -390,9 +405,9 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
         }
         {
             ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "entity_metadata");
-            SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, archetype_id.value, 32U, "archetype");
-            SERIALIZE_UNSIGNED_TRACE_WITH_CONTEXT(serialization_capture, payload, state_->scratch.tag_mask, 64U, "tag_mask");
-            SERIALIZE_UNSIGNED_TRACE_WITH_CONTEXT(
+            ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, archetype_id.value, 32U, "archetype");
+            ASHIATO_SERIALIZE_UNSIGNED_TRACE_WITH_CONTEXT(serialization_capture, payload, state_->scratch.tag_mask, 64U, "tag_mask");
+            ASHIATO_SERIALIZE_UNSIGNED_TRACE_WITH_CONTEXT(
                 serialization_capture,
                 payload,
                 state_->scratch.present_mask,
@@ -401,7 +416,7 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
         }
 
         const std::size_t component_count_offset = payload.bit_size();
-        SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, 0, 16U, "component_count");
+        ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, 0, 16U, "component_count");
         std::uint16_t component_count = 0;
         for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
             if (!detail::frame_has_component(state_->scratch, component_index) ||
@@ -419,23 +434,27 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
             }
             {
                 ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "component_record");
-                SERIALIZE_TRACE_WITH_CONTEXT(
+                ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(
                     serialization_capture,
                     payload,
                     static_cast<std::int64_t>(component_index),
                     16U,
                     "component_index");
                 const std::size_t component_bits_offset = payload.bit_size();
-                SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, 0, 16U, "payload_bits");
+                ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, payload, 0, 16U, "payload_bits");
                 const std::size_t component_payload_begin_bits = payload.bit_size();
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
                 ashiato::ComponentSerializationContext serialization_context{
                     ops.references_entities ? &reference_context : nullptr,
                     serialization_capture.payload_capture()};
+                serialization_context.currentFrame = sync_frame;
+                serialization_context.previousFrame = 0U;
                 ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, ops.serialization.name.c_str());
 #else
                 ashiato::ComponentSerializationContext serialization_context{
                     ops.references_entities ? &reference_context : nullptr};
+                serialization_context.currentFrame = sync_frame;
+                serialization_context.previousFrame = 0U;
 #endif
                 ops.serialization.serialize(nullptr, current, payload, serialization_context);
                 const std::size_t component_payload_bits = payload.bit_size() - component_payload_begin_bits;
@@ -455,6 +474,7 @@ void ReplicationReplayWriter::on_server_registry_dirty_frame(const ServerRegistr
     payload.overwrite_unsigned_bits(record_count_offset, record_count, 16U);
     write_cue_entries(
         state_->pending_cues,
+        sync_frame,
         payload
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
         ,

@@ -79,13 +79,20 @@ public:
         SyncFrame frame);
     void refresh_pending_rollback_frame(ReplicationClient& client) noexcept;
     void queue_rollback(ReplicationClient& client, EntityState& state, SyncFrame frame);
-    bool run_frame(ReplicationClient& client, ashiato::Registry& registry, SyncFrame frame, ashiato::RunJobsOptions options);
+    bool run_frame(
+        ReplicationClient& client,
+        ashiato::Registry& registry,
+        SyncFrame frame,
+        const ashiato::RunJobsOptions& options);
     bool run_catchup(
         ReplicationClient& client,
         ashiato::Registry& registry,
         std::uint32_t predicted_steps_this_tick,
-        ashiato::RunJobsOptions options);
-    bool apply_pending_rollback(ReplicationClient& client, ashiato::Registry& registry, ashiato::RunJobsOptions options);
+        const ashiato::RunJobsOptions& options);
+    bool apply_pending_rollback(
+        ReplicationClient& client,
+        ashiato::Registry& registry,
+        const ashiato::RunJobsOptions& options);
 
 private:
     enum class ResimScope {
@@ -98,19 +105,19 @@ private:
         ashiato::Registry& registry,
         SyncFrame begin_frame,
         SyncFrame current_frame,
-        ashiato::RunJobsOptions options);
+        const ashiato::RunJobsOptions& options);
     bool resimulate_affected(
         ReplicationClient& client,
         ashiato::Registry& registry,
         SyncFrame begin_frame,
         SyncFrame current_frame,
-        ashiato::RunJobsOptions options);
+        const ashiato::RunJobsOptions& options);
     bool resimulate(
         ReplicationClient& client,
         ashiato::Registry& registry,
         SyncFrame begin_frame,
         SyncFrame current_frame,
-        ashiato::RunJobsOptions options,
+        const ashiato::RunJobsOptions& options,
         ResimScope scope);
     bool prepare_resimulation(
         ReplicationClient& client,
@@ -124,7 +131,7 @@ private:
         ashiato::Registry& registry,
         const SyncSettings& settings,
         SyncFrame frame,
-        ashiato::RunJobsOptions options,
+        const ashiato::RunJobsOptions& options,
         ResimScope scope);
     bool quantize_resimulated(
         ReplicationClient& client,

@@ -7,6 +7,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -166,9 +167,9 @@ sockaddr_in loopback_address(std::uint16_t port) {
     return address;
 }
 
-ashiato::sync::ClientId peer_id(const sockaddr_in& address) {
-    return (static_cast<ashiato::sync::ClientId>(ntohs(address.sin_port)) << 32U) |
-        static_cast<ashiato::sync::ClientId>(ntohl(address.sin_addr.s_addr));
+ashiato::sync::PeerId peer_id(const sockaddr_in& address) {
+    return (static_cast<ashiato::sync::PeerId>(ntohs(address.sin_port)) << 32U) |
+        static_cast<ashiato::sync::PeerId>(ntohl(address.sin_addr.s_addr));
 }
 
 void send_packet(SocketHandle socket, const sockaddr_in& target, const ashiato::BitBuffer& packet) {
@@ -201,7 +202,7 @@ bool receive_packet(SocketHandle socket, ashiato::BitBuffer& packet, sockaddr_in
         return false;
     }
     packet.clear();
-    packet.push_bytes(bytes.data(), static_cast<std::size_t>(received));
+    packet.write_bytes(bytes.data(), static_cast<std::size_t>(received));
     if (sender != nullptr) {
         *sender = source;
     }
@@ -209,14 +210,16 @@ bool receive_packet(SocketHandle socket, ashiato::BitBuffer& packet, sockaddr_in
 }
 
 std::uint8_t packet_message(ashiato::BitBuffer packet) {
-    return packet.remaining_bits() >= 8U ? static_cast<std::uint8_t>(packet.read_bits(8U)) : 0U;
+    return packet.remaining_bits() >= ashiato::sync::protocol::message_bits
+        ? static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits))
+        : std::numeric_limits<std::uint8_t>::max();
 }
 
 ashiato::sync::SyncFrame update_packet_frame(ashiato::BitBuffer packet) {
     if (packet_message(packet) != ashiato::sync::protocol::server_update_message) {
         return 0U;
     }
-    (void)packet.read_bits(8U);
+    (void)packet.read_bits(ashiato::sync::protocol::message_bits);
     return static_cast<ashiato::sync::SyncFrame>(packet.read_bits(32U));
 }
 
@@ -423,7 +426,7 @@ struct ReplayNetworkHarness {
             accepted = replay_client_id;
             return true;
         };
-        options.transport = [this](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
+        options.transport = [this](ashiato::sync::PeerId, const ashiato::BitBuffer& packet) {
             send_packet(socket, client_address, packet);
         };
         server = std::make_unique<ashiato::sync::ReplicationServer>(registry, options);
@@ -449,7 +452,7 @@ struct SyncComponentTraits<replay_network_tests::ReplayTransform> {
     }
 
     static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
-        out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
+        out.write_bytes(reinterpret_cast<const char*>(&current), sizeof(current));
     }
 
     static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
@@ -471,7 +474,7 @@ struct SyncComponentTraits<replay_network_tests::ReplayDeathState> {
     }
 
     static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
-        out.push_bits(current.dead, 1U);
+        out.write_bits(current.dead, 1U);
     }
 
     static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
@@ -486,7 +489,7 @@ struct SyncCueTraits<replay_network_tests::ShootingCue> {
         const replay_network_tests::ShootingCue& cue,
         ashiato::BitBuffer& out,
         ashiato::ComponentSerializationContext& context) {
-        SERIALIZE_TRACE(out, cue.id, 16U, "id");
+        ASHIATO_SERIALIZE_TRACE(out, cue.id, 16U, "id");
     }
 
     static bool deserialize(
@@ -529,6 +532,13 @@ TEST_CASE("network replay smoke streams correct movement and cue frames") {
     using namespace replay_network_tests;
 
     SocketRuntime socket_runtime;
+    try {
+        SocketHandle probe_socket = make_udp_socket(0);
+        close_socket(probe_socket);
+    } catch (const std::runtime_error& ex) {
+        SKIP(ex.what());
+    }
+
     RecordedReplay recorded = build_recorded_replay();
     ReplayNetworkHarness harness(recorded.streamer);
 

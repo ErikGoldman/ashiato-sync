@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cstring>
 #include <sstream>
+#include <string>
 #include <utility>
 
 namespace ashiato::sync::client_detail {
@@ -40,10 +41,13 @@ bool ClientUpdateRuntime::apply_update(
     std::uint32_t packet_id,
     SyncFrame frame,
     std::uint16_t record_count) {
+    last_apply_failure_reason_.clear();
+    active_apply_record_index_ = invalid_apply_record_index;
     const SyncSettings& settings = registry.get<SyncSettings>();
     bool applied_any = false;
 
     for (std::uint16_t record = 0; record < record_count; ++record) {
+        begin_apply_record(record);
         bool destroy = false;
         std::uint32_t wire_network_id = 0;
         if (!packet.read_bits(1U, destroy) ||
@@ -51,25 +55,53 @@ bool ClientUpdateRuntime::apply_update(
                 packet,
                 wire_network_id,
                 client.options_.network.protocol.network_entity_id_tier0_bits)) {
-            return false;
+            return fail_apply("record_header_read_failed");
         }
         if (wire_network_id == 0U) {
-            return false;
+            return fail_apply("zero_wire_network_id");
         }
 
         const bool applied = destroy
             ? apply_destroy(client, registry, frame, wire_network_id)
             : apply_upsert(client, registry, settings, frame, wire_network_id, packet);
         if (!applied) {
-            return false;
+            return fail_apply_if_empty(destroy ? "destroy_failed" : "upsert_failed");
         }
         applied_any = true;
     }
 
+    active_apply_record_index_ = invalid_apply_record_index;
     if (applied_any) {
         client.queue_ack(packet_id);
     }
-    return applied_any;
+    return applied_any || fail_apply("empty_update");
+}
+
+const std::string& ClientUpdateRuntime::last_apply_failure_reason() const noexcept {
+    return last_apply_failure_reason_;
+}
+
+void ClientUpdateRuntime::begin_apply_record(std::uint16_t record_index) {
+    active_apply_record_index_ = record_index;
+}
+
+bool ClientUpdateRuntime::fail_apply(const char* reason) {
+    if (last_apply_failure_reason_.empty()) {
+        if (active_apply_record_index_ != invalid_apply_record_index) {
+            last_apply_failure_reason_ = "record_" + std::to_string(active_apply_record_index_) + "_";
+            last_apply_failure_reason_ += reason;
+        } else {
+            last_apply_failure_reason_ = reason;
+        }
+    }
+    return false;
+}
+
+bool ClientUpdateRuntime::fail_apply_if_empty(const char* reason) {
+    if (last_apply_failure_reason_.empty()) {
+        return fail_apply(reason);
+    }
+    return false;
 }
 
 void ClientUpdateRuntime::reset_previously_absent_entity(
@@ -108,17 +140,17 @@ bool ClientUpdateRuntime::apply_upsert(
     detail::BitReader& packet) {
     UpsertMetadata metadata;
     if (!read_upsert_metadata(client, settings, frame, wire_network_id, packet, metadata)) {
-        return false;
+        return fail_apply_if_empty("metadata_read_failed");
     }
 
     AuthoritativeUpsertRecord record;
     if (!decode_upsert_record(client, settings, metadata, packet, record)) {
-        return false;
+        return fail_apply_if_empty("upsert_decode_failed");
     }
 
     std::vector<EntityCue>& received_cues = received_cues_scratch_;
-    if (!read_cues(packet, received_cues)) {
-        return false;
+    if (!read_cues(client, settings, frame, packet, received_cues)) {
+        return fail_apply_if_empty("cue_read_failed");
     }
     record.received_cues = &received_cues;
 
@@ -126,12 +158,12 @@ bool ClientUpdateRuntime::apply_upsert(
     EntityState* state =
         ensure_upsert_entity(client, registry, settings, metadata, record, selector_updates_scratch_);
     if (state == nullptr) {
-        return false;
+        return fail_apply("ensure_entity_state_failed");
     }
     trace_cues_received(client, settings, metadata, *record.received_cues);
     trace_received_upsert_record(client, settings, metadata, record, *state);
     if (!apply_upsert_record(client, registry, settings, *state, metadata, record)) {
-        return false;
+        return fail_apply_if_empty("mode_apply_failed");
     }
 
     finish_upsert(client, metadata);
@@ -149,16 +181,16 @@ bool ClientUpdateRuntime::read_upsert_metadata(
     metadata.frame = frame;
     metadata.wire_network_id = wire_network_id;
     if (!packet.read_bits(1U, metadata.is_full_upsert)) {
-        return false;
+        return fail_apply("full_flag_read_failed");
     }
     metadata.client_entity_network_id = client.client_entity_network_id_for_wire(wire_network_id);
     if (metadata.client_entity_network_id == invalid_client_entity_network_id) {
-        return false;
+        return fail_apply("invalid_client_entity_network_id");
     }
 
     if (metadata.is_full_upsert) {
         if (client.destroy_tombstone_blocks(wire_network_id, frame)) {
-            return false;
+            return fail_apply("full_destroy_tombstone_blocked");
         }
         metadata.found_state = client.find_entity_state(metadata.client_entity_network_id);
     } else {
@@ -171,22 +203,22 @@ bool ClientUpdateRuntime::read_upsert_metadata(
     if (metadata.is_full_upsert) {
         std::uint32_t archetype_value = 0;
         if (!packet.read_bits(32U, archetype_value)) {
-            return false;
+            return fail_apply("full_archetype_read_failed");
         }
         metadata.archetype = SyncArchetypeId{archetype_value};
         if (metadata.archetype.value >= settings.archetypes.size()) {
-            return false;
+            return fail_apply("full_invalid_archetype");
         }
         if (metadata.found_state != nullptr &&
             !metadata.previous_absent &&
             metadata.found_state->replication.entity_present &&
             metadata.found_state->identity.archetype != metadata.archetype) {
-            return false;
+            return fail_apply("full_archetype_mismatch");
         }
         if (metadata.found_state != nullptr &&
             !metadata.previous_absent &&
             frame <= metadata.found_state->replication.frame) {
-            return false;
+            return fail_apply("full_stale_frame");
         }
         if (metadata.previous_absent) {
             reset_previously_absent_entity(client, *metadata.found_state, metadata.archetype);
@@ -195,21 +227,21 @@ bool ClientUpdateRuntime::read_upsert_metadata(
     }
 
     if (metadata.found_state == nullptr || metadata.previous_absent) {
-        return false;
+        return fail_apply("delta_missing_entity_state");
     }
     metadata.archetype = metadata.found_state->identity.archetype;
     if (metadata.archetype.value >= settings.archetypes.size()) {
-        return false;
+        return fail_apply("delta_invalid_archetype");
     }
     if (frame <= metadata.found_state->replication.frame) {
-        return false;
+        return fail_apply("delta_stale_frame");
     }
     if (!protocol::read_baseline_frame(packet, frame, metadata.baseline_frame)) {
-        return false;
+        return fail_apply("delta_baseline_frame_read_failed");
     }
     metadata.previous_state = metadata.found_state;
     metadata.previous_baseline = client.find_baseline(*metadata.previous_state, metadata.baseline_frame);
-    return metadata.previous_baseline != nullptr;
+    return metadata.previous_baseline != nullptr || fail_apply("delta_missing_baseline");
 }
 
 bool ClientUpdateRuntime::decode_upsert_record(
@@ -222,7 +254,7 @@ bool ClientUpdateRuntime::decode_upsert_record(
     const SyncArchetype& definition = settings.archetypes[metadata.archetype.value];
 
     if (!init_frame_data(definition, record.authoritative)) {
-        return false;
+        return fail_apply("init_authoritative_frame_failed");
     }
     return metadata.is_full_upsert
         ? decode_full_upsert_record_payload(client, settings, metadata, packet, record)
@@ -240,13 +272,13 @@ bool ClientUpdateRuntime::decode_full_upsert_record_payload(
 
     bool uses_presence_mask = false;
     if (!packet.read_bits(1U, uses_presence_mask)) {
-        return false;
+        return fail_apply("full_presence_mask_flag_read_failed");
     }
     std::uint64_t presence_mask = 0;
     std::uint16_t component_count = 0;
     if (uses_presence_mask) {
         if (!packet.read_bits(sync_slot_count(definition), presence_mask)) {
-            return false;
+            return fail_apply("full_presence_mask_read_failed");
         }
         for (std::size_t sync_slot = 0; sync_slot < sync_slot_count(definition); ++sync_slot) {
             if ((presence_mask & sync_slot_bit(sync_slot)) != 0U) {
@@ -254,7 +286,7 @@ bool ClientUpdateRuntime::decode_full_upsert_record_payload(
             }
         }
     } else if (!packet.read_bits(16U, component_count)) {
-        return false;
+        return fail_apply("full_component_count_read_failed");
     }
 
     EntityReferenceContext reference_context;
@@ -269,14 +301,14 @@ bool ClientUpdateRuntime::decode_full_upsert_record_payload(
 
     auto read_slot = [&](std::uint16_t sync_slot) {
         if (sync_slot >= sync_slot_count(definition)) {
-            return false;
+            return fail_apply("full_sync_slot_out_of_range");
         }
         if (sync_slot == 0U) {
             if (!has_tag_slot(definition)) {
-                return false;
+                return fail_apply("full_tag_slot_unavailable");
             }
             if (!packet.read_bits(definition.tags.size(), record.authoritative.tag_mask)) {
-                return false;
+                return fail_apply("full_tag_mask_read_failed");
             }
             record.changed_sync_slots |= sync_slot_bit(sync_slot);
             return true;
@@ -284,25 +316,27 @@ bool ClientUpdateRuntime::decode_full_upsert_record_payload(
 
         const std::size_t component_index = static_cast<std::size_t>(sync_slot - 1U);
         if (component_index >= definition.component_ops.size()) {
-            return false;
+            return fail_apply("full_component_ops_missing");
         }
         const SyncComponentOps& ops = definition.component_ops[component_index];
         if (ops.serialization.deserialize == nullptr || ops.serialization.push_to_registry == nullptr) {
-            return false;
+            return fail_apply("full_component_serializer_missing");
         }
 
         std::uint8_t* received_bytes = mutable_frame_component_data(definition, record.authoritative, component_index);
         if (received_bytes == nullptr) {
-            return false;
+            return fail_apply("full_component_storage_missing");
         }
         EntityReferenceContext* references = ops.references_entities ? references_for_component() : nullptr;
         ashiato::ComponentSerializationContext serialization_context{references};
+        serialization_context.currentFrame = metadata.frame;
+        serialization_context.previousFrame = 0U;
         if (!ops.serialization.deserialize(
                 packet.raw(),
                 nullptr,
                 received_bytes,
                 serialization_context)) {
-            return false;
+            return fail_apply("full_component_deserialize_failed");
         }
         record.changed_sync_slots |= sync_slot_bit(sync_slot);
         return true;
@@ -320,7 +354,10 @@ bool ClientUpdateRuntime::decode_full_upsert_record_payload(
     } else {
         for (std::uint16_t component = 0; component < component_count; ++component) {
             std::uint16_t sync_slot = 0;
-            if (!packet.read_bits(sync_slot_bits, sync_slot) || !read_slot(sync_slot)) {
+            if (!packet.read_bits(sync_slot_bits, sync_slot)) {
+                return fail_apply("full_sync_slot_read_failed");
+            }
+            if (!read_slot(sync_slot)) {
                 return false;
             }
         }
@@ -335,22 +372,22 @@ bool ClientUpdateRuntime::decode_delta_upsert_record_payload(
     detail::BitReader& packet,
     AuthoritativeUpsertRecord& record) {
     if (metadata.previous_baseline == nullptr) {
-        return false;
+        return fail_apply("delta_missing_baseline");
     }
     const SyncArchetype& definition = settings.archetypes[metadata.archetype.value];
     std::uint64_t changed_mask = 0;
     if (!packet.read_bits(sync_slot_count(definition), changed_mask)) {
-        return false;
+        return fail_apply("delta_changed_mask_read_failed");
     }
     record.changed_sync_slots = changed_mask;
     record.authoritative = *metadata.previous_baseline;
 
     if ((changed_mask & sync_slot_bit(0)) != 0U) {
         if (!has_tag_slot(definition)) {
-            return false;
+            return fail_apply("delta_tag_slot_unavailable");
         }
         if (!packet.read_bits(definition.tags.size(), record.authoritative.tag_mask)) {
-            return false;
+            return fail_apply("delta_tag_mask_read_failed");
         }
     }
 
@@ -369,27 +406,29 @@ bool ClientUpdateRuntime::decode_delta_upsert_record_payload(
             continue;
         }
         if (component_index >= definition.component_ops.size()) {
-            return false;
+            return fail_apply("delta_component_ops_missing");
         }
         const SyncComponentOps& ops = definition.component_ops[component_index];
         if (ops.serialization.deserialize == nullptr || ops.serialization.push_to_registry == nullptr) {
-            return false;
+            return fail_apply("delta_component_serializer_missing");
         }
 
         const std::uint8_t* previous_bytes =
             frame_component_data(definition, *metadata.previous_baseline, component_index);
         std::uint8_t* merged_bytes = mutable_frame_component_data(definition, record.authoritative, component_index);
         if (previous_bytes == nullptr || merged_bytes == nullptr) {
-            return false;
+            return fail_apply("delta_component_storage_missing");
         }
         EntityReferenceContext* references = ops.references_entities ? references_for_component() : nullptr;
         ashiato::ComponentSerializationContext serialization_context{references};
+        serialization_context.currentFrame = metadata.frame;
+        serialization_context.previousFrame = metadata.baseline_frame;
         if (!ops.serialization.deserialize(
                 packet.raw(),
                 previous_bytes,
                 merged_bytes,
                 serialization_context)) {
-            return false;
+            return fail_apply("delta_component_deserialize_failed");
         }
     }
     return true;
@@ -408,32 +447,47 @@ EntityReferenceContext ClientUpdateRuntime::make_upsert_reference_context(Replic
     return reference_context;
 }
 
-bool ClientUpdateRuntime::read_cues(detail::BitReader& packet, std::vector<EntityCue>& out) {
+bool ClientUpdateRuntime::read_cues(
+    ReplicationClient& client,
+    const SyncSettings& settings,
+    SyncFrame transmitted_frame,
+    detail::BitReader& packet,
+    std::vector<EntityCue>& out) {
     out.clear();
-    bool has_cues = false;
-    if (!packet.read_bits(1U, has_cues)) {
-        return false;
-    }
-    if (!has_cues) {
-        return true;
-    }
-    std::uint16_t cue_count = 0;
-    if (!packet.read_bits(16U, cue_count)) {
-        return false;
-    }
-    out.reserve(cue_count);
-    for (std::uint16_t index = 0; index < cue_count; ++index) {
-		EntityCue cue;
-		std::uint16_t payload_bits = 0;
-		if (!packet.read_bits(32U, cue.frame) ||
-			!packet.read_bits(16U, cue.type) ||
-			!packet.read_bits(16U, payload_bits) ||
-			!packet.read_buffer_bits(cue.payload, payload_bits)) {
-			return false;
+    for (;;) {
+        bool has_cue = false;
+        if (!packet.read_bits(1U, has_cue)) {
+            return fail_apply("cue_sentinel_read_failed");
+        }
+        if (!has_cue) {
+            return true;
+        }
+        EntityCue cue;
+        if (!protocol::read_cue_frame(packet, transmitted_frame, cue.frame) || !packet.read_bits(16U, cue.type)) {
+            return fail_apply("cue_header_invalid");
+        }
+        if (cue.type >= settings.cue_ops.size()) {
+            return fail_apply("cue_unknown");
+        }
+        if (settings.cue_ops[cue.type].deserialize_into == nullptr) {
+            return fail_apply("cue_no_deserializer");
+        }
+
+        EntityReferenceContext reference_context = make_upsert_reference_context(client);
+        EntityReferenceContext* references = settings.cue_ops[cue.type].references_entities ? &reference_context : nullptr;
+        ashiato::ComponentSerializationContext serialization_context{references};
+        serialization_context.currentFrame = cue.frame;
+        serialization_context.previousFrame = 0U;
+        if (!settings.cue_ops[cue.type].deserialize_into(
+                cue.type,
+                settings.cue_ops[cue.type].user_data,
+                packet.raw(),
+                cue.value,
+                serialization_context)) {
+            return fail_apply("cue_deserialize_failed");
         }
         out.push_back(std::move(cue));
     }
-    return true;
 }
 
 void ClientUpdateRuntime::trace_cues_received(
@@ -452,12 +506,12 @@ void ClientUpdateRuntime::trace_cues_received(
                 << ",type=" << cue.type;
 #ifdef ASHIATO_SYNC_TRACE_COMPONENT_DATA
             if (client.tracer_ != nullptr && client.tracer_->frame_data_enabled() &&
-                cue.type < settings.cue_ops.size() && settings.cue_ops[cue.type].trace != nullptr) {
+                cue.type < settings.cue_ops.size() && settings.cue_ops[cue.type].trace_value != nullptr) {
                 SyncTraceStringBuilder builder;
-                if (settings.cue_ops[cue.type].trace(
+                if (settings.cue_ops[cue.type].trace_value(
                         cue.type,
                         settings.cue_ops[cue.type].user_data,
-                        cue.payload,
+                        cue.value.data(),
                         builder) &&
                     !builder.value.empty()) {
                     summary << ",data=" << builder.value;
@@ -480,7 +534,19 @@ void ClientUpdateRuntime::trace_cues_received(
             event.archetype = metadata.archetype;
             event.cue_type = cue.type;
             append_trace_cue_name(settings, cue.type, event);
-            append_trace_cue_data(client.tracer_, settings, cue.type, cue.payload, event);
+#ifdef ASHIATO_SYNC_TRACE_COMPONENT_DATA
+            if (client.tracer_->frame_data_enabled() &&
+                cue.type < settings.cue_ops.size() && settings.cue_ops[cue.type].trace_value != nullptr) {
+                SyncTraceStringBuilder builder;
+                if (settings.cue_ops[cue.type].trace_value(
+                        cue.type,
+                        settings.cue_ops[cue.type].user_data,
+                        cue.value.data(),
+                        builder)) {
+                    event.data = std::move(builder.value);
+                }
+            }
+#endif
             append_trace_data_field(event, "source", "server");
             client.tracer_->trace(event);
         }
@@ -579,6 +645,7 @@ void ClientUpdateRuntime::build_upsert_mode_selector_updates(
         }
         ComponentBaseline baseline;
         baseline.component = definition.components[component_index].component;
+        baseline.serializer = definition.components[component_index].serializer;
         baseline.bytes.assign(bytes, ops.serialization.quantized_size);
         out.push_back(std::move(baseline));
     }
@@ -653,14 +720,14 @@ bool ClientUpdateRuntime::apply_upsert_record(
     const UpsertMetadata& metadata,
     AuthoritativeUpsertRecord& record) {
     if (record.received_cues == nullptr) {
-        return false;
+        return fail_apply("received_cues_missing");
     }
     QuantizedFrameData decoded_delta;
     QuantizedFrameData* decoded = &record.authoritative;
     if (!metadata.is_full_upsert && state.mode.current == ReplicationClientMode::Snap) {
         const SyncArchetype& definition = settings.archetypes[metadata.archetype.value];
         if (!init_frame_data(definition, decoded_delta)) {
-            return false;
+            return fail_apply("snap_delta_frame_init_failed");
         }
         decoded_delta.tag_mask = record.authoritative.tag_mask;
         for (std::size_t component_index = 0; component_index < definition.components.size(); ++component_index) {
@@ -673,7 +740,7 @@ bool ClientUpdateRuntime::apply_upsert_record(
                 frame_component_data(definition, record.authoritative, component_index);
             std::uint8_t* decoded_bytes = mutable_frame_component_data(definition, decoded_delta, component_index);
             if (authoritative_bytes == nullptr || decoded_bytes == nullptr) {
-                return false;
+                return fail_apply("snap_delta_component_storage_missing");
             }
             std::memcpy(decoded_bytes, authoritative_bytes, ops.serialization.quantized_size);
         }
@@ -706,7 +773,7 @@ bool ClientUpdateRuntime::apply_destroy(
     if (state == nullptr) {
         const auto result = client.entity_store_->record_destroy_tombstone(wire_network_id, frame);
         if (result == ClientEntityStore::DestroyTombstoneRecordResult::Ignored) {
-            return false;
+            return fail_apply("destroy_tombstone_ignored");
         }
         if (result == ClientEntityStore::DestroyTombstoneRecordResult::Inserted) {
             client.advance_wire_network_id_version(wire_network_id);
@@ -733,7 +800,7 @@ bool ClientUpdateRuntime::apply_destroy(
     };
 #endif
     if (!apply_destroy_for_mode(client, registry, frame, *state, client_entity_network_id)) {
-        return false;
+        return fail_apply_if_empty("destroy_mode_apply_failed");
     }
     client.record_destroy_tombstone(wire_network_id, frame);
     client.advance_wire_network_id_version(wire_network_id);
@@ -757,7 +824,7 @@ bool ClientUpdateRuntime::apply_destroy_for_mode(
     case ReplicationClientMode::Snap:
         return apply_snap_destroy(client, registry, frame, state, client_entity_network_id);
     }
-    return false;
+    return fail_apply("destroy_unknown_mode");
 }
 
 bool ClientUpdateRuntime::apply_snap_destroy(
@@ -767,7 +834,7 @@ bool ClientUpdateRuntime::apply_snap_destroy(
     EntityState& state,
     ClientEntityNetworkId client_entity_network_id) {
     if (frame <= state.replication.frame) {
-        return false;
+        return fail_apply("snap_destroy_stale_frame");
     }
     const std::uint32_t entity_index =
         client.entity_store_->entity_index_for_client_entity_network_id(client_entity_network_id);
@@ -793,7 +860,7 @@ bool ClientUpdateRuntime::apply_upsert_for_mode(
                 context.client_entity_network_id,
                 context.archetype,
                 context.authoritative)) {
-            return false;
+            return fail_apply_if_empty("buffered_upsert_failed");
         }
         client.cue_runtime_->store_authoritative_buffered(
             client,
@@ -814,7 +881,7 @@ bool ClientUpdateRuntime::apply_upsert_for_mode(
                 context.archetype,
                 context.authoritative,
                 context.full)) {
-            return false;
+            return fail_apply_if_empty("predicted_upsert_failed");
         }
         client.cue_runtime_->reconcile_authoritative_predicted(
             client,
@@ -828,7 +895,7 @@ bool ClientUpdateRuntime::apply_upsert_for_mode(
     case ReplicationClientMode::Snap:
         return apply_snap_upsert(client, registry, settings, state, context);
     }
-    return false;
+    return fail_apply("upsert_unknown_mode");
 }
 
 bool ClientUpdateRuntime::apply_snap_upsert(
@@ -844,7 +911,7 @@ bool ClientUpdateRuntime::apply_snap_upsert(
     }
     state.identity.archetype = context.archetype;
     if (!client.apply_snap_sample(registry, settings, state, context.decoded, context.full)) {
-        return false;
+        return fail_apply("snap_apply_sample_failed");
     }
     client.cue_runtime_->play_snap(client, registry, settings, state, context.received_cues);
     client.record_authoritative_present(
@@ -867,12 +934,12 @@ bool ClientUpdateRuntime::apply_buffered_upsert(
     SyncArchetypeId archetype,
     QuantizedFrameData& decoded) {
     if (!client.validate_buffered_archetype(settings, archetype)) {
-        return false;
+        return fail_apply("buffered_invalid_archetype");
     }
 
     EntityState* ensured_state = client.find_entity_state(client_entity_network_id);
     if (ensured_state == nullptr) {
-        return false;
+        return fail_apply("buffered_missing_entity_state");
     }
     EntityState& state = *ensured_state;
     client.mark_mode_auto_selected(state, ReplicationClientMode::BufferedInterpolation);
@@ -882,7 +949,7 @@ bool ClientUpdateRuntime::apply_buffered_upsert(
     client.buffered_runtime_->ensure_entity(entity_index);
 
     if (!client.fill_buffered_frames(settings, state, frame, true, decoded)) {
-        return false;
+        return fail_apply("buffered_fill_frames_failed");
     }
 
     client.record_authoritative_present(
@@ -895,7 +962,7 @@ bool ClientUpdateRuntime::apply_buffered_upsert(
         EntityFrameView sample;
         if (!client.buffered_runtime_->frames().view(entity_index, frame, sample) ||
             !client.apply_buffered_sample(registry, settings, state, sample)) {
-            return false;
+            return fail_apply("buffered_apply_sample_failed");
         }
     }
     return true;
@@ -908,7 +975,7 @@ bool ClientUpdateRuntime::apply_buffered_destroy(
     ClientEntityNetworkId client_entity_network_id) {
     EntityState* state_ptr = client.find_entity_state(client_entity_network_id);
     if (state_ptr == nullptr) {
-        return false;
+        return fail_apply("buffered_destroy_missing_entity_state");
     }
     EntityState& state = *state_ptr;
     client.mark_mode_auto_selected(state, ReplicationClientMode::BufferedInterpolation);
@@ -921,14 +988,14 @@ bool ClientUpdateRuntime::apply_buffered_destroy(
         (void)init_frame_data(settings.archetypes[state.identity.archetype.value], empty);
     }
     if (!client.fill_buffered_frames(settings, state, frame, false, empty)) {
-        return false;
+        return fail_apply("buffered_destroy_fill_frames_failed");
     }
     client.record_authoritative_absent(state, frame);
     if (client.buffered_runtime_->has_applied_frame() && frame <= client.buffered_runtime_->last_applied_frame()) {
         EntityFrameView sample;
         if (!client.buffered_runtime_->frames().view(entity_index, frame, sample) ||
             !client.apply_buffered_sample(registry, settings, state, sample)) {
-            return false;
+            return fail_apply("buffered_destroy_apply_sample_failed");
         }
         client.erase_entity_state(registry, entity_index, false);
         return true;
@@ -947,19 +1014,19 @@ bool ClientUpdateRuntime::apply_predicted_upsert(
     bool full) {
     (void)full;
     if (!client.validate_predicted_archetype(settings, archetype)) {
-        return false;
+        return fail_apply("predicted_invalid_archetype");
     }
 
     EntityState* state_ptr = client.find_entity_state(client_entity_network_id);
     if (state_ptr == nullptr) {
-        return false;
+        return fail_apply("predicted_missing_entity_state");
     }
     EntityState& state = *state_ptr;
     const std::uint32_t entity_index = client.entity_store_->index_of(state);
     client.prediction_->ensure_entity(entity_index);
     if (state.identity.archetype.value < settings.archetypes.size() &&
         state.identity.local && registry.alive(state.identity.local) && state.identity.archetype != archetype) {
-        return false;
+        return fail_apply("predicted_archetype_mismatch");
     }
     client.mark_mode_auto_selected(state, ReplicationClientMode::Predict);
     state.identity.archetype = archetype;
@@ -979,12 +1046,12 @@ bool ClientUpdateRuntime::apply_predicted_upsert(
 
     if (first_authoritative) {
         if (!client.apply_frame_data(registry, settings, state, frame, true, authoritative)) {
-            return false;
+            return fail_apply("predicted_first_apply_frame_failed");
         }
     }
     if (!client.prediction_->has_predicted_frame()) {
         if (!client.prediction_->seed_first_authoritative_frame(client, registry, settings, frame)) {
-            return false;
+            return fail_apply("predicted_seed_first_frame_failed");
         }
     }
     return true;
@@ -997,11 +1064,11 @@ bool ClientUpdateRuntime::apply_predicted_destroy(
     ClientEntityNetworkId client_entity_network_id) {
     EntityState* state_ptr = client.find_entity_state(client_entity_network_id);
     if (state_ptr == nullptr) {
-        return false;
+        return fail_apply("predicted_destroy_missing_entity_state");
     }
     EntityState& state = *state_ptr;
     if (frame <= state.replication.frame) {
-        return false;
+        return fail_apply("predicted_destroy_stale_frame");
     }
     const std::uint32_t entity_index = client.entity_store_->index_of(*state_ptr);
     client.erase_entity_state(registry, entity_index, true);

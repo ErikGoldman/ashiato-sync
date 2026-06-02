@@ -143,7 +143,7 @@ struct SyncCueTraits<ashiato_sync_tests::TestCue> {
         const ashiato_sync_tests::TestCue& cue,
         ashiato::BitBuffer& out,
         ashiato::ComponentSerializationContext& context) {
-        SERIALIZE_TRACE(out, cue.id, 16U, "id");
+        ASHIATO_SERIALIZE_TRACE(out, cue.id, 16U, "id");
     }
 
     static bool deserialize(
@@ -276,8 +276,8 @@ struct SyncComponentTraits<ashiato_sync_tests::PredictedPosition> {
     }
 
     static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
-        out.push_bits(current.x, 16U);
-        out.push_bits(current.y, 16U);
+        out.write_bits(current.x, 16U);
+        out.write_bits(current.y, 16U);
     }
 
     static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
@@ -350,11 +350,11 @@ struct SyncComponentTraits<ashiato_sync_tests::NetworkedPosition> {
     }
 
     static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
-        out.push_bool(previous != nullptr);
+        out.write_bool(previous != nullptr);
         const std::int32_t x = previous == nullptr ? current.x : current.x - previous->x;
         const std::int32_t y = previous == nullptr ? current.y : current.y - previous->y;
-        out.push_bits(x, 8U);
-        out.push_bits(y, 8U);
+        out.write_bits(x, 8U);
+        out.write_bits(y, 8U);
     }
 
     static bool deserialize(ashiato::BitBuffer& in, const Quantized* previous, Quantized& out, ashiato::ComponentSerializationContext&) {
@@ -396,7 +396,7 @@ struct SyncComponentTraits<ashiato_sync_tests::SmoothPosition> {
     }
 
     static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
-        out.push_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
+        out.write_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
     static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
@@ -485,12 +485,12 @@ struct SyncComponentTraits<ashiato_sync_tests::BandwidthProbe> {
     }
 
     static void serialize(const Quantized* previous, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
-        out.push_bool(previous != nullptr);
+        out.write_bool(previous != nullptr);
         if (previous == nullptr) {
-            out.push_bits(current, 32U);
+            out.write_bits(current, 32U);
             return;
         }
-        out.push_bits(current - *previous, 8U);
+        out.write_bits(current - *previous, 8U);
     }
 
     static bool deserialize(ashiato::BitBuffer& in, const Quantized* previous, Quantized& out, ashiato::ComponentSerializationContext&) {

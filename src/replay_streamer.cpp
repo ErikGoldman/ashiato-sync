@@ -4,6 +4,7 @@
 
 #include "ashiato/sync/components.hpp"
 #include "ashiato/sync/detail/bit_reader.hpp"
+#include "ashiato/sync/protocol.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -118,6 +119,7 @@ void apply_tags(
 bool apply_components(
     ashiato::Registry& registry,
     ashiato::Entity entity,
+    SyncFrame frame,
     const SyncArchetype& archetype,
     std::uint64_t present_mask,
     detail::BitReader& payload,
@@ -149,6 +151,8 @@ bool apply_components(
         std::vector<std::uint8_t>& scratch = ReplicationReplayStreamSessionAccess::scratch(session);
         scratch.assign(ops.serialization.quantized_size, 0U);
         ashiato::ComponentSerializationContext serialization_context{ops.references_entities ? &references : nullptr};
+        serialization_context.currentFrame = frame;
+        serialization_context.previousFrame = 0U;
         if (!ops.serialization.deserialize(
                 component_payload,
                 nullptr,
@@ -259,7 +263,7 @@ bool ReplicationReplayStreamer::begin_network_session(
     ashiato::Registry& registry,
     ReplicationServer& server,
     ReplicationReplayStreamSession& session,
-    ReplicationReplayNetworkSessionOptions options) const {
+    const ReplicationReplayNetworkSessionOptions& options) const {
     if (!begin_session(focus_frame, registry, server, session)) {
         return false;
     }
@@ -272,7 +276,7 @@ bool ReplicationReplayStreamer::begin_network_session(
 
 bool ReplicationReplayStreamer::attach_network_session_bandwidth(
     ReplicationServer& replay_server,
-    ReplicationReplayNetworkSessionOptions options) const {
+    const ReplicationReplayNetworkSessionOptions& options) const {
     if (options.source_server == nullptr || options.client == invalid_client_id) {
         return false;
     }
@@ -380,7 +384,7 @@ bool ReplicationReplayStreamer::apply_frame(
                 registry.add<Replicated>(entity, Replicated{archetype_id});
             }
             apply_tags(registry, entity, archetype, tag_mask);
-            if (!apply_components(registry, entity, archetype, present_mask, reader, references, session)) {
+            if (!apply_components(registry, entity, frame.frame, archetype, present_mask, reader, references, session)) {
                 return false;
             }
         }
@@ -397,7 +401,7 @@ bool ReplicationReplayStreamer::apply_frame(
             }
         }
 
-        return !include_cues || apply_cues(registry, settings, payload, references, session);
+        return !include_cues || apply_cues(registry, settings, frame.frame, payload, references, session);
     } catch (const std::exception&) {
         return false;
     }
@@ -406,23 +410,20 @@ bool ReplicationReplayStreamer::apply_frame(
 bool ReplicationReplayStreamer::apply_cues(
     ashiato::Registry& registry,
     const SyncSettings& settings,
+    SyncFrame replay_frame,
     ashiato::BitBuffer& payload,
     EntityReferenceContext& references,
     ReplicationReplayStreamSession& session) const {
     detail::BitReader reader(payload);
-    bool has_cues = false;
-    if (!reader.read_bits(1U, has_cues)) {
-        return false;
-    }
-    if (!has_cues) {
-        return true;
-    }
-    std::uint16_t cue_count = 0;
-    if (!reader.read_bits(16U, cue_count)) {
-        return false;
-    }
     CueDispatcher& dispatcher = registry.write<CueDispatcher>();
-    for (std::uint16_t cue_index = 0; cue_index < cue_count; ++cue_index) {
+    for (;;) {
+        bool has_cue = false;
+        if (!reader.read_bits(1U, has_cue)) {
+            return false;
+        }
+        if (!has_cue) {
+            return true;
+        }
         std::uint32_t owner_replay_id = 0;
         SyncFrame frame = 0;
         SyncCueTypeId type = 0;
@@ -431,10 +432,13 @@ bool ReplicationReplayStreamer::apply_cues(
         std::uint16_t cue_bits = 0;
         ashiato::BitBuffer cue_payload;
         if (!reader.read_bits(32U, owner_replay_id) ||
-            !reader.read_bits(32U, frame) ||
+            !protocol::read_cue_frame(reader, replay_frame, frame) ||
             !reader.read_bits(16U, type) ||
-            !reader.read_bytes(reinterpret_cast<char*>(&relevance_seconds), sizeof(relevance_seconds)) ||
-            !reader.read_bits(1U, only_replicate_to_owner) ||
+            reader.raw().remaining_bits() < sizeof(std::uint32_t) * 8U) {
+            return false;
+        }
+        relevance_seconds = reader.raw().read_float32_le();
+        if (!reader.read_bits(1U, only_replicate_to_owner) ||
             !reader.read_bits(16U, cue_bits) ||
             !reader.read_buffer_bits(cue_payload, cue_bits)) {
             return false;
@@ -453,12 +457,13 @@ bool ReplicationReplayStreamer::apply_cues(
         cue.relevance_seconds = relevance_seconds;
         cue.only_replicate_to_owner = only_replicate_to_owner;
         if (ops.references_entities) {
-            if (ops.deserialize_value == nullptr) {
+            if (ops.deserialize_into == nullptr) {
                 continue;
             }
             ashiato::ComponentSerializationContext serialization_context{&references};
-            cue.value = ops.deserialize_value(type, ops.user_data, cue_payload, serialization_context);
-            if (!cue.value) {
+            serialization_context.currentFrame = cue.frame;
+            serialization_context.previousFrame = 0U;
+            if (!ops.deserialize_into(type, ops.user_data, cue_payload, cue.value, serialization_context)) {
                 continue;
             }
         } else {
@@ -466,7 +471,6 @@ bool ReplicationReplayStreamer::apply_cues(
         }
         (void)dispatcher.enqueue(std::move(cue));
     }
-    return true;
 }
 
 const ReplicationReplayFrame& ReplicationReplayStreamer::frame_at(std::size_t index) const {

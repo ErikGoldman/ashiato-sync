@@ -20,8 +20,8 @@
 #include <cstring>
 #include <functional>
 #include <limits>
-#include <memory>
 #include <mutex>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -36,11 +36,12 @@ namespace client_detail {
 class ClientCueRuntime;
 }  // namespace client_detail
 
-using ClientId = std::uint64_t;
+using ClientId = std::uint8_t;
+using PeerId = std::uint64_t;
 using SyncFrame = std::uint32_t;
 using SyncCueTypeId = std::uint16_t;
 using ClientEntityNetworkId = std::uint64_t;
-using TransportFn = std::function<void(ClientId, const ashiato::BitBuffer&)>;
+using TransportFn = std::function<void(PeerId, const ashiato::BitBuffer&)>;
 using ConnectHandlerFn = std::function<bool(const std::string&, ClientId&, std::string&)>;
 
 struct SyncSettings;
@@ -65,8 +66,9 @@ struct ReplicationPriorityDecision {
 using ReplicationPrioritizerFn = std::function<ReplicationPriorityDecision(ClientId, ReplicationPriorityObject)>;
 
 inline constexpr ClientId invalid_client_id = std::numeric_limits<ClientId>::max();
+inline constexpr PeerId invalid_peer_id = std::numeric_limits<PeerId>::max();
 inline constexpr ClientEntityNetworkId invalid_client_entity_network_id = 0;
-inline constexpr ClientId max_client_entity_network_id_client = 0xfffULL;
+inline constexpr ClientId max_client_entity_network_id_client = invalid_client_id - 1U;
 inline constexpr std::uint32_t max_client_local_wire_network_id = (std::uint32_t{1} << 20U) - 1U;
 
 enum class ReplicationServerConnectionEventType {
@@ -79,7 +81,7 @@ enum class ReplicationServerConnectionEventType {
 
 struct ReplicationServerConnectionEvent {
     ReplicationServerConnectionEventType type = ReplicationServerConnectionEventType::Accepted;
-    ClientId peer = invalid_client_id;
+    PeerId peer = invalid_peer_id;
     ClientId client = invalid_client_id;
     bool local = false;
     std::string reason;
@@ -91,13 +93,13 @@ inline constexpr ClientEntityNetworkId make_client_entity_network_id(
     ClientId client,
     std::uint32_t wire_network_id,
     std::uint32_t version) noexcept {
-    return ((client & max_client_entity_network_id_client) << 52U) |
+    return ((static_cast<std::uint64_t>(client) & 0xffULL) << 52U) |
         ((static_cast<std::uint64_t>(wire_network_id) & 0xfffffULL) << 32U) |
         static_cast<std::uint64_t>(version);
 }
 
 inline constexpr ClientId client_entity_network_id_client(ClientEntityNetworkId id) noexcept {
-    return (id >> 52U) & 0xfffULL;
+    return static_cast<ClientId>((id >> 52U) & 0xffULL);
 }
 
 inline constexpr std::uint32_t client_entity_network_id_wire_id(ClientEntityNetworkId id) noexcept {
@@ -119,6 +121,12 @@ struct SyncArchetypeId {
 
 inline constexpr SyncArchetypeId invalid_sync_archetype_id{};
 
+struct SyncComponentSerializerId {
+    std::uint32_t value = std::numeric_limits<std::uint32_t>::max();
+};
+
+inline constexpr SyncComponentSerializerId invalid_sync_component_serializer_id{};
+
 constexpr bool operator==(SyncArchetypeId lhs, SyncArchetypeId rhs) noexcept {
     return lhs.value == rhs.value;
 }
@@ -127,10 +135,34 @@ constexpr bool operator!=(SyncArchetypeId lhs, SyncArchetypeId rhs) noexcept {
     return !(lhs == rhs);
 }
 
+constexpr bool operator==(SyncComponentSerializerId lhs, SyncComponentSerializerId rhs) noexcept {
+    return lhs.value == rhs.value;
+}
+
+constexpr bool operator!=(SyncComponentSerializerId lhs, SyncComponentSerializerId rhs) noexcept {
+    return !(lhs == rhs);
+}
+
 enum class ReplicationAudience {
     Owner,
-    All
+    All,
+    EveryoneExceptOwner
 };
+
+inline constexpr bool replication_audience_matches(
+    ReplicationAudience audience,
+    ClientId owner,
+    ClientId client) noexcept {
+    switch (audience) {
+        case ReplicationAudience::Owner:
+            return owner != invalid_client_id && owner == client;
+        case ReplicationAudience::EveryoneExceptOwner:
+            return owner == invalid_client_id || owner != client;
+        case ReplicationAudience::All:
+            return true;
+    }
+    return false;
+}
 
 enum class ComponentInterpolation {
     Step,
@@ -189,6 +221,7 @@ struct ComponentReplication {
     ashiato::Entity component;
     ReplicationAudience audience = ReplicationAudience::All;
     ComponentInterpolation interpolation = ComponentInterpolation::Step;
+    SyncComponentSerializerId serializer = invalid_sync_component_serializer_id;
 };
 
 struct SyncTagReplication {
@@ -369,8 +402,12 @@ inline bool write_entity_reference(
     ashiato::BitBuffer& out,
     ashiato::Entity entity,
     const EntityReferenceContext& context) {
+    if (!entity) {
+        out.write_bool(false);
+        return true;
+    }
     const std::uint32_t network_id = context.network_id_for_entity(entity);
-    out.push_bool(network_id != 0U);
+    out.write_bool(network_id != 0U);
     if (network_id == 0U) {
         return false;
     }
@@ -438,41 +475,148 @@ struct SyncComponentOps {
 #endif
 };
 
+class CueValue {
+public:
+    using DestroyFn = void (*)(void*) noexcept;
+    using CopyFn = void (*)(void*, const void*);
+    using MoveFn = void (*)(void*, void*) noexcept;
+
+    CueValue() = default;
+
+    CueValue(const CueValue& other) {
+        copy_from(other);
+    }
+
+    CueValue& operator=(const CueValue& other) {
+        if (this != &other) {
+            reset();
+            copy_from(other);
+        }
+        return *this;
+    }
+
+    CueValue(CueValue&& other) noexcept {
+        move_from(std::move(other));
+    }
+
+    CueValue& operator=(CueValue&& other) noexcept {
+        if (this != &other) {
+            reset();
+            move_from(std::move(other));
+        }
+        return *this;
+    }
+
+    ~CueValue() {
+        reset();
+    }
+
+    template <typename T, typename... Args>
+    T& emplace(Args&&... args) {
+        static_assert(sizeof(T) <= protocol::max_cue_value_bytes, "sync cue value exceeds max cue size");
+        static_assert(alignof(T) <= alignof(std::max_align_t), "sync cue value alignment exceeds max cue alignment");
+        reset();
+        T* value = new (&storage_) T(std::forward<Args>(args)...);
+        destroy_ = [](void* ptr) noexcept {
+            static_cast<T*>(ptr)->~T();
+        };
+        copy_ = [](void* dst, const void* src) {
+            new (dst) T(*static_cast<const T*>(src));
+        };
+        move_ = [](void* dst, void* src) noexcept {
+            new (dst) T(std::move(*static_cast<T*>(src)));
+            static_cast<T*>(src)->~T();
+        };
+        return *value;
+    }
+
+    void reset() noexcept {
+        if (destroy_ != nullptr) {
+            destroy_(data());
+        }
+        destroy_ = nullptr;
+        copy_ = nullptr;
+        move_ = nullptr;
+    }
+
+    bool has_value() const noexcept {
+        return destroy_ != nullptr;
+    }
+
+    void* data() noexcept {
+        return &storage_;
+    }
+
+    const void* data() const noexcept {
+        return &storage_;
+    }
+
+private:
+    void copy_from(const CueValue& other) {
+        if (!other.has_value()) {
+            return;
+        }
+        other.copy_(data(), other.data());
+        destroy_ = other.destroy_;
+        copy_ = other.copy_;
+        move_ = other.move_;
+    }
+
+    void move_from(CueValue&& other) noexcept {
+        if (!other.has_value()) {
+            return;
+        }
+        other.move_(data(), other.data());
+        destroy_ = other.destroy_;
+        copy_ = other.copy_;
+        move_ = other.move_;
+        other.destroy_ = nullptr;
+        other.copy_ = nullptr;
+        other.move_ = nullptr;
+    }
+
+    using Storage = std::aligned_storage_t<protocol::max_cue_value_bytes, alignof(std::max_align_t)>;
+
+    Storage storage_;
+    DestroyFn destroy_ = nullptr;
+    CopyFn copy_ = nullptr;
+    MoveFn move_ = nullptr;
+};
+
 struct SyncCueOps {
     using SerializeFn = void (*)(const void*, ashiato::BitBuffer&, ashiato::ComponentSerializationContext&);
-    using DeserializeValueFn = std::shared_ptr<void> (*)(
+    using DeserializeIntoFn = bool (*)(
         SyncCueTypeId,
         void*,
-        const ashiato::BitBuffer&,
+        ashiato::BitBuffer&,
+        CueValue&,
         ashiato::ComponentSerializationContext&);
     using PlayFn = bool (*)(
         SyncCueTypeId,
         void*,
         ashiato::Registry&,
         ashiato::Entity,
-        const ashiato::BitBuffer&,
+        const void*,
         float,
-        SyncFrame,
-        ashiato::ComponentSerializationContext&);
+        SyncFrame);
     using RollbackFn = bool (*)(
         SyncCueTypeId,
         void*,
         ashiato::Registry&,
         ashiato::Entity,
-        const ashiato::BitBuffer&,
-        ashiato::ComponentSerializationContext&);
+        const void*);
     using EqualsFn = bool (*)(
         SyncCueTypeId,
         void*,
-        const ashiato::BitBuffer&,
-        const ashiato::BitBuffer&,
-        ashiato::ComponentSerializationContext&);
+        const void*,
+        const void*);
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
     using TraceFn = bool (*)(SyncCueTypeId, void*, const ashiato::BitBuffer&, SyncTraceStringBuilder&);
+    using TraceValueFn = bool (*)(SyncCueTypeId, void*, const void*, SyncTraceStringBuilder&);
 #endif
 
     SerializeFn serialize = nullptr;
-    DeserializeValueFn deserialize_value = nullptr;
+    DeserializeIntoFn deserialize_into = nullptr;
     PlayFn play = nullptr;
     RollbackFn rollback = nullptr;
     EqualsFn equals = nullptr;
@@ -481,6 +625,7 @@ struct SyncCueOps {
     bool references_entities = false;
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
     TraceFn trace = nullptr;
+    TraceValueFn trace_value = nullptr;
 #endif
 };
 
@@ -490,7 +635,10 @@ struct QueuedSyncCue {
     SyncCueTypeId type = 0;
     float relevance_seconds = 0.0f;
     ashiato::BitBuffer payload;
-    std::shared_ptr<void> value;
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
+    std::vector<ashiato::SerializationTraceScope> payload_trace_scopes;
+#endif
+    CueValue value;
     bool only_replicate_to_owner = false;
 };
 
@@ -532,7 +680,12 @@ public:
         SyncCueTypeId type,
         ashiato::BitBuffer payload,
         float relevance_seconds,
-        bool only_replicate_to_owner = false);
+        bool only_replicate_to_owner = false
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
+        ,
+        std::vector<ashiato::SerializationTraceScope> payload_trace_scopes = {}
+#endif
+    );
 
     QueuedSyncCueView view() const noexcept;
     bool empty() const noexcept;
@@ -596,6 +749,7 @@ struct SyncSettings {
         swap(input_component, other.input_component);
         archetypes.swap(other.archetypes);
         component_ops.swap(other.component_ops);
+        component_serializers.swap(other.component_serializers);
         cue_ops.swap(other.cue_ops);
         cue_type_ids.swap(other.cue_type_ids);
         runtime_cue_type_ids.swap(other.runtime_cue_type_ids);
@@ -607,6 +761,7 @@ struct SyncSettings {
     ashiato::Entity input_component;
     std::vector<SyncArchetype> archetypes;
     std::unordered_map<std::uint64_t, SyncComponentOps> component_ops;
+    std::vector<SyncComponentOps> component_serializers;
     std::vector<SyncCueOps> cue_ops;
     std::unordered_map<std::type_index, SyncCueTypeId> cue_type_ids;
     std::unordered_map<std::string, SyncCueTypeId> runtime_cue_type_ids;
@@ -639,14 +794,15 @@ struct NetworkOwner {
 };
 
 struct FractionalTickSampled {};
+struct PredictiveSimulationJob {};
 struct NoResim {};
 struct NoSimulate {};
 
 struct ReplicationBandwidthOptions {
     bool enabled = false;
-    std::size_t min_bytes_per_second = 8U * 1024U;
-    std::size_t initial_bytes_per_second = 32U * 1024U;
-    std::size_t max_bytes_per_second = 512U * 1024U;
+    std::size_t min_bytes_per_second = std::size_t{8U} * 1024U;
+    std::size_t initial_bytes_per_second = std::size_t{32U} * 1024U;
+    std::size_t max_bytes_per_second = std::size_t{512U} * 1024U;
     std::size_t max_burst_bytes = 0;
     std::size_t transport_overhead_bytes_per_packet = 28U;
     SyncFrame sample_window_frames = 60;

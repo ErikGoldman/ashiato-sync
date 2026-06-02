@@ -56,8 +56,8 @@ void spawn_bots(ashiato::Registry& registry, const SyncSchema& schema, int count
 
 ashiato::sync::ReplicationServerOptions make_fps_server_options(
     const AppConfig& config,
-    std::unordered_map<ashiato::sync::ClientId, sockaddr_in>& peers,
-    std::unordered_map<ashiato::sync::ClientId, ashiato::sync::examples::NetworkSimulator<sockaddr_in>>& downstream_links,
+    std::unordered_map<ashiato::sync::PeerId, sockaddr_in>& peers,
+    std::unordered_map<ashiato::sync::PeerId, ashiato::sync::examples::NetworkSimulator<sockaddr_in>>& downstream_links,
     double& link_time_seconds,
     std::vector<ashiato::sync::ClientId>& pending_spawns) {
     ashiato::sync::ReplicationServerOptions options;
@@ -86,7 +86,7 @@ ashiato::sync::ReplicationServerOptions make_fps_server_options(
         std::clamp(config.loss_percent, 0.0, 100.0),
         std::max(0.0, config.link_bandwidth_kbps),
         static_cast<std::size_t>(std::max(0.0, config.link_queue_kb) * 1024.0)};
-    options.transport = [&peers, &downstream_links, &link_time_seconds, link_settings](ashiato::sync::ClientId peer, const ashiato::BitBuffer& packet) {
+    options.transport = [&peers, &downstream_links, &link_time_seconds, link_settings](ashiato::sync::PeerId peer, const ashiato::BitBuffer& packet) {
         const auto found = peers.find(peer);
         if (found != peers.end()) {
             auto& link = downstream_links.try_emplace(peer, link_settings, static_cast<std::uint32_t>(peer)).first->second;
@@ -103,12 +103,12 @@ ashiato::sync::ReplicationServerOptions make_fps_server_options(
 
 void receive_server_packets(
     SocketHandle socket,
-    std::unordered_map<ashiato::sync::ClientId, sockaddr_in>& peers,
+    std::unordered_map<ashiato::sync::PeerId, sockaddr_in>& peers,
     ashiato::sync::ReplicationServer& server) {
     ashiato::BitBuffer packet;
     sockaddr_in sender{};
     while (receive_packet(socket, packet, &sender)) {
-        const ashiato::sync::ClientId peer = peer_id(sender);
+        const ashiato::sync::PeerId peer = peer_id(sender);
         peers[peer] = sender;
         server.receive_packet(peer, packet);
     }
@@ -154,8 +154,8 @@ void run_server_mode(const AppConfig& config, bool listen_mode) {
     FpsReplayServer replay_server(replay_recorder, config.replay_port);
 
     SocketHandle socket = make_udp_socket(config.port);
-    std::unordered_map<ashiato::sync::ClientId, sockaddr_in> peers;
-    std::unordered_map<ashiato::sync::ClientId, ashiato::sync::examples::NetworkSimulator<sockaddr_in>> downstream_links;
+    std::unordered_map<ashiato::sync::PeerId, sockaddr_in> peers;
+    std::unordered_map<ashiato::sync::PeerId, ashiato::sync::examples::NetworkSimulator<sockaddr_in>> downstream_links;
     double link_time_seconds = 0.0;
     std::vector<ashiato::sync::ClientId> pending_spawns;
     std::vector<ServerPlayer> players;

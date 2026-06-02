@@ -3,7 +3,6 @@
 #include "ashiato/sync/tracing.hpp"
 
 #include <algorithm>
-#include <limits>
 #include <optional>
 
 namespace ashiato::sync::client_detail {
@@ -45,7 +44,7 @@ void ClientAckQueue::drain_ack_packets(
     const std::size_t mtu_bits = mtu_bytes * 8U;
     const std::size_t max_acks_per_packet =
         std::min<std::size_t>(
-            std::numeric_limits<std::uint16_t>::max(),
+            protocol::max_ack_count,
             (mtu_bits - protocol::client_ack_header_bits) / packet_id_bits);
     if (max_acks_per_packet == 0U) {
         return;
@@ -87,18 +86,18 @@ void ClientAckQueue::drain_ack_packets(
             serialization_capture ? &*serialization_capture : nullptr,
             "header");
 #endif
-        SERIALIZE_TRACE_WITH_CAPTURE(
+        ASHIATO_SERIALIZE_TRACE_WITH_CAPTURE(
             serialization_capture ? &*serialization_capture : nullptr,
             packet,
             protocol::client_ack_message,
-            8U,
+            protocol::message_bits,
             "message");
         packet_count_offset = packet.bit_size();
-        SERIALIZE_TRACE_WITH_CAPTURE(
+        ASHIATO_SERIALIZE_TRACE_WITH_CAPTURE(
             serialization_capture ? &*serialization_capture : nullptr,
             packet,
             0,
-            16U,
+            protocol::ack_count_bits,
             "ack_count");
         packet_ack_count = 0;
         trace.acks.clear();
@@ -107,7 +106,7 @@ void ClientAckQueue::drain_ack_packets(
         if (packet_ack_count == 0U) {
             return;
         }
-        packet.overwrite_unsigned_bits(packet_count_offset, packet_ack_count, 16U);
+        packet.overwrite_unsigned_bits(packet_count_offset, packet_ack_count, protocol::ack_count_bits);
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
         if (serialization_capture) {
             serialization_capture->flush();
@@ -127,7 +126,7 @@ void ClientAckQueue::drain_ack_packets(
             finish_packet();
             begin_packet();
         }
-        SERIALIZE_TRACE_WITH_CAPTURE(
+        ASHIATO_SERIALIZE_TRACE_WITH_CAPTURE(
             serialization_capture ? &*serialization_capture : nullptr,
             packet,
             packet_id,

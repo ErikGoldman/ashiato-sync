@@ -12,6 +12,7 @@
 #include "ashiato/sync/registration.hpp"
 #include "ashiato/sync/replay_streamer.hpp"
 #include "ashiato/sync/replay_writer.hpp"
+#include "ashiato/sync/serialization.hpp"
 #include "ashiato/sync/server.hpp"
 #include "ashiato/sync/tracing.hpp"
 #include "ashiato/sync/types.hpp"

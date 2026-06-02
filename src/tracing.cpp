@@ -50,9 +50,9 @@ T read_pod(const std::vector<std::uint8_t>& bytes, std::size_t& offset) {
     if (offset + sizeof(T) > bytes.size()) {
         throw std::runtime_error("ktrace record is truncated");
     }
-    typename std::make_unsigned<T>::type raw = 0;
+    std::uint64_t raw = 0;
     for (std::size_t byte = 0; byte < sizeof(T); ++byte) {
-        raw |= static_cast<typename std::make_unsigned<T>::type>(bytes[offset + byte]) << (byte * 8U);
+        raw |= std::uint64_t{bytes[offset + byte]} << (byte * 8U);
     }
     offset += sizeof(T);
     return static_cast<T>(raw);
@@ -116,6 +116,28 @@ std::uint64_t read_trace_u64(std::ifstream& file) {
     return value;
 }
 
+bool is_known_trace_event_type(std::uint8_t value) noexcept {
+    return value >= static_cast<std::uint8_t>(SyncTraceEventType::ClientConnected) &&
+        value <= static_cast<std::uint8_t>(SyncTraceEventType::SerializationPayloadTagName);
+}
+
+bool is_known_ktrace_flags(std::uint32_t flags) noexcept {
+    constexpr std::uint32_t known_flags = ktrace_flag_packet_logs | ktrace_flag_serialization_payloads;
+    return (flags & ~known_flags) == 0U;
+}
+
+bool has_valid_record_type_at(std::ifstream& file, std::uint64_t offset, std::uint64_t file_size) {
+    if (offset >= file_size) {
+        return false;
+    }
+
+    file.clear();
+    file.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+    const int type_byte = file.get();
+    return type_byte != std::char_traits<char>::eof() &&
+        is_known_trace_event_type(static_cast<std::uint8_t>(type_byte));
+}
+
 KTraceFileHeader read_trace_file_header(std::ifstream& file, const std::string& path) {
     char magic[8]{};
     file.read(magic, sizeof(magic));
@@ -142,7 +164,9 @@ KTraceFileHeader read_trace_file_header(std::ifstream& file, const std::string& 
     }
     header.role = static_cast<SyncTraceRole>(read_trace_byte(file));
     header.recorded_unix_ns = read_trace_u64(file);
-    header.client = read_trace_u64(file);
+    const std::uint64_t client_offset = static_cast<std::uint64_t>(file.tellg());
+    const std::uint64_t stored_client = read_trace_u64(file);
+    header.client = static_cast<ClientId>(stored_client);
     header.flags = read_trace_u32(file);
     header.data_offset = static_cast<std::uint64_t>(file.tellg());
     std::error_code ec;
@@ -150,6 +174,24 @@ KTraceFileHeader read_trace_file_header(std::ifstream& file, const std::string& 
     if (ec) {
         header.file_size = header.data_offset;
     }
+    if (stored_client > std::numeric_limits<ClientId>::max() ||
+        !is_known_ktrace_flags(header.flags) ||
+        (!has_valid_record_type_at(file, header.data_offset, header.file_size) &&
+            client_offset + 5U < header.file_size)) {
+        file.clear();
+        file.seekg(static_cast<std::streamoff>(client_offset), std::ios::beg);
+        const std::uint8_t short_client = read_trace_byte(file);
+        const std::uint32_t short_flags = read_trace_u32(file);
+        const std::uint64_t short_data_offset = static_cast<std::uint64_t>(file.tellg());
+        if (is_known_ktrace_flags(short_flags) &&
+            has_valid_record_type_at(file, short_data_offset, header.file_size)) {
+            header.client = short_client;
+            header.flags = short_flags;
+            header.data_offset = short_data_offset;
+        }
+    }
+    file.clear();
+    file.seekg(static_cast<std::streamoff>(header.data_offset), std::ios::beg);
     return header;
 }
 
@@ -197,7 +239,7 @@ SyncTraceEvent read_event_payload(
     SyncTraceEvent event;
     event.type = type;
     event.role = static_cast<SyncTraceRole>(read_pod<std::uint8_t>(payload, offset));
-    event.client = read_pod<std::uint64_t>(payload, offset);
+    event.client = static_cast<ClientId>(read_pod<std::uint64_t>(payload, offset));
     event.frame = read_pod<std::uint32_t>(payload, offset);
     event.server_entity = ashiato::Entity{read_pod<std::uint64_t>(payload, offset)};
     event.local_entity = ashiato::Entity{read_pod<std::uint64_t>(payload, offset)};
@@ -894,8 +936,9 @@ void KTraceDirectoryWriter::write_header(Sink& sink) {
     for (std::size_t byte = 0; byte < sizeof(sink.recorded_unix_ns); ++byte) {
         sink.file.put(static_cast<char>((sink.recorded_unix_ns >> (byte * 8U)) & 0xffU));
     }
-    for (std::size_t byte = 0; byte < sizeof(sink.client); ++byte) {
-        sink.file.put(static_cast<char>((sink.client >> (byte * 8U)) & 0xffU));
+    const std::uint64_t client = sink.client;
+    for (std::size_t byte = 0; byte < sizeof(client); ++byte) {
+        sink.file.put(static_cast<char>((client >> (byte * 8U)) & 0xffU));
     }
     std::uint32_t flags = tracer_.serialization_payloads_enabled() ? ktrace_flag_serialization_payloads : 0U;
 #ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
@@ -1118,7 +1161,7 @@ bool KTraceStreamReader::read_next(KTraceRecord& out) {
 
     std::vector<std::uint8_t> payload(payload_size);
     if (payload_size != 0U) {
-        file_.read(reinterpret_cast<char*>(payload.data()), payload.size());
+        file_.read(reinterpret_cast<char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
         if (file_.gcount() != static_cast<std::streamsize>(payload.size())) {
             position_ = header_.file_size;
             return false;

@@ -31,7 +31,7 @@ void close_socket(SocketHandle socket);
 void set_nonblocking(SocketHandle socket);
 SocketHandle make_udp_socket(std::uint16_t port);
 sockaddr_in make_address(const std::string& host, std::uint16_t port);
-ashiato::sync::ClientId peer_id(const sockaddr_in& address);
+ashiato::sync::PeerId peer_id(const sockaddr_in& address);
 bool receive_packet(SocketHandle socket, ashiato::BitBuffer& packet, sockaddr_in* sender = nullptr);
 void send_packet(SocketHandle socket, const sockaddr_in& target, const ashiato::BitBuffer& packet);
 

@@ -100,6 +100,7 @@ bool ClientDisplaySampler::append_frame_sample(
 
         ReplicatedComponentUpdate value;
         value.component = component;
+        value.serializer = archetype.components[component_index].serializer;
         if (next_frame_sample != nullptr &&
             frame_has_component(next_frame_sample->baseline, component_index) &&
             archetype.components[component_index].interpolation == ComponentInterpolation::Interpolate) {
@@ -300,6 +301,7 @@ bool ClientDisplaySampler::append_live_sample(WriteContext& context, const Entit
 
         ReplicatedComponentUpdate value;
         value.component = component;
+        value.serializer = archetype.components[component_index].serializer;
         value.bytes.resize(ops.serialization.quantized_size);
         ops.serialization.quantize(current, value.bytes.data());
         const auto found_error = std::find_if(

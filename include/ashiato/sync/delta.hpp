@@ -77,7 +77,7 @@ inline float dequantize_float(std::uint32_t quantized, FloatConfig config) {
 }
 
 inline void write_float(ashiato::BitBuffer& out, float value, FloatConfig config) {
-    out.push_unsigned_bits(quantize_float(value, config), float_bits(config));
+    out.write_unsigned_bits(quantize_float(value, config), float_bits(config));
 }
 
 inline bool read_float(ashiato::BitBuffer& in, FloatConfig config, float& out) {
@@ -93,9 +93,9 @@ inline void write_delta_float(ashiato::BitBuffer& out, float previous, float cur
     const std::uint32_t previous_quantized = quantize_float(previous, config);
     const std::uint32_t current_quantized = quantize_float(current, config);
     const bool changed = previous_quantized != current_quantized;
-    out.push_bool(changed);
+    out.write_bool(changed);
     if (changed) {
-        out.push_unsigned_bits(current_quantized, float_bits(config));
+        out.write_unsigned_bits(current_quantized, float_bits(config));
     }
 }
 
@@ -124,9 +124,9 @@ inline void write_delta_int(ashiato::BitBuffer& out, std::int64_t previous, std:
         throw std::invalid_argument("delta integer bits must be in [1, 64]");
     }
     const bool changed = previous != current;
-    out.push_bool(changed);
+    out.write_bool(changed);
     if (changed) {
-        out.push_unsigned_bits(zigzag_encode(current - previous), bits);
+        out.write_unsigned_bits(zigzag_encode(current - previous), bits);
     }
 }
 
