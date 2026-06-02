@@ -1,0 +1,74 @@
+[
+  {
+    "name": "BM_ClientReceivePredict/4096/16",
+    "real_time": 22747434.281250812,
+    "cpu_time": 22747293.156249985,
+    "time_unit": "ns",
+    "items_per_second": 15518.329920631046,
+    "bytes_per_second": null,
+    "iterations": 32
+  },
+  {
+    "name": "BM_ClientApplyBufferedInterpolation/4096/16",
+    "real_time": 8486238.805969335,
+    "cpu_time": 8484448.029850747,
+    "time_unit": "ns",
+    "items_per_second": 1885.8032889950368,
+    "bytes_per_second": null,
+    "iterations": 67
+  },
+  {
+    "name": "BM_ClientSampleFractionalTickLargePayload/1024/16",
+    "real_time": 1449418.004329154,
+    "cpu_time": 1448931.5086580233,
+    "time_unit": "ns",
+    "items_per_second": 10352.45621367759,
+    "bytes_per_second": null,
+    "iterations": 462
+  },
+  {
+    "name": "BM_ServerTickBudgetLimited/16384/8/64",
+    "real_time": 14761899.239130486,
+    "cpu_time": 14759859.565217376,
+    "time_unit": "ns",
+    "items_per_second": 34688.67693067779,
+    "bytes_per_second": null,
+    "iterations": 46
+  },
+  {
+    "name": "BM_ServerTickSerializedDelta/16384/8",
+    "real_time": 99466689.57142687,
+    "cpu_time": 99459426.14285716,
+    "time_unit": "ns",
+    "items_per_second": 1317843.9197078873,
+    "bytes_per_second": null,
+    "iterations": 7
+  },
+  {
+    "name": "BM_ServerTickPackedAckedDeltaShared/16384/8",
+    "real_time": 538282.24858299,
+    "cpu_time": 538247.1643724693,
+    "time_unit": "ns",
+    "items_per_second": 243516378.117503,
+    "bytes_per_second": null,
+    "iterations": 1235
+  },
+  {
+    "name": "BM_ServerTickMutatingAckedDelta/16384/8",
+    "real_time": 175690469.00000748,
+    "cpu_time": 175664468.0000002,
+    "time_unit": "ns",
+    "items_per_second": 746149.7563639326,
+    "bytes_per_second": null,
+    "iterations": 3
+  },
+  {
+    "name": "BM_BitBufferAppendBits/131072",
+    "real_time": 304.3678446406902,
+    "cpu_time": 304.10257527070434,
+    "time_unit": "ns",
+    "items_per_second": 431012463091.84674,
+    "bytes_per_second": null,
+    "iterations": 2353306
+  }
+]
