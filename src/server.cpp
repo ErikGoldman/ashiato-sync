@@ -1846,7 +1846,11 @@ void ReplicationServer::push_client_inputs_to_ashiato(ashiato::Registry& registr
     const SyncFrame input_frame_num = frame_;
     std::unordered_map<ClientId, server_detail::ServerInputForFrame> input_for_frame_cache;
 
-    registry.view<const NetworkOwner>().each([this, &input_for_frame_cache, input_frame_num, &ops, &registry, &settings]
+    registry.view<const NetworkOwner>().each([this, &input_for_frame_cache, input_frame_num, &ops, &registry
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+          , &settings
+#endif
+    ]
           (ashiato::Entity entity, const NetworkOwner& owner) {
         const auto found_client = client_to_index_.find(owner.client);
         if (found_client == client_to_index_.end()) {
