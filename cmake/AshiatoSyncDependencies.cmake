@@ -9,7 +9,7 @@ function(ashiato_sync_add_ashiato_dependency)
         FORCE
     )
     set(ASHIATO_SYNC_ASHIATO_GIT_TAG
-        "6a964ea7347b130391687467a46f524a24e49ddc"
+        "af1e1c8dd569137c56357398a2e70225581ddbf5"
         CACHE STRING "Pinned Ashiato ECS Git commit/tag"
         FORCE
     )

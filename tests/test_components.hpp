@@ -224,7 +224,9 @@ struct SyncCueTraits<ashiato_sync_tests::ReferenceCue> {
         ashiato::Registry& registry,
         ashiato::Entity owner,
         const ashiato_sync_tests::ReferenceCue& cue,
-        float late_seconds) {
+        float late_seconds,
+        SyncFrame frame) {
+        (void)frame;
         if (!registry.contains<ashiato_sync_tests::CuePlayback>(owner)) {
             registry.add<ashiato_sync_tests::CuePlayback>(owner);
         }
@@ -261,8 +263,8 @@ struct SyncComponentTraits<ashiato_sync_tests::PredictedPosition> {
     using Quantized = ashiato_sync_tests::QuantizedPredictedPosition;
     using Error = ashiato_sync_tests::QuantizedPredictedPosition;
 
-    static Quantized quantize(const ashiato_sync_tests::PredictedPosition& value) {
-        return Quantized{
+    static void quantize(const ashiato_sync_tests::PredictedPosition& value, Quantized& out) {
+        out = Quantized{
             static_cast<std::int32_t>(value.x * 10.0f),
             static_cast<std::int32_t>(value.y * 10.0f),
         };
@@ -335,8 +337,8 @@ template <>
 struct SyncComponentTraits<ashiato_sync_tests::NetworkedPosition> {
     using Quantized = ashiato_sync_tests::QuantizedNetworkedPosition;
 
-    static Quantized quantize(const ashiato_sync_tests::NetworkedPosition& value) {
-        return Quantized{
+    static void quantize(const ashiato_sync_tests::NetworkedPosition& value, Quantized& out) {
+        out = Quantized{
             static_cast<std::int32_t>(value.x * 10.0f),
             static_cast<std::int32_t>(value.y * 10.0f),
         };
@@ -387,8 +389,8 @@ struct SyncComponentTraits<ashiato_sync_tests::SmoothPosition> {
     using Quantized = ashiato_sync_tests::SmoothPosition;
     using Error = ashiato_sync_tests::SmoothPosition;
 
-    static Quantized quantize(const ashiato_sync_tests::SmoothPosition& value) {
-        return value;
+    static void quantize(const ashiato_sync_tests::SmoothPosition& value, Quantized& out) {
+        out = value;
     }
 
     static ashiato_sync_tests::SmoothPosition dequantize(const Quantized& value) {
@@ -445,8 +447,8 @@ struct SyncComponentTraits<ashiato_sync_tests::TargetReference> {
     using Quantized = ashiato_sync_tests::TargetReference;
     static constexpr bool references_entities = true;
 
-    static Quantized quantize(const ashiato_sync_tests::TargetReference& value) {
-        return value;
+    static void quantize(const ashiato_sync_tests::TargetReference& value, Quantized& out) {
+        out = value;
     }
 
     static ashiato_sync_tests::TargetReference dequantize(const Quantized& value) {
@@ -476,8 +478,8 @@ template <>
 struct SyncComponentTraits<ashiato_sync_tests::BandwidthProbe> {
     using Quantized = std::int32_t;
 
-    static Quantized quantize(const ashiato_sync_tests::BandwidthProbe& value) {
-        return value.value;
+    static void quantize(const ashiato_sync_tests::BandwidthProbe& value, Quantized& out) {
+        out = value.value;
     }
 
     static ashiato_sync_tests::BandwidthProbe dequantize(const Quantized& value) {

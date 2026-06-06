@@ -97,8 +97,8 @@ struct SyncComponentTraits<prediction_stress::PredPosition> {
     using Quantized = prediction_stress::PredPosition;
     using Error = prediction_stress::PredPosition;
 
-    static Quantized quantize(const prediction_stress::PredPosition& value) {
-        return value;
+    static void quantize(const prediction_stress::PredPosition& value, Quantized& out) {
+        out = value;
     }
 
     static prediction_stress::PredPosition dequantize(const Quantized& value) {
@@ -145,8 +145,8 @@ template <>
 struct SyncComponentTraits<prediction_stress::PredVelocity> {
     using Quantized = prediction_stress::PredVelocity;
 
-    static Quantized quantize(const prediction_stress::PredVelocity& value) {
-        return value;
+    static void quantize(const prediction_stress::PredVelocity& value, Quantized& out) {
+        out = value;
     }
 
     static prediction_stress::PredVelocity dequantize(const Quantized& value) {
@@ -173,8 +173,8 @@ template <>
 struct SyncComponentTraits<prediction_stress::PredAcceleration> {
     using Quantized = prediction_stress::PredAcceleration;
 
-    static Quantized quantize(const prediction_stress::PredAcceleration& value) {
-        return value;
+    static void quantize(const prediction_stress::PredAcceleration& value, Quantized& out) {
+        out = value;
     }
 
     static prediction_stress::PredAcceleration dequantize(const Quantized& value) {
@@ -201,8 +201,8 @@ template <>
 struct SyncComponentTraits<prediction_stress::PredEnergy> {
     using Quantized = std::int32_t;
 
-    static Quantized quantize(const prediction_stress::PredEnergy& value) {
-        return value.value;
+    static void quantize(const prediction_stress::PredEnergy& value, Quantized& out) {
+        out = value.value;
     }
 
     static prediction_stress::PredEnergy dequantize(const Quantized& value) {
@@ -227,8 +227,8 @@ template <>
 struct SyncComponentTraits<prediction_stress::PredFlags> {
     using Quantized = std::uint32_t;
 
-    static Quantized quantize(const prediction_stress::PredFlags& value) {
-        return value.bits;
+    static void quantize(const prediction_stress::PredFlags& value, Quantized& out) {
+        out = value.bits;
     }
 
     static prediction_stress::PredFlags dequantize(const Quantized& value) {

@@ -443,8 +443,8 @@ template <>
 struct SyncComponentTraits<replay_network_tests::ReplayTransform> {
     using Quantized = replay_network_tests::ReplayTransform;
 
-    static Quantized quantize(const replay_network_tests::ReplayTransform& value) {
-        return value;
+    static void quantize(const replay_network_tests::ReplayTransform& value, Quantized& out) {
+        out = value;
     }
 
     static replay_network_tests::ReplayTransform dequantize(const Quantized& value) {
@@ -465,8 +465,8 @@ template <>
 struct SyncComponentTraits<replay_network_tests::ReplayDeathState> {
     using Quantized = replay_network_tests::ReplayDeathState;
 
-    static Quantized quantize(const replay_network_tests::ReplayDeathState& value) {
-        return value;
+    static void quantize(const replay_network_tests::ReplayDeathState& value, Quantized& out) {
+        out = value;
     }
 
     static replay_network_tests::ReplayDeathState dequantize(const Quantized& value) {

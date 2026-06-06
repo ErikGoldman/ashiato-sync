@@ -1143,7 +1143,7 @@ void ReplicationServer::rediscover_replicated_entities(ashiato::Registry& regist
     }
 
     dirty.each_removed<Replicated>([&](ashiato::Registry::ComponentRemoval removal) {
-        deactivate_entity_index(removal.entity_index);
+        deactivate_entity_index(ashiato::Registry::entity_index(removal.entity));
     });
 
     dirty.each_added<Replicated>([&](ashiato::Entity entity, const void* value) {
@@ -2091,7 +2091,8 @@ void ReplicationServer::capture_dirty_generations(ashiato::Registry::DirtyView d
                 }
             });
             dirty.each_removed(tag_replication.tag, [&](ashiato::Registry::ComponentRemoval removal) {
-                const auto found = entity_index_to_replicated_index_.find(removal.entity_index);
+                const auto found =
+                    entity_index_to_replicated_index_.find(ashiato::Registry::entity_index(removal.entity));
                 if (found != entity_index_to_replicated_index_.end()) {
                     mark_dirty_tag(settings, found->second, tag_replication.tag);
                 }
@@ -2108,7 +2109,8 @@ void ReplicationServer::capture_dirty_generations(ashiato::Registry::DirtyView d
             }
         });
         dirty.each_removed(component, [&](ashiato::Registry::ComponentRemoval removal) {
-            const auto found = entity_index_to_replicated_index_.find(removal.entity_index);
+            const auto found =
+                entity_index_to_replicated_index_.find(ashiato::Registry::entity_index(removal.entity));
             if (found != entity_index_to_replicated_index_.end()) {
                 mark_dirty_component(settings, found->second, component);
             }
@@ -2122,7 +2124,7 @@ void ReplicationServer::capture_dirty_generations(ashiato::Registry::DirtyView d
         }
     });
     dirty.each_removed<NetworkOwner>([&](ashiato::Registry::ComponentRemoval removal) {
-        const auto found = entity_index_to_replicated_index_.find(removal.entity_index);
+        const auto found = entity_index_to_replicated_index_.find(ashiato::Registry::entity_index(removal.entity));
         if (found != entity_index_to_replicated_index_.end()) {
             mark_owner_visibility_dirty(settings, found->second);
         }

@@ -40,11 +40,11 @@ struct SyncComponentTraits<ProfiledTransform> {
         std::int32_t y = 0;
     };
 
-    template <typename SettingsT = Settings>
-    struct Serializer {
-        static Quantized quantize(const ProfiledTransform& value) {
-            return Quantized{value.x, value.y};
-        }
+	template <typename SettingsT = Settings>
+	struct Serializer {
+		static void quantize(const ProfiledTransform& value, Quantized& out) {
+			out = Quantized{value.x, value.y};
+		}
 
         static ProfiledTransform dequantize(const Quantized& value) {
             return ProfiledTransform{value.x, value.y};

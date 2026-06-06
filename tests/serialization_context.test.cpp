@@ -83,8 +83,8 @@ template <>
 struct SyncComponentTraits<ContextProbe> {
     using Quantized = QuantizedContextProbe;
 
-    static Quantized quantize(const ContextProbe& value) {
-        return Quantized{value.value};
+    static void quantize(const ContextProbe& value, Quantized& out) {
+        out = Quantized{value.value};
     }
 
     static ContextProbe dequantize(const Quantized& value) {

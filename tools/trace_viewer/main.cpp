@@ -26,6 +26,7 @@
 #include <mutex>
 #include <numeric>
 #include <sstream>
+#include <set>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -193,6 +194,27 @@ struct PacketEventInfo {
     int flow_index = -1;
 };
 
+struct PacketEndpointKey {
+    ClientId client = invalid_client_id;
+    bool server_side = false;
+    std::string match_key;
+};
+
+bool operator==(const PacketEndpointKey& lhs, const PacketEndpointKey& rhs) {
+    return lhs.client == rhs.client &&
+        lhs.server_side == rhs.server_side &&
+        lhs.match_key == rhs.match_key;
+}
+
+struct PacketEndpointKeyHash {
+    std::size_t operator()(const PacketEndpointKey& key) const noexcept {
+        std::size_t mixed = std::hash<ClientId>{}(key.client);
+        mixed ^= std::hash<bool>{}(key.server_side) + 0x9e3779b97f4a7c15ULL + (mixed << 6U) + (mixed >> 2U);
+        mixed ^= std::hash<std::string>{}(key.match_key) + 0x9e3779b97f4a7c15ULL + (mixed << 6U) + (mixed >> 2U);
+        return mixed;
+    }
+};
+
 struct PacketFlow {
     int send_event = -1;
     int receive_event = -1;
@@ -290,6 +312,7 @@ struct PayloadBandwidthBucket {
     std::uint64_t begin_us = 0;
     std::uint64_t end_us = 0;
     std::uint64_t total_bits = 0;
+    std::uint64_t packets = 0;
 };
 
 struct PayloadSummary {
@@ -303,6 +326,23 @@ struct PayloadClientSummary {
     ClientId client = invalid_client_id;
     std::uint64_t total_bits = 0;
     std::uint64_t packets = 0;
+};
+
+struct PayloadClientKey {
+    SyncTracePayloadSource payload_source = SyncTracePayloadSource::Network;
+    ClientId client = invalid_client_id;
+
+    bool operator==(const PayloadClientKey& other) const noexcept {
+        return payload_source == other.payload_source && client == other.client;
+    }
+};
+
+struct PayloadClientKeyHash {
+    std::size_t operator()(const PayloadClientKey& key) const noexcept {
+        std::size_t mixed = std::hash<unsigned>{}(static_cast<unsigned>(key.payload_source));
+        mixed ^= std::hash<ClientId>{}(key.client) + 0x9e3779b97f4a7c15ULL + (mixed << 6U) + (mixed >> 2U);
+        return mixed;
+    }
 };
 
 struct DirectoryPickerEntry {
@@ -439,6 +479,7 @@ struct ViewerState {
     bool payload_row_sort_ascending = false;
     PayloadSourceFilter payload_source_filter = PayloadSourceFilter::All;
     PayloadDirectionFilter payload_direction_filter = PayloadDirectionFilter::All;
+    std::unordered_set<PayloadClientKey, PayloadClientKeyHash> payload_excluded_clients;
     std::array<char, 256> payload_filter{};
     bool payload_filter_enabled = false;
     bool payload_hierarchy_view = false;
@@ -1377,14 +1418,35 @@ std::string packet_match_key(const PacketEventInfo& event) {
     return out.str();
 }
 
-bool packet_endpoints_match(const PacketEventInfo& send, const PacketEventInfo& receive) {
-    if (!send.send || receive.send ||
-        send.client != receive.client ||
-        send.message != receive.message ||
-        send.server_side == receive.server_side) {
-        return false;
+PacketEndpointKey packet_receive_endpoint_key(const PacketEventInfo& event) {
+    return PacketEndpointKey{event.client, event.server_side, packet_match_key(event)};
+}
+
+using PacketReceiveOrder = std::set<std::pair<std::uint64_t, int>>;
+
+int choose_packet_receive_candidate(
+    const PacketEventInfo& send,
+    const PacketReceiveOrder& receive_order,
+    const std::vector<PacketEventInfo>& events) {
+    if (receive_order.empty()) {
+        return -1;
     }
-    return packet_match_key(send) == packet_match_key(receive);
+    const auto after = receive_order.lower_bound({send.absolute_us, std::numeric_limits<int>::min()});
+    int best_receive = after != receive_order.end() ? after->second : -1;
+    std::uint64_t best_delta = best_receive >= 0
+        ? events[static_cast<std::size_t>(best_receive)].absolute_us - send.absolute_us
+        : std::numeric_limits<std::uint64_t>::max();
+    if (after != receive_order.begin()) {
+        const auto before = std::prev(after);
+        const PacketEventInfo& before_event = events[static_cast<std::size_t>(before->second)];
+        const std::uint64_t before_delta = send.absolute_us >= before_event.absolute_us
+            ? send.absolute_us - before_event.absolute_us
+            : before_event.absolute_us - send.absolute_us;
+        if (best_receive < 0 || before_delta < best_delta) {
+            best_receive = before->second;
+        }
+    }
+    return best_receive;
 }
 
 std::string packet_marker_label(const PacketEventInfo& event) {
@@ -1408,6 +1470,21 @@ bool packet_message_is_ping_or_pong(const PacketEventInfo& event) {
 
 bool packet_update_apply_failed(const PacketEventInfo& event) {
     return !event.send && event.message == "server_update" && event.applied == "false";
+}
+
+bool packet_update_apply_failed_from_stale_frame(const PacketEventInfo& event) {
+    constexpr const char* stale_delta_suffix = "delta_stale_frame";
+    constexpr const char* stale_full_suffix = "full_stale_frame";
+    if (!packet_update_apply_failed(event)) {
+        return false;
+    }
+    const auto matches_suffix = [&](const char* suffix) {
+        const std::size_t suffix_len = std::strlen(suffix);
+        return event.apply_failure == suffix ||
+            (event.apply_failure.size() > suffix_len &&
+                event.apply_failure.compare(event.apply_failure.size() - suffix_len, suffix_len, suffix) == 0);
+    };
+    return matches_suffix(stale_delta_suffix) || matches_suffix(stale_full_suffix);
 }
 
 float packet_marker_width_estimate(const PacketEventInfo& event) {
@@ -1549,31 +1626,24 @@ void rebuild_packet_log_rows(ViewerState& state) {
             : 0U;
     }
 
-    std::vector<bool> receive_used(state.packet_events.size(), false);
+    std::unordered_map<PacketEndpointKey, PacketReceiveOrder, PacketEndpointKeyHash> receive_events_by_endpoint;
+    receive_events_by_endpoint.reserve(state.packet_events.size());
+    for (int event_index = 0; event_index < static_cast<int>(state.packet_events.size()); ++event_index) {
+        const PacketEventInfo& event = state.packet_events[static_cast<std::size_t>(event_index)];
+        if (event.send) {
+            continue;
+        }
+        receive_events_by_endpoint[packet_receive_endpoint_key(event)].insert({event.absolute_us, event_index});
+    }
     for (int send_index = 0; send_index < static_cast<int>(state.packet_events.size()); ++send_index) {
         const PacketEventInfo& send = state.packet_events[static_cast<std::size_t>(send_index)];
         if (!send.send) {
             continue;
         }
         int best_receive = -1;
-        std::uint64_t best_delta = std::numeric_limits<std::uint64_t>::max();
-        for (int receive_index = 0; receive_index < static_cast<int>(state.packet_events.size()); ++receive_index) {
-            if (receive_used[static_cast<std::size_t>(receive_index)]) {
-                continue;
-            }
-            const PacketEventInfo& receive = state.packet_events[static_cast<std::size_t>(receive_index)];
-            if (!packet_endpoints_match(send, receive)) {
-                continue;
-            }
-            const std::uint64_t delta = receive.absolute_us >= send.absolute_us
-                ? receive.absolute_us - send.absolute_us
-                : send.absolute_us - receive.absolute_us;
-            if (best_receive < 0 ||
-                (receive.absolute_us >= send.absolute_us && state.packet_events[static_cast<std::size_t>(best_receive)].absolute_us < send.absolute_us) ||
-                delta < best_delta) {
-                best_receive = receive_index;
-                best_delta = delta;
-            }
+        auto endpoint = receive_events_by_endpoint.find(PacketEndpointKey{send.client, !send.server_side, packet_match_key(send)});
+        if (endpoint != receive_events_by_endpoint.end()) {
+            best_receive = choose_packet_receive_candidate(send, endpoint->second, state.packet_events);
         }
         PacketFlow flow;
         flow.send_event = send_index;
@@ -1581,7 +1651,9 @@ void rebuild_packet_log_rows(ViewerState& state) {
         flow.client = send.client;
         flow.server_to_client = send.server_side;
         if (best_receive >= 0) {
-            receive_used[static_cast<std::size_t>(best_receive)] = true;
+            endpoint->second.erase({
+                state.packet_events[static_cast<std::size_t>(best_receive)].absolute_us,
+                best_receive});
         }
         state.packet_flows.push_back(flow);
         const int flow_index = static_cast<int>(state.packet_flows.size()) - 1;
@@ -2020,6 +2092,14 @@ bool payload_packet_matches_direction_filter(const ViewerState& state, const Pay
     return payload_direction_matches_filter(state.payload_direction_filter, packet.payload_tag_bits);
 }
 
+bool payload_client_excluded(const ViewerState& state, SyncTracePayloadSource source, ClientId client) {
+    return state.payload_excluded_clients.find(PayloadClientKey{source, client}) != state.payload_excluded_clients.end();
+}
+
+bool payload_packet_matches_client_filter(const ViewerState& state, const PayloadPacketInfo& packet) {
+    return !payload_client_excluded(state, packet.payload_source, packet.client);
+}
+
 bool payload_packet_matches_scope_filter(const ViewerState& state, const PayloadPacketInfo& packet) {
     if (state.selected_payload_scope_path.empty()) {
         return true;
@@ -2038,6 +2118,11 @@ bool payload_packet_matches_chart_filter(const ViewerState& state, const Payload
         payload_packet_matches_time_filter(state, packet) &&
         payload_packet_matches_name_filter(state, packet) &&
         payload_packet_matches_scope_filter(state, packet);
+}
+
+bool payload_packet_matches_active_filter(const ViewerState& state, const PayloadPacketInfo& packet) {
+    return payload_packet_matches_chart_filter(state, packet) &&
+        payload_packet_matches_client_filter(state, packet);
 }
 
 std::uint64_t payload_filter_duration_us(const ViewerState& state) {
@@ -2097,11 +2182,7 @@ void rebuild_payload_filtered_packets(ViewerState& state) {
     state.payload_filtered_packets.reserve(state.payload_packets.size());
     for (int index = 0; index < static_cast<int>(state.payload_packets.size()); ++index) {
         const PayloadPacketInfo& packet = state.payload_packets[static_cast<std::size_t>(index)];
-        if (payload_packet_matches_source_filter(state, packet) &&
-            payload_packet_matches_direction_filter(state, packet) &&
-            payload_packet_matches_time_filter(state, packet) &&
-            payload_packet_matches_name_filter(state, packet) &&
-            payload_packet_matches_scope_filter(state, packet)) {
+        if (payload_packet_matches_active_filter(state, packet)) {
             state.payload_filtered_packets.push_back(index);
         }
     }
@@ -2128,7 +2209,8 @@ void rebuild_payload_aggregate_rows(ViewerState& state) {
         const PayloadPacketInfo& packet = state.payload_packets[static_cast<std::size_t>(packet_index)];
         if (!payload_packet_matches_source_filter(state, packet) ||
             !payload_packet_matches_direction_filter(state, packet) ||
-            !payload_packet_matches_time_filter(state, packet)) {
+            !payload_packet_matches_time_filter(state, packet) ||
+            !payload_packet_matches_client_filter(state, packet)) {
             continue;
         }
         for (int scope_index = 0; scope_index < static_cast<int>(packet.scopes.size()); ++scope_index) {
@@ -2374,7 +2456,9 @@ void rebuild_payload_bandwidth_buckets(ViewerState& state) {
             state.payload_buckets.push_back(bucket);
             found = bucket_by_key.find(key);
         }
-        state.payload_buckets[static_cast<std::size_t>(found->second)].total_bits += packet.wire_bits;
+        PayloadBandwidthBucket& bucket = state.payload_buckets[static_cast<std::size_t>(found->second)];
+        bucket.total_bits += packet.wire_bits;
+        ++bucket.packets;
     }
     std::sort(state.payload_buckets.begin(), state.payload_buckets.end(), [](const PayloadBandwidthBucket& lhs, const PayloadBandwidthBucket& rhs) {
         if (lhs.payload_source != rhs.payload_source) {
@@ -2754,6 +2838,7 @@ void select_payload_packet(ViewerState& state, int packet_index) {
     state.selected_payload_packet = packet_index;
     state.payload_source_filter = PayloadSourceFilter::All;
     state.payload_direction_filter = PayloadDirectionFilter::All;
+    state.payload_excluded_clients.clear();
     state.payload_filter_enabled = false;
     state.payload_filter[0] = '\0';
     state.payload_time_filter_enabled = false;
@@ -3194,8 +3279,39 @@ ImU32 color_with_alpha(ImU32 color, float alpha) {
     return ImGui::ColorConvertFloat4ToU32(value);
 }
 
+struct ProximityHighlight {
+    bool active = false;
+    ImVec2 mouse{};
+    SyncFrame first_frame = 0;
+    SyncFrame last_frame = 0;
+    float inner_radius = 0.0f;
+    float outer_radius = 0.0f;
+    float inner_radius_sq = 0.0f;
+    float outer_radius_sq = 0.0f;
+};
+
+float proximity_alpha(
+    const ImVec2& mouse,
+    const ImVec2& target,
+    float inner_radius,
+    float outer_radius,
+    float inner_radius_sq,
+    float outer_radius_sq) {
+    const float dx = mouse.x - target.x;
+    const float dy = mouse.y - target.y;
+    const float distance_sq = dx * dx + dy * dy;
+    if (distance_sq <= inner_radius_sq) {
+        return 1.0f;
+    }
+    if (distance_sq >= outer_radius_sq || outer_radius <= inner_radius) {
+        return 0.0f;
+    }
+    const float distance = std::sqrt(distance_sq);
+    return std::clamp(1.0f - ((distance - inner_radius) / (outer_radius - inner_radius)), 0.0f, 1.0f);
+}
+
 template <typename Key, typename Hash>
-float update_hover_alpha(std::unordered_map<Key, float, Hash>& alphas, const Key& key, bool hovered) {
+float update_hover_alpha(std::unordered_map<Key, float, Hash>& alphas, const Key& key, float target) {
     const float dt = std::clamp(ImGui::GetIO().DeltaTime, 0.0f, 1.0f / 15.0f);
     const float in_speed = 10.0f;
     const float out_speed = 7.0f;
@@ -3204,14 +3320,14 @@ float update_hover_alpha(std::unordered_map<Key, float, Hash>& alphas, const Key
     if (found != alphas.end()) {
         current = found->second;
     }
-    const float target = hovered ? 1.0f : 0.0f;
-    const float step = dt * (hovered ? in_speed : out_speed);
-    if (current < target) {
-        current = std::min(target, current + step);
-    } else if (current > target) {
-        current = std::max(target, current - step);
+    const float clamped_target = std::clamp(target, 0.0f, 1.0f);
+    const float step = dt * (clamped_target > current ? in_speed : out_speed);
+    if (current < clamped_target) {
+        current = std::min(clamped_target, current + step);
+    } else if (current > clamped_target) {
+        current = std::max(clamped_target, current - step);
     }
-    if (!hovered && current <= 0.001f) {
+    if (clamped_target <= 0.0f && current <= 0.001f) {
         if (found != alphas.end()) {
             alphas.erase(found);
         }
@@ -3219,6 +3335,11 @@ float update_hover_alpha(std::unordered_map<Key, float, Hash>& alphas, const Key
     }
     alphas[key] = current;
     return current;
+}
+
+template <typename Key, typename Hash>
+float update_hover_alpha(std::unordered_map<Key, float, Hash>& alphas, const Key& key, bool hovered) {
+    return update_hover_alpha(alphas, key, hovered ? 1.0f : 0.0f);
 }
 
 void draw_cell(
@@ -3235,6 +3356,7 @@ void draw_cell(
     KTraceRunId run,
     int source_index,
     ViewerState& state,
+    const ProximityHighlight& proximity,
     bool force_predicted_visual = false) {
     const float x = origin.x + label_width + static_cast<float>(cell.frame - min_frame) * frame_pitch - scroll_x;
     const float y = origin.y + static_cast<float>(row) * row_height - scroll_y + 4.0f;
@@ -3262,7 +3384,7 @@ void draw_cell(
         }
     }
 
-    const ImVec2 mouse = ImGui::GetMousePos();
+    const ImVec2 mouse = proximity.mouse;
     const bool hovered = mouse.x >= min.x && mouse.x <= max.x && mouse.y >= min.y && mouse.y <= max.y;
     const EventVisualKey visual_key{source_index, entity.client_network_id, component, cell.frame, run};
     const std::string popup_id = "frame_context##" +
@@ -3271,25 +3393,37 @@ void draw_cell(
         std::to_string(component.value) + ":" +
         std::to_string(cell.frame) + ":" +
         std::to_string(run);
-    const float hover_alpha = update_hover_alpha(state.event_hover_alpha, visual_key, hovered);
     const bool selected = state.selected.source_index == source_index &&
         state.selected.network_id == entity.client_network_id &&
         state.selected.component == component &&
         state.selected.frame == cell.frame &&
         state.selected.run == run &&
         state.selected.event_indices == cell.event_indices;
+    float proximity_alpha_value = 0.0f;
+    if (proximity.active && cell.frame >= proximity.first_frame && cell.frame <= proximity.last_frame) {
+        proximity_alpha_value = proximity_alpha(
+            proximity.mouse,
+            ImVec2((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f),
+            proximity.inner_radius,
+            proximity.outer_radius,
+            proximity.inner_radius_sq,
+            proximity.outer_radius_sq);
+    }
+    const float proximity_target = proximity_alpha_value * proximity_alpha_value * 0.5f;
+    const float highlight_target = hovered ? 1.0f : proximity_target;
+    const float highlight_alpha = update_hover_alpha(state.event_hover_alpha, visual_key, highlight_target);
     if (selected) {
         draw->AddRect(ImVec2(min.x - 2.0f, min.y - 2.0f), ImVec2(max.x + 2.0f, max.y + 2.0f), IM_COL32(255, 230, 155, 255), 0.0f, 0, 2.0f);
-    } else if (hover_alpha > 0.0f) {
+    } else if (highlight_alpha > 0.0f) {
         draw->AddRectFilled(
             ImVec2(min.x - 3.0f, min.y - 3.0f),
             ImVec2(max.x + 3.0f, max.y + 3.0f),
-            color_with_alpha(IM_COL32(205, 226, 255, 82), hover_alpha),
+            color_with_alpha(IM_COL32(205, 226, 255, 82), highlight_alpha),
             3.0f);
         draw->AddRect(
             ImVec2(min.x - 1.5f, min.y - 1.5f),
             ImVec2(max.x + 1.5f, max.y + 1.5f),
-            color_with_alpha(IM_COL32(235, 245, 255, 210), hover_alpha),
+            color_with_alpha(IM_COL32(235, 245, 255, 210), highlight_alpha),
             2.0f,
             0,
             1.2f);
@@ -3566,7 +3700,8 @@ int draw_entity_summary_cells(
     SyncFrame last_visible_frame,
     int row,
     int source_index,
-    ViewerState& state) {
+    ViewerState& state,
+    const ProximityHighlight& proximity) {
     int drawn = 0;
     for (SyncFrame frame = first_visible_frame; frame <= last_visible_frame; ++frame) {
         SummaryState summary = SummaryState::None;
@@ -3578,7 +3713,7 @@ int draw_entity_summary_cells(
         if (summary != SummaryState::None) {
             KTraceFrameCell cell = summary_cell(frame, summary);
             append_entity_frame_event_indices(entity, frame, cell.event_indices);
-            draw_cell(draw, source, cell, origin, scroll_x, scroll_y, min_frame, row, entity, ashiato::Entity{}, 0, source_index, state);
+            draw_cell(draw, source, cell, origin, scroll_x, scroll_y, min_frame, row, entity, ashiato::Entity{}, 0, source_index, state, proximity);
             ++drawn;
         }
     }
@@ -3598,7 +3733,8 @@ int draw_component_summary_cells(
     SyncFrame last_visible_frame,
     int row,
     int source_index,
-    ViewerState& state) {
+    ViewerState& state,
+    const ProximityHighlight& proximity) {
     int drawn = 0;
     for (SyncFrame frame = first_visible_frame; frame <= last_visible_frame; ++frame) {
         SummaryState summary = SummaryState::None;
@@ -3610,7 +3746,7 @@ int draw_component_summary_cells(
         if (summary != SummaryState::None) {
             KTraceFrameCell cell = summary_cell(frame, summary);
             append_component_frame_event_indices(entity, component.component, frame, cell.event_indices);
-            draw_cell(draw, source, cell, origin, scroll_x, scroll_y, min_frame, row, entity, component.component, 0, source_index, state);
+            draw_cell(draw, source, cell, origin, scroll_x, scroll_y, min_frame, row, entity, component.component, 0, source_index, state, proximity);
             ++drawn;
         }
     }
@@ -3890,6 +4026,7 @@ void reset_loaded_trace(ViewerState& state) {
     clear_selected_payload_scope(state);
     state.payload_source_filter = PayloadSourceFilter::All;
     state.payload_direction_filter = PayloadDirectionFilter::All;
+    state.payload_excluded_clients.clear();
     state.payload_filter_enabled = false;
     state.payload_hierarchy_view = false;
     state.payload_return_to_flat_on_back_to_top = false;
@@ -4679,14 +4816,19 @@ void draw_packet_marker(
         draw->AddTriangle(top, right, left, IM_COL32(226, 210, 255, 235), 1.4f);
     } else if (!event.send) {
         if (packet_update_apply_failed(event)) {
-            draw->AddRectFilled(min, max, IM_COL32(255, 177, 184, 255), 2.0f);
-            draw->AddRect(min, max, IM_COL32(160, 63, 73, 230), 2.0f, 0, 1.2f);
-            const char* warning_text = "!";
-            const ImVec2 warning_size = ImGui::CalcTextSize(warning_text);
-            draw->AddText(
-                ImVec2(center.x - warning_size.x * 0.5f, center.y - warning_size.y * 0.5f - 0.5f),
-                IM_COL32(105, 28, 36, 255),
-                warning_text);
+            if (packet_update_apply_failed_from_stale_frame(event)) {
+                draw->AddCircleFilled(center, packet_marker_size * 0.5f, IM_COL32(247, 199, 74, 255));
+                draw->AddCircle(center, packet_marker_size * 0.5f, IM_COL32(142, 105, 20, 230), 0, 1.2f);
+            } else {
+                draw->AddRectFilled(min, max, IM_COL32(255, 177, 184, 255), 2.0f);
+                draw->AddRect(min, max, IM_COL32(160, 63, 73, 230), 2.0f, 0, 1.2f);
+                const char* warning_text = "!";
+                const ImVec2 warning_size = ImGui::CalcTextSize(warning_text);
+                draw->AddText(
+                    ImVec2(center.x - warning_size.x * 0.5f, center.y - warning_size.y * 0.5f - 0.5f),
+                    IM_COL32(105, 28, 36, 255),
+                    warning_text);
+            }
         } else {
             draw->AddRectFilled(min, max, IM_COL32(51, 177, 103, 255), 2.0f);
             draw->AddRectFilled(ImVec2(min.x + 4.0f, min.y + 4.0f), ImVec2(max.x - 4.0f, max.y - 4.0f), IM_COL32(205, 255, 222, 210), 1.0f);
@@ -5100,6 +5242,32 @@ void render_timeline(ViewerState& state, int source_index) {
     const int last_visible_index = std::max(0, static_cast<int>(std::ceil(last_visible_frame_value)) + 1);
     const SyncFrame first_visible_frame = min_frame + static_cast<SyncFrame>(first_visible_index);
     const SyncFrame last_visible_frame = std::min(max_frame, min_frame + static_cast<SyncFrame>(last_visible_index));
+    const ImVec2 mouse = ImGui::GetMousePos();
+    ProximityHighlight proximity;
+    proximity.mouse = mouse;
+    proximity.inner_radius = pill_width * 0.75f;
+    proximity.outer_radius = frame_pitch * 2.5f;
+    proximity.inner_radius_sq = proximity.inner_radius * proximity.inner_radius;
+    proximity.outer_radius_sq = proximity.outer_radius * proximity.outer_radius;
+    proximity.active =
+        mouse.x >= frame_clip_min_x &&
+        mouse.x <= clip_max.x &&
+        mouse.y >= origin.y &&
+        mouse.y <= clip_max.y;
+    if (proximity.active) {
+        const float center_base_x = origin.x + label_width - scroll_x + pill_width * 0.5f;
+        const int max_frame_index = static_cast<int>(max_frame - min_frame);
+        const int first_proximity_index = std::clamp(
+            static_cast<int>(std::floor((mouse.x - proximity.outer_radius - center_base_x) / frame_pitch)),
+            0,
+            max_frame_index);
+        const int last_proximity_index = std::clamp(
+            static_cast<int>(std::ceil((mouse.x + proximity.outer_radius - center_base_x) / frame_pitch)),
+            0,
+            max_frame_index);
+        proximity.first_frame = min_frame + static_cast<SyncFrame>(first_proximity_index);
+        proximity.last_frame = min_frame + static_cast<SyncFrame>(last_proximity_index);
+    }
     int drawn_rows = 0;
     int drawn_cells = 0;
     draw->AddRectFilled(origin, ImVec2(origin.x + width, origin.y + timeline_header_height), IM_COL32(22, 26, 32, 255));
@@ -5216,7 +5384,8 @@ void render_timeline(ViewerState& state, int source_index) {
                     last_visible_frame,
                     row,
                     source_index,
-                    state);
+                    state,
+                    proximity);
                 draw->PopClipRect();
             }
             ++drawn_rows;
@@ -5270,7 +5439,7 @@ void render_timeline(ViewerState& state, int source_index) {
                             if (cell.frame > last_visible_frame) {
                                 break;
                             }
-                            draw_cell(draw, source, cell, body_origin, scroll_x, scroll_y, min_frame, row, entity, component.component, 0, source_index, state);
+                            draw_cell(draw, source, cell, body_origin, scroll_x, scroll_y, min_frame, row, entity, component.component, 0, source_index, state, proximity);
                             ++drawn_cells;
                         }
                     }
@@ -5290,7 +5459,8 @@ void render_timeline(ViewerState& state, int source_index) {
                         last_visible_frame,
                         row,
                         source_index,
-                        state);
+                        state,
+                        proximity);
                     draw->PopClipRect();
                 }
             }
@@ -5385,7 +5555,8 @@ void render_timeline(ViewerState& state, int source_index) {
                         component.component,
                         item.run_id,
                         source_index,
-                        state);
+                        state,
+                        proximity);
                     ++drawn_cells;
                 }
             }
@@ -5988,6 +6159,7 @@ void render_payload_bandwidth_chart(ViewerState& state) {
         std::uint64_t incoming_bits = 0;
         std::uint64_t outgoing_bits = 0;
         std::uint64_t unknown_bits = 0;
+        std::uint64_t packets = 0;
     };
     std::vector<PayloadLane> lanes;
     std::vector<StackedPayloadBucket> stacked_buckets;
@@ -6023,6 +6195,7 @@ void render_payload_bandwidth_chart(ViewerState& state) {
         } else {
             stack_found->unknown_bits += bucket.total_bits;
         }
+        stack_found->packets += bucket.packets;
     }
     const std::uint64_t bucket_count = state.payload_bucket_us == 0U
         ? 1U
@@ -6037,7 +6210,6 @@ void render_payload_bandwidth_chart(ViewerState& state) {
             return std::max(value, bucket.incoming_bits + bucket.outgoing_bits + bucket.unknown_bits);
         });
     const PayloadSummary summary = payload_filtered_summary(state);
-    const std::vector<PayloadClientSummary> client_summaries = payload_filtered_client_summaries(state);
     const std::uint64_t summary_bps = bits_per_second(summary.total_bits, summary.duration_us);
     const std::string summary_text = "all clients " + format_compact_bits(summary.total_bits) +
         " | " + format_bps(summary_bps) +
@@ -6053,34 +6225,68 @@ void render_payload_bandwidth_chart(ViewerState& state) {
     draw->AddText(ImVec2(canvas.x + left_w, canvas.y + 7.0f), IM_COL32(220, 228, 240, 245), summary_text.c_str());
 
     const ImVec2 mouse = ImGui::GetMousePos();
+    const ImVec2 clip_min = draw->GetClipRectMin();
+    const ImVec2 clip_max = draw->GetClipRectMax();
+    const float bandwidth_inner_radius = bucket_w * 1.25f;
+    const float bandwidth_outer_radius = bucket_w * 4.0f;
+    const float bandwidth_inner_radius_sq = bandwidth_inner_radius * bandwidth_inner_radius;
+    const float bandwidth_outer_radius_sq = bandwidth_outer_radius * bandwidth_outer_radius;
     int hovered_bucket = -1;
+    bool hovered_client_label = false;
     for (int lane_index = 0; lane_index < static_cast<int>(lanes.size()); ++lane_index) {
         const PayloadLane& lane = lanes[static_cast<std::size_t>(lane_index)];
         const std::string lane_label = payload_summary_owner_label(lane.source, lane.client);
         std::string lane_summary_text;
-        const auto summary_found = std::find_if(
-            client_summaries.begin(),
-            client_summaries.end(),
-            [&](const PayloadClientSummary& client_summary) {
-                return client_summary.payload_source == lane.source && client_summary.client == lane.client;
-            });
-        if (summary_found != client_summaries.end()) {
-            lane_summary_text = format_compact_bits(summary_found->total_bits);
-            lane_summary_text += " | " + format_bps(bits_per_second(summary_found->total_bits, summary.duration_us));
-            lane_summary_text += " | " + std::to_string(summary_found->packets) + " packets";
+        std::uint64_t lane_bits = 0;
+        std::uint64_t lane_packets = 0;
+        for (const StackedPayloadBucket& bucket : stacked_buckets) {
+            if (bucket.lane_index != lane_index) {
+                continue;
+            }
+            lane_bits += bucket.incoming_bits + bucket.outgoing_bits + bucket.unknown_bits;
+            lane_packets += bucket.packets;
+        }
+        if (lane_packets != 0U) {
+            lane_summary_text = format_compact_bits(lane_bits);
+            lane_summary_text += " | " + format_bps(bits_per_second(lane_bits, summary.duration_us));
+            lane_summary_text += " | " + std::to_string(lane_packets) + " packets";
         }
         const float row_y = canvas.y + 28.0f + static_cast<float>(lane_index) * row_h;
+        const bool excluded = payload_client_excluded(state, lane.source, lane.client);
+        const ImVec2 label_min(canvas.x + 8.0f, row_y + 18.0f);
+        const ImVec2 label_max(canvas.x + left_w - 6.0f, row_y + 38.0f);
+        const bool label_hovered = mouse.x >= label_min.x && mouse.x <= label_max.x && mouse.y >= label_min.y && mouse.y <= label_max.y;
+        hovered_client_label = hovered_client_label || label_hovered;
+        if (label_hovered) {
+            draw->AddRectFilled(label_min, label_max, excluded ? IM_COL32(115, 125, 145, 55) : IM_COL32(90, 130, 190, 65), 3.0f);
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ImGui::SetTooltip("%s %s", excluded ? "Show" : "Hide", lane_label.c_str());
+        }
+        if (label_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            const PayloadClientKey key{lane.source, lane.client};
+            auto found = state.payload_excluded_clients.find(key);
+            if (found == state.payload_excluded_clients.end()) {
+                state.payload_excluded_clients.insert(key);
+            } else {
+                state.payload_excluded_clients.erase(found);
+            }
+            state.payload_view_dirty = true;
+        }
         draw->AddText(
             ImVec2(canvas.x + 8.0f, row_y + 20.0f),
-            IM_COL32(226, 234, 245, 235),
+            excluded ? IM_COL32(155, 164, 180, 110) : IM_COL32(226, 234, 245, 235),
             lane_label.c_str());
         if (!lane_summary_text.empty()) {
             draw->AddText(
                 ImVec2(canvas.x + left_w + 4.0f, row_y + 4.0f),
-                IM_COL32(200, 211, 228, 245),
+                excluded ? IM_COL32(150, 160, 176, 100) : IM_COL32(200, 211, 228, 245),
                 lane_summary_text.c_str());
         }
-        draw->AddLine(ImVec2(canvas.x + left_w, row_y + row_h), ImVec2(canvas.x + width, row_y + row_h), IM_COL32(75, 86, 105, 100), 1.0f);
+        draw->AddLine(
+            ImVec2(canvas.x + left_w, row_y + row_h),
+            ImVec2(canvas.x + width, row_y + row_h),
+            excluded ? IM_COL32(75, 86, 105, 45) : IM_COL32(75, 86, 105, 100),
+            1.0f);
     }
     for (int bucket_index = 0; bucket_index < static_cast<int>(stacked_buckets.size()); ++bucket_index) {
         const StackedPayloadBucket& bucket = stacked_buckets[static_cast<std::size_t>(bucket_index)];
@@ -6088,6 +6294,7 @@ void render_payload_bandwidth_chart(ViewerState& state) {
             continue;
         }
         const PayloadLane& lane = lanes[static_cast<std::size_t>(bucket.lane_index)];
+        const bool excluded = payload_client_excluded(state, lane.source, lane.client);
         const std::uint64_t total_bits = bucket.incoming_bits + bucket.outgoing_bits + bucket.unknown_bits;
         const std::uint64_t bucket_offset = state.payload_bucket_us == 0U ? 0U : (bucket.begin_us - state.payload_min_us) / state.payload_bucket_us;
         const float x0 = canvas.x + left_w + static_cast<float>(bucket_offset) * bucket_w + 2.0f;
@@ -6113,9 +6320,36 @@ void render_payload_bandwidth_chart(ViewerState& state) {
             draw->AddRectFilled(ImVec2(x0, segment_bottom - segment_h), ImVec2(x1, segment_bottom), color, 2.0f);
             segment_bottom -= segment_h;
         };
-        draw_segment(bucket.incoming_bits, IM_COL32(65, 135, 226, 235));
-        draw_segment(bucket.outgoing_bits, IM_COL32(236, 184, 70, 240));
-        draw_segment(bucket.unknown_bits, IM_COL32(135, 145, 160, 225));
+        draw_segment(bucket.incoming_bits, excluded ? IM_COL32(65, 135, 226, 70) : IM_COL32(65, 135, 226, 235));
+        draw_segment(bucket.outgoing_bits, excluded ? IM_COL32(236, 184, 70, 72) : IM_COL32(236, 184, 70, 240));
+        draw_segment(bucket.unknown_bits, excluded ? IM_COL32(135, 145, 160, 68) : IM_COL32(135, 145, 160, 225));
+        const bool proximity_visible =
+            max.x >= clip_min.x - bandwidth_outer_radius &&
+            min.x <= clip_max.x + bandwidth_outer_radius &&
+            max.y >= clip_min.y - bandwidth_outer_radius &&
+            min.y <= clip_max.y + bandwidth_outer_radius;
+        const float bar_proximity_alpha = hovered_canvas && proximity_visible && !selected
+            ? proximity_alpha(
+                mouse,
+                ImVec2((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f),
+                bandwidth_inner_radius,
+                bandwidth_outer_radius,
+                bandwidth_inner_radius_sq,
+                bandwidth_outer_radius_sq)
+            : 0.0f;
+        if (bar_proximity_alpha > 0.0f) {
+            const float proximity_visual_alpha = bar_proximity_alpha * bar_proximity_alpha * 0.5f;
+            draw->AddRectFilled(
+                ImVec2(min.x - 1.0f, min.y - 1.0f),
+                ImVec2(max.x + 1.0f, max.y + 1.0f),
+                color_with_alpha(IM_COL32(205, 226, 255, excluded ? 36 : 82), proximity_visual_alpha),
+                2.0f);
+            draw->AddRect(
+                ImVec2(min.x - 1.0f, min.y - 1.0f),
+                ImVec2(max.x + 1.0f, max.y + 1.0f),
+                color_with_alpha(IM_COL32(238, 246, 255, excluded ? 92 : 230), proximity_visual_alpha),
+                2.0f);
+        }
         if (selected) {
             draw->AddRect(ImVec2(min.x - 1.0f, min.y - 1.0f), ImVec2(max.x + 1.0f, max.y + 1.0f), IM_COL32(255, 224, 128, 245), 2.0f, 0, 2.0f);
         }
@@ -6124,6 +6358,7 @@ void render_payload_bandwidth_chart(ViewerState& state) {
                 ? "replay"
                 : "client " + std::to_string(lane.client);
             draw->AddRect(ImVec2(min.x - 1.0f, min.y - 1.0f), ImVec2(max.x + 1.0f, max.y + 1.0f), IM_COL32(238, 246, 255, 230), 2.0f);
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             ImGui::SetTooltip(
                 "source %s\n%s\n%.3fms - %.3fms\nincoming %s\noutgoing %s\ntotal %s",
                 payload_source_label(lane.source),
@@ -6136,7 +6371,7 @@ void render_payload_bandwidth_chart(ViewerState& state) {
         }
     }
 
-    if (hovered_canvas && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    if (hovered_canvas && !hovered_client_label && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         state.payload_drag_selecting = true;
         state.payload_drag_start = mouse;
         state.payload_drag_current = mouse;
@@ -6255,6 +6490,14 @@ void render_payload_filter_controls(ViewerState& state) {
             state.payload_view_dirty = true;
         }
         ImGui::EndCombo();
+    }
+    if (!state.payload_excluded_clients.empty()) {
+        ImGui::SameLine();
+        const std::string hidden_label = "Hidden clients: " + std::to_string(state.payload_excluded_clients.size());
+        if (ImGui::Button(hidden_label.c_str(), ImVec2(132.0f, 0.0f))) {
+            state.payload_excluded_clients.clear();
+            state.payload_view_dirty = true;
+        }
     }
     ImGui::SameLine();
     if (ImGui::Checkbox("Hierarchy", &state.payload_hierarchy_view)) {
@@ -6381,6 +6624,9 @@ void render_payload_rows_table(ViewerState& state) {
                 draw->AddLine(ImVec2(icon_x + 6.0f, center_y - 5.0f), ImVec2(icon_x + 2.0f, center_y - 1.0f), up_color, 1.5f);
                 draw->AddLine(ImVec2(icon_x + 6.0f, center_y - 5.0f), ImVec2(icon_x + 10.0f, center_y - 1.0f), up_color, 1.5f);
                 draw->AddText(ImVec2(row_min.x + 32.0f, row_min.y + 2.0f), up_color, "Back to top");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                }
                 if (clicked_up) {
                     clear_selected_payload_scope(state);
                     state.selected_payload_row = -1;
@@ -6418,7 +6664,11 @@ void render_payload_rows_table(ViewerState& state) {
                     ? std::string(static_cast<std::size_t>(std::max(0, row.depth)) * 2U, ' ') + row.name
                     : row.path;
                 ImGui::PushID(row.path.c_str());
-                if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
+                const bool clicked_row = ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                }
+                if (clicked_row) {
                     select_payload_scope_hierarchy_item(state, row.max_packet_index, row.path, row_index);
                 }
                 ImGui::PopID();
@@ -6454,11 +6704,19 @@ void render_payload_packet_nav(ViewerState& state, const std::vector<int>& packe
     }
 
     const int packet_position = payload_packet_position(state, packets);
-    if (ImGui::Button("Previous") && !packets.empty()) {
+    const bool previous_clicked = ImGui::Button("Previous");
+    if (!packets.empty() && ImGui::IsItemHovered()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+    if (previous_clicked && !packets.empty()) {
         move_selected_payload_packet(state, packets, -1);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Next") && !packets.empty()) {
+    const bool next_clicked = ImGui::Button("Next");
+    if (!packets.empty() && ImGui::IsItemHovered()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+    if (next_clicked && !packets.empty()) {
         move_selected_payload_packet(state, packets, 1);
     }
     ImGui::SameLine();
@@ -6551,6 +6809,7 @@ void render_payload_packet_view(ViewerState& state, const std::vector<int>& pack
             ImGui::PopClipRect();
         }
         if (hovered) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             ImGui::SetTooltip(
                 "%s\nrange %llu-%llu\n%s",
                 scope.path.c_str(),
@@ -6746,8 +7005,6 @@ void render_app(ViewerState& state) {
         ImGui::Dummy(status_size);
     }
     render_directory_picker(state);
-    render_legend();
-    ImGui::Spacing();
 
     const bool has_packet_logs = packet_logs_enabled_in_trace(state);
     if (!has_packet_logs && state.mode == ViewerMode::EventLog) {
@@ -6789,24 +7046,28 @@ void render_app(ViewerState& state) {
         render_event_log(state);
     } else if (state.mode == ViewerMode::Payloads) {
         render_payloads(state);
-    } else if (ImGui::BeginTabBar("sources")) {
-        for (int i = 0; i < static_cast<int>(state.history.sources.size()); ++i) {
-            const std::string label = source_label(state.history.sources[static_cast<std::size_t>(i)]);
-            ImGuiTabItemFlags flags = 0;
-            if (state.selected_source_dirty && i == state.selected_source) {
-                flags |= ImGuiTabItemFlags_SetSelected;
-            }
-            if (ImGui::BeginTabItem(label.c_str(), nullptr, flags)) {
-                if (state.selected_source != i) {
-                    state.selected_source = i;
+    } else {
+        render_legend();
+        ImGui::Spacing();
+        if (ImGui::BeginTabBar("sources")) {
+            for (int i = 0; i < static_cast<int>(state.history.sources.size()); ++i) {
+                const std::string label = source_label(state.history.sources[static_cast<std::size_t>(i)]);
+                ImGuiTabItemFlags flags = 0;
+                if (state.selected_source_dirty && i == state.selected_source) {
+                    flags |= ImGuiTabItemFlags_SetSelected;
                 }
-                state.selected_source_dirty = false;
-                render_timeline(state, i);
-                handle_timeline_keyboard(state, i);
-                ImGui::EndTabItem();
+                if (ImGui::BeginTabItem(label.c_str(), nullptr, flags)) {
+                    if (state.selected_source != i) {
+                        state.selected_source = i;
+                    }
+                    state.selected_source_dirty = false;
+                    render_timeline(state, i);
+                    handle_timeline_keyboard(state, i);
+                    ImGui::EndTabItem();
+                }
             }
+            ImGui::EndTabBar();
         }
-        ImGui::EndTabBar();
     }
     select_benchmark_cell(state);
     render_details(state);

@@ -31,19 +31,6 @@ struct has_context_cue_deserialize<
         std::declval<T&>(),
         std::declval<ashiato::ComponentSerializationContext&>()))>> : std::true_type {};
 
-template <typename T, typename = void>
-struct has_frame_cue_play : std::false_type {};
-
-template <typename T>
-struct has_frame_cue_play<
-    T,
-    std::void_t<decltype(SyncCueTraits<T>::play(
-        std::declval<ashiato::Registry&>(),
-        std::declval<ashiato::Entity>(),
-        std::declval<const T&>(),
-        std::declval<float>(),
-        std::declval<SyncFrame>()))>> : std::true_type {};
-
 template <typename T>
 void serialize_cue_payload(const T& cue, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext& context) {
     static_assert(
@@ -91,12 +78,7 @@ bool play_cue_value(
     if (value == nullptr) {
         return false;
     }
-    if constexpr (has_frame_cue_play<T>::value) {
-        return SyncCueTraits<T>::play(registry, owner, *static_cast<const T*>(value), late_seconds, frame);
-    } else {
-        (void)frame;
-        return SyncCueTraits<T>::play(registry, owner, *static_cast<const T*>(value), late_seconds);
-    }
+    return SyncCueTraits<T>::play(registry, owner, *static_cast<const T*>(value), late_seconds, frame);
 }
 
 template <typename T>

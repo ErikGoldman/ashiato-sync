@@ -30,11 +30,11 @@ template <typename T>
 struct SyncComponentTraits {
     using Quantized = T;
 
-    static Quantized quantize(const T& value) {
+    static void quantize(const T& value, Quantized& out) {
         static_assert(
             std::is_trivially_copyable<T>::value,
             "default SyncComponentTraits require a trivially copyable component");
-        return value;
+        out = value;
     }
 
     static T dequantize(const Quantized& value) {

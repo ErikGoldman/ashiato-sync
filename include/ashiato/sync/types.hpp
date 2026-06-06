@@ -1,12 +1,5 @@
 #pragma once
 
-#if defined(ASHIATO_ENABLE_SERIALIZATION_TRACING) && !defined(ASHIATO_SYNC_ENABLE_TRACING)
-#define ASHIATO_SYNC_ENABLE_TRACING 1
-#endif
-#if defined(ASHIATO_SYNC_ENABLE_TRACING) && !defined(ASHIATO_ENABLE_SERIALIZATION_TRACING)
-#define ASHIATO_ENABLE_SERIALIZATION_TRACING 1
-#endif
-
 #include "ashiato/bit_buffer.hpp"
 #include "ashiato/sync/logging.hpp"
 #include "ashiato/sync/protocol.hpp"

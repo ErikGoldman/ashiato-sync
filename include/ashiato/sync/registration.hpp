@@ -24,13 +24,13 @@ template <typename T, typename ComponentTraits, typename Serializer>
 struct SyncComponentSerializationTraitsAdapter {
     using Quantized = typename ComponentTraits::Quantized;
 
-    static Quantized quantize(const T& value) {
-        return Serializer::quantize(value);
-    }
+	static void quantize(const T& value, Quantized& out) {
+		Serializer::quantize(value, out);
+	}
 
-    static T dequantize(const Quantized& value) {
-        return Serializer::dequantize(value);
-    }
+	static T dequantize(const Quantized& value) {
+		return Serializer::dequantize(value);
+	}
 
     static void serialize(
         const Quantized* previous,

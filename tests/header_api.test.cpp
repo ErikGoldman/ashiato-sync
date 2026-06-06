@@ -31,8 +31,8 @@ template <>
 struct SyncComponentTraits<HeaderApiDefaultNamedComponent> {
     using Quantized = HeaderApiDefaultNamedComponent;
 
-    static Quantized quantize(const HeaderApiDefaultNamedComponent& value) {
-        return value;
+    static void quantize(const HeaderApiDefaultNamedComponent& value, Quantized& out) {
+        out = value;
     }
 
     static HeaderApiDefaultNamedComponent dequantize(const Quantized& value) {
@@ -70,7 +70,7 @@ struct SyncCueTraits<HeaderApiDefaultNamedCue> {
         return true;
     }
 
-    static bool play(ashiato::Registry&, ashiato::Entity, const HeaderApiDefaultNamedCue&, float) {
+    static bool play(ashiato::Registry&, ashiato::Entity, const HeaderApiDefaultNamedCue&, float, SyncFrame) {
         return true;
     }
 

@@ -36,8 +36,8 @@ template <>
 struct SyncComponentTraits<stress::BallPosition> {
     using Quantized = stress::BallPosition;
 
-    static Quantized quantize(const stress::BallPosition& value) {
-        return value;
+    static void quantize(const stress::BallPosition& value, Quantized& out) {
+        out = value;
     }
 
     static stress::BallPosition dequantize(const Quantized& value) {
@@ -126,7 +126,7 @@ struct SyncCueTraits<stress::BallBounceCue> {
         return true;
     }
 
-    static bool play(ashiato::Registry&, ashiato::Entity, const stress::BallBounceCue&, float) {
+    static bool play(ashiato::Registry&, ashiato::Entity, const stress::BallBounceCue&, float, SyncFrame) {
         return true;
     }
 

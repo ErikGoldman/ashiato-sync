@@ -6,6 +6,10 @@ The project is a library for fixed-tick, predictive networking for online games.
 
 This is under active development with no users, so never prioritize backwards compatibility.
 
+## Gotchas
+
+Entity ids/references are not stable across clients/the server. Use the entity reference system if you want to serialize a reference to another entity.
+
 ## Performance
 
 This is a high-performance project. Always consider the performance effect of any change on all possible operations and suggest additions to the benchmark suite to measure the impact of any significant change. When designing a new feature, carefully consider how to optimize for cache hits, avoiding memory allocation churn, and keeping the hot paths fast.

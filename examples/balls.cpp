@@ -77,8 +77,8 @@ struct SyncComponentTraits<BallPosition> {
     using Quantized = BallPosition;
     using Error = BallPosition;
 
-    static Quantized quantize(const BallPosition& value) {
-        return value;
+    static void quantize(const BallPosition& value, Quantized& out) {
+        out = value;
     }
 
     static BallPosition dequantize(const Quantized& value) {
@@ -156,8 +156,8 @@ template <>
 struct SyncComponentTraits<BallVelocity> {
     using Quantized = BallVelocity;
 
-    static Quantized quantize(const BallVelocity& value) {
-        return value;
+    static void quantize(const BallVelocity& value, Quantized& out) {
+        out = value;
     }
 
     static BallVelocity dequantize(const Quantized& value) {
@@ -241,7 +241,13 @@ struct SyncCueTraits<BallBounceCue> {
         return true;
     }
 
-    static bool play(ashiato::Registry& registry, ashiato::Entity owner, const BallBounceCue& cue, float late_seconds) {
+    static bool play(
+        ashiato::Registry& registry,
+        ashiato::Entity owner,
+        const BallBounceCue& cue,
+        float late_seconds,
+        SyncFrame frame) {
+        (void)frame;
         const float duration = std::max(0.05f, 0.22f - late_seconds);
         registry.add<BallCueFlash>(owner, BallCueFlash{duration, cue.strength});
         return true;
@@ -270,8 +276,8 @@ template <>
 struct SyncComponentTraits<BallVisual> {
     using Quantized = BallVisual;
 
-    static Quantized quantize(const BallVisual& value) {
-        return value;
+    static void quantize(const BallVisual& value, Quantized& out) {
+        out = value;
     }
 
     static BallVisual dequantize(const Quantized& value) {
@@ -317,8 +323,8 @@ struct SyncComponentTraits<BallContact> {
     using Quantized = BallContact;
     static constexpr bool references_entities = true;
 
-    static Quantized quantize(const BallContact& value) {
-        return value;
+    static void quantize(const BallContact& value, Quantized& out) {
+        out = value;
     }
 
     static BallContact dequantize(const Quantized& value) {

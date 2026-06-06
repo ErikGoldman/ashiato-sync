@@ -79,8 +79,8 @@ template <>
 struct SyncComponentTraits<FpsUniquePlayerId> {
     using Quantized = FpsUniquePlayerId;
 
-    static Quantized quantize(const FpsUniquePlayerId& value) {
-        return value;
+    static void quantize(const FpsUniquePlayerId& value, Quantized& out) {
+        out = value;
     }
 
     static FpsUniquePlayerId dequantize(const Quantized& value) {
@@ -106,8 +106,8 @@ template <>
 struct SyncComponentTraits<NetworkOwner> {
     using Quantized = NetworkOwner;
 
-    static Quantized quantize(const NetworkOwner& value) {
-        return value;
+    static void quantize(const NetworkOwner& value, Quantized& out) {
+        out = value;
     }
 
     static NetworkOwner dequantize(const Quantized& value) {
@@ -134,8 +134,8 @@ struct SyncComponentTraits<FpsTransform> {
     using Quantized = FpsTransform;
     using Error = FpsTransform;
 
-    static Quantized quantize(const FpsTransform& value) {
-        return value;
+    static void quantize(const FpsTransform& value, Quantized& out) {
+        out = value;
     }
 
     static FpsTransform dequantize(const Quantized& value) {
@@ -227,8 +227,8 @@ template <>
 struct SyncComponentTraits<FpsVelocity> {
     using Quantized = FpsVelocity;
 
-    static Quantized quantize(const FpsVelocity& value) {
-        return value;
+    static void quantize(const FpsVelocity& value, Quantized& out) {
+        out = value;
     }
 
     static FpsVelocity dequantize(const Quantized& value) {
@@ -271,8 +271,8 @@ template <>
 struct SyncComponentTraits<FpsCombatState> {
     using Quantized = FpsCombatState;
 
-    static Quantized quantize(const FpsCombatState& value) {
-        return value;
+    static void quantize(const FpsCombatState& value, Quantized& out) {
+        out = value;
     }
 
     static FpsCombatState dequantize(const Quantized& value) {
@@ -332,8 +332,8 @@ template <>
 struct SyncComponentTraits<FpsDeathInfo> {
     using Quantized = FpsDeathInfo;
 
-    static Quantized quantize(const FpsDeathInfo& value) {
-        return value;
+    static void quantize(const FpsDeathInfo& value, Quantized& out) {
+        out = value;
     }
 
     static FpsDeathInfo dequantize(const Quantized& value) {
@@ -369,8 +369,8 @@ template <>
 struct SyncComponentTraits<FpsVisual> {
     using Quantized = FpsVisual;
 
-    static Quantized quantize(const FpsVisual& value) {
-        return value;
+    static void quantize(const FpsVisual& value, Quantized& out) {
+        out = value;
     }
 
     static FpsVisual dequantize(const Quantized& value) {
@@ -418,8 +418,8 @@ template <>
 struct SyncComponentTraits<FpsInput> {
     using Quantized = FpsInput;
 
-    static Quantized quantize(const FpsInput& value) {
-        return value;
+    static void quantize(const FpsInput& value, Quantized& out) {
+        out = value;
     }
 
     static FpsInput dequantize(const Quantized& value) {
@@ -466,7 +466,13 @@ struct SyncCueTraits<ShotCue> {
         return true;
     }
 
-    static bool play(ashiato::Registry& registry, ashiato::Entity owner, const ShotCue&, float late_seconds) {
+    static bool play(
+        ashiato::Registry& registry,
+        ashiato::Entity owner,
+        const ShotCue&,
+        float late_seconds,
+        SyncFrame frame) {
+        (void)frame;
         const float seconds = std::max(0.03f, 0.12f - late_seconds);
         if (registry.contains<FpsShotEffect>(owner)) {
             FpsShotEffect& effect = registry.write<FpsShotEffect>(owner);
@@ -512,7 +518,13 @@ struct SyncCueTraits<SurfaceHitCue> {
         return true;
     }
 
-    static bool play(ashiato::Registry& registry, ashiato::Entity owner, const SurfaceHitCue& cue, float late_seconds) {
+    static bool play(
+        ashiato::Registry& registry,
+        ashiato::Entity owner,
+        const SurfaceHitCue& cue,
+        float late_seconds,
+        SyncFrame frame) {
+        (void)frame;
         if (!registry.contains<FpsSurfaceHitEffect>(owner)) {
             registry.add<FpsSurfaceHitEffect>(owner);
         }

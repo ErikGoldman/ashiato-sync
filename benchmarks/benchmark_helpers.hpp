@@ -58,8 +58,8 @@ template <>
 struct SyncComponentTraits<benchmarks::DeltaPosition> {
     using Quantized = benchmarks::DeltaPosition;
 
-    static Quantized quantize(const benchmarks::DeltaPosition& value) {
-        return value;
+    static void quantize(const benchmarks::DeltaPosition& value, Quantized& out) {
+        out = value;
     }
 
     static benchmarks::DeltaPosition dequantize(const Quantized& value) {
@@ -105,8 +105,8 @@ template <>
 struct SyncComponentTraits<benchmarks::LargePayload> {
     using Quantized = benchmarks::LargePayload;
 
-    static Quantized quantize(const benchmarks::LargePayload& value) {
-        return value;
+    static void quantize(const benchmarks::LargePayload& value, Quantized& out) {
+        out = value;
     }
 
     static benchmarks::LargePayload dequantize(const Quantized& value) {
@@ -142,8 +142,8 @@ template <>
 struct SyncComponentTraits<benchmarks::TinyFlags> {
     using Quantized = benchmarks::TinyFlags;
 
-    static Quantized quantize(const benchmarks::TinyFlags& value) {
-        return value;
+    static void quantize(const benchmarks::TinyFlags& value, Quantized& out) {
+        out = value;
     }
 
     static benchmarks::TinyFlags dequantize(const Quantized& value) {
