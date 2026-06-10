@@ -84,6 +84,7 @@ public:
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     void set_tracer(SyncTracer* tracer) noexcept;
     void set_trace_options(TraceOptions options);
+    void trace_current_frame_components(ashiato::Registry& registry);
     void flush_trace();
     void close_trace();
 #endif

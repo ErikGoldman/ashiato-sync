@@ -65,6 +65,47 @@ struct SyncComponentTraits {
     }
 };
 
+template <>
+struct SyncComponentTraits<NetworkOwner> {
+    using Quantized = NetworkOwner;
+
+    static void quantize(const NetworkOwner& value, Quantized& out) {
+        out = value;
+    }
+
+    static NetworkOwner dequantize(const Quantized& value) {
+        return value;
+    }
+
+    static void serialize(
+        const Quantized* /*previous*/,
+        const Quantized& current,
+        ashiato::BitBuffer& out,
+        ashiato::ComponentSerializationContext& /*context*/) {
+        out.write_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
+    }
+
+    static bool deserialize(
+        ashiato::BitBuffer& in,
+        const Quantized* /*previous*/,
+        Quantized& out,
+        ashiato::ComponentSerializationContext& /*context*/) {
+        in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
+        return true;
+    }
+
+    static bool should_roll_back(const Quantized& predicted, const Quantized& authoritative) {
+        return predicted.client != authoritative.client;
+    }
+
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
+    static void trace(const Quantized& value, SyncTraceStringBuilder& out) {
+        out.append("client=");
+        out.append_number(value.client);
+    }
+#endif
+};
+
 template <typename T>
 struct SyncCueTraits;
 

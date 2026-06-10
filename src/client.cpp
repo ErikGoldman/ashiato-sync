@@ -51,6 +51,36 @@ using client_detail::tag_bit_set;
 using client_detail::unchecked_frame_component_data;
 using client_detail::unchecked_mutable_frame_component_data;
 
+std::string missing_prediction_rollback_trait_message(
+    SyncArchetypeId archetype_id,
+    const SyncArchetype& archetype,
+    std::size_t component_index) {
+    std::ostringstream message;
+    message << "predicted replicated component must define SyncComponentTraits<T>::should_roll_back"
+            << " archetype=" << archetype_id.value;
+    if (!archetype.name.empty()) {
+        message << " archetype_name=" << archetype.name;
+    }
+    message << " component_index=" << component_index;
+    if (component_index < archetype.components.size()) {
+        message << " component=" << archetype.components[component_index].component.value;
+    }
+    if (component_index < archetype.component_ops.size() &&
+        !archetype.component_ops[component_index].serialization.name.empty()) {
+        message << " component_name=" << archetype.component_ops[component_index].serialization.name;
+    }
+    return message.str();
+}
+
+ClientError missing_prediction_rollback_trait_error(
+    SyncArchetypeId archetype_id,
+    const SyncArchetype& archetype,
+    std::size_t component_index) {
+    const std::string message =
+        missing_prediction_rollback_trait_message(archetype_id, archetype, component_index);
+    return ClientError(ClientStatus::MissingPredictionRollbackTrait, message.c_str());
+}
+
 ReplicationClientClockConfig make_clock_config(
     const ReplicationClientOptions& options,
     std::size_t buffered_frame_capacity) noexcept {
@@ -832,9 +862,7 @@ bool ReplicationClient::validate_predicted_archetype(const SyncSettings& setting
     for (std::size_t index = 0; index < definition.components.size(); ++index) {
         if (index >= definition.component_ops.size() ||
             definition.component_ops[index].should_roll_back == nullptr) {
-            throw ClientError(
-                ClientStatus::MissingPredictionRollbackTrait,
-                "predicted replicated components must define SyncComponentTraits<T>::should_roll_back");
+            throw missing_prediction_rollback_trait_error(archetype, definition, index);
         }
     }
     return true;
@@ -1124,9 +1152,7 @@ bool ReplicationClient::compare_predicted_frame(
         }
         const SyncComponentOps& ops = archetype.component_ops[component_index];
         if (ops.should_roll_back == nullptr) {
-            throw ClientError(
-                ClientStatus::MissingPredictionRollbackTrait,
-                "predicted replicated components must define SyncComponentTraits<T>::should_roll_back");
+            throw missing_prediction_rollback_trait_error(state.identity.archetype, archetype, component_index);
         }
         const std::uint8_t* predicted_bytes =
             unchecked_frame_component_data(archetype, predicted.baseline, component_index);

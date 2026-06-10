@@ -42,7 +42,10 @@ add_library(ashiato_sync ${ASHIATO_SYNC_LIBRARY_TYPE}
 
 add_library(ashiato::sync ALIAS ashiato_sync)
 
-target_compile_features(ashiato_sync PUBLIC cxx_std_17)
+set_target_properties(ashiato_sync PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+)
 
 target_include_directories(ashiato_sync
     PUBLIC

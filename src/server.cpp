@@ -476,6 +476,10 @@ void ReplicationServer::set_trace_options(TraceOptions options) {
     tracer_ = trace_writer_ != nullptr ? &trace_writer_->tracer() : nullptr;
 }
 
+void ReplicationServer::trace_current_frame_components(ashiato::Registry& registry) {
+    trace_frame_components(registry, registry.get<SyncSettings>());
+}
+
 void ReplicationServer::flush_trace() {
     if (trace_writer_ != nullptr) {
         trace_writer_->flush();

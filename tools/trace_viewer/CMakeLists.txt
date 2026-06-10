@@ -29,7 +29,10 @@ target_link_libraries(ashiato_sync_imgui
         OpenGL::GL
 )
 
-target_compile_features(ashiato_sync_imgui PUBLIC cxx_std_17)
+set_target_properties(ashiato_sync_imgui PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+)
 
 add_executable(ashiato_sync_trace_viewer
     main.cpp
@@ -41,7 +44,10 @@ target_link_libraries(ashiato_sync_trace_viewer
         ashiato_sync_imgui
 )
 
-target_compile_features(ashiato_sync_trace_viewer PRIVATE cxx_std_17)
+set_target_properties(ashiato_sync_trace_viewer PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+)
 
 if(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
     set(ashiato_sync_trace_viewer_stb_include_dir "")
