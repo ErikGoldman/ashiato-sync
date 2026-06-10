@@ -1,0 +1,162 @@
+{
+  "context": {
+    "date": "2026-06-10T19:01:47+00:00",
+    "host_name": "runnervm1li68",
+    "executable": "build-benchmarks/benchmarks/ashiato_sync_benchmark",
+    "num_cpus": 4,
+    "mhz_per_cpu": 3241,
+    "cpu_scaling_enabled": false,
+    "caches": [
+      {
+        "type": "Data",
+        "level": 1,
+        "size": 32768,
+        "num_sharing": 2
+      },
+      {
+        "type": "Instruction",
+        "level": 1,
+        "size": 32768,
+        "num_sharing": 2
+      },
+      {
+        "type": "Unified",
+        "level": 2,
+        "size": 524288,
+        "num_sharing": 2
+      },
+      {
+        "type": "Unified",
+        "level": 3,
+        "size": 33554432,
+        "num_sharing": 4
+      }
+    ],
+    "load_avg": [10.5063,4.1543,1.52686],
+    "library_version": "v1.9.1",
+    "library_build_type": "release",
+    "json_schema_version": 1
+  },
+  "benchmarks": [
+    {
+      "name": "BM_ClientReceivePredict/4096/16",
+      "family_index": 0,
+      "per_family_instance_index": 0,
+      "run_name": "BM_ClientReceivePredict/4096/16",
+      "run_type": "iteration",
+      "repetitions": 1,
+      "repetition_index": 0,
+      "threads": 1,
+      "iterations": 30,
+      "real_time": 2.2426930166669004e+07,
+      "cpu_time": 2.2426709466666676e+07,
+      "time_unit": "ns",
+      "items_per_second": 1.5740160210514692e+04
+    },
+    {
+      "name": "BM_ClientApplyBufferedInterpolation/4096/16",
+      "family_index": 1,
+      "per_family_instance_index": 0,
+      "run_name": "BM_ClientApplyBufferedInterpolation/4096/16",
+      "run_type": "iteration",
+      "repetitions": 1,
+      "repetition_index": 0,
+      "threads": 1,
+      "iterations": 92,
+      "real_time": 7.6924620869591637e+06,
+      "cpu_time": 7.6878662173913065e+06,
+      "time_unit": "ns",
+      "items_per_second": 2.0812016686509428e+03
+    },
+    {
+      "name": "BM_ClientSampleFractionalTickLargePayload/1024/16",
+      "family_index": 2,
+      "per_family_instance_index": 0,
+      "run_name": "BM_ClientSampleFractionalTickLargePayload/1024/16",
+      "run_type": "iteration",
+      "repetitions": 1,
+      "repetition_index": 0,
+      "threads": 1,
+      "iterations": 530,
+      "real_time": 1.3633721056598830e+06,
+      "cpu_time": 1.3628538415094700e+06,
+      "time_unit": "ns",
+      "items_per_second": 1.1006315969573301e+04
+    },
+    {
+      "name": "BM_ServerTickBudgetLimited/16384/8/64",
+      "family_index": 3,
+      "per_family_instance_index": 0,
+      "run_name": "BM_ServerTickBudgetLimited/16384/8/64",
+      "run_type": "iteration",
+      "repetitions": 1,
+      "repetition_index": 0,
+      "threads": 1,
+      "iterations": 46,
+      "real_time": 1.4586993000000225e+07,
+      "cpu_time": 1.4585191152173918e+07,
+      "time_unit": "ns",
+      "items_per_second": 3.5104099401788546e+04
+    },
+    {
+      "name": "BM_ServerTickSerializedDelta/16384/8",
+      "family_index": 4,
+      "per_family_instance_index": 0,
+      "run_name": "BM_ServerTickSerializedDelta/16384/8",
+      "run_type": "iteration",
+      "repetitions": 1,
+      "repetition_index": 0,
+      "threads": 1,
+      "iterations": 7,
+      "real_time": 9.9039373000002638e+07,
+      "cpu_time": 9.9029887142857283e+07,
+      "time_unit": "ns",
+      "items_per_second": 1.3235600259840731e+06
+    },
+    {
+      "name": "BM_ServerTickPackedAckedDeltaShared/16384/8",
+      "family_index": 5,
+      "per_family_instance_index": 0,
+      "run_name": "BM_ServerTickPackedAckedDeltaShared/16384/8",
+      "run_type": "iteration",
+      "repetitions": 1,
+      "repetition_index": 0,
+      "threads": 1,
+      "iterations": 1556,
+      "real_time": 4.5170285604112910e+05,
+      "cpu_time": 4.5166169537275069e+05,
+      "time_unit": "ns",
+      "items_per_second": 2.9019950405984265e+08
+    },
+    {
+      "name": "BM_ServerTickMutatingAckedDelta/16384/8",
+      "family_index": 6,
+      "per_family_instance_index": 0,
+      "run_name": "BM_ServerTickMutatingAckedDelta/16384/8",
+      "run_type": "iteration",
+      "repetitions": 1,
+      "repetition_index": 0,
+      "threads": 1,
+      "iterations": 3,
+      "real_time": 1.7348387500000700e+08,
+      "cpu_time": 1.7345618599999982e+08,
+      "time_unit": "ns",
+      "items_per_second": 7.5564903750391537e+05
+    },
+    {
+      "name": "BM_BitBufferAppendBits/131072",
+      "family_index": 7,
+      "per_family_instance_index": 0,
+      "run_name": "BM_BitBufferAppendBits/131072",
+      "run_type": "iteration",
+      "repetitions": 1,
+      "repetition_index": 0,
+      "threads": 1,
+      "iterations": 3054211,
+      "real_time": 2.2962381184534681e+02,
+      "cpu_time": 2.2960768591298998e+02,
+      "time_unit": "ns",
+      "items_per_second": 5.7085197073790405e+11
+    }
+  ]
+}
