@@ -55,6 +55,10 @@ void FractionalTickSampler::capture_server_frame(ashiato::Registry& registry) {
     if (source_ != Source::Server || server_ == nullptr) {
         return;
     }
+    if (current_.valid && current_.frame == server_->frame_) {
+        return;
+    }
+
     server_->rediscover_all_replicated_entities(registry);
 
     Snapshot next;
