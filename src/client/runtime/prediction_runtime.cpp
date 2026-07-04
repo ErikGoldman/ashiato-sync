@@ -11,7 +11,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <sstream>
 
 namespace ashiato::sync::client_detail {
 namespace {
@@ -373,19 +372,6 @@ bool ClientPredictionRuntime::apply_pending_rollback(
     ++rollback_applied_count_;
     const SyncFrame begin_frame = pending_prediction_rollback_frame_;
     const SyncFrame current_frame = has_predicted_frame_ ? last_predicted_frame_ : begin_frame;
-    {
-        std::ostringstream fields;
-        fields << "begin_frame=" << begin_frame
-               << " current_frame=" << current_frame
-               << " rollback_queued_count=" << rollback_queued_count_
-               << " rollback_applied_count=" << rollback_applied_count_
-               << " rollback_entity_count=" << client.entity_store_->prediction_rollback_entity_indices().size()
-               << " policy="
-               << (client.options_.prediction.rollback_policy == ReplicationRollbackPolicy::OnlyAffected
-                       ? "only_affected"
-                       : "all");
-        client.log_info("prediction_rollback_begin", fields.str());
-    }
     collect_resimulated_entities(client, rollback_entity_indices_scratch_);
     capture_original_current(
         client,
@@ -417,14 +403,6 @@ bool ClientPredictionRuntime::apply_pending_rollback(
     has_pending_prediction_rollback_ = false;
     pending_prediction_rollback_frame_ = 0;
     client.entity_store_->clear_prediction_rollback_memberships();
-    {
-        std::ostringstream fields;
-        fields << "begin_frame=" << begin_frame
-               << " current_frame=" << current_frame
-               << " rollback_applied_count=" << rollback_applied_count_
-               << " resimulated_frame_count=" << resimulated_frame_count_;
-        client.log_info("prediction_rollback_end", fields.str());
-    }
     return true;
 }
 
@@ -458,25 +436,10 @@ bool ClientPredictionRuntime::resimulate(
     if (!prepare_resimulation(client, registry, settings, begin_frame, scope, has_entities_to_resimulate)) {
         return false;
     }
-    const char* scope_name = scope == ResimScope::All ? "all" : "affected";
-    {
-        std::ostringstream fields;
-        fields << "begin_frame=" << begin_frame
-               << " current_frame=" << current_frame
-               << " scope=" << scope_name
-               << " has_entities=" << (has_entities_to_resimulate ? "true" : "false");
-        client.log_info("prediction_resim_range", fields.str());
-    }
     if (!has_entities_to_resimulate) {
         return true;
     }
     if (current_frame <= begin_frame) {
-        std::ostringstream fields;
-        fields << "frame=" << current_frame
-               << " begin_frame=" << begin_frame
-               << " scope=" << scope_name
-               << " ran_jobs=false reason=no_frames_after_canonical";
-        client.log_info("prediction_resim_frame", fields.str());
         return quantize_resimulated(client, registry, settings, current_frame, scope);
     }
 
@@ -543,26 +506,15 @@ bool ClientPredictionRuntime::run_resimulation_frame(
     SyncFrame frame,
     const ashiato::RunJobsOptions& options,
     ResimScope scope) {
-    bool applied_frame = false;
     if (scope == ResimScope::All) {
         if (!client.apply_frame(registry, frame)) {
             return false;
         }
-        applied_frame = true;
     }
     if (!client.apply_input_frame(registry, settings, frame)) {
         return false;
     }
     registry.write<FrameInfo>().frame = frame;
-    const char* scope_name = scope == ResimScope::All ? "all" : "affected";
-    {
-        std::ostringstream fields;
-        fields << "frame=" << frame
-               << " scope=" << scope_name
-               << " applied_frame=" << (applied_frame ? "true" : "false")
-               << " applied_input=true ran_jobs=pending";
-        client.log_info("prediction_resim_frame_begin", fields.str());
-    }
     if (scope == ResimScope::Affected) {
         client.resim_job_graph(registry).tick_for_entities(registry, rollback_affected_entities_scratch_, options);
     } else {
@@ -572,15 +524,6 @@ bool ClientPredictionRuntime::run_resimulation_frame(
     ++resimulated_frame_count_;
     if (!quantize_resimulated(client, registry, settings, frame, scope)) {
         return false;
-    }
-    {
-        std::ostringstream fields;
-        fields << "frame=" << frame
-               << " scope=" << scope_name
-               << " applied_frame=" << (applied_frame ? "true" : "false")
-               << " applied_input=true ran_jobs=true"
-               << " resimulated_frame_count=" << resimulated_frame_count_;
-        client.log_info("prediction_resim_frame_end", fields.str());
     }
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     client.trace_frame_components(

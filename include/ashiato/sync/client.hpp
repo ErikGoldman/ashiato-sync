@@ -455,33 +455,6 @@ public:
         std::uint64_t client_connects_rejected = 0;
     };
 
-    struct PredictionGateDiagnostics {
-        std::uint64_t tick_sequence = 0;
-        bool range_empty = true;
-        SyncFrame frame_first = 0;
-        SyncFrame frame_last = 0;
-        std::uint32_t frames_considered = 0;
-        std::uint32_t ran_frames = 0;
-        std::uint32_t skipped_no_predicted_entities = 0;
-        std::uint32_t skipped_should_not_run = 0;
-        bool has_predicted_entities_begin = false;
-        bool has_predicted_entities_end = false;
-        std::size_t predicted_entity_count_begin = 0;
-        std::size_t predicted_entity_count_end = 0;
-        bool has_predicted_frame_begin = false;
-        bool has_predicted_frame_end = false;
-        SyncFrame last_predicted_frame_begin = 0;
-        SyncFrame last_predicted_frame_end = 0;
-        SyncFrame client_predicted_frame_begin = 0;
-        SyncFrame client_predicted_frame_end = 0;
-        double continuous_predicted_frame_begin = 0.0;
-        double continuous_predicted_frame_end = 0.0;
-        std::uint64_t prediction_run_count_begin = 0;
-        std::uint64_t prediction_run_count_end = 0;
-        std::uint64_t prediction_seed_count_begin = 0;
-        std::uint64_t prediction_seed_count_end = 0;
-    };
-
     static constexpr std::size_t buffered_frame_capacity = 64;
     static constexpr std::size_t prediction_frame_capacity = 64;
 
@@ -589,9 +562,6 @@ public:
     }
     ObservabilityStats observability_stats() const noexcept {
         return observability_stats_;
-    }
-    const PredictionGateDiagnostics& prediction_gate_diagnostics() const noexcept {
-        return prediction_gate_diagnostics_;
     }
 #ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     const ReplicationClientInterpolationDiagnostics& interpolation_diagnostics() const noexcept {
@@ -887,7 +857,6 @@ private:
     std::unique_ptr<client_detail::ClientInputBuffer> input_;
     std::shared_ptr<spdlog::logger> logger_;
     ObservabilityStats observability_stats_;
-    PredictionGateDiagnostics prediction_gate_diagnostics_;
     std::unordered_map<std::uint8_t, std::uint32_t> warning_logs_by_message_;
     SyncFrame last_server_update_frame_ = 0;
     bool has_received_server_update_ = false;

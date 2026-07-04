@@ -601,54 +601,15 @@ bool ReplicationClient::run_predicted_frames(
     ashiato::Registry& registry,
     const ReplicationClientClock::FrameRange& frames,
     const ashiato::RunJobsOptions& options) {
-    PredictionGateDiagnostics diagnostics;
-    diagnostics.tick_sequence = prediction_gate_diagnostics_.tick_sequence + 1U;
-    diagnostics.range_empty = frames.empty();
-    diagnostics.frame_first = frames.first;
-    diagnostics.frame_last = frames.last;
-    diagnostics.has_predicted_entities_begin = has_predicted_entities();
-    diagnostics.predicted_entity_count_begin = entity_store_->predicted_entity_indices().size();
-    diagnostics.has_predicted_frame_begin = prediction_->has_predicted_frame();
-    diagnostics.last_predicted_frame_begin = prediction_->last_predicted_frame();
-    diagnostics.client_predicted_frame_begin = clock_.predicted_frame();
-    diagnostics.continuous_predicted_frame_begin = clock_.continuous_predicted_frame();
-    diagnostics.prediction_run_count_begin = prediction_->predicted_frame_run_count();
-    diagnostics.prediction_seed_count_begin = prediction_->prediction_seed_count();
     for (SyncFrame frame = frames.first; !frames.empty() && frame <= frames.last; ++frame) {
-        ++diagnostics.frames_considered;
         const SyncSettings& settings = registry.get<SyncSettings>();
         (void)record_input_frame(registry, settings, frame);
         const bool has_predicted = has_predicted_entities();
         const bool should_run = prediction_->should_run_prediction_frame(frame);
-        if (has_predicted && should_run) {
-            ++diagnostics.ran_frames;
-            if (!prediction_->run_frame(*this, registry, frame, options)) {
-                diagnostics.has_predicted_entities_end = has_predicted_entities();
-                diagnostics.predicted_entity_count_end = entity_store_->predicted_entity_indices().size();
-                diagnostics.has_predicted_frame_end = prediction_->has_predicted_frame();
-                diagnostics.last_predicted_frame_end = prediction_->last_predicted_frame();
-                diagnostics.client_predicted_frame_end = clock_.predicted_frame();
-                diagnostics.continuous_predicted_frame_end = clock_.continuous_predicted_frame();
-                diagnostics.prediction_run_count_end = prediction_->predicted_frame_run_count();
-                diagnostics.prediction_seed_count_end = prediction_->prediction_seed_count();
-                prediction_gate_diagnostics_ = diagnostics;
-                return false;
-            }
-        } else if (!has_predicted) {
-            ++diagnostics.skipped_no_predicted_entities;
-        } else {
-            ++diagnostics.skipped_should_not_run;
+        if (has_predicted && should_run && !prediction_->run_frame(*this, registry, frame, options)) {
+            return false;
         }
     }
-    diagnostics.has_predicted_entities_end = has_predicted_entities();
-    diagnostics.predicted_entity_count_end = entity_store_->predicted_entity_indices().size();
-    diagnostics.has_predicted_frame_end = prediction_->has_predicted_frame();
-    diagnostics.last_predicted_frame_end = prediction_->last_predicted_frame();
-    diagnostics.client_predicted_frame_end = clock_.predicted_frame();
-    diagnostics.continuous_predicted_frame_end = clock_.continuous_predicted_frame();
-    diagnostics.prediction_run_count_end = prediction_->predicted_frame_run_count();
-    diagnostics.prediction_seed_count_end = prediction_->prediction_seed_count();
-    prediction_gate_diagnostics_ = diagnostics;
     return true;
 }
 
