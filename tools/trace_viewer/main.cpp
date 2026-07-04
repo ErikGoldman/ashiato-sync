@@ -450,6 +450,24 @@ struct ComponentExpansionKeyHash {
     }
 };
 
+constexpr int component_lane = -1;
+constexpr int unassigned_lane = -2;
+
+struct RunRenderItem {
+    KTraceRunId run_id = invalid_trace_run;
+    int lane = 0;
+    int parent_lane = component_lane;
+    SyncFrame start_frame = 0;
+    SyncFrame end_frame = 0;
+    KTraceRunId prev = invalid_trace_run;
+    std::vector<std::pair<SyncFrame, int>> frame_lanes;
+};
+
+struct RunLaneLayout {
+    std::vector<RunRenderItem> items;
+    int lane_count = 0;
+};
+
 struct ViewerState {
     SyncTraceHistory history;
     std::array<char, 1024> directory{};
@@ -515,6 +533,7 @@ struct ViewerState {
 #endif
     std::unordered_set<EntityExpansionKey, EntityExpansionKeyHash> expanded_entities;
     std::unordered_set<ComponentExpansionKey, ComponentExpansionKeyHash> expanded_components;
+    std::unordered_map<ComponentExpansionKey, RunLaneLayout, ComponentExpansionKeyHash> run_lane_layouts;
     std::unordered_map<EventVisualKey, float, EventVisualKeyHash> event_hover_alpha;
     std::unordered_map<PacketVisualKey, float, PacketVisualKeyHash> packet_hover_alpha;
 #if defined(ASHIATO_SYNC_TRACE_VIEWER_ENABLE_AUTOMATION)
@@ -565,22 +584,6 @@ void jump_selected_packet_to_frame(ViewerState& state);
 void jump_selected_packet_to_payload(ViewerState& state);
 void jump_selected_payload_to_frame(ViewerState& state);
 void jump_selected_payload_to_event_log(ViewerState& state);
-
-struct RunRenderItem {
-    const KTraceFrameRun* run = nullptr;
-    KTraceRunId run_id = invalid_trace_run;
-    int lane = 0;
-    SyncFrame end_frame = 0;
-    std::vector<std::pair<SyncFrame, int>> frame_lanes;
-};
-
-constexpr int component_lane = -1;
-constexpr int unassigned_lane = -2;
-
-struct RunLaneLayout {
-    std::vector<RunRenderItem> items;
-    int lane_count = 0;
-};
 
 struct RunVerticalSpan {
     SyncFrame frame = 0;
@@ -1062,15 +1065,20 @@ bool vertical_spans_overlap(int from_a, int to_a, int from_b, int to_b) {
 }
 
 bool vertical_span_available(
-    const std::vector<RunVerticalSpan>& spans,
+    const std::unordered_map<SyncFrame, std::vector<RunVerticalSpan>>& spans_by_frame,
     SyncFrame frame,
     int from_lane,
     int to_lane) {
     if (from_lane == to_lane) {
         return true;
     }
+    const auto found = spans_by_frame.find(frame);
+    if (found == spans_by_frame.end()) {
+        return true;
+    }
+    const std::vector<RunVerticalSpan>& spans = found->second;
     for (const RunVerticalSpan& span : spans) {
-        if (span.frame == frame && vertical_spans_overlap(from_lane, to_lane, span.from_lane, span.to_lane)) {
+        if (vertical_spans_overlap(from_lane, to_lane, span.from_lane, span.to_lane)) {
             return false;
         }
     }
@@ -1078,26 +1086,26 @@ bool vertical_span_available(
 }
 
 void reserve_vertical_span(
-    std::vector<RunVerticalSpan>& spans,
+    std::unordered_map<SyncFrame, std::vector<RunVerticalSpan>>& spans_by_frame,
     SyncFrame frame,
     int from_lane,
     int to_lane) {
     if (from_lane == to_lane) {
         return;
     }
-    spans.push_back(RunVerticalSpan{frame, from_lane, to_lane});
+    spans_by_frame[frame].push_back(RunVerticalSpan{frame, from_lane, to_lane});
 }
 
 int first_available_run_lane(
     const std::vector<SyncFrame>& lane_ends,
-    const std::vector<RunVerticalSpan>& spans,
+    const std::unordered_map<SyncFrame, std::vector<RunVerticalSpan>>& spans_by_frame,
     int first_lane,
     SyncFrame frame,
     int parent_lane) {
     int lane = std::max(0, first_lane);
     for (; lane < static_cast<int>(lane_ends.size()); ++lane) {
         if (lane_has_gap_before(lane_ends[static_cast<std::size_t>(lane)], frame) &&
-            vertical_span_available(spans, frame, parent_lane, lane)) {
+            vertical_span_available(spans_by_frame, frame, parent_lane, lane)) {
             return lane;
         }
     }
@@ -1115,40 +1123,44 @@ RunLaneLayout pack_run_lanes(const KTraceComponentRow& component) {
             continue;
         }
         layout.items.push_back(RunRenderItem{
-            &run,
             static_cast<KTraceRunId>(run_index),
             0,
+            component_lane,
+            run.start_frame,
             run_end_frame(run),
+            run.prev,
             {}});
     }
     std::sort(layout.items.begin(), layout.items.end(), [](const RunRenderItem& lhs, const RunRenderItem& rhs) {
-        if (lhs.run->start_frame != rhs.run->start_frame) {
-            return lhs.run->start_frame < rhs.run->start_frame;
+        if (lhs.start_frame != rhs.start_frame) {
+            return lhs.start_frame < rhs.start_frame;
         }
         return lhs.end_frame < rhs.end_frame;
     });
 
     std::vector<SyncFrame> lane_ends;
-    std::vector<RunVerticalSpan> vertical_spans;
+    std::unordered_map<SyncFrame, std::vector<RunVerticalSpan>> vertical_spans_by_frame;
     SyncFrame component_end = component.runs.empty() ? 0 : run_end_frame(component.runs[0]);
     for (RunRenderItem& item : layout.items) {
-        const std::vector<SyncFrame> frames = run_frames_for_layout(*item.run);
+        const KTraceFrameRun& run = component.runs[item.run_id];
+        const std::vector<SyncFrame> frames = run_frames_for_layout(run);
         int current_lane = unassigned_lane;
         item.frame_lanes.reserve(frames.size());
         const std::size_t item_index = static_cast<std::size_t>(&item - layout.items.data());
         const int parent_lane = run_parent_lane(layout.items, item_index);
+        item.parent_lane = parent_lane;
         for (SyncFrame frame : frames) {
             int lane = unassigned_lane;
             if (current_lane == unassigned_lane) {
-                lane = first_available_run_lane(lane_ends, vertical_spans, parent_lane + 1, frame, parent_lane);
-                reserve_vertical_span(vertical_spans, frame, parent_lane, lane);
+                lane = first_available_run_lane(lane_ends, vertical_spans_by_frame, parent_lane + 1, frame, parent_lane);
+                reserve_vertical_span(vertical_spans_by_frame, frame, parent_lane, lane);
             } else {
                 for (int candidate = component_lane; candidate < current_lane; ++candidate) {
                     if (candidate >= static_cast<int>(lane_ends.size())) {
                         break;
                     }
                     if (lane_has_open_frame_before(lane_end_at(lane_ends, component_end, candidate), frame) &&
-                        vertical_span_available(vertical_spans, frame, current_lane, candidate)) {
+                        vertical_span_available(vertical_spans_by_frame, frame, current_lane, candidate)) {
                         lane = candidate;
                         break;
                     }
@@ -1156,7 +1168,7 @@ RunLaneLayout pack_run_lanes(const KTraceComponentRow& component) {
                 if (lane == unassigned_lane) {
                     lane = current_lane;
                 } else {
-                    reserve_vertical_span(vertical_spans, frame, current_lane, lane);
+                    reserve_vertical_span(vertical_spans_by_frame, frame, current_lane, lane);
                 }
             }
             if (lane != component_lane && lane == static_cast<int>(lane_ends.size())) {
@@ -1174,17 +1186,22 @@ RunLaneLayout pack_run_lanes(const KTraceComponentRow& component) {
 }
 
 int run_lane_at_frame(const RunRenderItem& item, SyncFrame frame) {
-    for (const auto& frame_lane : item.frame_lanes) {
-        if (frame_lane.first == frame) {
-            return frame_lane.second;
-        }
+    const auto found = std::lower_bound(
+        item.frame_lanes.begin(),
+        item.frame_lanes.end(),
+        frame,
+        [](const std::pair<SyncFrame, int>& frame_lane, SyncFrame target) {
+            return frame_lane.first < target;
+        });
+    if (found != item.frame_lanes.end() && found->first == frame) {
+        return found->second;
     }
     return unassigned_lane;
 }
 
 int run_parent_lane(const std::vector<RunRenderItem>& runs, std::size_t run_index) {
     const RunRenderItem& run = runs[run_index];
-    if (run.run == nullptr || run.run->prev == invalid_trace_run || run.run->prev == 0) {
+    if (run.prev == invalid_trace_run || run.prev == 0) {
         return component_lane;
     }
     int parent_lane = component_lane;
@@ -1193,16 +1210,35 @@ int run_parent_lane(const std::vector<RunRenderItem>& runs, std::size_t run_inde
             continue;
         }
         const RunRenderItem& candidate = runs[index];
-        if (candidate.run_id == run.run->prev) {
-            parent_lane = run_lane_at_frame(candidate, run.run->start_frame);
+        if (candidate.run_id == run.prev) {
+            parent_lane = run_lane_at_frame(candidate, run.start_frame);
             break;
         }
     }
     return parent_lane;
 }
 
-int packed_run_lane_count(const KTraceComponentRow& component) {
-    return pack_run_lanes(component).lane_count;
+RunLaneLayout& get_run_lane_layout(
+    ViewerState& state,
+    int source_index,
+    const KTraceEntityRow& entity,
+    const KTraceComponentRow& component) {
+    const ComponentExpansionKey key{source_index, entity.client_network_id, component.component};
+    auto found = state.run_lane_layouts.find(key);
+    if (found == state.run_lane_layouts.end()) {
+        found = state.run_lane_layouts.emplace(key, pack_run_lanes(component)).first;
+    }
+    return found->second;
+}
+
+void clear_run_lane_cache_for_source(ViewerState& state, int source_index) {
+    for (auto it = state.run_lane_layouts.begin(); it != state.run_lane_layouts.end();) {
+        if (it->first.source_index == source_index) {
+            it = state.run_lane_layouts.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 std::string event_name(SyncTraceEventType type) {
@@ -3214,6 +3250,7 @@ void draw_consecutive_cell_links(
 
 void draw_run_links(
     ImDrawList* draw,
+    const KTraceFrameRun& run,
     const RunRenderItem& item,
     const ImVec2& origin,
     float scroll_x,
@@ -3224,12 +3261,26 @@ void draw_run_links(
     int run_base_row,
     const ImVec2& clip_min,
     const ImVec2& clip_max) {
-    if (item.run == nullptr) {
+    if (item.end_frame < first_visible_frame || item.start_frame > last_visible_frame) {
         return;
     }
-    for (std::size_t index = 1; index < item.run->frames.size(); ++index) {
-        const SyncFrame previous = item.run->frames[index - 1U].frame;
-        const SyncFrame current = item.run->frames[index].frame;
+    auto it = std::lower_bound(
+        run.frames.begin(),
+        run.frames.end(),
+        first_visible_frame,
+        [](const KTraceFrameCell& cell, SyncFrame frame) {
+            return cell.frame < frame;
+        });
+    if (it != run.frames.begin()) {
+        --it;
+    }
+    for (; it != run.frames.end(); ++it) {
+        const std::size_t index = static_cast<std::size_t>(it - run.frames.begin());
+        if (index == 0U) {
+            continue;
+        }
+        const SyncFrame previous = run.frames[index - 1U].frame;
+        const SyncFrame current = run.frames[index].frame;
         if (current < first_visible_frame) {
             continue;
         }
@@ -3471,14 +3522,11 @@ bool component_expanded(
 }
 
 bool component_has_resim(const KTraceComponentRow& component) {
-    for (std::size_t run_index = 1; run_index < component.runs.size(); ++run_index) {
-        for (const KTraceFrameCell& cell : component.runs[run_index].frames) {
-            if (has_state(cell, KTraceCellState::Resimulated)) {
-                return true;
-            }
-        }
-    }
-    return false;
+    return component.runs.size() > 1U;
+}
+
+bool component_has_run_lanes(const KTraceComponentRow& component) {
+    return component.runs.size() > 1U;
 }
 
 void draw_expand_toggle(
@@ -3816,7 +3864,7 @@ void append_nav_cell(
 }
 
 std::vector<TimelineNavCell> collect_timeline_nav_cells(
-    const ViewerState& state,
+    ViewerState& state,
     const KTraceSourceHistory& source,
     int source_index) {
     std::vector<TimelineNavCell> cells;
@@ -3860,19 +3908,22 @@ std::vector<TimelineNavCell> collect_timeline_nav_cells(
             }
             ++row;
             const int run_base_row = row;
-            const RunLaneLayout run_layout = pack_run_lanes(component);
-            for (const RunRenderItem& item : run_layout.items) {
-                if (item.run == nullptr) {
-                    continue;
-                }
-                for (const KTraceFrameCell& cell : item.run->frames) {
-                    const int cell_lane = run_lane_at_frame(item, cell.frame);
-                    if (cell_lane != unassigned_lane) {
-                        append_nav_cell(cells, source_index, entity, component.component, cell, item.run_id, run_base_row + cell_lane);
+            if (component_has_run_lanes(component)) {
+                const RunLaneLayout& run_layout = get_run_lane_layout(state, source_index, entity, component);
+                for (const RunRenderItem& item : run_layout.items) {
+                    if (item.run_id >= component.runs.size()) {
+                        continue;
+                    }
+                    const KTraceFrameRun& run = component.runs[item.run_id];
+                    for (const KTraceFrameCell& cell : run.frames) {
+                        const int cell_lane = run_lane_at_frame(item, cell.frame);
+                        if (cell_lane != unassigned_lane) {
+                            append_nav_cell(cells, source_index, entity, component.component, cell, item.run_id, run_base_row + cell_lane);
+                        }
                     }
                 }
+                row += run_layout.lane_count;
             }
-            row += run_layout.lane_count;
         }
     }
     std::sort(cells.begin(), cells.end(), [](const TimelineNavCell& lhs, const TimelineNavCell& rhs) {
@@ -3884,7 +3935,7 @@ std::vector<TimelineNavCell> collect_timeline_nav_cells(
     return cells;
 }
 
-SourceMetrics compute_source_metrics(const KTraceSourceHistory& source, const ViewerState& state, int source_index);
+SourceMetrics compute_source_metrics(const KTraceSourceHistory& source, ViewerState& state, int source_index);
 void rebuild_source_metrics(ViewerState& state);
 void update_source_metrics(ViewerState& state, int source_index);
 
@@ -3945,6 +3996,7 @@ void publish_loaded_source(
     if (source_index < 0) {
         return;
     }
+    clear_run_lane_cache_for_source(state, source_index);
     if (static_cast<int>(state.history.sources.size()) <= source_index) {
         state.history.sources.resize(static_cast<std::size_t>(source_index + 1));
     }
@@ -4005,6 +4057,7 @@ void reset_loaded_trace(ViewerState& state) {
     state.selected_packet = {};
     state.expanded_entities.clear();
     state.expanded_components.clear();
+    state.run_lane_layouts.clear();
     state.event_hover_alpha.clear();
     state.packet_hover_alpha.clear();
     state.details_dirty = true;
@@ -4552,7 +4605,7 @@ void frame_range(const KTraceSourceHistory& source, SyncFrame& min_frame, SyncFr
     }
 }
 
-int row_count(const KTraceSourceHistory& source, const ViewerState& state, int source_index) {
+int row_count(const KTraceSourceHistory& source, ViewerState& state, int source_index) {
     int rows = 0;
     for (const KTraceEntityRow& entity : source.entities) {
         rows += 1;
@@ -4565,7 +4618,9 @@ int row_count(const KTraceSourceHistory& source, const ViewerState& state, int s
                 !component_expanded(state, source_index, entity, component.component)) {
                 continue;
             }
-            rows += packed_run_lane_count(component);
+            if (component_has_run_lanes(component)) {
+                rows += get_run_lane_layout(state, source_index, entity, component).lane_count;
+            }
         }
     }
     return rows;
@@ -4583,7 +4638,7 @@ int cell_count(const KTraceSourceHistory& source) {
     return cells;
 }
 
-SourceMetrics compute_source_metrics(const KTraceSourceHistory& source, const ViewerState& state, int source_index) {
+SourceMetrics compute_source_metrics(const KTraceSourceHistory& source, ViewerState& state, int source_index) {
     SourceMetrics metrics;
     frame_range(source, metrics.min_frame, metrics.max_frame);
     for (const KTraceEntityRow& entity : source.entities) {
@@ -5432,10 +5487,16 @@ void render_timeline(ViewerState& state, int source_index) {
                             row,
                             clip_min,
                             clip_max);
-                        for (const KTraceFrameCell& cell : component.runs[0].frames) {
-                            if (cell.frame < first_visible_frame) {
-                                continue;
-                            }
+                        const KTraceFrameRun& root = component.runs[0];
+                        auto cell_it = std::lower_bound(
+                            root.frames.begin(),
+                            root.frames.end(),
+                            first_visible_frame,
+                            [](const KTraceFrameCell& cell, SyncFrame frame) {
+                                return cell.frame < frame;
+                            });
+                        for (; cell_it != root.frames.end(); ++cell_it) {
+                            const KTraceFrameCell& cell = *cell_it;
                             if (cell.frame > last_visible_frame) {
                                 break;
                             }
@@ -5468,7 +5529,10 @@ void render_timeline(ViewerState& state, int source_index) {
             if (!expanded_component) {
                 continue;
             }
-            const RunLaneLayout run_layout = pack_run_lanes(component);
+            if (!component_has_run_lanes(component)) {
+                continue;
+            }
+            const RunLaneLayout& run_layout = get_run_lane_layout(state, source_index, entity, component);
             const int run_base_row = row;
             for (int lane = 0; lane < run_layout.lane_count; ++lane) {
                 const int run_row = run_base_row + lane;
@@ -5496,12 +5560,12 @@ void render_timeline(ViewerState& state, int source_index) {
             draw->PushClipRect(ImVec2(frame_clip_min_x, clip_min.y), clip_max, true);
             for (std::size_t run_index = 0; run_index < run_layout.items.size(); ++run_index) {
                 const RunRenderItem& item = run_layout.items[run_index];
-                if (item.run == nullptr) {
+                if (item.run_id >= component.runs.size()) {
                     continue;
                 }
-                const int parent_lane = run_parent_lane(run_layout.items, run_index);
-                const int parent_row = parent_lane < 0 ? run_base_row - 1 : run_base_row + parent_lane;
-                const int start_lane = run_lane_at_frame(item, item.run->start_frame);
+                const KTraceFrameRun& run = component.runs[item.run_id];
+                const int parent_row = item.parent_lane < 0 ? run_base_row - 1 : run_base_row + item.parent_lane;
+                const int start_lane = run_lane_at_frame(item, item.start_frame);
                 if (start_lane != unassigned_lane) {
                     draw_run_drop_link(
                         draw,
@@ -5509,7 +5573,7 @@ void render_timeline(ViewerState& state, int source_index) {
                         scroll_x,
                         scroll_y,
                         min_frame,
-                        item.run->start_frame,
+                        item.start_frame,
                         parent_row,
                         run_base_row + start_lane,
                         clip_min,
@@ -5517,6 +5581,7 @@ void render_timeline(ViewerState& state, int source_index) {
                 }
                 draw_run_links(
                     draw,
+                    run,
                     item,
                     body_origin,
                     scroll_x,
@@ -5527,10 +5592,18 @@ void render_timeline(ViewerState& state, int source_index) {
                     run_base_row,
                     clip_min,
                     clip_max);
-                for (const KTraceFrameCell& cell : item.run->frames) {
-                    if (cell.frame < first_visible_frame) {
-                        continue;
-                    }
+                if (item.end_frame < first_visible_frame || item.start_frame > last_visible_frame) {
+                    continue;
+                }
+                auto cell_it = std::lower_bound(
+                    run.frames.begin(),
+                    run.frames.end(),
+                    first_visible_frame,
+                    [](const KTraceFrameCell& cell, SyncFrame frame) {
+                        return cell.frame < frame;
+                    });
+                for (; cell_it != run.frames.end(); ++cell_it) {
+                    const KTraceFrameCell& cell = *cell_it;
                     if (cell.frame > last_visible_frame) {
                         break;
                     }
