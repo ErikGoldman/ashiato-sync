@@ -13,13 +13,92 @@
 #include <utility>
 
 namespace ashiato::sync::client_detail {
+namespace {
+
+std::uint64_t hash_bytes(const std::uint8_t* bytes, std::size_t size) noexcept {
+    if (bytes == nullptr || size == 0U) {
+        return 0;
+    }
+    std::uint64_t hash = 1469598103934665603ULL;
+    for (std::size_t index = 0; index < size; ++index) {
+        hash ^= bytes[index];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+std::uint64_t combine_hash(std::uint64_t seed, std::uint64_t value) noexcept {
+    return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U));
+}
+
+std::uint64_t frame_payload_hash(const detail::FrameDataView& frame) noexcept {
+    std::uint64_t hash = combine_hash(0, frame.tag_mask);
+    hash = combine_hash(hash, frame.present_mask);
+    return combine_hash(hash, hash_bytes(frame.bytes, frame.byte_count));
+}
+
+void clear_diagnostics(FractionalTickSample& display) noexcept {
+    display.sampled_component_count = 0;
+    display.interpolated_component_count = 0;
+    display.stepped_component_count = 0;
+    display.missing_next_component_count = 0;
+    display.missing_interpolate_op_count = 0;
+    display.interpolated_equals_floor = false;
+    display.interpolated_equals_next = false;
+    display.source_floor_frame = 0;
+    display.source_next_frame = 0;
+    display.source_floor_generation = 0;
+    display.source_next_generation = 0;
+    display.source_floor_write_source = 0;
+    display.source_next_write_source = 0;
+    display.source_floor_presentation_cache_hit = false;
+    display.source_next_presentation_cache_hit = false;
+    display.source_floor_presentation_origin_valid = false;
+    display.source_next_presentation_origin_valid = false;
+    display.source_floor_presentation_origin_generation = 0;
+    display.source_next_presentation_origin_generation = 0;
+    display.source_floor_presentation_origin_write_source = 0;
+    display.source_next_presentation_origin_write_source = 0;
+    display.source_floor_presentation_origin_payload_hash = 0;
+    display.source_next_presentation_origin_payload_hash = 0;
+    display.floor_component_hash = 0;
+    display.next_component_hash = 0;
+    display.result_component_hash = 0;
+    display.prediction_last_frame = 0;
+    display.prediction_accumulator_seconds = 0.0;
+    display.prediction_run_count = 0;
+    display.prediction_rollback_queued_count = 0;
+    display.prediction_rollback_applied_count = 0;
+    display.prediction_resimulated_frame_count = 0;
+    display.prediction_seed_count = 0;
+    display.prediction_pending_rollback_frame = 0;
+    display.prediction_has_pending_rollback = false;
+}
+
+void write_prediction_diagnostics(
+    FractionalTickSample& display,
+    const ReplicationClientClock& clock,
+    const ClientPredictionRuntime& prediction) noexcept {
+    display.prediction_last_frame = prediction.last_predicted_frame();
+    display.prediction_accumulator_seconds = clock.predicted_accumulator_seconds();
+    display.prediction_run_count = prediction.predicted_frame_run_count();
+    display.prediction_rollback_queued_count = prediction.rollback_queued_count();
+    display.prediction_rollback_applied_count = prediction.rollback_applied_count();
+    display.prediction_resimulated_frame_count = prediction.resimulated_frame_count();
+    display.prediction_seed_count = prediction.prediction_seed_count();
+    display.prediction_pending_rollback_frame = prediction.pending_rollback_frame();
+    display.prediction_has_pending_rollback = prediction.has_pending_rollback();
+}
+
+}  // namespace
 
 ClientDisplaySampler::ClientDisplaySampler(
     const ReplicationClientClock& clock,
     const ClientEntityStore& entity_store,
-    const ClientPredictionRuntime& prediction,
+    ClientPredictionRuntime& prediction,
     const ClientFrameRingStore& buffered_frames,
     const ClientFrameRingStore& predicted_frames,
+    ClientFrameRingStore& predicted_presentation_frames,
     const FractionalTickSampleBuffer& previous_frame,
     double fixed_dt_seconds) noexcept
     : clock_(clock),
@@ -27,6 +106,7 @@ ClientDisplaySampler::ClientDisplaySampler(
       prediction_(prediction),
       buffered_frames_(buffered_frames),
       predicted_frames_(predicted_frames),
+      predicted_presentation_frames_(predicted_presentation_frames),
       previous_frame_(previous_frame),
       fixed_dt_seconds_(fixed_dt_seconds) {}
 
@@ -55,7 +135,17 @@ bool ClientDisplaySampler::append_previous_sample(
     if (previous == nullptr) {
         return false;
     }
-    next_sample(context) = *previous;
+    FractionalTickSample& display = next_sample(context);
+    display = *previous;
+    display.source = FractionalTickSample::Source::PreviousSample;
+    display.target_frame = context.target_frame;
+    display.target_floor_frame = context.floor_frame;
+    display.target_alpha = context.alpha;
+    display.target_valid = context.target_valid;
+    display.floor_frame_present = false;
+    display.next_frame_present = false;
+    clear_diagnostics(display);
+    write_prediction_diagnostics(display, clock_, prediction_);
     ++context.sampled_count;
     return true;
 }
@@ -68,6 +158,11 @@ bool ClientDisplaySampler::append_frame_sample(
     SyncFrame frame,
     float alpha,
     const EntityFrameView* next_frame_sample,
+    FractionalTickSample::Source source,
+    bool floor_frame_present,
+    std::uint64_t floor_write_generation,
+    FrameWriteSource floor_write_source,
+    const EntityFrameView* floor_frame_sample,
     bool apply_snap_errors) const {
     if (archetype_id.value >= context.settings.archetypes.size()) {
         return false;
@@ -78,6 +173,42 @@ bool ClientDisplaySampler::append_frame_sample(
     display.local_entity = state.identity.local;
     display.frame = frame;
     display.alpha = next_frame_sample != nullptr ? alpha : 0.0f;
+    display.source = source;
+    display.mode = state.mode.current;
+    display.target_frame = context.target_frame;
+    display.target_floor_frame = context.floor_frame;
+    display.target_alpha = context.alpha;
+    display.target_valid = context.target_valid;
+    display.floor_frame_present = floor_frame_present;
+    display.next_frame_present = next_frame_sample != nullptr;
+    clear_diagnostics(display);
+    write_prediction_diagnostics(display, clock_, prediction_);
+    display.source_floor_frame = frame;
+    display.source_next_frame = next_frame_sample != nullptr ? next_frame_sample->frame : 0;
+    display.source_floor_generation = floor_write_generation;
+    display.source_next_generation = next_frame_sample != nullptr ? next_frame_sample->write_generation : 0;
+    display.source_floor_write_source = static_cast<std::uint32_t>(floor_write_source);
+    display.source_next_write_source = next_frame_sample != nullptr
+        ? static_cast<std::uint32_t>(next_frame_sample->write_source)
+        : 0U;
+    if (floor_frame_sample != nullptr) {
+        display.source_floor_presentation_cache_hit = floor_frame_sample->presentation_cache_hit;
+        display.source_floor_presentation_origin_valid = floor_frame_sample->presentation_origin_valid;
+        display.source_floor_presentation_origin_generation = floor_frame_sample->presentation_origin_generation;
+        display.source_floor_presentation_origin_write_source =
+            static_cast<std::uint32_t>(floor_frame_sample->presentation_origin_write_source);
+        display.source_floor_presentation_origin_payload_hash =
+            floor_frame_sample->presentation_origin_payload_hash;
+    }
+    if (next_frame_sample != nullptr) {
+        display.source_next_presentation_cache_hit = next_frame_sample->presentation_cache_hit;
+        display.source_next_presentation_origin_valid = next_frame_sample->presentation_origin_valid;
+        display.source_next_presentation_origin_generation = next_frame_sample->presentation_origin_generation;
+        display.source_next_presentation_origin_write_source =
+            static_cast<std::uint32_t>(next_frame_sample->presentation_origin_write_source);
+        display.source_next_presentation_origin_payload_hash =
+            next_frame_sample->presentation_origin_payload_hash;
+    }
     display.components_.clear();
 
     const SyncArchetype& archetype = context.settings.archetypes[archetype_id.value];
@@ -97,14 +228,20 @@ bool ClientDisplaySampler::append_frame_sample(
         if (baseline_bytes == nullptr) {
             return false;
         }
+        const std::uint64_t floor_hash = hash_bytes(baseline_bytes, ops.serialization.quantized_size);
+        display.floor_component_hash = combine_hash(display.floor_component_hash, floor_hash);
 
         ReplicatedComponentUpdate value;
         value.component = component;
         value.serializer = archetype.components[component_index].serializer;
-        if (next_frame_sample != nullptr &&
-            frame_has_component(next_frame_sample->baseline, component_index) &&
-            archetype.components[component_index].interpolation == ComponentInterpolation::Interpolate) {
+        const bool next_has_component =
+            next_frame_sample != nullptr &&
+            frame_has_component(next_frame_sample->baseline, component_index);
+        const bool component_interpolates =
+            archetype.components[component_index].interpolation == ComponentInterpolation::Interpolate;
+        if (next_has_component && component_interpolates) {
             if (ops.interpolate == nullptr) {
+                ++display.missing_interpolate_op_count;
                 return false;
             }
             const std::uint8_t* next_bytes = frame_component_data(archetype, next_frame_sample->baseline, component_index);
@@ -112,8 +249,19 @@ bool ClientDisplaySampler::append_frame_sample(
             if (next_bytes == nullptr || !ops.interpolate(baseline_bytes, next_bytes, alpha, value.bytes.data())) {
                 return false;
             }
+            const std::uint64_t next_hash = hash_bytes(next_bytes, ops.serialization.quantized_size);
+            display.next_component_hash = combine_hash(display.next_component_hash, next_hash);
+            display.interpolated_equals_floor =
+                std::memcmp(value.bytes.data(), baseline_bytes, ops.serialization.quantized_size) == 0;
+            display.interpolated_equals_next =
+                std::memcmp(value.bytes.data(), next_bytes, ops.serialization.quantized_size) == 0;
+            ++display.interpolated_component_count;
         } else {
             value.bytes.assign(baseline_bytes, ops.serialization.quantized_size);
+            ++display.stepped_component_count;
+            if (next_frame_sample != nullptr && !next_has_component) {
+                ++display.missing_next_component_count;
+            }
         }
 
         if (apply_snap_errors) {
@@ -131,7 +279,11 @@ bool ClientDisplaySampler::append_frame_sample(
             }
         }
 
+        display.result_component_hash = combine_hash(
+            display.result_component_hash,
+            hash_bytes(value.bytes.empty() ? nullptr : value.bytes.data(), value.bytes.size()));
         display.components_.push_back(std::move(value));
+        ++display.sampled_component_count;
     }
 
     if (!display.components_.empty()) {
@@ -155,6 +307,11 @@ bool ClientDisplaySampler::append_latest_buffered_sample(WriteContext& context, 
             state.replication.frame,
             0.0f,
             nullptr,
+            FractionalTickSample::Source::LatestBuffered,
+            true,
+            0U,
+            FrameWriteSource::Unknown,
+            nullptr,
             false);
     }
 
@@ -169,6 +326,11 @@ bool ClientDisplaySampler::append_latest_buffered_sample(WriteContext& context, 
             latest.frame,
             0.0f,
             nullptr,
+            FractionalTickSample::Source::LatestBuffered,
+            true,
+            latest.write_generation,
+            latest.write_source,
+            &latest,
             false)
         : false;
 }
@@ -217,6 +379,11 @@ bool ClientDisplaySampler::append_buffered_sample(
         context.floor_frame,
         context.alpha,
         next_frame_sample,
+        FractionalTickSample::Source::Buffered,
+        true,
+        floor_sample.write_generation,
+        floor_sample.write_source,
+        &floor_sample,
         false);
 }
 
@@ -234,7 +401,7 @@ bool ClientDisplaySampler::append_predicted_sample(
 
     EntityFrameView current_sample;
     const SyncFrame last_predicted_frame = prediction_.last_predicted_frame();
-    if (!predicted_frames_.view(entity_index, last_predicted_frame, current_sample) ||
+    if (!ensure_predicted_presentation_frame(entity_index, last_predicted_frame, current_sample) ||
         !current_sample.entity_present) {
         return true;
     }
@@ -245,7 +412,7 @@ bool ClientDisplaySampler::append_predicted_sample(
     float predicted_alpha = 0.0f;
     if (last_predicted_frame != 0U) {
         const SyncFrame previous_frame = last_predicted_frame - 1U;
-        if (predicted_frames_.view(entity_index, previous_frame, previous_sample) &&
+        if (ensure_predicted_presentation_frame(entity_index, previous_frame, previous_sample) &&
             previous_sample.entity_present) {
             floor_sample = &previous_sample;
             next_frame_sample = &current_sample;
@@ -261,10 +428,49 @@ bool ClientDisplaySampler::append_predicted_sample(
             floor_sample->frame,
             predicted_alpha,
             next_frame_sample,
+            FractionalTickSample::Source::Predicted,
+            true,
+            floor_sample->write_generation,
+            floor_sample->write_source,
+            floor_sample,
             true)) {
         return false;
     }
     appended = true;
+    return true;
+}
+
+bool ClientDisplaySampler::ensure_predicted_presentation_frame(
+    std::uint32_t entity_index,
+    SyncFrame frame,
+    EntityFrameView& out) const {
+    if (predicted_presentation_frames_.view(entity_index, frame, out)) {
+        out.presentation_cache_hit = true;
+        return true;
+    }
+
+    EntityFrameView source_view;
+    if (!predicted_frames_.view(entity_index, frame, source_view)) {
+        return false;
+    }
+    EntityBufferedFrame source;
+    if (!predicted_frames_.read(entity_index, frame, source)) {
+        return false;
+    }
+    const FramePresentationOrigin presentation_origin{
+        true,
+        source_view.write_generation,
+        source_view.write_source,
+        frame_payload_hash(source_view.baseline)};
+    predicted_presentation_frames_.write(
+        entity_index,
+        source,
+        FrameWriteSource::PresentationFrame,
+        presentation_origin);
+    if (!predicted_presentation_frames_.view(entity_index, frame, out)) {
+        return false;
+    }
+    out.presentation_cache_hit = false;
     return true;
 }
 
@@ -278,6 +484,17 @@ bool ClientDisplaySampler::append_live_sample(WriteContext& context, const Entit
     display.local_entity = state.identity.local;
     display.frame = state.replication.frame;
     display.alpha = 0.0f;
+    display.source = FractionalTickSample::Source::Live;
+    display.mode = state.mode.current;
+    display.target_frame = context.target_frame;
+    display.target_floor_frame = context.floor_frame;
+    display.target_alpha = context.alpha;
+    display.target_valid = context.target_valid;
+    display.floor_frame_present = true;
+    display.next_frame_present = false;
+    clear_diagnostics(display);
+    write_prediction_diagnostics(display, clock_, prediction_);
+    display.source_floor_frame = state.replication.frame;
     display.components_.clear();
 
     const SyncArchetype& archetype = context.settings.archetypes[state.identity.archetype.value];
@@ -304,6 +521,8 @@ bool ClientDisplaySampler::append_live_sample(WriteContext& context, const Entit
         value.serializer = archetype.components[component_index].serializer;
         value.bytes.resize(ops.serialization.quantized_size);
         ops.serialization.quantize(current, value.bytes.data());
+        const std::uint64_t floor_hash = hash_bytes(value.bytes.data(), value.bytes.size());
+        display.floor_component_hash = combine_hash(display.floor_component_hash, floor_hash);
         const auto found_error = std::find_if(
             state.visual.snap_errors.begin(),
             state.visual.snap_errors.end(),
@@ -316,7 +535,11 @@ bool ClientDisplaySampler::append_live_sample(WriteContext& context, const Entit
                 return false;
             }
         }
+        display.result_component_hash = combine_hash(
+            display.result_component_hash,
+            hash_bytes(value.bytes.empty() ? nullptr : value.bytes.data(), value.bytes.size()));
         display.components_.push_back(std::move(value));
+        ++display.sampled_component_count;
     }
 
     ++context.sampled_count;
@@ -337,6 +560,7 @@ bool ClientDisplaySampler::sample_fractional_tick_frame(
         registry,
         settings,
         out,
+        target_frame,
         static_cast<SyncFrame>(floor_value),
         target_valid ? static_cast<float>(target_frame - floor_value) : 0.0f,
         target_valid,

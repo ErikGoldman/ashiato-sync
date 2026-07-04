@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <sstream>
 
 namespace ashiato::sync::client_detail {
 namespace {
@@ -24,18 +25,22 @@ bool all_zero(const SyncComponentOps::QuantizedBytes& bytes) {
 }  // namespace
 
 ClientPredictionRuntime::ClientPredictionRuntime(std::size_t frame_capacity)
-    : predicted_frames_(frame_capacity) {}
+    : predicted_frames_(frame_capacity),
+      presentation_frames_(frame_capacity) {}
 
 void ClientPredictionRuntime::reset_entity(std::uint32_t entity_index) noexcept {
     predicted_frames_.reset(entity_index);
+    presentation_frames_.reset(entity_index);
 }
 
 void ClientPredictionRuntime::ensure_entity(std::uint32_t entity_index) {
     predicted_frames_.ensure(entity_index);
+    presentation_frames_.ensure(entity_index);
 }
 
 void ClientPredictionRuntime::clear_entity(std::uint32_t entity_index) noexcept {
     predicted_frames_.clear(entity_index);
+    presentation_frames_.clear(entity_index);
 }
 
 void ClientPredictionRuntime::reset_predicted_frame() noexcept {
@@ -86,6 +91,7 @@ bool ClientPredictionRuntime::seed_first_authoritative_frame(
     if (!client.fill_input_frames_through(registry, settings, frame)) {
         return false;
     }
+    ++prediction_seed_count_;
     client.clock_.advance_predicted_frame_to(frame);
     last_predicted_frame_ = frame != 0U ? frame - 1U : 0U;
     has_predicted_frame_ = true;
@@ -103,6 +109,7 @@ bool ClientPredictionRuntime::seed_existing_authoritative_frame(
     if (!client.fill_input_frames_through(registry, settings, frame)) {
         return false;
     }
+    ++prediction_seed_count_;
     client.clock_.advance_predicted_frame_to(frame);
     last_predicted_frame_ = frame;
     has_predicted_frame_ = true;
@@ -129,6 +136,7 @@ void ClientPredictionRuntime::refresh_pending_rollback_frame(ReplicationClient& 
 }
 
 void ClientPredictionRuntime::queue_rollback(ReplicationClient& client, EntityState& state, SyncFrame frame) {
+    ++rollback_queued_count_;
     const std::uint32_t entity_index = client.entity_store_->index_of(state);
     client.entity_store_->queue_prediction_rollback(entity_index, frame);
     refresh_pending_rollback_frame(client);
@@ -151,6 +159,7 @@ bool ClientPredictionRuntime::run_frame(
     registry.run_jobs(options);
 
     client.cue_runtime_->drain_emitted_prediction(client, registry, settings, frame, true);
+    ++predicted_frame_run_count_;
     bool all_valid = true;
     for (std::uint32_t entity_index : client.entity_store_->active_entity_indices()) {
         if (entity_index >= client.entity_store_->entity_count()) {
@@ -161,7 +170,12 @@ bool ClientPredictionRuntime::run_frame(
             state.identity.client_entity_network_id == invalid_client_entity_network_id) {
             continue;
         }
-        if (!client.quantize_predicted_entity(registry, settings, state, frame)) {
+        if (!client.quantize_predicted_entity(
+                registry,
+                settings,
+                state,
+                frame,
+                FrameWriteSource::PredictedFrame)) {
             all_valid = false;
         }
     }
@@ -356,8 +370,22 @@ bool ClientPredictionRuntime::apply_pending_rollback(
     if (!has_pending_prediction_rollback_) {
         return true;
     }
+    ++rollback_applied_count_;
     const SyncFrame begin_frame = pending_prediction_rollback_frame_;
     const SyncFrame current_frame = has_predicted_frame_ ? last_predicted_frame_ : begin_frame;
+    {
+        std::ostringstream fields;
+        fields << "begin_frame=" << begin_frame
+               << " current_frame=" << current_frame
+               << " rollback_queued_count=" << rollback_queued_count_
+               << " rollback_applied_count=" << rollback_applied_count_
+               << " rollback_entity_count=" << client.entity_store_->prediction_rollback_entity_indices().size()
+               << " policy="
+               << (client.options_.prediction.rollback_policy == ReplicationRollbackPolicy::OnlyAffected
+                       ? "only_affected"
+                       : "all");
+        client.log_info("prediction_rollback_begin", fields.str());
+    }
     collect_resimulated_entities(client, rollback_entity_indices_scratch_);
     capture_original_current(
         client,
@@ -389,6 +417,14 @@ bool ClientPredictionRuntime::apply_pending_rollback(
     has_pending_prediction_rollback_ = false;
     pending_prediction_rollback_frame_ = 0;
     client.entity_store_->clear_prediction_rollback_memberships();
+    {
+        std::ostringstream fields;
+        fields << "begin_frame=" << begin_frame
+               << " current_frame=" << current_frame
+               << " rollback_applied_count=" << rollback_applied_count_
+               << " resimulated_frame_count=" << resimulated_frame_count_;
+        client.log_info("prediction_rollback_end", fields.str());
+    }
     return true;
 }
 
@@ -422,10 +458,25 @@ bool ClientPredictionRuntime::resimulate(
     if (!prepare_resimulation(client, registry, settings, begin_frame, scope, has_entities_to_resimulate)) {
         return false;
     }
+    const char* scope_name = scope == ResimScope::All ? "all" : "affected";
+    {
+        std::ostringstream fields;
+        fields << "begin_frame=" << begin_frame
+               << " current_frame=" << current_frame
+               << " scope=" << scope_name
+               << " has_entities=" << (has_entities_to_resimulate ? "true" : "false");
+        client.log_info("prediction_resim_range", fields.str());
+    }
     if (!has_entities_to_resimulate) {
         return true;
     }
     if (current_frame <= begin_frame) {
+        std::ostringstream fields;
+        fields << "frame=" << current_frame
+               << " begin_frame=" << begin_frame
+               << " scope=" << scope_name
+               << " ran_jobs=false reason=no_frames_after_canonical";
+        client.log_info("prediction_resim_frame", fields.str());
         return quantize_resimulated(client, registry, settings, current_frame, scope);
     }
 
@@ -492,21 +543,44 @@ bool ClientPredictionRuntime::run_resimulation_frame(
     SyncFrame frame,
     const ashiato::RunJobsOptions& options,
     ResimScope scope) {
-    if (scope == ResimScope::All && !client.apply_frame(registry, frame)) {
-        return false;
+    bool applied_frame = false;
+    if (scope == ResimScope::All) {
+        if (!client.apply_frame(registry, frame)) {
+            return false;
+        }
+        applied_frame = true;
     }
     if (!client.apply_input_frame(registry, settings, frame)) {
         return false;
     }
     registry.write<FrameInfo>().frame = frame;
+    const char* scope_name = scope == ResimScope::All ? "all" : "affected";
+    {
+        std::ostringstream fields;
+        fields << "frame=" << frame
+               << " scope=" << scope_name
+               << " applied_frame=" << (applied_frame ? "true" : "false")
+               << " applied_input=true ran_jobs=pending";
+        client.log_info("prediction_resim_frame_begin", fields.str());
+    }
     if (scope == ResimScope::Affected) {
         client.resim_job_graph(registry).tick_for_entities(registry, rollback_affected_entities_scratch_, options);
     } else {
         client.resim_job_graph(registry).tick(registry, options);
     }
     client.cue_runtime_->drain_emitted_prediction(client, registry, settings, frame, true);
+    ++resimulated_frame_count_;
     if (!quantize_resimulated(client, registry, settings, frame, scope)) {
         return false;
+    }
+    {
+        std::ostringstream fields;
+        fields << "frame=" << frame
+               << " scope=" << scope_name
+               << " applied_frame=" << (applied_frame ? "true" : "false")
+               << " applied_input=true ran_jobs=true"
+               << " resimulated_frame_count=" << resimulated_frame_count_;
+        client.log_info("prediction_resim_frame_end", fields.str());
     }
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     client.trace_frame_components(
@@ -537,7 +611,12 @@ bool ClientPredictionRuntime::quantize_resimulated(
         if (scope == ResimScope::Affected && !state.prediction.rollback_pending) {
             continue;
         }
-        if (!client.quantize_predicted_entity(registry, settings, state, frame)) {
+        if (!client.quantize_predicted_entity(
+                registry,
+                settings,
+                state,
+                frame,
+                FrameWriteSource::ResimulatedFrame)) {
             return false;
         }
     }

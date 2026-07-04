@@ -33,6 +33,7 @@ namespace client_detail {
 class ClientAckQueue;
 class ClientBufferedRuntime;
 class ClientCueRuntime;
+enum class FrameWriteSource : std::uint8_t;
 class ClientEntityStore;
 class ClientPredictionRuntime;
 class ClientSessionTransport;
@@ -81,10 +82,62 @@ private:
 };
 
 struct FractionalTickSample {
+    enum class Source : std::uint8_t {
+        Unknown,
+        PreviousSample,
+        LatestBuffered,
+        Buffered,
+        Predicted,
+        Live
+    };
+
     ClientEntityNetworkId client_entity_network_id = invalid_client_entity_network_id;
     ashiato::Entity local_entity;
     SyncFrame frame = 0;
     float alpha = 0.0f;
+    Source source = Source::Unknown;
+    ReplicationClientMode mode = ReplicationClientMode::Snap;
+    double target_frame = 0.0;
+    SyncFrame target_floor_frame = 0;
+    float target_alpha = 0.0f;
+    bool target_valid = false;
+    bool floor_frame_present = false;
+    bool next_frame_present = false;
+    std::uint32_t sampled_component_count = 0;
+    std::uint32_t interpolated_component_count = 0;
+    std::uint32_t stepped_component_count = 0;
+    std::uint32_t missing_next_component_count = 0;
+    std::uint32_t missing_interpolate_op_count = 0;
+    bool interpolated_equals_floor = false;
+    bool interpolated_equals_next = false;
+    SyncFrame source_floor_frame = 0;
+    SyncFrame source_next_frame = 0;
+    std::uint64_t source_floor_generation = 0;
+    std::uint64_t source_next_generation = 0;
+    std::uint32_t source_floor_write_source = 0;
+    std::uint32_t source_next_write_source = 0;
+    bool source_floor_presentation_cache_hit = false;
+    bool source_next_presentation_cache_hit = false;
+    bool source_floor_presentation_origin_valid = false;
+    bool source_next_presentation_origin_valid = false;
+    std::uint64_t source_floor_presentation_origin_generation = 0;
+    std::uint64_t source_next_presentation_origin_generation = 0;
+    std::uint32_t source_floor_presentation_origin_write_source = 0;
+    std::uint32_t source_next_presentation_origin_write_source = 0;
+    std::uint64_t source_floor_presentation_origin_payload_hash = 0;
+    std::uint64_t source_next_presentation_origin_payload_hash = 0;
+    std::uint64_t floor_component_hash = 0;
+    std::uint64_t next_component_hash = 0;
+    std::uint64_t result_component_hash = 0;
+    SyncFrame prediction_last_frame = 0;
+    double prediction_accumulator_seconds = 0.0;
+    std::uint64_t prediction_run_count = 0;
+    std::uint64_t prediction_rollback_queued_count = 0;
+    std::uint64_t prediction_rollback_applied_count = 0;
+    std::uint64_t prediction_resimulated_frame_count = 0;
+    std::uint64_t prediction_seed_count = 0;
+    SyncFrame prediction_pending_rollback_frame = 0;
+    bool prediction_has_pending_rollback = false;
 
     template <typename T>
     bool try_get_sampled_value(const ashiato::Registry& registry, T& out) const {
@@ -402,6 +455,33 @@ public:
         std::uint64_t client_connects_rejected = 0;
     };
 
+    struct PredictionGateDiagnostics {
+        std::uint64_t tick_sequence = 0;
+        bool range_empty = true;
+        SyncFrame frame_first = 0;
+        SyncFrame frame_last = 0;
+        std::uint32_t frames_considered = 0;
+        std::uint32_t ran_frames = 0;
+        std::uint32_t skipped_no_predicted_entities = 0;
+        std::uint32_t skipped_should_not_run = 0;
+        bool has_predicted_entities_begin = false;
+        bool has_predicted_entities_end = false;
+        std::size_t predicted_entity_count_begin = 0;
+        std::size_t predicted_entity_count_end = 0;
+        bool has_predicted_frame_begin = false;
+        bool has_predicted_frame_end = false;
+        SyncFrame last_predicted_frame_begin = 0;
+        SyncFrame last_predicted_frame_end = 0;
+        SyncFrame client_predicted_frame_begin = 0;
+        SyncFrame client_predicted_frame_end = 0;
+        double continuous_predicted_frame_begin = 0.0;
+        double continuous_predicted_frame_end = 0.0;
+        std::uint64_t prediction_run_count_begin = 0;
+        std::uint64_t prediction_run_count_end = 0;
+        std::uint64_t prediction_seed_count_begin = 0;
+        std::uint64_t prediction_seed_count_end = 0;
+    };
+
     static constexpr std::size_t buffered_frame_capacity = 64;
     static constexpr std::size_t prediction_frame_capacity = 64;
 
@@ -509,6 +589,9 @@ public:
     }
     ObservabilityStats observability_stats() const noexcept {
         return observability_stats_;
+    }
+    const PredictionGateDiagnostics& prediction_gate_diagnostics() const noexcept {
+        return prediction_gate_diagnostics_;
     }
 #ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS
     const ReplicationClientInterpolationDiagnostics& interpolation_diagnostics() const noexcept {
@@ -638,7 +721,8 @@ private:
         const ashiato::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
-        SyncFrame frame);
+        SyncFrame frame,
+        client_detail::FrameWriteSource source);
     void apply_buffered_frames_to_ashiato(
         ashiato::Registry& registry,
         const ReplicationClientClock::FrameRange& frames);
@@ -803,6 +887,7 @@ private:
     std::unique_ptr<client_detail::ClientInputBuffer> input_;
     std::shared_ptr<spdlog::logger> logger_;
     ObservabilityStats observability_stats_;
+    PredictionGateDiagnostics prediction_gate_diagnostics_;
     std::unordered_map<std::uint8_t, std::uint32_t> warning_logs_by_message_;
     SyncFrame last_server_update_frame_ = 0;
     bool has_received_server_update_ = false;

@@ -15,11 +15,19 @@ EntityFrameView make_view(
     const ClientFrameRingStore::EntityRing& ring,
     std::size_t slot) noexcept {
     const ClientFrameRingStore::FrameMetadata& sample = ring.metadata(slot);
-    return EntityFrameView{
+    EntityFrameView view{
         sample.frame,
         sample.valid,
         sample.entity_present,
+        sample.write_generation,
+        sample.write_source,
+        false,
+        sample.presentation_origin_valid,
+        sample.presentation_origin_generation,
+        sample.presentation_origin_write_source,
+        sample.presentation_origin_payload_hash,
         detail::FrameDataView{sample.tag_mask, sample.present_mask, ring.payload(slot), ring.payload_stride()}};
+    return view;
 }
 
 }  // namespace
@@ -54,6 +62,12 @@ void ClientFrameRingStore::clear(std::uint32_t entity_index) noexcept {
         frame.entity_present = false;
         frame.tag_mask = 0;
         frame.present_mask = 0;
+        frame.write_generation = 0;
+        frame.write_source = FrameWriteSource::Unknown;
+        frame.presentation_origin_valid = false;
+        frame.presentation_origin_generation = 0;
+        frame.presentation_origin_write_source = FrameWriteSource::Unknown;
+        frame.presentation_origin_payload_hash = 0;
     }
     ring.clear_payloads();
 }
@@ -133,10 +147,22 @@ bool ClientFrameRingStore::read(std::uint32_t entity_index, SyncFrame frame, Ent
     return true;
 }
 
-void ClientFrameRingStore::write(std::uint32_t entity_index, const EntityBufferedFrame& sample) {
-    MutableEntityFrameView frame = begin_write(entity_index, sample.frame, sample.baseline.bytes.size());
+void ClientFrameRingStore::write(
+    std::uint32_t entity_index,
+    const EntityBufferedFrame& sample,
+    FrameWriteSource source,
+    FramePresentationOrigin presentation_origin) {
+    MutableEntityFrameView frame = begin_write(
+        entity_index,
+        sample.frame,
+        sample.baseline.bytes.size(),
+        source);
     *frame.valid = sample.valid;
     *frame.entity_present = sample.entity_present;
+    *frame.presentation_origin_valid = presentation_origin.valid;
+    *frame.presentation_origin_generation = presentation_origin.write_generation;
+    *frame.presentation_origin_write_source = presentation_origin.write_source;
+    *frame.presentation_origin_payload_hash = presentation_origin.payload_hash;
     *frame.baseline.tag_mask = sample.baseline.tag_mask;
     *frame.baseline.present_mask = sample.baseline.present_mask;
     if (frame.baseline.byte_count != 0U) {
@@ -152,7 +178,8 @@ void ClientFrameRingStore::write(std::uint32_t entity_index, const EntityBuffere
 MutableEntityFrameView ClientFrameRingStore::begin_write(
     std::uint32_t entity_index,
     SyncFrame frame,
-    std::size_t payload_size) {
+    std::size_t payload_size,
+    FrameWriteSource source) {
     ensure(entity_index);
     EntityRing& ring = rings_[entity_index];
     ring.ensure_payload_stride(payload_size);
@@ -163,6 +190,12 @@ MutableEntityFrameView ClientFrameRingStore::begin_write(
     metadata.entity_present = false;
     metadata.tag_mask = 0;
     metadata.present_mask = 0;
+    metadata.write_generation = ++write_generation_counter_;
+    metadata.write_source = source;
+    metadata.presentation_origin_valid = false;
+    metadata.presentation_origin_generation = 0;
+    metadata.presentation_origin_write_source = FrameWriteSource::Unknown;
+    metadata.presentation_origin_payload_hash = 0;
     std::uint8_t* payload = ring.payload(slot);
     if (payload != nullptr) {
         std::fill(payload, payload + ring.payload_stride(), std::uint8_t{0});
@@ -171,6 +204,12 @@ MutableEntityFrameView ClientFrameRingStore::begin_write(
         frame,
         &metadata.valid,
         &metadata.entity_present,
+        &metadata.write_generation,
+        &metadata.write_source,
+        &metadata.presentation_origin_valid,
+        &metadata.presentation_origin_generation,
+        &metadata.presentation_origin_write_source,
+        &metadata.presentation_origin_payload_hash,
         detail::MutableFrameDataView{&metadata.tag_mask, &metadata.present_mask, payload, ring.payload_stride()}};
 }
 

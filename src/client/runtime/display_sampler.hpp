@@ -13,15 +13,17 @@ namespace ashiato::sync::client_detail {
 class ClientEntityStore;
 class ClientFrameRingStore;
 class ClientPredictionRuntime;
+enum class FrameWriteSource : std::uint8_t;
 
 class ClientDisplaySampler {
 public:
     ClientDisplaySampler(
         const ReplicationClientClock& clock,
         const ClientEntityStore& entity_store,
-        const ClientPredictionRuntime& prediction,
+        ClientPredictionRuntime& prediction,
         const ClientFrameRingStore& buffered_frames,
         const ClientFrameRingStore& predicted_frames,
+        ClientFrameRingStore& predicted_presentation_frames,
         const FractionalTickSampleBuffer& previous_frame,
         double fixed_dt_seconds) noexcept;
 
@@ -35,6 +37,7 @@ private:
         const ashiato::Registry& registry;
         const SyncSettings& settings;
         FractionalTickSampleBuffer& out;
+        double target_frame = 0.0;
         SyncFrame floor_frame = 0;
         float alpha = 0.0f;
         bool target_valid = false;
@@ -53,6 +56,11 @@ private:
         SyncFrame frame,
         float alpha,
         const EntityFrameView* next_sample,
+        FractionalTickSample::Source source,
+        bool floor_frame_present,
+        std::uint64_t floor_write_generation,
+        FrameWriteSource floor_write_source,
+        const EntityFrameView* floor_frame_sample,
         bool apply_snap_errors) const;
     bool append_latest_buffered_sample(WriteContext& context, const EntityState& state) const;
     bool append_missing_buffered_sample(WriteContext& context, const EntityState& state) const;
@@ -62,13 +70,18 @@ private:
         std::uint32_t entity_index,
         const EntityState& state,
         bool& appended) const;
+    bool ensure_predicted_presentation_frame(
+        std::uint32_t entity_index,
+        SyncFrame frame,
+        EntityFrameView& out) const;
     bool append_live_sample(WriteContext& context, const EntityState& state) const;
 
     const ReplicationClientClock& clock_;
     const ClientEntityStore& entity_store_;
-    const ClientPredictionRuntime& prediction_;
+    ClientPredictionRuntime& prediction_;
     const ClientFrameRingStore& buffered_frames_;
     const ClientFrameRingStore& predicted_frames_;
+    ClientFrameRingStore& predicted_presentation_frames_;
     const FractionalTickSampleBuffer& previous_frame_;
     double fixed_dt_seconds_ = 1.0 / 60.0;
 };

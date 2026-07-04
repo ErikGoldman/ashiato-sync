@@ -27,6 +27,14 @@ public:
         return predicted_frames_;
     }
 
+    ClientFrameRingStore& presentation_frames() noexcept {
+        return presentation_frames_;
+    }
+
+    const ClientFrameRingStore& presentation_frames() const noexcept {
+        return presentation_frames_;
+    }
+
     void reset_entity(std::uint32_t entity_index) noexcept;
     void ensure_entity(std::uint32_t entity_index);
     void clear_entity(std::uint32_t entity_index) noexcept;
@@ -53,6 +61,34 @@ public:
 
     SyncFrame pending_catchup_server_frame() const noexcept {
         return pending_prediction_catchup_server_frame_;
+    }
+
+    std::uint64_t predicted_frame_run_count() const noexcept {
+        return predicted_frame_run_count_;
+    }
+
+    std::uint64_t rollback_queued_count() const noexcept {
+        return rollback_queued_count_;
+    }
+
+    std::uint64_t rollback_applied_count() const noexcept {
+        return rollback_applied_count_;
+    }
+
+    std::uint64_t resimulated_frame_count() const noexcept {
+        return resimulated_frame_count_;
+    }
+
+    std::uint64_t prediction_seed_count() const noexcept {
+        return prediction_seed_count_;
+    }
+
+    SyncFrame pending_rollback_frame() const noexcept {
+        return pending_prediction_rollback_frame_;
+    }
+
+    bool has_pending_rollback() const noexcept {
+        return has_pending_prediction_rollback_;
     }
 
     SyncFrame late_frames_since(SyncFrame frame) const noexcept {
@@ -156,6 +192,7 @@ private:
     std::vector<ashiato::Entity> rollback_affected_entities_scratch_;
     std::vector<OriginalPredictionCapture> rollback_original_current_scratch_;
     ClientFrameRingStore predicted_frames_;
+    ClientFrameRingStore presentation_frames_;
     SyncFrame last_predicted_frame_ = 0;
     bool has_predicted_frame_ = false;
     SyncFrame active_prediction_snap_lead_frames_ = 0;
@@ -163,6 +200,11 @@ private:
     SyncFrame pending_prediction_catchup_server_frame_ = 0;
     SyncFrame pending_prediction_rollback_frame_ = 0;
     bool has_pending_prediction_rollback_ = false;
+    std::uint64_t predicted_frame_run_count_ = 0;
+    std::uint64_t rollback_queued_count_ = 0;
+    std::uint64_t rollback_applied_count_ = 0;
+    std::uint64_t resimulated_frame_count_ = 0;
+    std::uint64_t prediction_seed_count_ = 0;
 };
 
 }  // namespace client_detail
