@@ -1,5 +1,13 @@
 #include "test_protocol.hpp"
 
+#ifndef ASHIATO_ENABLE_DEBUG_SERVER
+#define ASHIATO_ENABLE_DEBUG_SERVER 0
+#endif
+
+#if ASHIATO_ENABLE_DEBUG_SERVER
+#include "ashiato/debug_server.hpp"
+#endif
+
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -67,6 +75,11 @@ TEST_CASE("replication client applies full updates and queues ACKs") {
     REQUIRE(client_registry.contains<Position>(local));
     REQUIRE(client_registry.get<Position>(local).x == 1.0f);
     REQUIRE(client_registry.get<Position>(local).y == 2.0f);
+#if ASHIATO_ENABLE_DEBUG_SERVER
+    const ashiato::DebugName* debug_name = client_registry.try_get<ashiato::DebugName>(local);
+    REQUIRE(debug_name != nullptr);
+    REQUIRE(debug_name->str() == "PositionActor");
+#endif
 
     std::vector<ashiato::BitBuffer> ack_packets = client.drain_ack_packets();
     REQUIRE(ack_packets.size() == 1);

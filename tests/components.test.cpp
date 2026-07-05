@@ -1,5 +1,13 @@
 #include "test_components.hpp"
 
+#ifndef ASHIATO_ENABLE_DEBUG_SERVER
+#define ASHIATO_ENABLE_DEBUG_SERVER 0
+#endif
+
+#if ASHIATO_ENABLE_DEBUG_SERVER
+#include "ashiato/debug_server.hpp"
+#endif
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
@@ -406,6 +414,30 @@ TEST_CASE("replication configuration is a direct Ashiato component") {
     REQUIRE_FALSE(registry.contains<ashiato::sync::Replicated>(entity));
     REQUIRE_FALSE(registry.remove<ashiato::sync::Replicated>(entity));
 }
+
+#if ASHIATO_ENABLE_DEBUG_SERVER
+TEST_CASE("replicated entities use their archetype name as Ashiato debug name") {
+    ashiato::Registry registry;
+    REQUIRE(ashiato_sync_tests::configure_test_server_registry(registry));
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<Position>(registry, "Position");
+    const ashiato::sync::SyncArchetypeId airplane = ashiato::sync::define_archetype(
+        registry,
+        "airplane",
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+
+    const ashiato::Entity entity = registry.create();
+    REQUIRE(registry.add<Position>(entity, Position{1.0f, 2.0f}) != nullptr);
+    REQUIRE(registry.add<ashiato::sync::Replicated>(entity, ashiato::sync::Replicated{airplane}) != nullptr);
+
+    ashiato::sync::ReplicationServer server(registry);
+    server.rediscover_all_replicated_entities(registry);
+
+    const ashiato::DebugName* debug_name = registry.try_get<ashiato::DebugName>(entity);
+    REQUIRE(debug_name != nullptr);
+    REQUIRE(debug_name->str() == "airplane");
+}
+#endif
 
 TEST_CASE("owners can be assigned and replaced independently of replication marker") {
     ashiato::Registry registry;

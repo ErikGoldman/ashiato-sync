@@ -11,6 +11,14 @@
 #include "ashiato/sync/protocol.hpp"
 #include "ashiato/sync/tracing.hpp"
 
+#ifndef ASHIATO_ENABLE_DEBUG_SERVER
+#define ASHIATO_ENABLE_DEBUG_SERVER 0
+#endif
+
+#if ASHIATO_ENABLE_DEBUG_SERVER
+#include "ashiato/debug_server.hpp"
+#endif
+
 #include <spdlog/logger.h>
 
 #include <algorithm>
@@ -46,6 +54,22 @@ using server_detail::configured_packet_id_bits;
 using server_detail::destroy_record_bits;
 using server_detail::make_server_packet;
 using server_detail::server_update_header_bits;
+
+#if ASHIATO_ENABLE_DEBUG_SERVER
+void set_sync_debug_name(ashiato::Registry& registry, ashiato::Entity entity, const SyncArchetype& archetype) {
+    if (!registry.alive(entity)) {
+        return;
+    }
+    (void)registry.register_component<ashiato::DebugName>("DebugName");
+    if (archetype.name.empty()) {
+        registry.remove<ashiato::DebugName>(entity);
+        return;
+    }
+    registry.add<ashiato::DebugName>(entity, ashiato::DebugName{archetype.name});
+}
+#else
+void set_sync_debug_name(ashiato::Registry&, ashiato::Entity, const SyncArchetype&) {}
+#endif
 
 ServerFixedStepAdvance consume_server_fixed_steps(
     double& accumulator_seconds,
@@ -3172,6 +3196,7 @@ bool ReplicationServer::upsert_replicated(ashiato::Registry& registry, ashiato::
     const std::uint32_t slot = allocate_replicated_slot(entity, archetype);
     const SyncSettings& settings = registry.get<SyncSettings>();
     if (archetype.value < settings.archetypes.size()) {
+        set_sync_debug_name(registry, entity, settings.archetypes[archetype.value]);
         replicated_[slot].same_frame_cacheable =
             archetype_is_same_frame_cacheable(settings.archetypes[archetype.value]);
         replicated_[slot].component_dirty_generations.assign(

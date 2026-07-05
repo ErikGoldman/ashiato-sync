@@ -20,6 +20,14 @@
 
 #include "ashiato/sync/protocol.hpp"
 
+#ifndef ASHIATO_ENABLE_DEBUG_SERVER
+#define ASHIATO_ENABLE_DEBUG_SERVER 0
+#endif
+
+#if ASHIATO_ENABLE_DEBUG_SERVER
+#include "ashiato/debug_server.hpp"
+#endif
+
 #include <spdlog/logger.h>
 
 #include <algorithm>
@@ -51,6 +59,22 @@ using client_detail::sync_slot_count;
 using client_detail::tag_bit_set;
 using client_detail::unchecked_frame_component_data;
 using client_detail::unchecked_mutable_frame_component_data;
+
+#if ASHIATO_ENABLE_DEBUG_SERVER
+void set_sync_debug_name(ashiato::Registry& registry, ashiato::Entity entity, const SyncArchetype& archetype) {
+    if (!registry.alive(entity)) {
+        return;
+    }
+    (void)registry.register_component<ashiato::DebugName>("DebugName");
+    if (archetype.name.empty()) {
+        registry.remove<ashiato::DebugName>(entity);
+        return;
+    }
+    registry.add<ashiato::DebugName>(entity, ashiato::DebugName{archetype.name});
+}
+#else
+void set_sync_debug_name(ashiato::Registry&, ashiato::Entity, const SyncArchetype&) {}
+#endif
 
 std::string missing_prediction_rollback_trait_message(
     SyncArchetypeId archetype_id,
@@ -671,6 +695,10 @@ bool ReplicationClient::ensure_local_entity(ashiato::Registry& registry, EntityS
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     register_local_entity_index(state);
 #endif
+    const SyncSettings& settings = registry.get<SyncSettings>();
+    if (state.identity.archetype.value < settings.archetypes.size()) {
+        set_sync_debug_name(registry, state.identity.local, settings.archetypes[state.identity.archetype.value]);
+    }
     return state.identity.local && registry.alive(state.identity.local);
 }
 
