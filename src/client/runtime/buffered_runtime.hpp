@@ -15,6 +15,11 @@ class ReplicationClient;
 
 namespace client_detail {
 
+enum class MissingBufferedFramePolicy : std::uint8_t {
+    FailApply,
+    AllowMissing,
+};
+
 class ClientBufferedRuntime {
 public:
     explicit ClientBufferedRuntime(std::size_t frame_capacity = 64);
@@ -43,7 +48,11 @@ public:
         ReplicationClient& client,
         ashiato::Registry& registry,
         const ReplicationClientClock::FrameRange& frames);
-    bool apply_frame(ReplicationClient& client, ashiato::Registry& registry, SyncFrame buffered_frame);
+    bool apply_frame(
+        ReplicationClient& client,
+        ashiato::Registry& registry,
+        SyncFrame buffered_frame,
+        MissingBufferedFramePolicy missing_frame_policy = MissingBufferedFramePolicy::FailApply);
 
 private:
     ClientFrameRingStore buffered_frames_;

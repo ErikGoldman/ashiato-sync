@@ -1,5 +1,6 @@
 #include "client/runtime/prediction_runtime.hpp"
 
+#include "client/runtime/buffered_runtime.hpp"
 #include "client/runtime/cue_runtime.hpp"
 #include "client/store/cue_store.hpp"
 #include "client/store/entity_store.hpp"
@@ -488,6 +489,12 @@ bool ClientPredictionRuntime::prepare_resimulation(
             if (!client.apply_frame_data(registry, settings, state, reset_frame, true, *baseline)) {
                 return false;
             }
+        } else if (scope == ResimScope::All) {
+            EntityFrameView predicted;
+            if (predicted_frames_.view(entity_index, reset_frame, predicted) &&
+                !client.apply_buffered_sample(registry, settings, state, predicted)) {
+                return false;
+            }
         }
         if (affected_scope && state.identity.local && registry.alive(state.identity.local)) {
             rollback_affected_entities_scratch_.push_back(state.identity.local);
@@ -507,7 +514,15 @@ bool ClientPredictionRuntime::run_resimulation_frame(
     const ashiato::RunJobsOptions& options,
     ResimScope scope) {
     if (scope == ResimScope::All) {
-        if (!client.apply_frame(registry, frame)) {
+        if (!apply_snap_resimulation_frame(client, registry, settings, frame)) {
+            return false;
+        }
+        const SyncFrame buffered_frame = buffered_resimulation_frame(client, frame);
+        if (!client.buffered_runtime_->apply_frame(
+                client,
+                registry,
+                buffered_frame,
+                MissingBufferedFramePolicy::AllowMissing)) {
             return false;
         }
     }
@@ -534,6 +549,41 @@ bool ClientPredictionRuntime::run_resimulation_frame(
         scope == ResimScope::Affected,
         ReplicationClient::TraceFrameComponentScope::Predicted);
 #endif
+    return true;
+}
+
+SyncFrame ClientPredictionRuntime::buffered_resimulation_frame(
+    const ReplicationClient& client,
+    SyncFrame predicted_frame) const noexcept {
+    const SyncFrame predicted_now = client.clock_.predicted_frame();
+    const SyncFrame buffered_now = client.clock_.buffered_frame();
+    const SyncFrame prediction_to_buffered_offset = predicted_now > buffered_now
+        ? predicted_now - buffered_now
+        : 0U;
+    return predicted_frame > prediction_to_buffered_offset ? predicted_frame - prediction_to_buffered_offset : 0U;
+}
+
+bool ClientPredictionRuntime::apply_snap_resimulation_frame(
+    ReplicationClient& client,
+    ashiato::Registry& registry,
+    const SyncSettings& settings,
+    SyncFrame frame) {
+    for (std::uint32_t entity_index : client.entity_store_->active_entity_indices()) {
+        if (entity_index >= client.entity_store_->entity_count()) {
+            continue;
+        }
+        EntityState& state = client.entity_store_->state_unchecked(entity_index);
+        if (state.mode.current != ReplicationClientMode::Snap) {
+            continue;
+        }
+        const QuantizedFrameData* baseline = client.find_baseline(state, frame);
+        if (baseline == nullptr) {
+            continue;
+        }
+        if (!client.apply_frame_data(registry, settings, state, frame, true, *baseline)) {
+            return false;
+        }
+    }
     return true;
 }
 

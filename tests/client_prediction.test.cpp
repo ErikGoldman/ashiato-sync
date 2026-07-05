@@ -11,6 +11,35 @@
 
 using namespace ashiato_sync_tests;
 
+namespace {
+
+ashiato::BitBuffer make_predicted_position_packet_for_archetype(
+    ashiato::sync::SyncFrame frame,
+    ashiato::Entity server_entity,
+    ashiato::sync::SyncArchetypeId archetype,
+    PredictedPosition position,
+    std::uint32_t packet_id = 0U) {
+    ashiato::BitBuffer packet;
+    packet.write_bits(ashiato::sync::protocol::server_update_message, ashiato::sync::protocol::message_bits);
+    packet.write_bits(frame, 32U);
+    packet.write_bits(packet_id == 0U ? frame : packet_id, ashiato::sync::protocol::server_packet_id_bits);
+    packet.write_bits(0, 32U);
+    packet.write_bits(1, 16U);
+    packet.write_bool(false);
+    ashiato::sync::protocol::write_network_entity_id(packet, test_network_id(server_entity));
+    packet.write_bool(true);
+    packet.write_bits(archetype.value, 32U);
+    packet.write_bool(false);
+    packet.write_bits(1, 16U);
+    packet.write_bits(1, ashiato::sync::protocol::bits_for_range(2U));
+    packet.write_bits(static_cast<std::int32_t>(position.x * 10.0f), 16U);
+    packet.write_bits(static_cast<std::int32_t>(position.y * 10.0f), 16U);
+    packet.write_bool(false);
+    return packet;
+}
+
+}  // namespace
+
 TEST_CASE("predicted client mode requires ShouldRollBack traits") {
     ashiato::Registry server_registry;
     const ashiato::sync::SyncArchetypeId server_archetype = ashiato_sync_tests::define_position_archetype(server_registry);
@@ -126,6 +155,437 @@ TEST_CASE("predicted client rolls back and resimulates mismatched frames") {
     REQUIRE(registry.get<PredictedPosition>(local).x == 1.0f);
     REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
     REQUIRE(registry.get<PredictedPosition>(local).x == 3.0f);
+}
+
+TEST_CASE("predicted client resimulation is not blocked by missing buffered entity frames") {
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+
+    const ashiato::Entity predicted_server_entity = registry.create();
+    const ashiato::Entity buffered_server_entity = registry.create();
+    const ashiato::sync::ClientEntityNetworkId predicted_network_id =
+        test_client_entity_network_id(1, predicted_server_entity);
+    const ashiato::sync::ClientEntityNetworkId buffered_network_id =
+        test_client_entity_network_id(1, buffered_server_entity);
+
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Snap;
+    options.entities.mode_selector = [&](const ashiato::sync::ReplicatedEntityUpdateView& update) {
+        if (update.client_entity_network_id == predicted_network_id) {
+            return ashiato::sync::ReplicationClientMode::Predict;
+        }
+        if (update.client_entity_network_id == buffered_network_id) {
+            return ashiato::sync::ReplicationClientMode::BufferedInterpolation;
+        }
+        return ashiato::sync::ReplicationClientMode::Snap;
+    };
+    options.prediction.rollback_policy = ashiato::sync::ReplicationRollbackPolicy::All;
+    options.buffered.buffered_frame_lag = 1;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    client.simulation_job<PredictedPosition>(registry, 0).each([](ashiato::Entity, PredictedPosition& position) {
+        position.x += 1.0f;
+    });
+
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet(1, predicted_server_entity, PredictedPosition{0.0f, 0.0f}, 1)));
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet(1, buffered_server_entity, PredictedPosition{100.0f, 0.0f}, 2)));
+    REQUIRE(client.entity_mode(predicted_network_id) == ashiato::sync::ReplicationClientMode::Predict);
+    REQUIRE(client.entity_mode(buffered_network_id) == ashiato::sync::ReplicationClientMode::BufferedInterpolation);
+
+    const ashiato::Entity predicted_local = client.local_entity(predicted_network_id);
+    REQUIRE(predicted_local);
+    REQUIRE(client.apply_frame(registry, 1));
+    const ashiato::Entity buffered_local = client.local_entity(buffered_network_id);
+    REQUIRE(buffered_local);
+    REQUIRE(registry.get<PredictedPosition>(buffered_local).x == 100.0f);
+    REQUIRE(registry.add<ashiato::sync::NoSimulate>(buffered_local));
+
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(registry.get<PredictedPosition>(predicted_local).x == 1.0f);
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(registry.get<PredictedPosition>(predicted_local).x == 2.0f);
+
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet(2, predicted_server_entity, PredictedPosition{20.0f, 0.0f}, 3)));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(registry.get<PredictedPosition>(predicted_local).x == 22.0f);
+    REQUIRE(registry.get<PredictedPosition>(buffered_local).x == 100.0f);
+}
+
+TEST_CASE("predicted client resimulation applies available buffered frames when another buffered entity is missing") {
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+
+    const ashiato::Entity predicted_server_entity = registry.create();
+    const ashiato::Entity missing_buffered_server_entity = registry.create();
+    const ashiato::Entity available_buffered_server_entity = registry.create();
+    const ashiato::sync::ClientEntityNetworkId predicted_network_id =
+        test_client_entity_network_id(1, predicted_server_entity);
+    const ashiato::sync::ClientEntityNetworkId missing_buffered_network_id =
+        test_client_entity_network_id(1, missing_buffered_server_entity);
+    const ashiato::sync::ClientEntityNetworkId available_buffered_network_id =
+        test_client_entity_network_id(1, available_buffered_server_entity);
+
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Snap;
+    options.entities.mode_selector = [&](const ashiato::sync::ReplicatedEntityUpdateView& update) {
+        if (update.client_entity_network_id == predicted_network_id) {
+            return ashiato::sync::ReplicationClientMode::Predict;
+        }
+        if (update.client_entity_network_id == missing_buffered_network_id ||
+            update.client_entity_network_id == available_buffered_network_id) {
+            return ashiato::sync::ReplicationClientMode::BufferedInterpolation;
+        }
+        return ashiato::sync::ReplicationClientMode::Snap;
+    };
+    options.prediction.rollback_policy = ashiato::sync::ReplicationRollbackPolicy::All;
+    options.buffered.buffered_frame_lag = 1;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    client.simulation_job<PredictedPosition>(registry, 0).each([](ashiato::Entity, PredictedPosition& position) {
+        position.x += 1.0f;
+    });
+
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet(1, predicted_server_entity, PredictedPosition{0.0f, 0.0f}, 1)));
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet(1, missing_buffered_server_entity, PredictedPosition{100.0f, 0.0f}, 2)));
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet(1, available_buffered_server_entity, PredictedPosition{200.0f, 0.0f}, 3)));
+
+    const ashiato::Entity predicted_local = client.local_entity(predicted_network_id);
+    REQUIRE(predicted_local);
+    REQUIRE(client.apply_frame(registry, 1));
+    const ashiato::Entity missing_buffered_local = client.local_entity(missing_buffered_network_id);
+    const ashiato::Entity available_buffered_local = client.local_entity(available_buffered_network_id);
+    REQUIRE(missing_buffered_local);
+    REQUIRE(available_buffered_local);
+    REQUIRE(registry.add<ashiato::sync::NoSimulate>(missing_buffered_local));
+    REQUIRE(registry.add<ashiato::sync::NoSimulate>(available_buffered_local));
+
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet(2, available_buffered_server_entity, PredictedPosition{300.0f, 0.0f}, 4)));
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet(3, available_buffered_server_entity, PredictedPosition{300.0f, 0.0f}, 5)));
+    registry.write<PredictedPosition>(available_buffered_local).x = 999.0f;
+
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(registry.get<PredictedPosition>(predicted_local).x == 2.0f);
+
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet(2, predicted_server_entity, PredictedPosition{20.0f, 0.0f}, 6)));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(registry.get<PredictedPosition>(predicted_local).x == 22.0f);
+    REQUIRE(registry.get<PredictedPosition>(missing_buffered_local).x == 100.0f);
+    REQUIRE(registry.get<PredictedPosition>(available_buffered_local).x == 200.0f);
+}
+
+TEST_CASE("predicted client resimulation applies snap frames and delayed buffered frames by entity type") {
+    constexpr ashiato::sync::SyncFrame rollback_frame = 2;
+    constexpr ashiato::sync::SyncFrame observed_frame = 5;
+
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId step_archetype = ashiato::sync::define_archetype(
+        registry,
+        "StepActor",
+        {{position_component, ashiato::sync::ReplicationAudience::All, ashiato::sync::ComponentInterpolation::Step}});
+    const ashiato::sync::SyncArchetypeId interpolated_archetype = ashiato::sync::define_archetype(
+        registry,
+        "InterpolatedActor",
+        {{position_component, ashiato::sync::ReplicationAudience::All, ashiato::sync::ComponentInterpolation::Interpolate}});
+    REQUIRE(step_archetype.value == 0);
+    REQUIRE(interpolated_archetype.value == 1);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+
+    const ashiato::Entity predicted_server_entity = registry.create();
+    const ashiato::Entity snap_server_entity = registry.create();
+    const ashiato::Entity step_buffered_server_entity = registry.create();
+    const ashiato::Entity interpolated_buffered_server_entity = registry.create();
+    const ashiato::Entity other_predicted_server_entity = registry.create();
+    const ashiato::sync::ClientEntityNetworkId predicted_network_id =
+        test_client_entity_network_id(1, predicted_server_entity);
+    const ashiato::sync::ClientEntityNetworkId snap_network_id =
+        test_client_entity_network_id(1, snap_server_entity);
+    const ashiato::sync::ClientEntityNetworkId step_buffered_network_id =
+        test_client_entity_network_id(1, step_buffered_server_entity);
+    const ashiato::sync::ClientEntityNetworkId interpolated_buffered_network_id =
+        test_client_entity_network_id(1, interpolated_buffered_server_entity);
+    const ashiato::sync::ClientEntityNetworkId other_predicted_network_id =
+        test_client_entity_network_id(1, other_predicted_server_entity);
+
+    struct ResimObservedValues {
+        bool original_seen = false;
+        bool resim_seen = false;
+        float snap = 0.0f;
+        float step_buffered = 0.0f;
+        float interpolated_buffered = 0.0f;
+        float other_predicted = 0.0f;
+    };
+    ResimObservedValues observed;
+    ashiato::Entity predicted_local;
+    ashiato::Entity snap_local;
+    ashiato::Entity step_buffered_local;
+    ashiato::Entity interpolated_buffered_local;
+    ashiato::Entity other_predicted_local;
+
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Snap;
+    options.entities.mode_selector = [&](const ashiato::sync::ReplicatedEntityUpdateView& update) {
+        if (update.client_entity_network_id == predicted_network_id ||
+            update.client_entity_network_id == other_predicted_network_id) {
+            return ashiato::sync::ReplicationClientMode::Predict;
+        }
+        if (update.client_entity_network_id == step_buffered_network_id ||
+            update.client_entity_network_id == interpolated_buffered_network_id) {
+            return ashiato::sync::ReplicationClientMode::BufferedInterpolation;
+        }
+        return ashiato::sync::ReplicationClientMode::Snap;
+    };
+    options.prediction.rollback_policy = ashiato::sync::ReplicationRollbackPolicy::All;
+    options.prediction.auto_lead_frames = false;
+    options.prediction.lead_frames = 2;
+    options.buffered.auto_buffered_frame_lag = false;
+    options.buffered.buffered_frame_lag = 2;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    client.simulation_job<PredictedPosition, const ashiato::sync::FrameInfo>(registry, 0).each(
+        [&](ashiato::Entity entity, PredictedPosition& position, const ashiato::sync::FrameInfo& frame) {
+            position.x += 1.0f;
+            if (frame.frame != observed_frame || entity != predicted_local) {
+                return;
+            }
+
+            const float snap = registry.get<PredictedPosition>(snap_local).x;
+            const float step_buffered = registry.get<PredictedPosition>(step_buffered_local).x;
+            const float interpolated_buffered = registry.get<PredictedPosition>(interpolated_buffered_local).x;
+            const float other_predicted = registry.get<PredictedPosition>(other_predicted_local).x;
+            if (!observed.original_seen) {
+                observed = ResimObservedValues{
+                    true,
+                    false,
+                    snap,
+                    step_buffered,
+                    interpolated_buffered,
+                    other_predicted};
+                return;
+            }
+
+            observed.resim_seen = true;
+            REQUIRE(snap == observed.snap);
+            REQUIRE(step_buffered == observed.step_buffered);
+            REQUIRE(interpolated_buffered == observed.interpolated_buffered);
+            REQUIRE(other_predicted == observed.other_predicted);
+        });
+
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet_for_archetype(
+            1,
+            predicted_server_entity,
+            step_archetype,
+            PredictedPosition{0.0f, 0.0f},
+            1)));
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet_for_archetype(
+            1,
+            other_predicted_server_entity,
+            step_archetype,
+            PredictedPosition{50.0f, 0.0f},
+            2)));
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet_for_archetype(
+            1,
+            snap_server_entity,
+            step_archetype,
+            PredictedPosition{100.0f, 0.0f},
+            3)));
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet_for_archetype(
+            1,
+            step_buffered_server_entity,
+            step_archetype,
+            PredictedPosition{200.0f, 0.0f},
+            4)));
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet_for_archetype(
+            1,
+            interpolated_buffered_server_entity,
+            interpolated_archetype,
+            PredictedPosition{1000.0f, 0.0f},
+            5)));
+
+    predicted_local = client.local_entity(predicted_network_id);
+    other_predicted_local = client.local_entity(other_predicted_network_id);
+    snap_local = client.local_entity(snap_network_id);
+    REQUIRE(predicted_local);
+    REQUIRE(other_predicted_local);
+    REQUIRE(snap_local);
+    REQUIRE(client.apply_frame(registry, 1));
+    step_buffered_local = client.local_entity(step_buffered_network_id);
+    interpolated_buffered_local = client.local_entity(interpolated_buffered_network_id);
+    REQUIRE(step_buffered_local);
+    REQUIRE(interpolated_buffered_local);
+    REQUIRE(registry.add<ashiato::sync::NoSimulate>(snap_local));
+    REQUIRE(registry.add<ashiato::sync::NoSimulate>(step_buffered_local));
+    REQUIRE(registry.add<ashiato::sync::NoSimulate>(interpolated_buffered_local));
+
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet_for_archetype(
+            observed_frame,
+            snap_server_entity,
+            step_archetype,
+            PredictedPosition{500.0f, 0.0f},
+            6)));
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet_for_archetype(
+            2,
+            step_buffered_server_entity,
+            step_archetype,
+            PredictedPosition{220.0f, 0.0f},
+            7)));
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet_for_archetype(
+            3,
+            interpolated_buffered_server_entity,
+            interpolated_archetype,
+            PredictedPosition{1200.0f, 0.0f},
+            8)));
+
+    while (client.predicted_frame() < observed_frame) {
+        REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    }
+    REQUIRE(client.predicted_frame() == observed_frame);
+    REQUIRE(observed.original_seen);
+    REQUIRE_FALSE(observed.resim_seen);
+
+    registry.write<PredictedPosition>(snap_local).x = 999.0f;
+    registry.write<PredictedPosition>(step_buffered_local).x = 999.0f;
+    registry.write<PredictedPosition>(interpolated_buffered_local).x = 999.0f;
+    registry.write<PredictedPosition>(other_predicted_local).x = 999.0f;
+
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet_for_archetype(
+            rollback_frame,
+            predicted_server_entity,
+            step_archetype,
+            PredictedPosition{20.0f, 0.0f},
+            9)));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+
+    REQUIRE(observed.resim_seen);
+}
+
+TEST_CASE("predicted client resimulation does not reuse stale snap frames") {
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+
+    const ashiato::Entity predicted_server_entity = registry.create();
+    const ashiato::Entity snap_server_entity = registry.create();
+    const ashiato::Entity buffered_server_entity = registry.create();
+    const ashiato::sync::ClientEntityNetworkId predicted_network_id =
+        test_client_entity_network_id(1, predicted_server_entity);
+    const ashiato::sync::ClientEntityNetworkId snap_network_id =
+        test_client_entity_network_id(1, snap_server_entity);
+    const ashiato::sync::ClientEntityNetworkId buffered_network_id =
+        test_client_entity_network_id(1, buffered_server_entity);
+
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Snap;
+    options.entities.mode_selector = [&](const ashiato::sync::ReplicatedEntityUpdateView& update) {
+        if (update.client_entity_network_id == predicted_network_id) {
+            return ashiato::sync::ReplicationClientMode::Predict;
+        }
+        if (update.client_entity_network_id == buffered_network_id) {
+            return ashiato::sync::ReplicationClientMode::BufferedInterpolation;
+        }
+        return ashiato::sync::ReplicationClientMode::Snap;
+    };
+    options.prediction.rollback_policy = ashiato::sync::ReplicationRollbackPolicy::All;
+    options.prediction.auto_lead_frames = false;
+    options.prediction.lead_frames = 1;
+    options.buffered.auto_buffered_frame_lag = false;
+    options.buffered.buffered_frame_lag = 1;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    client.simulation_job<PredictedPosition>(registry, 0).each([](ashiato::Entity, PredictedPosition& position) {
+        position.x += 1.0f;
+    });
+
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet(1, predicted_server_entity, PredictedPosition{0.0f, 0.0f}, 1)));
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet(1, snap_server_entity, PredictedPosition{100.0f, 0.0f}, 2)));
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet(1, buffered_server_entity, PredictedPosition{200.0f, 0.0f}, 3)));
+
+    const ashiato::Entity predicted_local = client.local_entity(predicted_network_id);
+    const ashiato::Entity snap_local = client.local_entity(snap_network_id);
+    REQUIRE(predicted_local);
+    REQUIRE(snap_local);
+    REQUIRE(client.apply_frame(registry, 1));
+    const ashiato::Entity buffered_local = client.local_entity(buffered_network_id);
+    REQUIRE(buffered_local);
+    REQUIRE(registry.add<ashiato::sync::NoSimulate>(snap_local));
+    REQUIRE(registry.add<ashiato::sync::NoSimulate>(buffered_local));
+
+    while (client.predicted_frame() < 4U) {
+        REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    }
+    REQUIRE(client.predicted_frame() == 4U);
+    REQUIRE(client.buffered_frame() == 2U);
+
+    registry.write<PredictedPosition>(snap_local).x = 999.0f;
+    registry.write<PredictedPosition>(buffered_local).x = 888.0f;
+
+    REQUIRE(client.receive(
+        registry,
+        make_predicted_position_packet(2, predicted_server_entity, PredictedPosition{10.0f, 0.0f}, 4)));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+
+    REQUIRE(registry.get<PredictedPosition>(snap_local).x == 999.0f);
+    REQUIRE(registry.get<PredictedPosition>(buffered_local).x == 200.0f);
 }
 
 #ifdef ASHIATO_SYNC_ENABLE_TRACING

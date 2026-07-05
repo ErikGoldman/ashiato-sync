@@ -42,7 +42,8 @@ bool ClientBufferedRuntime::apply_frames(
 bool ClientBufferedRuntime::apply_frame(
     ReplicationClient& client,
     ashiato::Registry& registry,
-    SyncFrame buffered_frame) {
+    SyncFrame buffered_frame,
+    MissingBufferedFramePolicy missing_frame_policy) {
     last_applied_buffered_frame_ = buffered_frame;
     has_applied_buffered_frame_ = true;
     if (!client.has_buffered_entities()) {
@@ -108,7 +109,9 @@ bool ClientBufferedRuntime::apply_frame(
                 client.tracer_->trace(event);
             }
 #endif
-            all_valid = false;
+            if (missing_frame_policy == MissingBufferedFramePolicy::FailApply) {
+                all_valid = false;
+            }
             continue;
         }
 #ifdef ASHIATO_SYNC_ENABLE_INTERPOLATION_DIAGNOSTICS

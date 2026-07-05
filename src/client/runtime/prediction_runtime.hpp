@@ -169,6 +169,12 @@ private:
         SyncFrame frame,
         const ashiato::RunJobsOptions& options,
         ResimScope scope);
+    SyncFrame buffered_resimulation_frame(const ReplicationClient& client, SyncFrame predicted_frame) const noexcept;
+    bool apply_snap_resimulation_frame(
+        ReplicationClient& client,
+        ashiato::Registry& registry,
+        const SyncSettings& settings,
+        SyncFrame frame);
     bool quantize_resimulated(
         ReplicationClient& client,
         ashiato::Registry& registry,
