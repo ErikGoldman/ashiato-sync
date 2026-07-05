@@ -2,95 +2,95 @@
   "schema_version": 1,
   "runs": [
     {
-      "commit": "bd4b514ce51c995e545ec40a29e2dac14f55721c",
-      "short_commit": "bd4b514ce51c",
+      "commit": "d5c4384568d56df9fc52fc93eecbfcd598fdb9ac",
+      "short_commit": "d5c4384568d5",
       "ref": "main",
-      "run_id": "28722016037",
+      "run_id": "28728634364",
       "run_attempt": "1",
-      "started_at": "2026-07-04T22:44:20.367334+00:00",
-      "finished_at": "2026-07-04T22:44:43.682571+00:00",
+      "started_at": "2026-07-05T03:49:58.488484+00:00",
+      "finished_at": "2026-07-05T03:50:21.914450+00:00",
       "subset": "characteristic",
-      "path": "commits/bd4b514ce51c995e545ec40a29e2dac14f55721c/result.json",
+      "path": "commits/d5c4384568d56df9fc52fc93eecbfcd598fdb9ac/result.json",
       "cpu": [
         {
           "name": "BM_ClientReceivePredict/4096/16",
-          "real_time": 37178539.11111193,
-          "cpu_time": 37178050.999999985,
+          "real_time": 41505760.176471375,
+          "cpu_time": 41497785.82352942,
           "time_unit": "ns",
-          "items_per_second": 9494.849528287541,
+          "items_per_second": 8506.477948031808,
           "bytes_per_second": null,
-          "iterations": 18
+          "iterations": 17
         },
         {
           "name": "BM_ClientApplyBufferedInterpolation/4096/16",
-          "real_time": 7920411.377776936,
-          "cpu_time": 7919155.022222229,
+          "real_time": 11499753.467742696,
+          "cpu_time": 11497633.596774202,
           "time_unit": "ns",
-          "items_per_second": 2020.4175767618917,
+          "items_per_second": 1391.5907012803914,
           "bytes_per_second": null,
-          "iterations": 90
+          "iterations": 62
         },
         {
           "name": "BM_ClientSampleFractionalTickLargePayload/1024/16",
-          "real_time": 1909851.0435963748,
-          "cpu_time": 1909484.5585830885,
+          "real_time": 2267262.2668806384,
+          "cpu_time": 2265508.8070739843,
           "time_unit": "ns",
-          "items_per_second": 7855.52306907922,
+          "items_per_second": 6621.029215672411,
           "bytes_per_second": null,
-          "iterations": 367
+          "iterations": 311
         },
         {
           "name": "BM_ServerTickBudgetLimited/16384/8/64",
-          "real_time": 14969702.638297878,
-          "cpu_time": 14969465.404255347,
+          "real_time": 15641284.818182105,
+          "cpu_time": 15635405.499999987,
           "time_unit": "ns",
-          "items_per_second": 34202.9582335288,
+          "items_per_second": 32746.19260754065,
           "bytes_per_second": null,
-          "iterations": 47
+          "iterations": 44
         },
         {
           "name": "BM_ServerTickSerializedDelta/16384/8",
-          "real_time": 97302451.00000241,
-          "cpu_time": 97297499.42857145,
+          "real_time": 98794458.85714436,
+          "cpu_time": 98787133.7142856,
           "time_unit": "ns",
-          "items_per_second": 1347126.0902878933,
+          "items_per_second": 1326812.4610143,
           "bytes_per_second": null,
           "iterations": 7
         },
         {
           "name": "BM_ServerTickPackedAckedDeltaShared/16384/8",
-          "real_time": 533757.0942367592,
-          "cpu_time": 533661.2827102806,
+          "real_time": 563247.2782018711,
+          "cpu_time": 563204.7794741314,
           "time_unit": "ns",
-          "items_per_second": 245608973.79388428,
+          "items_per_second": 232725297.75472242,
           "bytes_per_second": null,
-          "iterations": 1284
+          "iterations": 1179
         },
         {
           "name": "BM_ServerTickMutatingAckedDelta/16384/8",
-          "real_time": 172629861.99999848,
-          "cpu_time": 172621463.33333382,
+          "real_time": 177243447.33333436,
+          "cpu_time": 177215499.33333355,
           "time_unit": "ns",
-          "items_per_second": 759303.029119262,
+          "items_per_second": 739619.279877208,
           "bytes_per_second": null,
           "iterations": 3
         },
         {
           "name": "BM_BitBufferAppendBits/131072",
-          "real_time": 303.44494997542193,
-          "cpu_time": 303.4167606945611,
+          "real_time": 231.87690644084358,
+          "cpu_time": 231.86531271595123,
           "time_unit": "ns",
-          "items_per_second": 431986682937.22095,
+          "items_per_second": 565293697727.745,
           "bytes_per_second": null,
-          "iterations": 2305167
+          "iterations": 3025861
         }
       ],
       "bandwidth": [
         {
           "scenario": "ball_snap_baseline",
-          "wall_seconds": 0.665690738,
-          "server_replication_seconds": 0.400367933,
-          "client_receive_seconds": 0.232651205,
+          "wall_seconds": 0.682260069,
+          "server_replication_seconds": 0.402915517,
+          "client_receive_seconds": 0.246105303,
           "server_to_clients_bytes": 6620612,
           "server_to_clients_packets": 5876,
           "clients_to_server_bytes": 6492,
@@ -102,9 +102,9 @@
         },
         {
           "scenario": "ball_buffered_latency",
-          "wall_seconds": 0.949117956,
-          "server_replication_seconds": 0.493302062,
-          "client_receive_seconds": 0.397257119,
+          "wall_seconds": 1.006788776,
+          "server_replication_seconds": 0.505371336,
+          "client_receive_seconds": 0.43315693,
           "server_to_clients_bytes": 8057160,
           "server_to_clients_packets": 7080,
           "clients_to_server_bytes": 7358,
@@ -116,9 +116,9 @@
         },
         {
           "scenario": "prediction_rollback_mixed",
-          "wall_seconds": 7.440894,
-          "server_replication_seconds": 2.386904,
-          "client_receive_seconds": 2.168793,
+          "wall_seconds": 7.866106,
+          "server_replication_seconds": 2.529892,
+          "client_receive_seconds": 2.288082,
           "server_to_clients_bytes": null,
           "server_to_clients_packets": null,
           "clients_to_server_bytes": null,
