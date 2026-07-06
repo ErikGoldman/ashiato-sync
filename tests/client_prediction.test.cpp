@@ -157,6 +157,57 @@ TEST_CASE("predicted client rolls back and resimulates mismatched frames") {
     REQUIRE(registry.get<PredictedPosition>(local).x == 3.0f);
 }
 
+TEST_CASE("predicted client notifies after rollback state is restored before resimulation") {
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+
+    int rollback_prepared_count = 0;
+    ashiato::Entity rollback_entity;
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    options.prediction.rollback_policy = ashiato::sync::ReplicationRollbackPolicy::All;
+    options.rollback_prepared_handler =
+        [&](ashiato::Registry& callback_registry,
+            const ashiato::sync::ReplicationClientRollbackPreparedEvent& event) {
+            ++rollback_prepared_count;
+            REQUIRE(event.rollback_frame == 2U);
+            REQUIRE(event.resim_end_frame == 2U);
+            REQUIRE(event.rollback_policy == ashiato::sync::ReplicationRollbackPolicy::All);
+            REQUIRE(event.resimulated_entities.size() == 1U);
+
+            rollback_entity = event.resimulated_entities[0];
+            REQUIRE(callback_registry.alive(rollback_entity));
+            REQUIRE(callback_registry.get<PredictedPosition>(rollback_entity).x == 2.0f);
+        };
+
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    client.simulation_job<PredictedPosition>(registry, 0).each([](ashiato::Entity, PredictedPosition& position) {
+        position.x += 1.0f;
+    });
+
+    const ashiato::Entity server_entity = registry.create();
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+    const ashiato::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+    REQUIRE(local);
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(registry.get<PredictedPosition>(local).x == 1.0f);
+
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{2.0f, 0.0f})));
+    REQUIRE(rollback_prepared_count == 0);
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+
+    REQUIRE(rollback_prepared_count == 1);
+    REQUIRE(rollback_entity == local);
+    REQUIRE(registry.get<PredictedPosition>(local).x == 3.0f);
+}
+
 TEST_CASE("predicted client resimulation is not blocked by missing buffered entity frames") {
     ashiato::Registry registry;
     const ashiato::Entity position_component =

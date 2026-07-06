@@ -162,6 +162,11 @@ private:
         SyncFrame begin_frame,
         ResimScope scope,
         bool& has_entities_to_resimulate);
+    void notify_rollback_prepared(
+        ReplicationClient& client,
+        ashiato::Registry& registry,
+        SyncFrame rollback_frame,
+        SyncFrame resim_end_frame) const;
     bool run_resimulation_frame(
         ReplicationClient& client,
         ashiato::Registry& registry,
@@ -196,6 +201,7 @@ private:
 
     std::vector<std::uint32_t> rollback_entity_indices_scratch_;
     std::vector<ashiato::Entity> rollback_affected_entities_scratch_;
+    std::vector<ashiato::Entity> rollback_event_entities_scratch_;
     std::vector<OriginalPredictionCapture> rollback_original_current_scratch_;
     ClientFrameRingStore predicted_frames_;
     ClientFrameRingStore presentation_frames_;

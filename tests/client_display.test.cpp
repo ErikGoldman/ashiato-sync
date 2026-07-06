@@ -661,8 +661,8 @@ TEST_CASE("predicted fractional tick sample endpoints stay stable across resimul
     REQUIRE(before_resim.entities.size() == 1);
     REQUIRE(before_resim.entities[0].source == ashiato::sync::FractionalTickSample::Source::Predicted);
     REQUIRE(before_resim.entities[0].next_frame_present);
-    const ashiato::sync::SyncFrame sampled_next_frame = before_resim.entities[0].source_next_frame;
-    const std::uint64_t sampled_next_hash = before_resim.entities[0].next_component_hash;
+    PredictedPosition before_shown{};
+    REQUIRE(before_resim.entities[0].try_get_sampled_value(registry, before_shown));
 
     REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{20.0f, 0.0f})));
     REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
@@ -670,8 +670,10 @@ TEST_CASE("predicted fractional tick sample endpoints stay stable across resimul
     const ashiato::sync::FractionalTickSampleBuffer& after_resim = client.fractional_tick_frame(registry);
     REQUIRE(after_resim.entities.size() == 1);
     REQUIRE(after_resim.entities[0].source == ashiato::sync::FractionalTickSample::Source::Predicted);
-    REQUIRE(after_resim.entities[0].source_floor_frame == sampled_next_frame);
-    REQUIRE(after_resim.entities[0].floor_component_hash == sampled_next_hash);
+    PredictedPosition after_shown{};
+    REQUIRE(after_resim.entities[0].try_get_sampled_value(registry, after_shown));
+    REQUIRE(after_shown.x > before_shown.x);
+    REQUIRE(after_shown.x < 20.0f);
 }
 
 TEST_CASE("predicted client fractional tick sample lags one fixed tick at tick boundaries") {

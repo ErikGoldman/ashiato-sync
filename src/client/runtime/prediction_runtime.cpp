@@ -440,6 +440,7 @@ bool ClientPredictionRuntime::resimulate(
     if (!has_entities_to_resimulate) {
         return true;
     }
+    notify_rollback_prepared(client, registry, begin_frame, current_frame);
     if (current_frame <= begin_frame) {
         return quantize_resimulated(client, registry, settings, current_frame, scope);
     }
@@ -463,6 +464,7 @@ bool ClientPredictionRuntime::prepare_resimulation(
     ResimScope scope,
     bool& has_entities_to_resimulate) {
     has_entities_to_resimulate = true;
+    rollback_event_entities_scratch_.clear();
     if (scope == ResimScope::Affected) {
         rollback_affected_entities_scratch_.clear();
         rollback_affected_entities_scratch_.reserve(client.entity_store_->prediction_rollback_entity_indices().size());
@@ -496,14 +498,35 @@ bool ClientPredictionRuntime::prepare_resimulation(
                 return false;
             }
         }
-        if (affected_scope && state.identity.local && registry.alive(state.identity.local)) {
-            rollback_affected_entities_scratch_.push_back(state.identity.local);
+        if (state.identity.local && registry.alive(state.identity.local)) {
+            rollback_event_entities_scratch_.push_back(state.identity.local);
+            if (affected_scope) {
+                rollback_affected_entities_scratch_.push_back(state.identity.local);
+            }
         }
     }
     if (scope == ResimScope::Affected && rollback_affected_entities_scratch_.empty()) {
         has_entities_to_resimulate = false;
     }
     return true;
+}
+
+void ClientPredictionRuntime::notify_rollback_prepared(
+    ReplicationClient& client,
+    ashiato::Registry& registry,
+    SyncFrame rollback_frame,
+    SyncFrame resim_end_frame) const {
+    if (!client.options_.rollback_prepared_handler) {
+        return;
+    }
+
+    client.options_.rollback_prepared_handler(
+        registry,
+        ReplicationClientRollbackPreparedEvent{
+            rollback_frame,
+            resim_end_frame,
+            client.options_.prediction.rollback_policy,
+            rollback_event_entities_scratch_});
 }
 
 bool ClientPredictionRuntime::run_resimulation_frame(

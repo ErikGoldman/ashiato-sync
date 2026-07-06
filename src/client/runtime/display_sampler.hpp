@@ -58,9 +58,6 @@ private:
         const EntityFrameView* next_sample,
         FractionalTickSample::Source source,
         bool floor_frame_present,
-        std::uint64_t floor_write_generation,
-        FrameWriteSource floor_write_source,
-        const EntityFrameView* floor_frame_sample,
         bool apply_snap_errors) const;
     bool append_latest_buffered_sample(WriteContext& context, const EntityState& state) const;
     bool append_missing_buffered_sample(WriteContext& context, const EntityState& state) const;

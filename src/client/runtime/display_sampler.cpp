@@ -37,59 +37,6 @@ std::uint64_t frame_payload_hash(const detail::FrameDataView& frame) noexcept {
     return combine_hash(hash, hash_bytes(frame.bytes, frame.byte_count));
 }
 
-void clear_diagnostics(FractionalTickSample& display) noexcept {
-    display.sampled_component_count = 0;
-    display.interpolated_component_count = 0;
-    display.stepped_component_count = 0;
-    display.missing_next_component_count = 0;
-    display.missing_interpolate_op_count = 0;
-    display.interpolated_equals_floor = false;
-    display.interpolated_equals_next = false;
-    display.source_floor_frame = 0;
-    display.source_next_frame = 0;
-    display.source_floor_generation = 0;
-    display.source_next_generation = 0;
-    display.source_floor_write_source = 0;
-    display.source_next_write_source = 0;
-    display.source_floor_presentation_cache_hit = false;
-    display.source_next_presentation_cache_hit = false;
-    display.source_floor_presentation_origin_valid = false;
-    display.source_next_presentation_origin_valid = false;
-    display.source_floor_presentation_origin_generation = 0;
-    display.source_next_presentation_origin_generation = 0;
-    display.source_floor_presentation_origin_write_source = 0;
-    display.source_next_presentation_origin_write_source = 0;
-    display.source_floor_presentation_origin_payload_hash = 0;
-    display.source_next_presentation_origin_payload_hash = 0;
-    display.floor_component_hash = 0;
-    display.next_component_hash = 0;
-    display.result_component_hash = 0;
-    display.prediction_last_frame = 0;
-    display.prediction_accumulator_seconds = 0.0;
-    display.prediction_run_count = 0;
-    display.prediction_rollback_queued_count = 0;
-    display.prediction_rollback_applied_count = 0;
-    display.prediction_resimulated_frame_count = 0;
-    display.prediction_seed_count = 0;
-    display.prediction_pending_rollback_frame = 0;
-    display.prediction_has_pending_rollback = false;
-}
-
-void write_prediction_diagnostics(
-    FractionalTickSample& display,
-    const ReplicationClientClock& clock,
-    const ClientPredictionRuntime& prediction) noexcept {
-    display.prediction_last_frame = prediction.last_predicted_frame();
-    display.prediction_accumulator_seconds = clock.predicted_accumulator_seconds();
-    display.prediction_run_count = prediction.predicted_frame_run_count();
-    display.prediction_rollback_queued_count = prediction.rollback_queued_count();
-    display.prediction_rollback_applied_count = prediction.rollback_applied_count();
-    display.prediction_resimulated_frame_count = prediction.resimulated_frame_count();
-    display.prediction_seed_count = prediction.prediction_seed_count();
-    display.prediction_pending_rollback_frame = prediction.pending_rollback_frame();
-    display.prediction_has_pending_rollback = prediction.has_pending_rollback();
-}
-
 }  // namespace
 
 ClientDisplaySampler::ClientDisplaySampler(
@@ -144,8 +91,6 @@ bool ClientDisplaySampler::append_previous_sample(
     display.target_valid = context.target_valid;
     display.floor_frame_present = false;
     display.next_frame_present = false;
-    clear_diagnostics(display);
-    write_prediction_diagnostics(display, clock_, prediction_);
     ++context.sampled_count;
     return true;
 }
@@ -160,9 +105,6 @@ bool ClientDisplaySampler::append_frame_sample(
     const EntityFrameView* next_frame_sample,
     FractionalTickSample::Source source,
     bool floor_frame_present,
-    std::uint64_t floor_write_generation,
-    FrameWriteSource floor_write_source,
-    const EntityFrameView* floor_frame_sample,
     bool apply_snap_errors) const {
     if (archetype_id.value >= context.settings.archetypes.size()) {
         return false;
@@ -181,34 +123,6 @@ bool ClientDisplaySampler::append_frame_sample(
     display.target_valid = context.target_valid;
     display.floor_frame_present = floor_frame_present;
     display.next_frame_present = next_frame_sample != nullptr;
-    clear_diagnostics(display);
-    write_prediction_diagnostics(display, clock_, prediction_);
-    display.source_floor_frame = frame;
-    display.source_next_frame = next_frame_sample != nullptr ? next_frame_sample->frame : 0;
-    display.source_floor_generation = floor_write_generation;
-    display.source_next_generation = next_frame_sample != nullptr ? next_frame_sample->write_generation : 0;
-    display.source_floor_write_source = static_cast<std::uint32_t>(floor_write_source);
-    display.source_next_write_source = next_frame_sample != nullptr
-        ? static_cast<std::uint32_t>(next_frame_sample->write_source)
-        : 0U;
-    if (floor_frame_sample != nullptr) {
-        display.source_floor_presentation_cache_hit = floor_frame_sample->presentation_cache_hit;
-        display.source_floor_presentation_origin_valid = floor_frame_sample->presentation_origin_valid;
-        display.source_floor_presentation_origin_generation = floor_frame_sample->presentation_origin_generation;
-        display.source_floor_presentation_origin_write_source =
-            static_cast<std::uint32_t>(floor_frame_sample->presentation_origin_write_source);
-        display.source_floor_presentation_origin_payload_hash =
-            floor_frame_sample->presentation_origin_payload_hash;
-    }
-    if (next_frame_sample != nullptr) {
-        display.source_next_presentation_cache_hit = next_frame_sample->presentation_cache_hit;
-        display.source_next_presentation_origin_valid = next_frame_sample->presentation_origin_valid;
-        display.source_next_presentation_origin_generation = next_frame_sample->presentation_origin_generation;
-        display.source_next_presentation_origin_write_source =
-            static_cast<std::uint32_t>(next_frame_sample->presentation_origin_write_source);
-        display.source_next_presentation_origin_payload_hash =
-            next_frame_sample->presentation_origin_payload_hash;
-    }
     display.components_.clear();
 
     const SyncArchetype& archetype = context.settings.archetypes[archetype_id.value];
@@ -228,8 +142,6 @@ bool ClientDisplaySampler::append_frame_sample(
         if (baseline_bytes == nullptr) {
             return false;
         }
-        const std::uint64_t floor_hash = hash_bytes(baseline_bytes, ops.serialization.quantized_size);
-        display.floor_component_hash = combine_hash(display.floor_component_hash, floor_hash);
 
         ReplicatedComponentUpdate value;
         value.component = component;
@@ -241,7 +153,6 @@ bool ClientDisplaySampler::append_frame_sample(
             archetype.components[component_index].interpolation == ComponentInterpolation::Interpolate;
         if (next_has_component && component_interpolates) {
             if (ops.interpolate == nullptr) {
-                ++display.missing_interpolate_op_count;
                 return false;
             }
             const std::uint8_t* next_bytes = frame_component_data(archetype, next_frame_sample->baseline, component_index);
@@ -249,19 +160,8 @@ bool ClientDisplaySampler::append_frame_sample(
             if (next_bytes == nullptr || !ops.interpolate(baseline_bytes, next_bytes, alpha, value.bytes.data())) {
                 return false;
             }
-            const std::uint64_t next_hash = hash_bytes(next_bytes, ops.serialization.quantized_size);
-            display.next_component_hash = combine_hash(display.next_component_hash, next_hash);
-            display.interpolated_equals_floor =
-                std::memcmp(value.bytes.data(), baseline_bytes, ops.serialization.quantized_size) == 0;
-            display.interpolated_equals_next =
-                std::memcmp(value.bytes.data(), next_bytes, ops.serialization.quantized_size) == 0;
-            ++display.interpolated_component_count;
         } else {
             value.bytes.assign(baseline_bytes, ops.serialization.quantized_size);
-            ++display.stepped_component_count;
-            if (next_frame_sample != nullptr && !next_has_component) {
-                ++display.missing_next_component_count;
-            }
         }
 
         if (apply_snap_errors) {
@@ -279,11 +179,7 @@ bool ClientDisplaySampler::append_frame_sample(
             }
         }
 
-        display.result_component_hash = combine_hash(
-            display.result_component_hash,
-            hash_bytes(value.bytes.empty() ? nullptr : value.bytes.data(), value.bytes.size()));
         display.components_.push_back(std::move(value));
-        ++display.sampled_component_count;
     }
 
     if (!display.components_.empty()) {
@@ -309,9 +205,6 @@ bool ClientDisplaySampler::append_latest_buffered_sample(WriteContext& context, 
             nullptr,
             FractionalTickSample::Source::LatestBuffered,
             true,
-            0U,
-            FrameWriteSource::Unknown,
-            nullptr,
             false);
     }
 
@@ -328,9 +221,6 @@ bool ClientDisplaySampler::append_latest_buffered_sample(WriteContext& context, 
             nullptr,
             FractionalTickSample::Source::LatestBuffered,
             true,
-            latest.write_generation,
-            latest.write_source,
-            &latest,
             false)
         : false;
 }
@@ -381,9 +271,6 @@ bool ClientDisplaySampler::append_buffered_sample(
         next_frame_sample,
         FractionalTickSample::Source::Buffered,
         true,
-        floor_sample.write_generation,
-        floor_sample.write_source,
-        &floor_sample,
         false);
 }
 
@@ -430,9 +317,6 @@ bool ClientDisplaySampler::append_predicted_sample(
             next_frame_sample,
             FractionalTickSample::Source::Predicted,
             true,
-            floor_sample->write_generation,
-            floor_sample->write_source,
-            floor_sample,
             true)) {
         return false;
     }
@@ -492,9 +376,6 @@ bool ClientDisplaySampler::append_live_sample(WriteContext& context, const Entit
     display.target_valid = context.target_valid;
     display.floor_frame_present = true;
     display.next_frame_present = false;
-    clear_diagnostics(display);
-    write_prediction_diagnostics(display, clock_, prediction_);
-    display.source_floor_frame = state.replication.frame;
     display.components_.clear();
 
     const SyncArchetype& archetype = context.settings.archetypes[state.identity.archetype.value];
@@ -521,8 +402,6 @@ bool ClientDisplaySampler::append_live_sample(WriteContext& context, const Entit
         value.serializer = archetype.components[component_index].serializer;
         value.bytes.resize(ops.serialization.quantized_size);
         ops.serialization.quantize(current, value.bytes.data());
-        const std::uint64_t floor_hash = hash_bytes(value.bytes.data(), value.bytes.size());
-        display.floor_component_hash = combine_hash(display.floor_component_hash, floor_hash);
         const auto found_error = std::find_if(
             state.visual.snap_errors.begin(),
             state.visual.snap_errors.end(),
@@ -535,11 +414,7 @@ bool ClientDisplaySampler::append_live_sample(WriteContext& context, const Entit
                 return false;
             }
         }
-        display.result_component_hash = combine_hash(
-            display.result_component_hash,
-            hash_bytes(value.bytes.empty() ? nullptr : value.bytes.data(), value.bytes.size()));
         display.components_.push_back(std::move(value));
-        ++display.sampled_component_count;
     }
 
     ++context.sampled_count;

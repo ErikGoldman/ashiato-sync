@@ -103,41 +103,6 @@ struct FractionalTickSample {
     bool target_valid = false;
     bool floor_frame_present = false;
     bool next_frame_present = false;
-    std::uint32_t sampled_component_count = 0;
-    std::uint32_t interpolated_component_count = 0;
-    std::uint32_t stepped_component_count = 0;
-    std::uint32_t missing_next_component_count = 0;
-    std::uint32_t missing_interpolate_op_count = 0;
-    bool interpolated_equals_floor = false;
-    bool interpolated_equals_next = false;
-    SyncFrame source_floor_frame = 0;
-    SyncFrame source_next_frame = 0;
-    std::uint64_t source_floor_generation = 0;
-    std::uint64_t source_next_generation = 0;
-    std::uint32_t source_floor_write_source = 0;
-    std::uint32_t source_next_write_source = 0;
-    bool source_floor_presentation_cache_hit = false;
-    bool source_next_presentation_cache_hit = false;
-    bool source_floor_presentation_origin_valid = false;
-    bool source_next_presentation_origin_valid = false;
-    std::uint64_t source_floor_presentation_origin_generation = 0;
-    std::uint64_t source_next_presentation_origin_generation = 0;
-    std::uint32_t source_floor_presentation_origin_write_source = 0;
-    std::uint32_t source_next_presentation_origin_write_source = 0;
-    std::uint64_t source_floor_presentation_origin_payload_hash = 0;
-    std::uint64_t source_next_presentation_origin_payload_hash = 0;
-    std::uint64_t floor_component_hash = 0;
-    std::uint64_t next_component_hash = 0;
-    std::uint64_t result_component_hash = 0;
-    SyncFrame prediction_last_frame = 0;
-    double prediction_accumulator_seconds = 0.0;
-    std::uint64_t prediction_run_count = 0;
-    std::uint64_t prediction_rollback_queued_count = 0;
-    std::uint64_t prediction_rollback_applied_count = 0;
-    std::uint64_t prediction_resimulated_frame_count = 0;
-    std::uint64_t prediction_seed_count = 0;
-    SyncFrame prediction_pending_rollback_frame = 0;
-    bool prediction_has_pending_rollback = false;
 
     template <typename T>
     bool try_get_sampled_value(const ashiato::Registry& registry, T& out) const {
@@ -244,6 +209,18 @@ struct ReplicationClientPredictionOptions {
     float auto_predicted_time_dilation_gain = 0.05f;
 };
 
+struct ReplicationClientRollbackPreparedEvent {
+    // First frame in the rollback/resimulation window.
+    SyncFrame rollback_frame = 0;
+    // Last frame replayed by resimulation, inclusive.
+    SyncFrame resim_end_frame = 0;
+    ReplicationRollbackPolicy rollback_policy = ReplicationRollbackPolicy::All;
+    std::vector<ashiato::Entity> resimulated_entities;
+};
+
+using ClientRollbackPreparedFn =
+    std::function<void(ashiato::Registry&, const ReplicationClientRollbackPreparedEvent&)>;
+
 struct ReplicationClientSessionOptions {
     ClientId local_client = invalid_client_id;
     std::string connect_token;
@@ -271,6 +248,7 @@ struct ReplicationClientOptions {
     ReplicationClientSessionOptions session;
     ReplicationClientClockOptions clock;
     ClientConnectionEventFn connection_event_handler;
+    ClientRollbackPreparedFn rollback_prepared_handler;
     LoggingOptions logging;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     TraceOptions trace;
@@ -980,9 +958,9 @@ struct SimulationJobCallbackAdapter {
         invoke_view_simulation_job_callback(*callback, view, context, entity, args...);
     }
 
-    template <typename ViewType, typename... StructuralComponents, typename... Args>
+    template <bool DispatchHooks, typename ViewType, typename... StructuralComponents, typename... Args>
     void operator()(
-        ashiato::Registry::JobStructuralContext<ViewType, StructuralComponents...>& structural_context,
+        ashiato::Registry::JobStructuralContext<DispatchHooks, ViewType, StructuralComponents...>& structural_context,
         ashiato::Entity entity,
         Args&... args) {
         invoke_structural_simulation_job_callback(*callback, context, structural_context, entity, args...);

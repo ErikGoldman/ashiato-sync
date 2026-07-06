@@ -5,7 +5,7 @@
 
 namespace ashiato::sync {
 
-class FractionalTickSampler {
+class FractionalTickSampler : private ServerRegistryDirtyFrameListener {
 public:
     explicit FractionalTickSampler(ReplicationClient& client);
     explicit FractionalTickSampler(ReplicationServer& server);
@@ -34,10 +34,12 @@ private:
 
     void rebuild_from_client(const ashiato::Registry& registry);
     void rebuild_from_server(const ashiato::Registry& registry);
+    void on_server_registry_dirty_frame(const ServerRegistryDirtyFrame& frame) override;
 
     Source source_;
     ReplicationClient* client_ = nullptr;
     ReplicationServer* server_ = nullptr;
+    ServerRegistryDirtyFrameSubscription server_frame_subscription_;
     Snapshot previous_;
     Snapshot current_;
     std::vector<FractionalTickSample> samples_;

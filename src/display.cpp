@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <limits>
 
 namespace ashiato::sync {
 namespace {
@@ -27,7 +28,9 @@ FractionalTickSampler::FractionalTickSampler(ReplicationClient& client)
     : source_(Source::Client), client_(&client) {}
 
 FractionalTickSampler::FractionalTickSampler(ReplicationServer& server)
-    : source_(Source::Server), server_(&server) {}
+    : source_(Source::Server),
+      server_(&server),
+      server_frame_subscription_(server.subscribe_registry_dirty_frame_listener(*this)) {}
 
 ClientId FractionalTickSampler::local_client() const noexcept {
     return source_ == Source::Client
@@ -109,6 +112,13 @@ void FractionalTickSampler::capture_server_frame(ashiato::Registry& registry) {
     current_ = std::move(next);
 }
 
+void FractionalTickSampler::on_server_registry_dirty_frame(const ServerRegistryDirtyFrame& frame) {
+    if (source_ != Source::Server || server_ == nullptr || &frame.server != server_) {
+        return;
+    }
+    capture_server_frame(frame.registry);
+}
+
 void FractionalTickSampler::rebuild_from_client(const ashiato::Registry& registry) {
     samples_.clear();
     if (client_ == nullptr) {
@@ -133,10 +143,19 @@ void FractionalTickSampler::rebuild_from_server(const ashiato::Registry& registr
               0.0,
               1.0))
         : 0.0f;
+    const double target = target_frame();
+    const bool target_valid = target >= 0.0 &&
+        std::isfinite(target) &&
+        target <= static_cast<double>(std::numeric_limits<SyncFrame>::max());
+    const double target_floor_value = target_valid ? std::floor(target) : 0.0;
     samples_.reserve(current_.entities.size());
     for (const FractionalTickSampler::SnapshotEntity& current : current_.entities) {
         FractionalTickSample display = current.sample;
         display.alpha = alpha;
+        display.target_frame = target;
+        display.target_floor_frame = target_valid ? static_cast<SyncFrame>(target_floor_value) : 0;
+        display.target_alpha = target_valid ? static_cast<float>(target - target_floor_value) : 0.0f;
+        display.target_valid = target_valid;
         const auto found_previous = previous_.valid
             ? std::find_if(
                   previous_.entities.begin(),
@@ -147,10 +166,14 @@ void FractionalTickSampler::rebuild_from_server(const ashiato::Registry& registr
                   })
             : previous_.entities.end();
         if (found_previous == previous_.entities.end()) {
+            display.floor_frame_present = true;
+            display.next_frame_present = false;
             samples_.push_back(std::move(display));
             continue;
         }
 
+        display.floor_frame_present = true;
+        display.next_frame_present = true;
         for (ReplicatedComponentUpdate& component : display.components_) {
             const ReplicatedComponentUpdate* previous_component =
                 find_component(found_previous->sample.components_, component.component);
