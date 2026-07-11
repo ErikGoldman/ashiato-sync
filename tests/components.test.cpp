@@ -94,6 +94,24 @@ struct SyncComponentTraits<ProfiledTransform> {
 
 }  // namespace ashiato::sync
 
+namespace {
+
+using ProfiledTransformTraits = ashiato::sync::SyncComponentTraits<ProfiledTransform>;
+
+struct InterpolatedProfiledTransformSerializer :
+    ProfiledTransformTraits::Serializer<ProfiledTransformTraits::Settings> {
+    static ProfiledTransformTraits::Quantized interpolate(
+        const ProfiledTransformTraits::Quantized& from,
+        const ProfiledTransformTraits::Quantized& to,
+        float alpha) {
+        return ProfiledTransformTraits::Quantized{
+            from.x + static_cast<std::int32_t>(static_cast<float>(to.x - from.x) * alpha),
+            from.y + static_cast<std::int32_t>(static_cast<float>(to.y - from.y) * alpha)};
+    }
+};
+
+}  // namespace
+
 static_assert(
     std::is_nothrow_move_constructible<ashiato::sync::SyncSettings>::value,
     "SyncSettings must satisfy Ashiato component storage requirements");
@@ -395,6 +413,46 @@ TEST_CASE("sync component serializers support compile-time settings profiles per
     x_only_ops.serialization.dequantize(decoded.data(), &dequantized);
     REQUIRE(dequantized.x == 3);
     REQUIRE(dequantized.y == 0);
+}
+
+TEST_CASE("sync component serializer profiles reject heterogeneous capabilities") {
+    SECTION("custom profile registered after default") {
+        ashiato::Registry registry;
+        ashiato::sync::register_sync_component<ProfiledTransform>(registry, "ProfiledTransform");
+
+        REQUIRE_THROWS_AS(
+            (ashiato::sync::register_sync_component_serializer<
+                ProfiledTransform,
+                InterpolatedProfiledTransformSerializer>(registry, "ProfiledTransform.Interpolated")),
+            std::invalid_argument);
+    }
+
+    SECTION("default profile registered after custom profile") {
+        ashiato::Registry registry;
+        ashiato::sync::register_sync_component_serializer<
+            ProfiledTransform,
+            InterpolatedProfiledTransformSerializer>(registry, "ProfiledTransform.Interpolated");
+
+        REQUIRE_THROWS_AS(
+            ashiato::sync::register_sync_component<ProfiledTransform>(registry, "ProfiledTransform"),
+            std::invalid_argument);
+    }
+}
+
+TEST_CASE("homogeneous sync component serializer profiles allow custom-first registration") {
+    ashiato::Registry registry;
+    using TransformSync = ashiato::sync::SyncComponentTraits<ProfiledTransform>;
+    using XOnlySerializer = TransformSync::Serializer<ProfiledTransformXOnlySettings>;
+
+    const ashiato::sync::SyncComponentSerializerId x_only =
+        ashiato::sync::register_sync_component_serializer<ProfiledTransform, XOnlySerializer>(
+            registry,
+            "ProfiledTransform.XOnly");
+    const ashiato::Entity transform =
+        ashiato::sync::register_sync_component<ProfiledTransform>(registry, "ProfiledTransform");
+
+    REQUIRE(x_only != ashiato::sync::invalid_sync_component_serializer_id);
+    REQUIRE(transform == registry.component<ProfiledTransform>());
 }
 
 TEST_CASE("replication configuration is a direct Ashiato component") {

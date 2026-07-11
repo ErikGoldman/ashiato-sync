@@ -109,6 +109,42 @@ SyncComponentOps make_sync_component_ops(ashiato::Entity component, std::string 
     return ops;
 }
 
+inline bool component_profile_capabilities_match(
+    const SyncComponentOps& lhs,
+    const SyncComponentOps& rhs) noexcept {
+    const bool capabilities_match =
+        lhs.references_entities == rhs.references_entities &&
+        (lhs.interpolate != nullptr) == (rhs.interpolate != nullptr) &&
+        (lhs.compute_error != nullptr) == (rhs.compute_error != nullptr) &&
+        (lhs.apply_error != nullptr) == (rhs.apply_error != nullptr) &&
+        (lhs.blend_out_error != nullptr) == (rhs.blend_out_error != nullptr) &&
+        (lhs.should_roll_back != nullptr) == (rhs.should_roll_back != nullptr) &&
+        lhs.error_size == rhs.error_size;
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_COMPONENT_DATA)
+    return capabilities_match && (lhs.trace != nullptr) == (rhs.trace != nullptr);
+#else
+    return capabilities_match;
+#endif
+}
+
+inline void validate_component_profile_capabilities(
+    const SyncSettings& settings,
+    ashiato::Entity component,
+    const SyncComponentOps& candidate) {
+    const auto default_ops = settings.component_ops.find(component.value);
+    if (default_ops != settings.component_ops.end() &&
+        !component_profile_capabilities_match(default_ops->second, candidate)) {
+        throw std::invalid_argument("sync component serializer profiles must have homogeneous capabilities");
+    }
+
+    for (const SyncComponentOps& profile : settings.component_serializers) {
+        if (profile.serialization.component == component &&
+            !component_profile_capabilities_match(profile, candidate)) {
+            throw std::invalid_argument("sync component serializer profiles must have homogeneous capabilities");
+        }
+    }
+}
+
 }  // namespace detail
 
 template <typename T>
@@ -122,7 +158,9 @@ ashiato::Entity register_sync_component(ashiato::Registry& registry, std::string
     const ashiato::Entity component = registry.register_component<T>(std::move(name));
 
     SyncComponentOps ops = detail::make_sync_component_ops<T, Serializer>(component, std::move(component_name));
-    registry.write<SyncSettings>().component_ops[component.value] = ops;
+    SyncSettings& settings = registry.write<SyncSettings>();
+    detail::validate_component_profile_capabilities(settings, component, ops);
+    settings.component_ops[component.value] = std::move(ops);
     return component;
 }
 
@@ -134,6 +172,7 @@ SyncComponentSerializerId register_sync_component_serializer(ashiato::Registry& 
     SyncComponentOps ops = detail::make_sync_component_ops<T, Serializer>(component, std::move(name));
 
     SyncSettings& settings = registry.write<SyncSettings>();
+    detail::validate_component_profile_capabilities(settings, component, ops);
     const SyncComponentSerializerId id{static_cast<std::uint32_t>(settings.component_serializers.size())};
     settings.component_serializers.push_back(std::move(ops));
     return id;
