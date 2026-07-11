@@ -58,6 +58,7 @@ private:
         const EntityFrameView* next_sample,
         FractionalTickSample::Source source,
         bool floor_frame_present,
+        bool boundary_corrected,
         bool apply_snap_errors) const;
     bool append_latest_buffered_sample(WriteContext& context, const EntityState& state) const;
     bool append_missing_buffered_sample(WriteContext& context, const EntityState& state) const;
@@ -68,9 +69,20 @@ private:
         const EntityState& state,
         bool& appended) const;
     bool ensure_predicted_presentation_frame(
+        const WriteContext& context,
         std::uint32_t entity_index,
+        const EntityState& state,
         SyncFrame frame,
+        const EntityFrameView* visual_boundary,
         EntityFrameView& out) const;
+    bool is_stale_presentation_cache(std::uint32_t entity_index, const EntityFrameView& sample) const;
+    bool apply_predicted_presentation_boundary_error(
+        const WriteContext& context,
+        std::uint32_t entity_index,
+        const EntityState& state,
+        const EntityFrameView& visual_boundary,
+        EntityBufferedFrame& target,
+        bool& out_corrected) const;
     bool append_live_sample(WriteContext& context, const EntityState& state) const;
 
     const ReplicationClientClock& clock_;

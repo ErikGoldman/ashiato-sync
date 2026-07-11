@@ -801,6 +801,11 @@ workers is best and 8 workers adds no value. Do not parallelize simulated
 client receive work for this benchmark, because that does not correspond to a
 single real client's performance.
 
+Maintenance note: a later scheduler refactor removed the parallel implementation
+but accidentally left the option, benchmark dimension, and stress-tool flag in
+place. Those inert controls were removed after review; the commands and results
+above are retained only as historical measurements of the former implementation.
+
 ## Experiment 17: Serial Client State Locality
 
 Rationale: improve real single-client performance without parallelizing
@@ -1564,3 +1569,41 @@ Gprof build result:
 Conclusion: accepted. The styled gprof-build benchmark remains effectively in
 line with Experiment 33 (`1.301 ms` total average versus `1.275 ms`) while
 making frame classes visually distinct again.
+
+## Experiment 35: Reusable Fractional Display Sample Storage
+
+Rationale: client fractional display sampling cleared every output entity and
+its nested component updates on every render sample. Rebuilding the result
+therefore allocated once per sampled entity for inline payloads and twice per
+entity when `QuantizedBytes` overflowed its 64-byte inline capacity. Add focused
+steady-state benchmarks with benchmark-only C++ allocation counters, then reuse
+entity, component, and overflow byte capacity across samples.
+
+Build configuration: `RelWithDebInfo`, using clean Ashiato revision
+`9178b17c2c762fb892edb4fab0017988c1bdd87e` from the bundled checkout because
+the checkout's working tree contained unrelated in-progress ECS changes.
+
+Benchmark command, run serially before and after:
+
+```sh
+/tmp/ashiato-sync-fractional-bench-clean/benchmarks/ashiato_sync_benchmark --benchmark_filter='BM_ClientSampleFractionalTickSteadyState(Inline|Overflow)/4096/16$' --benchmark_min_time=0.2s --benchmark_repetitions=7 --benchmark_report_aggregates_only=true --benchmark_out=ARTIFACT --benchmark_out_format=json
+```
+
+Artifacts:
+
+- Before: `/tmp/ashiato_sync_fractional_before.json`
+- After: `/tmp/ashiato_sync_fractional_after.json`
+
+Mean CPU results:
+
+- Inline 8-byte payload: `265009 ns` to `233314 ns` (`12.0%` faster).
+- Overflow 96-byte payload: `370536 ns` to `255299 ns` (`31.1%` faster).
+- Inline allocations: `4096` calls and `425984` bytes per sample to zero.
+- Overflow allocations: `8192` calls and `819200` bytes per sample to zero.
+
+Conclusion: accepted. Retaining the two client display buffers' nested capacity
+eliminates steady-state C++ allocation churn and substantially reduces sampling
+time. The tradeoff is that the scratch buffer now retains roughly one additional
+sample frame of component capacity (about 416 KiB for this inline case or 800
+KiB for this overflow case at 4096 entities) until the entity/component count
+shrinks or the client is destroyed.

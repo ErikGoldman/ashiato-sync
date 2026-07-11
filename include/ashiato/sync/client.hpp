@@ -587,10 +587,8 @@ private:
     EntityState* find_entity_state_by_wire_id(std::uint32_t wire_network_id) noexcept;
     const EntityState* find_entity_state_by_wire_id(std::uint32_t wire_network_id) const noexcept;
     EntityState* find_entity_state_for_local(ashiato::Entity local) noexcept;
-#ifdef ASHIATO_SYNC_ENABLE_TRACING
     void register_local_entity_index(const EntityState& state);
     void unregister_local_entity_index(const EntityState& state);
-#endif
     EntityState* ensure_entity_state(
         ashiato::Registry& registry,
         ClientEntityNetworkId client_entity_network_id,

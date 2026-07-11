@@ -10,6 +10,7 @@
 
 #include "ashiato/sync/client.hpp"
 #include "ashiato/sync/detail/bit_reader.hpp"
+#include "ashiato/sync/profiling.hpp"
 #include "ashiato/sync/protocol.hpp"
 #include "ashiato/sync/tracing.hpp"
 
@@ -41,6 +42,8 @@ bool ClientUpdateRuntime::apply_update(
     std::uint32_t packet_id,
     SyncFrame frame,
     std::uint16_t record_count) {
+    ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientUpdateApplyRecords");
+
     last_apply_failure_reason_.clear();
     active_apply_record_index_ = invalid_apply_record_index;
     const SyncSettings& settings = registry.get<SyncSettings>();
@@ -138,6 +141,8 @@ bool ClientUpdateRuntime::apply_upsert(
     SyncFrame frame,
     std::uint32_t wire_network_id,
     detail::BitReader& packet) {
+    ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientUpdateApplyUpsert");
+
     UpsertMetadata metadata;
     if (!read_upsert_metadata(client, settings, frame, wire_network_id, packet, metadata)) {
         return fail_apply_if_empty("metadata_read_failed");

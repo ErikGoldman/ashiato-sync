@@ -70,6 +70,27 @@ TEST_CASE("bandwidth controller increases target after clean delivery") {
     REQUIRE(controller.target_bytes_per_second() == Catch::Approx(4010.0));
 }
 
+TEST_CASE("bandwidth controller additive increase follows the configured tick duration") {
+    ashiato::sync::ReplicationBandwidthOptions options;
+    options.min_bytes_per_second = 1000;
+    options.initial_bytes_per_second = 4000;
+    options.max_bytes_per_second = 5000;
+    options.max_burst_bytes = 500;
+    options.additive_increase_bytes_per_second = 600.0f;
+
+    ashiato::sync::server_detail::BandwidthController thirty_hz(options);
+    thirty_hz.packet_sent(100);
+    thirty_hz.packet_acked(options, 1, 2, 100);
+    (void)thirty_hz.begin_tick(options, 1.0 / 30.0);
+    REQUIRE(thirty_hz.target_bytes_per_second() == Catch::Approx(4020.0));
+
+    ashiato::sync::server_detail::BandwidthController one_twenty_hz(options);
+    one_twenty_hz.packet_sent(100);
+    one_twenty_hz.packet_acked(options, 1, 2, 100);
+    (void)one_twenty_hz.begin_tick(options, 1.0 / 120.0);
+    REQUIRE(one_twenty_hz.target_bytes_per_second() == Catch::Approx(4005.0));
+}
+
 TEST_CASE("bandwidth controller keeps sample loss in the configured frame window") {
     ashiato::sync::ReplicationBandwidthOptions options;
     options.min_bytes_per_second = 1000;

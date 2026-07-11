@@ -97,6 +97,18 @@ struct BallBounced {};
 namespace ashiato::sync {
 
 template <>
+struct SyncComponentTraits<stress::BallVisual> :
+    UnsafeNativeLayoutSyncComponentTraits<stress::BallVisual> {};
+
+template <>
+struct SyncComponentTraits<stress::BallHealth> :
+    UnsafeNativeLayoutSyncComponentTraits<stress::BallHealth> {};
+
+template <>
+struct SyncComponentTraits<stress::BallPoison> :
+    UnsafeNativeLayoutSyncComponentTraits<stress::BallPoison> {};
+
+template <>
 struct SyncCueTraits<stress::BallBounceCue> {
     static void serialize(
         const stress::BallBounceCue& cue,
@@ -180,7 +192,6 @@ struct StressConfig {
     double tick_rate = 30.0;
     std::size_t mtu = 1200;
     std::size_t bandwidth_limit = 1024U * 1024U;
-    std::size_t server_worker_threads = 1;
     std::uint32_t seed = 0xC0FFEEU;
     double latency_ms = 0.0;
     double jitter_ms = 0.0;
@@ -878,9 +889,6 @@ inline void validate_config(const StressConfig& config) {
     if (config.mtu == 0 || config.bandwidth_limit == 0) {
         throw std::invalid_argument("--mtu and --bandwidth-limit must be greater than zero");
     }
-    if (config.server_worker_threads == 0U) {
-        throw std::invalid_argument("--server-worker-threads must be greater than zero");
-    }
     if (config.latency_ms < 0.0 ||
         config.jitter_ms < 0.0 ||
         config.server_to_client_latency_ms < 0.0 ||
@@ -1173,7 +1181,6 @@ inline StressReport run_stress(const StressConfig& input_config) {
     ReplicationServerOptions server_options;
     server_options.bandwidth_limit_bytes_per_tick = config.bandwidth_limit;
     server_options.mtu_bytes = config.mtu;
-    server_options.serialized_worker_threads = config.server_worker_threads;
     server_options.fixed_dt_seconds = 1.0 / config.tick_rate;
     server_options.prioritizer = make_sphere_prioritizer(server_registry);
     server_options.transport = [&](ClientId client, const ashiato::BitBuffer& packet) {
@@ -1694,8 +1701,6 @@ inline StressConfig parse_args(int argc, char** argv) {
             config.mtu = static_cast<std::size_t>(parse_u64(arg, require_value()));
         } else if (arg == "--bandwidth-limit") {
             config.bandwidth_limit = static_cast<std::size_t>(parse_u64(arg, require_value()));
-        } else if (arg == "--server-worker-threads") {
-            config.server_worker_threads = static_cast<std::size_t>(parse_u64(arg, require_value()));
         } else if (arg == "--seed") {
             config.seed = static_cast<std::uint32_t>(parse_u64(arg, require_value()));
         } else if (arg == "--latency-ms") {
@@ -1759,7 +1764,6 @@ inline void write_usage(std::ostream& out) {
         << "  --tick-rate N\n"
         << "  --mtu N\n"
         << "  --bandwidth-limit N\n"
-        << "  --server-worker-threads N\n"
         << "  --seed N\n"
         << "  --latency-ms N --jitter-ms N --loss-percent N\n"
         << "  --server-to-client-latency-ms N --client-to-server-latency-ms N\n"

@@ -203,14 +203,19 @@ bool set_fractional_tick_sampled(ashiato::Registry& registry, ashiato::Entity co
     }
 
     const SyncComponentOps* ops = find_component_ops(registry, component);
+    const auto has_fractional_sampling_ops = [component](const SyncComponentOps& candidate) {
+        return candidate.serialization.component == component &&
+            candidate.interpolate != nullptr &&
+            candidate.compute_error != nullptr &&
+            candidate.apply_error != nullptr &&
+            candidate.blend_out_error != nullptr;
+    };
     const SyncSettings& settings = registry.get<SyncSettings>();
-    const bool has_profile_interpolation = std::any_of(
+    const bool has_profile_fractional_sampling_ops = std::any_of(
         settings.component_serializers.begin(),
         settings.component_serializers.end(),
-        [component](const SyncComponentOps& profile_ops) {
-            return profile_ops.serialization.component == component && profile_ops.interpolate != nullptr;
-        });
-    if ((ops == nullptr || ops->interpolate == nullptr) && !has_profile_interpolation) {
+        has_fractional_sampling_ops);
+    if ((ops == nullptr || !has_fractional_sampling_ops(*ops)) && !has_profile_fractional_sampling_ops) {
         return false;
     }
 

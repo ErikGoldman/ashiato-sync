@@ -153,6 +153,10 @@ TEST_CASE("fractional tick sample marker is stored as a component entity tag") {
     ashiato::Registry registry;
     const ashiato::Entity smooth_component =
         ashiato::sync::register_sync_component<ashiato_sync_tests::SmoothPosition>(registry, "SmoothPosition");
+    const ashiato::Entity interpolated_no_error_component =
+        ashiato::sync::register_sync_component<ashiato_sync_tests::InterpolatedNoErrorPosition>(
+            registry,
+            "InterpolatedNoErrorPosition");
     const ashiato::Entity position_component = ashiato::sync::register_sync_component<Position>(registry, "Position");
 
     REQUIRE(ashiato::sync::set_fractional_tick_sampled(registry, smooth_component));
@@ -161,6 +165,9 @@ TEST_CASE("fractional tick sample marker is stored as a component entity tag") {
 
     REQUIRE_FALSE(ashiato::sync::set_fractional_tick_sampled(registry, position_component));
     REQUIRE_FALSE(ashiato::sync::is_fractional_tick_sampled(registry, position_component));
+
+    REQUIRE_FALSE(ashiato::sync::set_fractional_tick_sampled(registry, interpolated_no_error_component));
+    REQUIRE_FALSE(ashiato::sync::is_fractional_tick_sampled(registry, interpolated_no_error_component));
 
     REQUIRE(ashiato::sync::set_fractional_tick_sampled<ashiato_sync_tests::SmoothPosition>(registry, false));
     REQUIRE_FALSE(ashiato::sync::is_fractional_tick_sampled<ashiato_sync_tests::SmoothPosition>(registry));

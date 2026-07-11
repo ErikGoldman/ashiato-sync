@@ -561,7 +561,7 @@ TEST_CASE("fractional tick samples throw for unmarked snap components") {
     REQUIRE_THROWS_AS(display.entities[0].try_get_sampled_value(client_registry, sampled), std::logic_error);
 }
 
-TEST_CASE("predicted client error blends fractional-tick-sampled resim corrections") {
+TEST_CASE("predicted client fractional tick samples corrected frames without prior presentation state") {
     ashiato::Registry registry;
     const ashiato::Entity position_component =
         ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
@@ -591,6 +591,8 @@ TEST_CASE("predicted client error blends fractional-tick-sampled resim correctio
 
     const ashiato::sync::FractionalTickSampleBuffer& display = client.fractional_tick_frame(registry);
     REQUIRE(display.entities.size() == 1);
+    REQUIRE(display.entities[0].source == ashiato::sync::FractionalTickSample::Source::Predicted);
+    REQUIRE(display.entities[0].frame == 2);
     PredictedPosition shown;
     REQUIRE(display.entities[0].try_get_sampled_value(registry, shown));
     REQUIRE(shown.x == Catch::Approx(1.2f));
@@ -674,6 +676,57 @@ TEST_CASE("predicted fractional tick sample endpoints stay stable across resimul
     REQUIRE(after_resim.entities[0].try_get_sampled_value(registry, after_shown));
     REQUIRE(after_shown.x > before_shown.x);
     REQUIRE(after_shown.x < 20.0f);
+}
+
+TEST_CASE("predicted fractional tick carries visual next to floor and adjusts new frames after resimulation") {
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, ashiato::sync::ReplicationAudience::All, ashiato::sync::ComponentInterpolation::Interpolate}});
+    REQUIRE(archetype.value == 0);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+    REQUIRE(ashiato::sync::set_fractional_tick_sampled<PredictedPosition>(registry));
+
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    options.clock.fixed_dt_seconds = 0.25;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    client.simulation_job<PredictedPosition>(registry, 0).each([](ashiato::Entity, PredictedPosition& position) {
+        position.x += 1.0f;
+    });
+
+    const ashiato::Entity server_entity = registry.create();
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds() * 0.5));
+
+    const ashiato::sync::FractionalTickSampleBuffer& before_resim = client.fractional_tick_frame(registry);
+    REQUIRE(before_resim.entities.size() == 1);
+    REQUIRE(before_resim.entities[0].source == ashiato::sync::FractionalTickSample::Source::Predicted);
+    REQUIRE(before_resim.entities[0].next_frame_present);
+    const ashiato::sync::SyncFrame carried_floor_frame = before_resim.entities[0].frame + 1U;
+    PredictedPosition before_shown{};
+    REQUIRE(before_resim.entities[0].try_get_sampled_value(registry, before_shown));
+
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, server_entity, PredictedPosition{20.0f, 0.0f})));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+
+    const ashiato::sync::FractionalTickSampleBuffer& after_resim = client.fractional_tick_frame(registry);
+    REQUIRE(after_resim.entities.size() == 1);
+    REQUIRE(after_resim.entities[0].source == ashiato::sync::FractionalTickSample::Source::Predicted);
+    REQUIRE(after_resim.entities[0].frame == carried_floor_frame);
+    REQUIRE(after_resim.entities[0].next_frame_present);
+
+    const ashiato::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+    REQUIRE(registry.get<PredictedPosition>(local).x > 20.0f);
+    PredictedPosition after_shown{};
+    REQUIRE(after_resim.entities[0].try_get_sampled_value(registry, after_shown));
+    REQUIRE(after_shown.x > before_shown.x);
+    REQUIRE(after_shown.x < 10.0f);
 }
 
 TEST_CASE("predicted client fractional tick sample lags one fixed tick at tick boundaries") {

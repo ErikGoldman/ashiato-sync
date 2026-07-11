@@ -425,16 +425,25 @@ TEST_CASE("predicted client resimulation applies snap frames and delayed buffere
     options.buffered.buffered_frame_lag = 2;
     ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
     client.simulation_job<PredictedPosition, const ashiato::sync::FrameInfo>(registry, 0).each(
-        [&](ashiato::Entity entity, PredictedPosition& position, const ashiato::sync::FrameInfo& frame) {
+        [](ashiato::Entity, PredictedPosition& position, const ashiato::sync::FrameInfo&) {
             position.x += 1.0f;
+        });
+    client.simulation_job<const PredictedPosition, const ashiato::sync::FrameInfo>(registry, 1)
+        .access_other_entities<PredictedPosition>()
+        .each([&](
+            auto& view,
+            ashiato::Entity entity,
+            const PredictedPosition&,
+            const ashiato::sync::FrameInfo& frame) {
             if (frame.frame != observed_frame || entity != predicted_local) {
                 return;
             }
 
-            const float snap = registry.get<PredictedPosition>(snap_local).x;
-            const float step_buffered = registry.get<PredictedPosition>(step_buffered_local).x;
-            const float interpolated_buffered = registry.get<PredictedPosition>(interpolated_buffered_local).x;
-            const float other_predicted = registry.get<PredictedPosition>(other_predicted_local).x;
+            const float snap = view.template get<const PredictedPosition>(snap_local).x;
+            const float step_buffered = view.template get<const PredictedPosition>(step_buffered_local).x;
+            const float interpolated_buffered =
+                view.template get<const PredictedPosition>(interpolated_buffered_local).x;
+            const float other_predicted = view.template get<const PredictedPosition>(other_predicted_local).x;
             if (!observed.original_seen) {
                 observed = ResimObservedValues{
                     true,

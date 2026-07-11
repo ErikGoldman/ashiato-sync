@@ -330,7 +330,7 @@ TEST_CASE("replication prioritizer applies independent decisions per client") {
     }
 }
 
-TEST_CASE("replication prioritizer decisions are honored by the parallel serialized path") {
+TEST_CASE("replication prioritizer decisions are honored by serialized updates") {
     ashiato::Registry registry;
     const ashiato::Entity position_component =
         ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
@@ -348,7 +348,6 @@ TEST_CASE("replication prioritizer decisions are honored by the parallel seriali
     std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> payloads;
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.serialized_worker_threads = 2;
     options.prioritizer_interval_frames = 1;
     options.prioritizer = [&](ashiato::sync::ClientId client, ashiato::sync::ReplicationPriorityObject object) {
         ashiato::sync::ReplicationPriorityDecision decision;

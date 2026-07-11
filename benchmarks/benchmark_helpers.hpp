@@ -27,7 +27,8 @@ struct Health {
 };
 
 struct LargePayload {
-    std::int32_t values[8] = {};
+    static constexpr std::size_t value_count = 24;
+    std::int32_t values[value_count] = {};
 };
 
 struct TinyFlags {
@@ -53,6 +54,14 @@ struct TaggedSchema {
 }  // namespace ashiato::sync::benchmarks
 
 namespace ashiato::sync {
+
+template <>
+struct SyncComponentTraits<benchmarks::Position> :
+    UnsafeNativeLayoutSyncComponentTraits<benchmarks::Position> {};
+
+template <>
+struct SyncComponentTraits<benchmarks::Health> :
+    UnsafeNativeLayoutSyncComponentTraits<benchmarks::Health> {};
 
 template <>
 struct SyncComponentTraits<benchmarks::DeltaPosition> {
@@ -96,6 +105,20 @@ struct SyncComponentTraits<benchmarks::DeltaPosition> {
         };
     }
 
+    using Error = Quantized;
+
+    static Error compute_error(const Quantized& current, const Quantized& previous) {
+        return Error{current.x - previous.x, current.y - previous.y};
+    }
+
+    static Quantized apply_error(const Quantized& current, const Error& error) {
+        return Quantized{current.x + error.x, current.y + error.y};
+    }
+
+    static Error blend_out_error(const Error&, float) {
+        return Error{};
+    }
+
     static bool should_roll_back(const Quantized& predicted, const Quantized& authoritative) {
         return predicted.x != authoritative.x || predicted.y != authoritative.y;
     }
@@ -119,7 +142,7 @@ struct SyncComponentTraits<benchmarks::LargePayload> {
             return;
         }
 
-        for (int index = 0; index < 8; ++index) {
+        for (std::size_t index = 0; index < benchmarks::LargePayload::value_count; ++index) {
             out.write_bits(current.values[index] - previous->values[index], 8U);
         }
     }
@@ -131,10 +154,41 @@ struct SyncComponentTraits<benchmarks::LargePayload> {
         }
 
         out = *previous;
-        for (int index = 0; index < 8; ++index) {
+        for (std::size_t index = 0; index < benchmarks::LargePayload::value_count; ++index) {
             out.values[index] += static_cast<std::int32_t>(in.read_bits(8U));
         }
         return true;
+    }
+
+    static Quantized interpolate(const Quantized& from, const Quantized& to, float alpha) {
+        Quantized result;
+        for (std::size_t index = 0; index < benchmarks::LargePayload::value_count; ++index) {
+            result.values[index] = from.values[index] + static_cast<std::int32_t>(
+                static_cast<float>(to.values[index] - from.values[index]) * alpha);
+        }
+        return result;
+    }
+
+    using Error = Quantized;
+
+    static Error compute_error(const Quantized& current, const Quantized& previous) {
+        Error result;
+        for (std::size_t index = 0; index < benchmarks::LargePayload::value_count; ++index) {
+            result.values[index] = current.values[index] - previous.values[index];
+        }
+        return result;
+    }
+
+    static Quantized apply_error(const Quantized& current, const Error& error) {
+        Quantized result;
+        for (std::size_t index = 0; index < benchmarks::LargePayload::value_count; ++index) {
+            result.values[index] = current.values[index] + error.values[index];
+        }
+        return result;
+    }
+
+    static Error blend_out_error(const Error&, float) {
+        return Error{};
     }
 };
 
@@ -193,7 +247,7 @@ inline SyncArchetypeId define_large_payload_archetype(ashiato::Registry& registr
     return ::ashiato::sync::define_archetype(
         registry,
         "LargePayloadActor",
-        {{large, ReplicationAudience::All}});
+        {{large, ReplicationAudience::All, ComponentInterpolation::Interpolate}});
 }
 
 inline TaggedSchema define_tagged_archetype(ashiato::Registry& registry, int tag_count) {
@@ -309,8 +363,8 @@ inline std::vector<ashiato::Entity> create_large_payload_entities(ashiato::Regis
     for (int i = 0; i < count; ++i) {
         const ashiato::Entity entity = registry.create();
         LargePayload payload;
-        for (int value = 0; value < 8; ++value) {
-            payload.values[value] = i + value;
+        for (std::size_t value = 0; value < LargePayload::value_count; ++value) {
+            payload.values[value] = i + static_cast<std::int32_t>(value);
         }
         registry.add<LargePayload>(entity, payload);
         entities.push_back(entity);
@@ -350,8 +404,8 @@ inline std::vector<ashiato::Entity> create_diverse_entities(
             registry.add<TinyFlags>(entity, TinyFlags{static_cast<std::uint8_t>(i & 0x0F)});
         } else {
             LargePayload payload;
-            for (int value = 0; value < 8; ++value) {
-                payload.values[value] = i + value;
+            for (std::size_t value = 0; value < LargePayload::value_count; ++value) {
+                payload.values[value] = i + static_cast<std::int32_t>(value);
             }
             registry.add<LargePayload>(entity, payload);
             registry.add<Health>(entity, Health{100 + i});
@@ -481,8 +535,8 @@ inline std::vector<ashiato::BitBuffer> make_large_payload_client_receive_packets
     for (int frame = 0; frame < frame_count; ++frame) {
         for (int entity_index = 0; entity_index < entity_count; ++entity_index) {
             LargePayload& payload = registry.write<LargePayload>(entities[static_cast<std::size_t>(entity_index)]);
-            for (int value = 0; value < 8; ++value) {
-                payload.values[value] = entity_index + frame + value;
+            for (std::size_t value = 0; value < LargePayload::value_count; ++value) {
+                payload.values[value] = entity_index + frame + static_cast<std::int32_t>(value);
             }
         }
         server.tick(registry, server.options().fixed_dt_seconds);

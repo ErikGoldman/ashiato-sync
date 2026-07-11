@@ -31,6 +31,7 @@ struct EntityFrameView {
     std::uint64_t presentation_origin_generation = 0;
     FrameWriteSource presentation_origin_write_source = FrameWriteSource::Unknown;
     std::uint64_t presentation_origin_payload_hash = 0;
+    bool presentation_boundary_corrected = false;
     detail::FrameDataView baseline;
 };
 
@@ -44,6 +45,7 @@ struct MutableEntityFrameView {
     std::uint64_t* presentation_origin_generation = nullptr;
     FrameWriteSource* presentation_origin_write_source = nullptr;
     std::uint64_t* presentation_origin_payload_hash = nullptr;
+    bool* presentation_boundary_corrected = nullptr;
     detail::MutableFrameDataView baseline;
 };
 
@@ -52,6 +54,7 @@ struct FramePresentationOrigin {
     std::uint64_t write_generation = 0;
     FrameWriteSource write_source = FrameWriteSource::Unknown;
     std::uint64_t payload_hash = 0;
+    bool boundary_corrected = false;
 };
 
 class ClientFrameRingStore {
@@ -94,6 +97,7 @@ public:
         std::uint64_t presentation_origin_generation = 0;
         FrameWriteSource presentation_origin_write_source = FrameWriteSource::Unknown;
         std::uint64_t presentation_origin_payload_hash = 0;
+        bool presentation_boundary_corrected = false;
     };
 
     using EntityRing = FramePayloadRing<FrameMetadata>;

@@ -150,11 +150,45 @@ struct Position {
     float y = 0.0f;
 };
 
+namespace ashiato::sync {
+template <>
+struct SyncComponentTraits<Position> {
+    using Quantized = Position;
+    static constexpr serialization::QuantizedFloatConfig coordinate{-1000.0f, 1000.0f, 0.01f};
+
+    static void quantize(const Position& value, Quantized& out) {
+        out = value;
+    }
+
+    static Position dequantize(const Quantized& value) {
+        return value;
+    }
+
+    static void serialize(
+        const Quantized*,
+        const Quantized& current,
+        ashiato::BitBuffer& out,
+        ashiato::ComponentSerializationContext&) {
+        serialization::serialize_quantized_float(out, current.x, coordinate);
+        serialization::serialize_quantized_float(out, current.y, coordinate);
+    }
+
+    static bool deserialize(
+        ashiato::BitBuffer& in,
+        const Quantized*,
+        Quantized& out,
+        ashiato::ComponentSerializationContext&) {
+        return serialization::read_quantized_float(in, coordinate, out.x) &&
+            serialization::read_quantized_float(in, coordinate, out.y);
+    }
+};
+}  // namespace ashiato::sync
+
 int main() {
     ashiato::Registry registry;
 
     const ashiato::Entity position_component =
-        registry.register_component<Position>("Position");
+        ashiato::sync::register_sync_component<Position>(registry, "Position");
 
     const ashiato::sync::SyncArchetypeId actor =
         ashiato::sync::define_archetype(
@@ -195,6 +229,11 @@ fixed-step catch-up work; `0` keeps the default unlimited behavior.
 
 ## API Notes
 
+- Every replicated component must explicitly specialize `SyncComponentTraits<T>`
+  with quantization and wire serialization. The library never selects a native
+  object-layout wire format implicitly. Tests or homogeneous deployments can
+  deliberately inherit `UnsafeNativeLayoutSyncComponentTraits<T>`, whose name
+  reflects that it is not portable across architectures, ABIs, or layouts.
 - Constructing `ReplicationServer` or `ReplicationClient` registers the sync
   components and configures the registry role. Call
   `ashiato::sync::register_components` only when you need direct component access

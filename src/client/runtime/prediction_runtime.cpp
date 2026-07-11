@@ -9,6 +9,7 @@
 #include "client/store/input_buffer.hpp"
 
 #include "ashiato/sync/client.hpp"
+#include "ashiato/sync/profiling.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -147,6 +148,8 @@ bool ClientPredictionRuntime::run_frame(
     ashiato::Registry& registry,
     SyncFrame frame,
     const ashiato::RunJobsOptions& options) {
+    ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientPredictionFrame");
+
     if (!apply_pending_rollback(client, registry, options)) {
         return false;
     }
@@ -156,27 +159,36 @@ bool ClientPredictionRuntime::run_frame(
         return false;
     }
     registry.write<FrameInfo>().frame = frame;
-    registry.run_jobs(options);
+    {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientPredictionJobGraph");
+        registry.run_jobs(options);
+    }
 
-    client.cue_runtime_->drain_emitted_prediction(client, registry, settings, frame, true);
+    {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientPredictionDrainCues");
+        client.cue_runtime_->drain_emitted_prediction(client, registry, settings, frame, true);
+    }
     ++predicted_frame_run_count_;
     bool all_valid = true;
-    for (std::uint32_t entity_index : client.entity_store_->active_entity_indices()) {
-        if (entity_index >= client.entity_store_->entity_count()) {
-            continue;
-        }
-        EntityState& state = client.entity_store_->state_unchecked(entity_index);
-        if (state.mode.current != ReplicationClientMode::Predict ||
-            state.identity.client_entity_network_id == invalid_client_entity_network_id) {
-            continue;
-        }
-        if (!client.quantize_predicted_entity(
-                registry,
-                settings,
-                state,
-                frame,
-                FrameWriteSource::PredictedFrame)) {
-            all_valid = false;
+    {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientQuantizePredicted");
+        for (std::uint32_t entity_index : client.entity_store_->active_entity_indices()) {
+            if (entity_index >= client.entity_store_->entity_count()) {
+                continue;
+            }
+            EntityState& state = client.entity_store_->state_unchecked(entity_index);
+            if (state.mode.current != ReplicationClientMode::Predict ||
+                state.identity.client_entity_network_id == invalid_client_entity_network_id) {
+                continue;
+            }
+            if (!client.quantize_predicted_entity(
+                    registry,
+                    settings,
+                    state,
+                    frame,
+                    FrameWriteSource::PredictedFrame)) {
+                all_valid = false;
+            }
         }
     }
 
@@ -199,6 +211,8 @@ bool ClientPredictionRuntime::run_catchup(
     ashiato::Registry& registry,
     std::uint32_t predicted_steps_this_tick,
     const ashiato::RunJobsOptions& options) {
+    ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientPredictionCatchup");
+
     if (client.options_.clock.auto_timing_fast_recovery &&
         client.has_predicted_entities() &&
         has_predicted_frame_ &&
@@ -367,18 +381,26 @@ bool ClientPredictionRuntime::apply_pending_rollback(
     ReplicationClient& client,
     ashiato::Registry& registry,
     const ashiato::RunJobsOptions& options) {
+    ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientApplyPendingRollback");
+
     if (!has_pending_prediction_rollback_) {
         return true;
     }
     ++rollback_applied_count_;
     const SyncFrame begin_frame = pending_prediction_rollback_frame_;
     const SyncFrame current_frame = has_predicted_frame_ ? last_predicted_frame_ : begin_frame;
-    collect_resimulated_entities(client, rollback_entity_indices_scratch_);
-    capture_original_current(
-        client,
-        current_frame,
-        rollback_entity_indices_scratch_,
-        rollback_original_current_scratch_);
+    {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientCollectResimulatedEntities");
+        collect_resimulated_entities(client, rollback_entity_indices_scratch_);
+    }
+    {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientCaptureRollbackOriginal");
+        capture_original_current(
+            client,
+            current_frame,
+            rollback_entity_indices_scratch_,
+            rollback_original_current_scratch_);
+    }
     client.cue_runtime_->store().begin_resimulation();
 
     const bool resimmed = client.options_.prediction.rollback_policy == ReplicationRollbackPolicy::OnlyAffected
@@ -389,16 +411,22 @@ bool ClientPredictionRuntime::apply_pending_rollback(
     }
 
     const SyncSettings& settings = registry.get<SyncSettings>();
-    if (!client.cue_runtime_->finish_resimulation(client, registry, settings)) {
-        return false;
+    {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientFinishCueResimulation");
+        if (!client.cue_runtime_->finish_resimulation(client, registry, settings)) {
+            return false;
+        }
     }
-    if (!blend_resim_errors(
-            client,
-            registry,
-            settings,
-            current_frame,
-            rollback_original_current_scratch_)) {
-        return false;
+    {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientBlendResimErrors");
+        if (!blend_resim_errors(
+                client,
+                registry,
+                settings,
+                current_frame,
+                rollback_original_current_scratch_)) {
+            return false;
+        }
     }
 
     has_pending_prediction_rollback_ = false;
@@ -432,15 +460,23 @@ bool ClientPredictionRuntime::resimulate(
     SyncFrame current_frame,
     const ashiato::RunJobsOptions& options,
     ResimScope scope) {
+    ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientResimulate");
+
     const SyncSettings& settings = registry.get<SyncSettings>();
     bool has_entities_to_resimulate = true;
-    if (!prepare_resimulation(client, registry, settings, begin_frame, scope, has_entities_to_resimulate)) {
-        return false;
+    {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientPrepareResimulation");
+        if (!prepare_resimulation(client, registry, settings, begin_frame, scope, has_entities_to_resimulate)) {
+            return false;
+        }
     }
     if (!has_entities_to_resimulate) {
         return true;
     }
-    notify_rollback_prepared(client, registry, begin_frame, current_frame);
+    {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientRollbackPreparedCallback");
+        notify_rollback_prepared(client, registry, begin_frame, current_frame);
+    }
     if (current_frame <= begin_frame) {
         return quantize_resimulated(client, registry, settings, current_frame, scope);
     }
@@ -536,32 +572,49 @@ bool ClientPredictionRuntime::run_resimulation_frame(
     SyncFrame frame,
     const ashiato::RunJobsOptions& options,
     ResimScope scope) {
+    ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientRunResimulationFrame");
+
     if (scope == ResimScope::All) {
-        if (!apply_snap_resimulation_frame(client, registry, settings, frame)) {
-            return false;
+        {
+            ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientResimApplySnap");
+            if (!apply_snap_resimulation_frame(client, registry, settings, frame)) {
+                return false;
+            }
         }
         const SyncFrame buffered_frame = buffered_resimulation_frame(client, frame);
-        if (!client.buffered_runtime_->apply_frame(
-                client,
-                registry,
-                buffered_frame,
-                MissingBufferedFramePolicy::AllowMissing)) {
-            return false;
+        {
+            ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientResimApplyBuffered");
+            if (!client.buffered_runtime_->apply_frame(
+                    client,
+                    registry,
+                    buffered_frame,
+                    MissingBufferedFramePolicy::AllowMissing)) {
+                return false;
+            }
         }
     }
     if (!client.apply_input_frame(registry, settings, frame)) {
         return false;
     }
     registry.write<FrameInfo>().frame = frame;
-    if (scope == ResimScope::Affected) {
-        client.resim_job_graph(registry).tick_for_entities(registry, rollback_affected_entities_scratch_, options);
-    } else {
-        client.resim_job_graph(registry).tick(registry, options);
+    {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientResimJobGraph");
+        if (scope == ResimScope::Affected) {
+            client.resim_job_graph(registry).tick_for_entities(registry, rollback_affected_entities_scratch_, options);
+        } else {
+            client.resim_job_graph(registry).tick(registry, options);
+        }
     }
-    client.cue_runtime_->drain_emitted_prediction(client, registry, settings, frame, true);
+    {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientResimDrainCues");
+        client.cue_runtime_->drain_emitted_prediction(client, registry, settings, frame, true);
+    }
     ++resimulated_frame_count_;
-    if (!quantize_resimulated(client, registry, settings, frame, scope)) {
-        return false;
+    {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientQuantizeResimulated");
+        if (!quantize_resimulated(client, registry, settings, frame, scope)) {
+            return false;
+        }
     }
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     client.trace_frame_components(

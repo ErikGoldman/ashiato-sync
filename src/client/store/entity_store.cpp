@@ -195,7 +195,6 @@ void ClientEntityStore::sync_mode_memberships(std::uint32_t entity_index) {
             !state.visual.snap_errors.empty());
 }
 
-#ifdef ASHIATO_SYNC_ENABLE_TRACING
 EntityState* ClientEntityStore::find_by_local_entity(ashiato::Entity local) noexcept {
     const auto found = local_entity_indices_.find(local.value);
     if (found == local_entity_indices_.end() || found->second >= entities_.size()) {
@@ -224,16 +223,6 @@ void ClientEntityStore::unregister_local_entity_index(const EntityState& state) 
         local_entity_indices_.erase(found);
     }
 }
-#else
-EntityState* ClientEntityStore::find_by_local_entity(ashiato::Entity local) noexcept {
-    for (EntityState& state : entities_) {
-        if (state.identity.local == local) {
-            return &state;
-        }
-    }
-    return nullptr;
-}
-#endif
 
 void ClientEntityStore::set_active_membership(std::uint32_t entity_index, bool active) {
     set_indexed_membership(

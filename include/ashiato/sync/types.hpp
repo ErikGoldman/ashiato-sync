@@ -815,10 +815,8 @@ struct ReplicationBandwidthParticipantOptions {
 
 struct ReplicationServerOptions {
     std::size_t bandwidth_limit_bytes_per_tick = 1024;
-    std::size_t fixed_entity_replication_cost_bytes = 128;
     std::size_t mtu_bytes = 1200;
     ReplicationBandwidthOptions bandwidth;
-    std::size_t serialized_worker_threads = 1;
     protocol::Descriptor protocol = protocol::default_descriptor;
     double fixed_dt_seconds = 1.0 / 60.0;
     double connect_resend_interval_seconds = 0.25;

@@ -26,6 +26,7 @@ EntityFrameView make_view(
         sample.presentation_origin_generation,
         sample.presentation_origin_write_source,
         sample.presentation_origin_payload_hash,
+        sample.presentation_boundary_corrected,
         detail::FrameDataView{sample.tag_mask, sample.present_mask, ring.payload(slot), ring.payload_stride()}};
     return view;
 }
@@ -68,6 +69,7 @@ void ClientFrameRingStore::clear(std::uint32_t entity_index) noexcept {
         frame.presentation_origin_generation = 0;
         frame.presentation_origin_write_source = FrameWriteSource::Unknown;
         frame.presentation_origin_payload_hash = 0;
+        frame.presentation_boundary_corrected = false;
     }
     ring.clear_payloads();
 }
@@ -163,6 +165,7 @@ void ClientFrameRingStore::write(
     *frame.presentation_origin_generation = presentation_origin.write_generation;
     *frame.presentation_origin_write_source = presentation_origin.write_source;
     *frame.presentation_origin_payload_hash = presentation_origin.payload_hash;
+    *frame.presentation_boundary_corrected = presentation_origin.boundary_corrected;
     *frame.baseline.tag_mask = sample.baseline.tag_mask;
     *frame.baseline.present_mask = sample.baseline.present_mask;
     if (frame.baseline.byte_count != 0U) {
@@ -196,6 +199,7 @@ MutableEntityFrameView ClientFrameRingStore::begin_write(
     metadata.presentation_origin_generation = 0;
     metadata.presentation_origin_write_source = FrameWriteSource::Unknown;
     metadata.presentation_origin_payload_hash = 0;
+    metadata.presentation_boundary_corrected = false;
     std::uint8_t* payload = ring.payload(slot);
     if (payload != nullptr) {
         std::fill(payload, payload + ring.payload_stride(), std::uint8_t{0});
@@ -210,6 +214,7 @@ MutableEntityFrameView ClientFrameRingStore::begin_write(
         &metadata.presentation_origin_generation,
         &metadata.presentation_origin_write_source,
         &metadata.presentation_origin_payload_hash,
+        &metadata.presentation_boundary_corrected,
         detail::MutableFrameDataView{&metadata.tag_mask, &metadata.present_mask, payload, ring.payload_stride()}};
 }
 

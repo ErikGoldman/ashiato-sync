@@ -62,7 +62,7 @@ public:
             static_cast<double>(options.min_bytes_per_second),
             static_cast<double>(options.max_bytes_per_second));
         available_bytes_ = std::min(burst, available_bytes_ + target_bytes_per_second_ * fixed_dt_seconds);
-        adjust_target(options);
+        adjust_target(options, fixed_dt_seconds);
         return static_cast<std::size_t>(available_bytes_);
     }
 
@@ -275,7 +275,7 @@ private:
         }
     }
 
-    void adjust_target(const ReplicationBandwidthOptions& options) {
+    void adjust_target(const ReplicationBandwidthOptions& options, double fixed_dt_seconds) {
         const bool rtt_inflated = has_rtt_ && has_baseline_rtt_ && baseline_rtt_frames_ > 0.0 &&
             rtt_ewma_frames_ > baseline_rtt_frames_ * static_cast<double>(options.rtt_inflation_decrease_threshold);
         if (loss_rate() > options.loss_decrease_threshold || rtt_inflated) {
@@ -287,7 +287,8 @@ private:
         if (delivered_packets_ > 0U && in_flight_bytes_ == 0U) {
             target_bytes_per_second_ = std::min(
                 static_cast<double>(options.max_bytes_per_second),
-                target_bytes_per_second_ + static_cast<double>(options.additive_increase_bytes_per_second) / 60.0);
+                target_bytes_per_second_ +
+                    static_cast<double>(options.additive_increase_bytes_per_second) * fixed_dt_seconds);
         }
     }
 

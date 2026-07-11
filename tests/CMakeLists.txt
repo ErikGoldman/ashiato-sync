@@ -43,6 +43,10 @@ add_executable(ashiato_sync_tests
     tracing_reader.test.cpp
 )
 
+if(ASHIATO_SYNC_ENABLE_PROFILING)
+    target_sources(ashiato_sync_tests PRIVATE profiling.test.cpp)
+endif()
+
 target_link_libraries(ashiato_sync_tests
     PRIVATE
         ashiato::sync

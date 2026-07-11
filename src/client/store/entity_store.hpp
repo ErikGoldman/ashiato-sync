@@ -58,13 +58,9 @@ public:
     void unmap_entity_state(std::uint32_t entity_index);
     void sync_mode_memberships(std::uint32_t entity_index);
 
-#ifdef ASHIATO_SYNC_ENABLE_TRACING
     EntityState* find_by_local_entity(ashiato::Entity local) noexcept;
     void register_local_entity_index(const EntityState& state);
     void unregister_local_entity_index(const EntityState& state);
-#else
-    EntityState* find_by_local_entity(ashiato::Entity local) noexcept;
-#endif
 
     void set_active_membership(std::uint32_t entity_index, bool active);
     void set_buffered_membership(std::uint32_t entity_index, bool active);
@@ -97,9 +93,7 @@ private:
     std::vector<std::uint32_t> free_entity_indices_;
     std::vector<WireNetworkIdState> wire_network_ids_;
     std::unordered_map<ClientEntityNetworkId, std::uint32_t> client_entity_indices_;
-#ifdef ASHIATO_SYNC_ENABLE_TRACING
     std::unordered_map<std::uint64_t, std::uint32_t> local_entity_indices_;
-#endif
     std::unordered_map<std::uint32_t, DestroyTombstone> destroy_tombstones_;
     std::vector<DestroyTombstoneAgeEntry> destroy_tombstone_ages_;
     std::size_t destroy_tombstone_age_begin_ = 0;

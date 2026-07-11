@@ -1,4 +1,5 @@
 #include "benchmark_helpers.hpp"
+#include "allocation_tracker.hpp"
 
 #include <benchmark/benchmark.h>
 
@@ -9,6 +10,28 @@
 namespace {
 
 using namespace ashiato::sync::benchmarks;
+
+class ScopedAllocationTracking {
+public:
+    ScopedAllocationTracking() noexcept {
+        reset_allocation_counts();
+        set_allocation_tracking(true);
+    }
+
+    ScopedAllocationTracking(const ScopedAllocationTracking&) = delete;
+    ScopedAllocationTracking& operator=(const ScopedAllocationTracking&) = delete;
+
+    ~ScopedAllocationTracking() {
+        set_allocation_tracking(false);
+    }
+};
+
+void report_sample_allocations(
+    benchmark::State& state,
+    const AllocationCounts& counts) {
+    state.counters["allocations/sample"] = static_cast<double>(counts.allocations);
+    state.counters["allocated_bytes/sample"] = static_cast<double>(counts.allocated_bytes);
+}
 
 void BM_ClientReceiveSnap(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
@@ -151,63 +174,85 @@ void BM_ClientPredictTickQuantize(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(frame_count));
 }
 
-void BM_ClientSampleFractionalTick(benchmark::State& state) {
+void BM_ClientSampleFractionalTickSteadyStateInline(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
     const std::vector<ashiato::BitBuffer> packets = make_client_receive_packets(entity_count, frame_count);
 
-    for (auto _ : state) {
-        state.PauseTiming();
-        ashiato::Registry registry;
-        define_client_delta_schema(registry, true);
-        ashiato::sync::set_fractional_tick_sampled<DeltaPosition>(registry);
-        ashiato::sync::ReplicationClient client(registry, make_client_options(ashiato::sync::ReplicationClientMode::BufferedInterpolation));
-        for (const ashiato::BitBuffer& packet : packets) {
-            benchmark::DoNotOptimize(client.receive(registry, packet));
-        }
-        ashiato::sync::FractionalTickSampleBuffer display;
-        state.ResumeTiming();
+    ashiato::Registry registry;
+    define_client_delta_schema(registry, true);
+    if (!ashiato::sync::set_fractional_tick_sampled<DeltaPosition>(registry)) {
+        state.SkipWithError("DeltaPosition does not satisfy the fractional sampling contract");
+        return;
+    }
+    ashiato::sync::ReplicationClient client(
+        registry,
+        make_client_options(ashiato::sync::ReplicationClientMode::BufferedInterpolation));
+    for (const ashiato::BitBuffer& packet : packets) {
+        benchmark::DoNotOptimize(client.receive(registry, packet));
+    }
+    ashiato::sync::FractionalTickSampleBuffer display;
+    benchmark::DoNotOptimize(client.sample_fractional_tick_frame(registry, 1.5, display));
+    AllocationCounts counts;
+    {
+        ScopedAllocationTracking track_allocations;
+        benchmark::DoNotOptimize(client.sample_fractional_tick_frame(registry, 2.5, display));
+        counts = allocation_counts();
+    }
+    int frame = 3;
 
-        for (int frame = 1; frame < frame_count; ++frame) {
-            benchmark::DoNotOptimize(client.sample_fractional_tick_frame(
-                registry,
-                static_cast<double>(frame) + 0.5,
-                display));
-            benchmark::DoNotOptimize(display.entities.data());
-        }
+    for (auto _ : state) {
+        benchmark::DoNotOptimize(client.sample_fractional_tick_frame(
+            registry,
+            static_cast<double>(frame) + 0.5,
+            display));
+        benchmark::DoNotOptimize(display.entities.data());
+        frame = frame + 1 == frame_count ? 1 : frame + 1;
     }
 
-    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(frame_count - 1));
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(entity_count));
+    report_sample_allocations(state, counts);
 }
 
-void BM_ClientSampleFractionalTickLargePayload(benchmark::State& state) {
+void BM_ClientSampleFractionalTickSteadyStateOverflow(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int frame_count = static_cast<int>(state.range(1));
     const std::vector<ashiato::BitBuffer> packets =
         make_large_payload_client_receive_packets(entity_count, frame_count);
 
-    for (auto _ : state) {
-        state.PauseTiming();
-        ashiato::Registry registry;
-        define_client_large_payload_schema(registry);
-        ashiato::sync::set_fractional_tick_sampled<LargePayload>(registry);
-        ashiato::sync::ReplicationClient client(registry, make_client_options(ashiato::sync::ReplicationClientMode::BufferedInterpolation));
-        for (const ashiato::BitBuffer& packet : packets) {
-            benchmark::DoNotOptimize(client.receive(registry, packet));
-        }
-        ashiato::sync::FractionalTickSampleBuffer display;
-        state.ResumeTiming();
+    ashiato::Registry registry;
+    define_client_large_payload_schema(registry);
+    if (!ashiato::sync::set_fractional_tick_sampled<LargePayload>(registry)) {
+        state.SkipWithError("LargePayload does not satisfy the fractional sampling contract");
+        return;
+    }
+    ashiato::sync::ReplicationClient client(
+        registry,
+        make_client_options(ashiato::sync::ReplicationClientMode::BufferedInterpolation));
+    for (const ashiato::BitBuffer& packet : packets) {
+        benchmark::DoNotOptimize(client.receive(registry, packet));
+    }
+    ashiato::sync::FractionalTickSampleBuffer display;
+    benchmark::DoNotOptimize(client.sample_fractional_tick_frame(registry, 1.5, display));
+    AllocationCounts counts;
+    {
+        ScopedAllocationTracking track_allocations;
+        benchmark::DoNotOptimize(client.sample_fractional_tick_frame(registry, 2.5, display));
+        counts = allocation_counts();
+    }
+    int frame = 3;
 
-        for (int frame = 1; frame < frame_count; ++frame) {
-            benchmark::DoNotOptimize(client.sample_fractional_tick_frame(
-                registry,
-                static_cast<double>(frame) + 0.5,
-                display));
-            benchmark::DoNotOptimize(display.entities.data());
-        }
+    for (auto _ : state) {
+        benchmark::DoNotOptimize(client.sample_fractional_tick_frame(
+            registry,
+            static_cast<double>(frame) + 0.5,
+            display));
+        benchmark::DoNotOptimize(display.entities.data());
+        frame = frame + 1 == frame_count ? 1 : frame + 1;
     }
 
-    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(frame_count - 1));
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(entity_count));
+    report_sample_allocations(state, counts);
 }
 
 void BM_ClientDrainAckPackets(benchmark::State& state) {
@@ -408,14 +453,45 @@ void BM_ClientInputRecordAndDrain(benchmark::State& state) {
     state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(frame_count));
 }
 
+void BM_ClientEntityNetworkIdForLocalEntity(benchmark::State& state) {
+    const int entity_count = static_cast<int>(state.range(0));
+    const std::vector<ashiato::BitBuffer> packets = make_client_receive_packets(entity_count, 1);
+
+    ashiato::Registry registry;
+    define_client_delta_schema(registry, false);
+    ashiato::sync::ReplicationClient client(
+        registry,
+        make_client_options(ashiato::sync::ReplicationClientMode::Snap));
+    for (const ashiato::BitBuffer& packet : packets) {
+        benchmark::DoNotOptimize(client.receive(registry, packet));
+    }
+
+    std::vector<ashiato::Entity> local_entities;
+    local_entities.reserve(static_cast<std::size_t>(entity_count));
+    for (int wire_network_id = 1; wire_network_id <= entity_count; ++wire_network_id) {
+        local_entities.push_back(client.local_entity(ashiato::sync::make_client_entity_network_id(
+            0U,
+            static_cast<std::uint32_t>(wire_network_id),
+            1U)));
+    }
+
+    for (auto _ : state) {
+        for (const ashiato::Entity local : local_entities) {
+            benchmark::DoNotOptimize(client.client_entity_network_id(local));
+        }
+    }
+
+    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(entity_count));
+}
+
 BENCHMARK(BM_ClientReceiveSnap)->Apply(ClientArgs);
 BENCHMARK(BM_ClientReceiveBufferedInterpolation)->Apply(ClientArgs);
 BENCHMARK(BM_ClientReceivePredict)->Apply(ClientArgs);
 BENCHMARK(BM_ClientReceiveMixedEntityModes)->Apply(ClientArgs);
 BENCHMARK(BM_ClientApplyBufferedInterpolation)->Apply(ClientArgs);
 BENCHMARK(BM_ClientPredictTickQuantize)->Apply(ClientArgs);
-BENCHMARK(BM_ClientSampleFractionalTick)->Apply(ClientArgs);
-BENCHMARK(BM_ClientSampleFractionalTickLargePayload)->Apply(ClientArgs);
+BENCHMARK(BM_ClientSampleFractionalTickSteadyStateInline)->Apply(ClientArgs);
+BENCHMARK(BM_ClientSampleFractionalTickSteadyStateOverflow)->Apply(ClientArgs);
 BENCHMARK(BM_ClientDrainAckPackets)->Apply(ClientArgs);
 BENCHMARK(BM_ClientDrainDuplicateHeavyAckPackets)->Args({1024, 64})->Args({4096, 64});
 BENCHMARK(BM_ClientReceiveDestroySnap)->Apply(DestroyArgs);
@@ -424,5 +500,6 @@ BENCHMARK(BM_ClientReceiveSpawnDestroyChurn)->Apply(DestroyArgs);
 BENCHMARK(BM_ClientTickBufferedAutoInterpolation)->Apply(ClientArgs);
 BENCHMARK(BM_ClientTickCappedLargeDelta)->Args({1024, 64, 4})->Args({4096, 64, 4});
 BENCHMARK(BM_ClientInputRecordAndDrain)->Arg(16)->Arg(64);
+BENCHMARK(BM_ClientEntityNetworkIdForLocalEntity)->Arg(1024)->Arg(4096)->Arg(16384);
 
 }  // namespace

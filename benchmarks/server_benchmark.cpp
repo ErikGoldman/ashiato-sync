@@ -22,7 +22,6 @@ void BM_ServerTickFullBudget(benchmark::State& state) {
     std::uint64_t sent = 0;
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(entity_count) * 128U;
-    options.fixed_entity_replication_cost_bytes = 128U;
     options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& packet) {
         sent += client ^ packet.byte_size();
         benchmark::DoNotOptimize(sent);
@@ -52,7 +51,6 @@ void BM_ServerTickBudgetLimited(benchmark::State& state) {
     std::uint64_t sent = 0;
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = static_cast<std::size_t>(sends_per_client) * 128U;
-    options.fixed_entity_replication_cost_bytes = 128U;
     options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& packet) {
         sent += client + packet.byte_size();
         benchmark::DoNotOptimize(sent);
@@ -708,7 +706,6 @@ void BM_ServerTickArchetypeDiversity(benchmark::State& state) {
 void BM_ServerTickStressScheduler(benchmark::State& state) {
     const int entity_count = static_cast<int>(state.range(0));
     const int client_count = static_cast<int>(state.range(1));
-    const int worker_threads = static_cast<int>(state.range(2));
 
     ashiato::Registry registry;
     const ashiato::sync::SyncArchetypeId archetype = define_delta_archetype(registry);
@@ -718,7 +715,6 @@ void BM_ServerTickStressScheduler(benchmark::State& state) {
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024U * 1024U;
     options.mtu_bytes = 1200;
-    options.serialized_worker_threads = static_cast<std::size_t>(worker_threads);
     options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         sent += client + payload.byte_size();
         benchmark::DoNotOptimize(sent);
@@ -1007,7 +1003,7 @@ BENCHMARK(BM_ServerTickMutatingAckedDelta)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickOwnerAudienceMixed)->Apply(TickArgs);
 BENCHMARK(BM_ServerTickTaggedOwnerMixed)->Args({1024, 4, 8})->Args({16384, 4, 16});
 BENCHMARK(BM_ServerTickArchetypeDiversity)->Apply(TickArgs);
-BENCHMARK(BM_ServerTickStressScheduler)->Args({4096, 4, 1})->Args({4096, 4, 2})->Args({4096, 4, 4});
+BENCHMARK(BM_ServerTickStressScheduler)->Args({4096, 4});
 BENCHMARK(BM_ServerProcessInputPacket)->Apply(InputFrameArgs);
 BENCHMARK(BM_ServerTickInputUpsert)->Arg(1024)->Arg(16384);
 BENCHMARK(BM_ServerTickCappedLargeDelta)->Args({1024, 64, 4})->Args({16384, 64, 4});

@@ -55,7 +55,6 @@ static_assert(!std::is_move_assignable<ashiato::sync::ReplicationServer>::value,
 TEST_CASE("replication server rejects invalid option values") {
     require_invalid_server_options([](auto& options) { options.mtu_bytes = 0; });
     require_invalid_server_options([](auto& options) { options.bandwidth_limit_bytes_per_tick = 0; });
-    require_invalid_server_options([](auto& options) { options.fixed_entity_replication_cost_bytes = 0; });
     require_invalid_server_options([](auto& options) { options.bandwidth.min_bytes_per_second = 0; });
     require_invalid_server_options([](auto& options) { options.bandwidth.initial_bytes_per_second = 0; });
     require_invalid_server_options([](auto& options) { options.bandwidth.max_bytes_per_second = 0; });
@@ -66,7 +65,6 @@ TEST_CASE("replication server rejects invalid option values") {
     require_invalid_server_options([](auto& options) { options.bandwidth.rtt_inflation_decrease_threshold = 0.5f; });
     require_invalid_server_options([](auto& options) { options.bandwidth.multiplicative_decrease = 0.0f; });
     require_invalid_server_options([](auto& options) { options.bandwidth.additive_increase_bytes_per_second = std::numeric_limits<float>::infinity(); });
-    require_invalid_server_options([](auto& options) { options.serialized_worker_threads = 0; });
     require_invalid_server_options([](auto& options) { options.protocol.max_pending_packet_acks_per_client = 0; });
     require_invalid_server_options([](auto& options) {
         options.protocol.max_pending_packet_acks_per_client =

@@ -26,14 +26,19 @@ void trace_rollback_reason(const std::string& reason);
     } while (false)
 #endif
 
+template <typename>
+inline constexpr bool sync_component_traits_must_be_specialized = false;
+
+// Explicit opt-in for tests or homogeneous deployments that intentionally use
+// the compiler's native object representation as their wire format.
 template <typename T>
-struct SyncComponentTraits {
+struct UnsafeNativeLayoutSyncComponentTraits {
     using Quantized = T;
 
     static void quantize(const T& value, Quantized& out) {
         static_assert(
             std::is_trivially_copyable<T>::value,
-            "default SyncComponentTraits require a trivially copyable component");
+            "UnsafeNativeLayoutSyncComponentTraits requires a trivially copyable component");
         out = value;
     }
 
@@ -48,7 +53,7 @@ struct SyncComponentTraits {
         ashiato::ComponentSerializationContext& /*context*/) {
         static_assert(
             std::is_trivially_copyable<Quantized>::value,
-            "default SyncComponentTraits serialization requires a trivially copyable quantized state");
+            "UnsafeNativeLayoutSyncComponentTraits requires a trivially copyable quantized state");
         out.write_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
     }
 
@@ -59,10 +64,17 @@ struct SyncComponentTraits {
         ashiato::ComponentSerializationContext& /*context*/) {
         static_assert(
             std::is_trivially_copyable<Quantized>::value,
-            "default SyncComponentTraits deserialization requires a trivially copyable quantized state");
+            "UnsafeNativeLayoutSyncComponentTraits requires a trivially copyable quantized state");
         in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
         return true;
     }
+};
+
+template <typename T>
+struct SyncComponentTraits {
+    static_assert(
+        sync_component_traits_must_be_specialized<T>,
+        "SyncComponentTraits<T> must be explicitly specialized with a wire serializer");
 };
 
 template <>

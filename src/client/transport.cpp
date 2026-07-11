@@ -1,4 +1,5 @@
 #include "ashiato/sync/client.hpp"
+#include "ashiato/sync/profiling.hpp"
 
 #include "client/store/ack_queue.hpp"
 #include "client/runtime/cue_runtime.hpp"
@@ -55,6 +56,8 @@ std::vector<ashiato::BitBuffer> ReplicationClient::drain_ack_packets() {
 }
 
 void ReplicationClient::process_inbound_packets(ashiato::Registry& registry) {
+    ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientProcessInboundPackets");
+
     for (ashiato::BitBuffer& packet : session_transport_->inbound_packets) {
         (void)receive(registry, std::move(packet));
     }
@@ -62,6 +65,8 @@ void ReplicationClient::process_inbound_packets(ashiato::Registry& registry) {
 }
 
 void ReplicationClient::send_pending_packets() {
+    ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientSendPendingPackets");
+
     if (!session_transport_->packet_sender) {
         return;
     }
@@ -235,6 +240,8 @@ bool ReplicationClient::receive_entity_update(
     ashiato::Registry& registry,
     ashiato::BitBuffer& packet,
     const ReceiveContext& context) {
+    ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientReceiveEntityUpdate");
+
     detail::BitReader reader(packet);
     SyncFrame frame = 0;
     std::uint32_t packet_id = 0;
@@ -250,7 +257,11 @@ bool ReplicationClient::receive_entity_update(
     cue_runtime_->clear_current_packet_cue_summaries();
 
     input_->acknowledge_frame(input_ack_frame);
-    const bool applied = update_runtime_->apply_update(*this, registry, reader, packet_id, frame, record_count);
+    bool applied = false;
+    {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientApplyUpdatePacket");
+        applied = update_runtime_->apply_update(*this, registry, reader, packet_id, frame, record_count);
+    }
 
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     const std::string& apply_failure_reason = update_runtime_->last_apply_failure_reason();

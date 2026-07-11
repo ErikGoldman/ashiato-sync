@@ -1,4 +1,5 @@
 #include "ashiato/sync/client.hpp"
+#include "ashiato/sync/profiling.hpp"
 
 #include "client/store/ack_queue.hpp"
 #include "client/runtime/buffered_runtime.hpp"
@@ -568,6 +569,8 @@ bool ReplicationClient::tick(
     ashiato::Registry& registry,
     double dt_seconds,
     const ashiato::RunJobsOptions& prediction_options) {
+    ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientTick");
+
     if (dt_seconds < 0.0 || !std::isfinite(dt_seconds)) {
         return false;
     }
@@ -577,7 +580,10 @@ bool ReplicationClient::tick(
         std::floor(clock_.local_time_seconds() / fixed_dt_seconds_));
 #endif
 
-    clock_.advance_local_time(dt_seconds);
+    {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientAdvanceLocalTime");
+        clock_.advance_local_time(dt_seconds);
+    }
 
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     ReplicationClientClock::FrameRange local_time_frames;
@@ -594,7 +600,11 @@ bool ReplicationClient::tick(
 
     process_inbound_packets(registry);
 
-    const ReplicationClientClock::AdvanceResult current_frame_numbers = clock_.advance_client_frame_numbers(dt_seconds);
+    ReplicationClientClock::AdvanceResult current_frame_numbers;
+    {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientAdvanceFrameNumbers");
+        current_frame_numbers = clock_.advance_client_frame_numbers(dt_seconds);
+    }
     apply_buffered_frames_to_ashiato(registry, current_frame_numbers.buffered);
     if (!run_predicted_frames(registry, current_frame_numbers.predicted, prediction_options)) {
         return false;
@@ -607,7 +617,10 @@ bool ReplicationClient::tick(
         return false;
     }
 
-    clock_.update_display_target(dt_seconds);
+    {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientUpdateDisplayTarget");
+        clock_.update_display_target(dt_seconds);
+    }
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     trace_local_time_frames(registry, local_time_frames);
 #endif
@@ -618,6 +631,8 @@ bool ReplicationClient::tick(
 void ReplicationClient::apply_buffered_frames_to_ashiato(
     ashiato::Registry& registry,
     const ReplicationClientClock::FrameRange& frames) {
+    ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientApplyBufferedFrames");
+
     (void)buffered_runtime_->apply_frames(*this, registry, frames);
 }
 
@@ -625,6 +640,8 @@ bool ReplicationClient::run_predicted_frames(
     ashiato::Registry& registry,
     const ReplicationClientClock::FrameRange& frames,
     const ashiato::RunJobsOptions& options) {
+    ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientRunPredictedFrames");
+
     for (SyncFrame frame = frames.first; !frames.empty() && frame <= frames.last; ++frame) {
         const SyncSettings& settings = registry.get<SyncSettings>();
         (void)record_input_frame(registry, settings, frame);
@@ -670,31 +687,33 @@ void ReplicationClient::record_interpolation_frame(std::uint64_t checks, std::ui
 #endif
 
 const FractionalTickSampleBuffer& ReplicationClient::fractional_tick_frame(const ashiato::Registry& registry) {
+    ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientFractionalTickFrame");
+
     const double display_accumulator_seconds = clock_.consume_display_accumulator_seconds();
     const float display_dt = display_accumulator_seconds > 0.0 && std::isfinite(display_accumulator_seconds)
         ? static_cast<float>(display_accumulator_seconds)
         : 0.0f;
     if (display_dt > 0.0f) {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientBlendSnapErrors");
         blend_snap_errors(registry.get<SyncSettings>(), display_dt);
     }
-    if (sample_fractional_tick_frame(registry, clock_.display_target_frame(), fractional_tick_scratch_) ||
-        fractional_tick_frame_.entities.empty()) {
+    bool sampled_fractional_tick = false;
+    {
+        ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientSampleFractionalTickFrame");
+        sampled_fractional_tick = sample_fractional_tick_frame(registry, clock_.display_target_frame(), fractional_tick_scratch_);
+    }
+    if (sampled_fractional_tick || fractional_tick_frame_.entities.empty()) {
         fractional_tick_frame_.entities.swap(fractional_tick_scratch_.entities);
-        fractional_tick_scratch_.clear();
     }
     return fractional_tick_frame_;
 }
 
 bool ReplicationClient::ensure_local_entity(ashiato::Registry& registry, EntityState& state) {
     if (!state.identity.local || !registry.alive(state.identity.local)) {
-#ifdef ASHIATO_SYNC_ENABLE_TRACING
         unregister_local_entity_index(state);
-#endif
         state.identity.local = registry.create();
     }
-#ifdef ASHIATO_SYNC_ENABLE_TRACING
     register_local_entity_index(state);
-#endif
     const SyncSettings& settings = registry.get<SyncSettings>();
     if (state.identity.archetype.value < settings.archetypes.size()) {
         set_sync_debug_name(registry, state.identity.local, settings.archetypes[state.identity.archetype.value]);
@@ -1018,9 +1037,7 @@ bool ReplicationClient::apply_buffered_sample(
     const EntityFrameView& sample) {
     if (!sample.entity_present) {
         if (state.identity.local) {
-#ifdef ASHIATO_SYNC_ENABLE_TRACING
             unregister_local_entity_index(state);
-#endif
             if (registry.alive(state.identity.local)) {
                 registry.destroy(state.identity.local);
             }
@@ -1331,9 +1348,7 @@ bool ReplicationClient::apply_latest_snap(
     EntityState& state) {
     if (!state.replication.entity_present) {
         if (state.identity.local) {
-#ifdef ASHIATO_SYNC_ENABLE_TRACING
             unregister_local_entity_index(state);
-#endif
             if (registry.alive(state.identity.local)) {
                 registry.destroy(state.identity.local);
             }

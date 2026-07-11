@@ -1,6 +1,7 @@
 ashiato_sync_fetch_google_benchmark()
 
 add_executable(ashiato_sync_benchmark
+    allocation_tracker.cpp
     client_benchmark.cpp
     server_benchmark.cpp
 )

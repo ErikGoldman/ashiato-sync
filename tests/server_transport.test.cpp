@@ -387,7 +387,7 @@ TEST_CASE("replication server prioritizes pending destroys over creates when ban
     REQUIRE(update.entities[0].network_id == 1U);
 }
 
-TEST_CASE("replication server parallel path prioritizes pending destroys over creates when bandwidth limited") {
+TEST_CASE("replication server prioritizes pending destroys over creates per client when bandwidth limited") {
     ashiato::Registry registry;
     const ashiato::sync::SyncArchetypeId archetype = define_networked_position_archetype(registry);
     const ashiato::Entity destroyed = registry.create();
@@ -397,7 +397,6 @@ TEST_CASE("replication server parallel path prioritizes pending destroys over cr
     std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> payloads;
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 21;
-    options.serialized_worker_threads = 2;
     options.prioritizer_interval_frames = 1;
     options.prioritizer = [](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject) {
         ashiato::sync::ReplicationPriorityDecision decision;
@@ -438,7 +437,7 @@ TEST_CASE("replication server parallel path prioritizes pending destroys over cr
     }
 }
 
-TEST_CASE("replication server parallel path applies bandwidth limits independently per client") {
+TEST_CASE("replication server applies bandwidth limits independently per client") {
     ashiato::Registry registry;
     const ashiato::sync::SyncArchetypeId archetype = define_networked_position_archetype(registry);
     std::vector<ashiato::Entity> entities;
@@ -452,7 +451,6 @@ TEST_CASE("replication server parallel path applies bandwidth limits independent
     std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> packets;
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 21;
-    options.serialized_worker_threads = 2;
     options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         packets.emplace_back(client, payload);
     };
@@ -477,7 +475,7 @@ TEST_CASE("replication server parallel path applies bandwidth limits independent
     }
 }
 
-TEST_CASE("replication server parallel path batches records when budget allows") {
+TEST_CASE("replication server batches records when budget allows") {
     ashiato::Registry registry;
     const ashiato::sync::SyncArchetypeId archetype = define_networked_position_archetype(registry);
     for (int i = 0; i < 3; ++i) {
@@ -489,7 +487,6 @@ TEST_CASE("replication server parallel path batches records when budget allows")
     std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> packets;
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.serialized_worker_threads = 2;
     options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         packets.emplace_back(client, payload);
     };
@@ -630,7 +627,7 @@ TEST_CASE("replication server sends nothing when bandwidth cannot cover a serial
     REQUIRE(sends == 0);
 }
 
-TEST_CASE("replication server parallel path releases quantized frames for unsent records") {
+TEST_CASE("replication server releases quantized frames for unsent records") {
     ashiato::Registry registry;
     const ashiato::sync::SyncArchetypeId archetype = define_networked_position_archetype(registry);
     const ashiato::Entity entity = registry.create();
@@ -640,7 +637,6 @@ TEST_CASE("replication server parallel path releases quantized frames for unsent
     std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> packets;
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 19;
-    options.serialized_worker_threads = 2;
     options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
         packets.emplace_back(client, payload);
     };

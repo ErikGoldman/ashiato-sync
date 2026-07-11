@@ -38,7 +38,6 @@ ReplicationClient::EntityState* ReplicationClient::find_entity_state_for_local(a
     return entity_store_->find_by_local_entity(local);
 }
 
-#ifdef ASHIATO_SYNC_ENABLE_TRACING
 void ReplicationClient::register_local_entity_index(const EntityState& state) {
     entity_store_->register_local_entity_index(state);
 }
@@ -46,7 +45,6 @@ void ReplicationClient::register_local_entity_index(const EntityState& state) {
 void ReplicationClient::unregister_local_entity_index(const EntityState& state) {
     entity_store_->unregister_local_entity_index(state);
 }
-#endif
 
 ReplicationClient::EntityState* ReplicationClient::ensure_entity_state(
     ashiato::Registry& registry,
@@ -74,9 +72,7 @@ void ReplicationClient::erase_entity_state(
     entity_store_->unmap_entity_state(entity_index);
 
     if (state.identity.local) {
-#ifdef ASHIATO_SYNC_ENABLE_TRACING
         unregister_local_entity_index(state);
-#endif
         if (destroy_local && registry.alive(state.identity.local)) {
             registry.destroy(state.identity.local);
         }

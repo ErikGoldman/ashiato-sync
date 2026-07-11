@@ -37,6 +37,11 @@ struct SmoothPosition {
     float y = 0.0f;
 };
 
+struct InterpolatedNoErrorPosition {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
 struct PredictedPosition {
     float x = 0.0f;
     float y = 0.0f;
@@ -136,6 +141,14 @@ bool emit_test_cue(
 }  // namespace ashiato_sync_tests
 
 namespace ashiato::sync {
+
+template <>
+struct SyncComponentTraits<ashiato_sync_tests::Position> :
+    UnsafeNativeLayoutSyncComponentTraits<ashiato_sync_tests::Position> {};
+
+template <>
+struct SyncComponentTraits<ashiato_sync_tests::Health> :
+    UnsafeNativeLayoutSyncComponentTraits<ashiato_sync_tests::Health> {};
 
 template <>
 struct SyncCueTraits<ashiato_sync_tests::TestCue> {
@@ -382,6 +395,35 @@ struct SyncComponentTraits<ashiato_sync_tests::NetworkedPosition> {
         out.append_number(value.y);
     }
 #endif
+};
+
+template <>
+struct SyncComponentTraits<ashiato_sync_tests::InterpolatedNoErrorPosition> {
+    using Quantized = ashiato_sync_tests::InterpolatedNoErrorPosition;
+
+    static void quantize(const ashiato_sync_tests::InterpolatedNoErrorPosition& value, Quantized& out) {
+        out = value;
+    }
+
+    static ashiato_sync_tests::InterpolatedNoErrorPosition dequantize(const Quantized& value) {
+        return value;
+    }
+
+    static void serialize(const Quantized*, const Quantized& current, ashiato::BitBuffer& out, ashiato::ComponentSerializationContext&) {
+        out.write_bytes(reinterpret_cast<const char*>(&current), sizeof(Quantized));
+    }
+
+    static bool deserialize(ashiato::BitBuffer& in, const Quantized*, Quantized& out, ashiato::ComponentSerializationContext&) {
+        in.read_bytes(reinterpret_cast<char*>(&out), sizeof(Quantized));
+        return true;
+    }
+
+    static Quantized interpolate(const Quantized& from, const Quantized& to, float alpha) {
+        return Quantized{
+            from.x + (to.x - from.x) * alpha,
+            from.y + (to.y - from.y) * alpha,
+        };
+    }
 };
 
 template <>

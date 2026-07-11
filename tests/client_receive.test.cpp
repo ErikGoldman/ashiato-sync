@@ -71,6 +71,7 @@ TEST_CASE("replication client applies full updates and queues ACKs") {
 
     const ashiato::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
     REQUIRE(local);
+    REQUIRE(client.client_entity_network_id(local) == first_allocated_client_entity_network_id(1));
     REQUIRE(client_registry.alive(local));
     REQUIRE(client_registry.contains<Position>(local));
     REQUIRE(client_registry.get<Position>(local).x == 1.0f);
@@ -1178,6 +1179,9 @@ TEST_CASE("replication client rejects stale full after destroy and accepts reuse
     REQUIRE(first_update.records.size() == 1);
     const std::uint32_t reused_wire_network_id = first_update.records[0].network_id;
     REQUIRE(client.receive(client_registry, first_full));
+    const ashiato::Entity first_local =
+        client.local_entity(test_client_entity_network_id(1, reused_wire_network_id, 1U));
+    REQUIRE(first_local);
     process_client_acks();
 
     packets.clear();
@@ -1185,6 +1189,7 @@ TEST_CASE("replication client rejects stale full after destroy and accepts reuse
     server.tick(server_registry, server.options().fixed_dt_seconds);
     const ashiato::BitBuffer destroy = packets.back();
     REQUIRE(client.receive(client_registry, destroy));
+    REQUIRE(client.client_entity_network_id(first_local) == ashiato::sync::invalid_client_entity_network_id);
     process_client_acks();
     REQUIRE_FALSE(client.receive(client_registry, first_full));
     REQUIRE(client.pending_ack_count() == 0);
@@ -1198,7 +1203,11 @@ TEST_CASE("replication client rejects stale full after destroy and accepts reuse
     REQUIRE(second_update.records.size() == 1);
     REQUIRE(second_update.records[0].network_id == reused_wire_network_id);
     REQUIRE(client.receive(client_registry, packets.back()));
-    REQUIRE(client.local_entity(test_client_entity_network_id(1, reused_wire_network_id, 2U)));
+    const ashiato::sync::ClientEntityNetworkId second_id =
+        test_client_entity_network_id(1, reused_wire_network_id, 2U);
+    const ashiato::Entity second_local = client.local_entity(second_id);
+    REQUIRE(second_local);
+    REQUIRE(client.client_entity_network_id(second_local) == second_id);
 }
 
 TEST_CASE("replication client rejects stale client entity network ids after wire id reuse") {

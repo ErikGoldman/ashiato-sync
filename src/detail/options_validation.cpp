@@ -226,7 +226,6 @@ ReplicationClientClockConfig validate_client_clock_config(ReplicationClientClock
 
 ReplicationServerOptions validate_server_options(ReplicationServerOptions options) {
     require_positive_bytes(options.bandwidth_limit_bytes_per_tick, "bandwidth limit bytes per tick must be greater than zero");
-    require_positive_bytes(options.fixed_entity_replication_cost_bytes, "fixed entity replication cost bytes must be greater than zero");
     require_positive_bytes(options.mtu_bytes, "MTU bytes must be greater than zero");
     require_positive_bytes(options.bandwidth.min_bytes_per_second, "minimum bandwidth bytes per second must be greater than zero");
     require_positive_bytes(options.bandwidth.initial_bytes_per_second, "initial bandwidth bytes per second must be greater than zero");
@@ -250,9 +249,6 @@ ReplicationServerOptions validate_server_options(ReplicationServerOptions option
     require_finite_positive(
         options.bandwidth.additive_increase_bytes_per_second,
         "bandwidth additive increase bytes per second must be finite and positive");
-    if (options.serialized_worker_threads == 0U) {
-        throw std::invalid_argument("serialized worker threads must be greater than zero");
-    }
     validate_protocol_descriptor(options.protocol);
     require_finite_positive(options.fixed_dt_seconds, "fixed dt seconds must be finite and positive");
     require_finite_positive(
