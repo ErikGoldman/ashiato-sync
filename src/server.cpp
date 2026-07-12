@@ -1,5 +1,6 @@
 #include "ashiato/sync/server.hpp"
 
+#include "ashiato/sync/assert.hpp"
 #include "ashiato/sync/bandwidth_budget.hpp"
 #include "detail/frame_data.hpp"
 #include "detail/logging.hpp"
@@ -40,6 +41,25 @@ namespace {
 struct ServerFixedStepAdvance {
     std::uint32_t steps = 0;
     std::uint64_t dropped_steps = 0;
+};
+
+class ScopedBroadcastFlag final {
+public:
+    explicit ScopedBroadcastFlag(bool& flag) noexcept
+        : flag_(flag) {
+        ASHIATO_SYNC_ASSERT(!flag_);
+        flag_ = true;
+    }
+
+    ~ScopedBroadcastFlag() {
+        flag_ = false;
+    }
+
+    ScopedBroadcastFlag(const ScopedBroadcastFlag&) = delete;
+    ScopedBroadcastFlag& operator=(const ScopedBroadcastFlag&) = delete;
+
+private:
+    bool& flag_;
 };
 
 using detail::frame_component_data;
@@ -483,6 +503,10 @@ ServerRegistryDirtyFrameSubscription ReplicationServer::subscribe_registry_dirty
 
 ServerFrameBatchListenerSubscription ReplicationServer::subscribe_frame_batch_listener(
     ServerFrameBatchListener& listener) {
+    if (frame_batch_listeners_->broadcasting) {
+        ASHIATO_SYNC_ASSERT_FAIL("cannot subscribe a frame batch listener while broadcasting");
+        return {};
+    }
     const std::uint64_t id = frame_batch_listeners_->next_id++;
     frame_batch_listeners_->listeners.push_back(ServerFrameBatchListenerSubscription::Entry{id, &listener});
     return ServerFrameBatchListenerSubscription(frame_batch_listeners_, id);
@@ -2031,9 +2055,6 @@ void ReplicationServer::disconnect_timed_out_clients(ashiato::Registry& registry
 void ReplicationServer::push_dirty_info_to_listeners(ashiato::Registry& registry) {
     post_tick_destroyed_slots_.clear();
     registry_dirty_frame_broadcaster_.broadcast(registry);
-    SyncSettings& settings = registry.write<SyncSettings>();
-    CueDispatcher& cues = registry.write<CueDispatcher>();
-    capture_queued_cues(registry, settings, cues);
     post_tick_destroyed_slots_.clear();
 }
 
@@ -2044,7 +2065,13 @@ void ReplicationServer::on_registry_dirty_frame(const ashiato::RegistryDirtyFram
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     trace_frame_components(frame.registry, settings);
 #endif
-    broadcast_registry_dirty_frame(frame);
+    // This atomic swap is the cue observation boundary. Re-entrant emissions remain queued.
+    frame.registry.write<CueDispatcher>().drain_into(frame_cues_);
+    const QueuedSyncCueView cue_view{
+        frame_cues_.empty() ? nullptr : frame_cues_.data(),
+        frame_cues_.size()};
+    broadcast_registry_dirty_frame(frame, cue_view);
+    capture_queued_cues(frame.registry, settings, cue_view);
 }
 
 void ReplicationServer::push_frame_to_listeners(
@@ -2054,13 +2081,15 @@ void ReplicationServer::push_frame_to_listeners(
     broadcast_frame_batch(registry, dt_seconds, completed_frames);
 }
 
-void ReplicationServer::broadcast_registry_dirty_frame(const ashiato::RegistryDirtyFrame& frame) {
+void ReplicationServer::broadcast_registry_dirty_frame(
+    const ashiato::RegistryDirtyFrame& frame,
+    QueuedSyncCueView cues) {
     ServerRegistryDirtyFrame server_frame{
         *this,
         frame.registry,
         frame.dirty,
         frame_,
-        frame.registry.get<CueDispatcher>().view(),
+        cues,
         ServerDestroyedReplicatedSlotView{
             post_tick_destroyed_slots_.empty() ? nullptr : post_tick_destroyed_slots_.data(),
             post_tick_destroyed_slots_.size()}};
@@ -2089,6 +2118,7 @@ void ReplicationServer::broadcast_frame_batch(
     ashiato::Registry& registry,
     double dt_seconds,
     std::uint32_t completed_frames) {
+    ScopedBroadcastFlag broadcasting(frame_batch_listeners_->broadcasting);
     ServerFrameBatch batch{*this, registry, dt_seconds, completed_frames};
     for (const ServerFrameBatchListenerSubscription::Entry& entry : frame_batch_listeners_->listeners) {
         if (entry.listener != nullptr) {
@@ -2255,10 +2285,8 @@ bool ReplicationServer::play_local_cue(
 void ReplicationServer::capture_queued_cues(
     ashiato::Registry& registry,
     const SyncSettings& settings,
-    CueDispatcher& cues) {
-    const QueuedSyncCueView queued = cues.view();
-
-    for (const QueuedSyncCue& cue : queued) {
+    QueuedSyncCueView cues) {
+    for (const QueuedSyncCue& cue : cues) {
         const auto found = entity_to_replicated_index_.find(cue.entity.value);
         if (found == entity_to_replicated_index_.end()) {
             continue;
@@ -2294,7 +2322,6 @@ void ReplicationServer::capture_queued_cues(
 #endif
         attach_cue_to_clients(registry, settings, found->second, cue);
     }
-    cues.clear();
 }
 
 void ReplicationServer::attach_cue_to_clients(
@@ -2308,7 +2335,11 @@ void ReplicationServer::attach_cue_to_clients(
     if (cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].serialize == nullptr) {
         return;
     }
-    const SyncFrame relevance_frames = static_cast<SyncFrame>(
+    if (!detail::cue_relevance_fits_frame_range(cue.frame, cue.relevance_seconds, options_.fixed_dt_seconds)) {
+        ASHIATO_SYNC_ASSERT_FAIL("cue relevance must be finite, non-negative, and fit in the frame range");
+        return;
+    }
+    const auto relevance_frames = static_cast<SyncFrame>(
         std::ceil(static_cast<double>(cue.relevance_seconds) / options_.fixed_dt_seconds));
     const SyncFrame expire_frame = cue.frame + relevance_frames;
     const NetworkOwner* owner = registry.try_get<NetworkOwner>(cue.entity);
@@ -2409,6 +2440,7 @@ void ReplicationServer::attach_cue_to_clients(
 #endif
         }
         if (payload.bit_size() > protocol::max_cue_payload_bits) {
+            ASHIATO_SYNC_ASSERT_FAIL("serialized cue payload exceeds the protocol limit");
             continue;
         }
         ClientEntityState::PendingCue pending_cue;

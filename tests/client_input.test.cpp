@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -61,6 +62,24 @@ TEST_CASE("client input records trace samples for acknowledged frames") {
     REQUIRE(recorded.component == settings.input_component);
     REQUIRE(recorded.bytes != nullptr);
     REQUIRE(recorded.bytes[0] == 42U);
+}
+
+TEST_CASE("client input ignores acknowledgements beyond the recorded frame range") {
+    ashiato::Registry registry;
+    ashiato::sync::SyncSettings settings;
+    settings.input_component = ashiato::Entity{11};
+    settings.component_ops.emplace(settings.input_component.value, byte_input_component_ops());
+
+    ashiato::sync::client_detail::ClientInputBuffer buffer;
+    std::uint8_t input = 42U;
+    REQUIRE(buffer.set_latest(registry, settings, settings.input_component, &input));
+    REQUIRE(buffer.record_frame(settings, 4U, 1U, nullptr));
+
+    buffer.acknowledge_frame(std::numeric_limits<ashiato::sync::SyncFrame>::max());
+
+    REQUIRE(buffer.acked_frame() == 0U);
+    buffer.acknowledge_frame(1U);
+    REQUIRE(buffer.acked_frame() == 1U);
 }
 
 TEST_CASE("replication client input applies to locally owned entities and drains with ACKs") {

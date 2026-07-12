@@ -33,6 +33,19 @@ private:
     std::function<void(const ashiato::sync::ServerRegistryDirtyFrame&)> on_delta_;
 };
 
+class TestFrameBatchConsumer final : public ashiato::sync::ServerFrameBatchListener {
+public:
+    explicit TestFrameBatchConsumer(std::function<void(const ashiato::sync::ServerFrameBatch&)> on_batch)
+        : on_batch_(std::move(on_batch)) {}
+
+    void on_server_frame_batch_complete(const ashiato::sync::ServerFrameBatch& batch) override {
+        on_batch_(batch);
+    }
+
+private:
+    std::function<void(const ashiato::sync::ServerFrameBatch&)> on_batch_;
+};
+
 }  // namespace
 
 TEST_CASE("replication server tracks clients and replicated component changes") {
@@ -347,6 +360,70 @@ TEST_CASE("replication server frame consumer receives cues drained for the frame
     REQUIRE(seen[0].id == 42);
 }
 
+TEST_CASE("cues emitted by frame consumers are observed on the next frame") {
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_server_registry(registry);
+    const ashiato::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+    (void)ashiato::sync::register_sync_cue<TestCue>(registry);
+    const ashiato::Entity entity = registry.create();
+    registry.add<Position>(entity, Position{1.0f, 2.0f});
+    REQUIRE(start_sync(registry, entity, archetype));
+
+    ashiato::sync::ReplicationServerOptions options;
+    options.fixed_dt_seconds = 0.25;
+    options.transport = [](ashiato::sync::ClientId, const ashiato::BitBuffer&) {};
+    ashiato::sync::ReplicationServer server(registry, options);
+
+    std::vector<std::vector<std::int32_t>> cues_by_frame;
+    TestFrameConsumer emitting_consumer([&](const ashiato::sync::ServerRegistryDirtyFrame& frame) {
+        std::vector<std::int32_t> ids;
+        for (const ashiato::sync::QueuedSyncCue& cue : frame.cues) {
+            const TestCue* value = cue.value.has_value() ? static_cast<const TestCue*>(cue.value.data()) : nullptr;
+            REQUIRE(value != nullptr);
+            ids.push_back(value->id);
+        }
+        cues_by_frame.push_back(std::move(ids));
+
+        if (frame.frame == 1U) {
+            REQUIRE(ashiato_sync_tests::emit_test_cue(
+                frame.registry,
+                entity,
+                ashiato::sync::SyncFrame{2},
+                TestCue{2},
+                0.5f));
+        }
+    });
+    auto emitting_subscription = server.subscribe_registry_dirty_frame_listener(emitting_consumer);
+
+    std::vector<std::vector<std::int32_t>> later_consumer_cues_by_frame;
+    TestFrameConsumer later_consumer([&](const ashiato::sync::ServerRegistryDirtyFrame& frame) {
+        std::vector<std::int32_t> ids;
+        for (const ashiato::sync::QueuedSyncCue& cue : frame.cues) {
+            const TestCue* value = cue.value.has_value() ? static_cast<const TestCue*>(cue.value.data()) : nullptr;
+            REQUIRE(value != nullptr);
+            ids.push_back(value->id);
+        }
+        later_consumer_cues_by_frame.push_back(std::move(ids));
+    });
+    auto later_subscription = server.subscribe_registry_dirty_frame_listener(later_consumer);
+
+    REQUIRE(ashiato_sync_tests::emit_test_cue(
+        registry,
+        entity,
+        ashiato::sync::SyncFrame{1},
+        TestCue{1},
+        0.5f));
+    REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
+    REQUIRE(cues_by_frame == std::vector<std::vector<std::int32_t>>{{1}});
+    REQUIRE(later_consumer_cues_by_frame == std::vector<std::vector<std::int32_t>>{{1}});
+    REQUIRE(registry.get<ashiato::sync::CueDispatcher>().size() == 1U);
+
+    REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
+    REQUIRE(cues_by_frame == std::vector<std::vector<std::int32_t>>{{1}, {2}});
+    REQUIRE(later_consumer_cues_by_frame == std::vector<std::vector<std::int32_t>>{{1}, {2}});
+    REQUIRE(registry.get<ashiato::sync::CueDispatcher>().empty());
+}
+
 TEST_CASE("replication server dirty frame exposes destroyed replicated slots after server bookkeeping") {
     ashiato::Registry registry;
     ashiato_sync_tests::configure_test_server_registry(registry);
@@ -460,6 +537,33 @@ TEST_CASE("replication server frame consumer can detach while receiving a frame"
 
     server.tick(registry, server.options().fixed_dt_seconds);
     REQUIRE(frames == 1);
+}
+
+TEST_CASE("replication server rejects frame batch subscriptions while broadcasting") {
+#ifndef NDEBUG
+    SUCCEED("Debug builds enforce frame batch subscription timing with an assertion");
+#else
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_server_registry(registry);
+
+    ashiato::sync::ReplicationServer server(registry);
+    int first_batches = 0;
+    int second_batches = 0;
+    TestFrameBatchConsumer second([&](const ashiato::sync::ServerFrameBatch&) {
+        ++second_batches;
+    });
+    ashiato::sync::ServerFrameBatchListenerSubscription attempted;
+    TestFrameBatchConsumer first([&](const ashiato::sync::ServerFrameBatch&) {
+        ++first_batches;
+        attempted = server.subscribe_frame_batch_listener(second);
+    });
+    auto subscription = server.subscribe_frame_batch_listener(first);
+
+    REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
+    REQUIRE(first_batches == 1);
+    REQUIRE(second_batches == 0);
+    REQUIRE_FALSE(attempted.active());
+#endif
 }
 
 TEST_CASE("replication server flushes client replication once after fixed-step catch-up") {

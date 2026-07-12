@@ -1252,11 +1252,11 @@ TEST_CASE("role-tagged simulation jobs support advanced builder modifiers") {
         .each([](
             auto& structural,
             const ashiato::sync::JobRunContext& context,
-            ashiato::Entity entity,
+            ashiato::Entity,
             PredictedPosition& position) {
             REQUIRE(context.is_server_only());
             position.y += 2.0f;
-            REQUIRE(structural.template add<ashiato::sync::NoSimulate>(entity));
+            REQUIRE(structural.template add<ashiato::sync::NoSimulate>());
         });
 
     server_registry.run_jobs();

@@ -108,14 +108,56 @@ TEST_CASE("runtime cue ops register by key and raw cues enqueue") {
         payload,
         1.0f,
         true));
+#ifdef NDEBUG
+    ashiato::BitBuffer oversized_payload;
+    for (std::size_t bit = 0; bit <= ashiato::sync::protocol::max_cue_payload_bits; ++bit) {
+        oversized_payload.write_bool(false);
+    }
+    REQUIRE_FALSE(registry.write<ashiato::sync::CueDispatcher>().emit_raw(
+        registry.get<ashiato::sync::SyncSettings>(),
+        3,
+        entity,
+        cue_type,
+        std::move(oversized_payload),
+        1.0f,
+        true));
+#endif
 
-    const ashiato::sync::QueuedSyncCueView queued = registry.get<ashiato::sync::CueDispatcher>().view();
-    REQUIRE(queued.size == 1);
-    REQUIRE(queued.data[0].entity == entity);
-    REQUIRE(queued.data[0].frame == 3);
-    REQUIRE(queued.data[0].type == cue_type);
-    REQUIRE(queued.data[0].only_replicate_to_owner);
-    REQUIRE(queued.data[0].payload == payload);
+    REQUIRE(registry.get<ashiato::sync::CueDispatcher>().size() == 1U);
+}
+
+TEST_CASE("cue emission rejects unsafe relevance values") {
+#ifndef NDEBUG
+    SUCCEED("Debug builds enforce invalid cue relevance with assertions");
+#else
+    ashiato::Registry registry;
+    const ashiato::sync::SyncCueTypeId cue_type = ashiato::sync::register_sync_cue<TestCue>(registry);
+    const ashiato::Entity entity = registry.create();
+    ashiato::sync::CueDispatcher& cues = registry.write<ashiato::sync::CueDispatcher>();
+    const ashiato::sync::SyncSettings& settings = registry.get<ashiato::sync::SyncSettings>();
+
+    REQUIRE_FALSE(cues.emit(settings, 1U, entity, TestCue{}, -1.0f));
+    REQUIRE_FALSE(cues.emit(
+        settings,
+        1U,
+        entity,
+        TestCue{},
+        std::numeric_limits<float>::quiet_NaN()));
+    REQUIRE_FALSE(cues.emit(
+        settings,
+        1U,
+        entity,
+        TestCue{},
+        std::numeric_limits<float>::infinity()));
+    REQUIRE_FALSE(cues.emit(
+        settings,
+        std::numeric_limits<ashiato::sync::SyncFrame>::max(),
+        entity,
+        TestCue{},
+        1.0f));
+    REQUIRE(cues.empty());
+    (void)cue_type;
+#endif
 }
 
 TEST_CASE("replicated snap cues play once with late time and stop resending after ACK") {

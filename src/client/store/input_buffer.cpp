@@ -148,20 +148,17 @@ bool ClientInputBuffer::apply_frame(ashiato::Registry& registry, const SyncSetti
 }
 
 void ClientInputBuffer::acknowledge_frame(SyncFrame frame) {
-    if (frame <= acked_frame_) {
+    if (frame <= acked_frame_ || frame > last_recorded_frame_) {
         return;
     }
     bool found_baseline = false;
     if (!frames_.empty()) {
-        for (SyncFrame current = acked_frame_ + 1U; current <= frame; ++current) {
-            const std::size_t slot = frames_.slot_for(current);
-            InputFrameSlot& stored = frames_.metadata(slot);
-            if (stored.valid && stored.frame == current && current == frame) {
-                const std::uint8_t* bytes = frame_bytes(slot);
-                acked_baseline_.assign(bytes, bytes + frames_.payload_stride());
-                found_baseline = true;
-                break;
-            }
+        const std::size_t slot = frames_.slot_for(frame);
+        const InputFrameSlot& stored = frames_.metadata(slot);
+        if (stored.valid && stored.frame == frame) {
+            const std::uint8_t* bytes = frame_bytes(slot);
+            acked_baseline_.assign(bytes, bytes + frames_.payload_stride());
+            found_baseline = true;
         }
     }
     has_acked_baseline_ = frame == 0U || found_baseline;

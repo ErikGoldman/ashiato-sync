@@ -3,6 +3,7 @@
 #include "detail/frame_data.hpp"
 
 #include "ashiato/sync/components.hpp"
+#include "ashiato/sync/assert.hpp"
 #include "ashiato/sync/protocol.hpp"
 #include "ashiato/sync/server.hpp"
 #include "ashiato/sync/tracing.hpp"
@@ -113,6 +114,13 @@ void append_cue_entries(
         if (cue.type >= settings.cue_ops.size() || settings.cue_ops[cue.type].serialize == nullptr) {
             continue;
         }
+        if (!detail::cue_relevance_fits_frame_range(
+                cue.frame,
+                cue.relevance_seconds,
+                server.options().fixed_dt_seconds)) {
+            ASHIATO_SYNC_ASSERT_FAIL("cue relevance must be finite, non-negative, and fit in the frame range");
+            continue;
+        }
         ashiato::BitBuffer payload = cue.payload;
         if (cue.value.has_value()) {
             payload.clear();
@@ -158,6 +166,10 @@ void append_cue_entries(
             settings.cue_ops[cue.type].serialize(cue.value.data(), payload, serialization_context);
 #endif
         }
+        if (payload.bit_size() > protocol::max_cue_payload_bits) {
+            ASHIATO_SYNC_ASSERT_FAIL("serialized cue payload exceeds the protocol limit");
+            continue;
+        }
         const std::uint32_t slot = server.replicated_slot_for_entity(cue.entity);
         out.push_back(PendingReplayCueEntry{
             slot == invalid_replay_slot ? 0 : replay_id_for_slot(slot),
@@ -182,6 +194,10 @@ void write_cue_entries(
     ScopedSerializationTraceScope cue_entries_scope(serialization_capture, "cue_entries");
 #endif
     for (const PendingReplayCueEntry& cue : cues) {
+        if (cue.payload.bit_size() > protocol::max_cue_payload_bits) {
+            ASHIATO_SYNC_ASSERT_FAIL("replay cue payload exceeds the protocol limit");
+            continue;
+        }
         ASHIATO_SERIALIZE_BOOL_TRACE_WITH_CAPTURE(serialization_capture, out, true, "has_cue");
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
         ScopedSerializationTraceScope cue_entry_scope(serialization_capture, "cue_entry");
@@ -192,10 +208,7 @@ void write_cue_entries(
         entry.write_bits(cue.type, 16U);
         entry.write_float32_le(cue.relevance_seconds);
         entry.write_bool(cue.only_replicate_to_owner);
-        entry.write_bits(static_cast<std::int64_t>(std::min<std::size_t>(
-                         cue.payload.bit_size(),
-                         std::numeric_limits<std::uint16_t>::max())),
-            16U);
+        entry.write_bits(static_cast<std::uint16_t>(cue.payload.bit_size()), 16U);
         entry.write_buffer_bits(cue.payload);
         ASHIATO_SERIALIZE_BUFFER_TRACE_WITH_CAPTURE(serialization_capture, out, entry, "payload");
     }

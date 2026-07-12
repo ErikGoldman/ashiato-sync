@@ -1,5 +1,7 @@
 #include "ashiato/sync/components.hpp"
 
+#include "ashiato/sync/assert.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -138,7 +140,15 @@ CueDispatcher& CueDispatcher::operator=(CueDispatcher&& other) noexcept {
 }
 
 bool CueDispatcher::enqueue(QueuedSyncCue cue) {
-    if (!cue.entity || cue.relevance_seconds < 0.0f) {
+    if (!cue.entity || cue.frame == 0U) {
+        return false;
+    }
+    if (!detail::valid_cue_relevance_value(cue.relevance_seconds)) {
+        ASHIATO_SYNC_ASSERT_FAIL("cue relevance must be finite and non-negative");
+        return false;
+    }
+    if (cue.payload.bit_size() > protocol::max_cue_payload_bits) {
+        ASHIATO_SYNC_ASSERT_FAIL("cue payload exceeds the protocol limit");
         return false;
     }
     std::lock_guard<std::mutex> lock(mutex_);
@@ -148,27 +158,23 @@ bool CueDispatcher::enqueue(QueuedSyncCue cue) {
 
 std::vector<QueuedSyncCue> CueDispatcher::drain() {
     std::vector<QueuedSyncCue> drained;
-    std::lock_guard<std::mutex> lock(mutex_);
-    drained.swap(cues_);
+    drain_into(drained);
     return drained;
 }
 
-void CueDispatcher::clear() {
+void CueDispatcher::drain_into(std::vector<QueuedSyncCue>& drained) {
+    drained.clear();
     std::lock_guard<std::mutex> lock(mutex_);
-    cues_.clear();
+    drained.swap(cues_);
 }
 
-QueuedSyncCueView CueDispatcher::view() const noexcept {
-    return QueuedSyncCueView{
-        cues_.empty() ? nullptr : cues_.data(),
-        cues_.size()};
-}
-
-bool CueDispatcher::empty() const noexcept {
+bool CueDispatcher::empty() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     return cues_.empty();
 }
 
-std::size_t CueDispatcher::size() const noexcept {
+std::size_t CueDispatcher::size() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     return cues_.size();
 }
 

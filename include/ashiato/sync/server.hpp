@@ -251,13 +251,18 @@ private:
     void push_dirty_info_to_listeners(ashiato::Registry& registry);
     void push_frame_to_listeners(ashiato::Registry& registry, double dt_seconds, std::uint32_t completed_frames);
     void on_registry_dirty_frame(const ashiato::RegistryDirtyFrame& frame) override;
-    void broadcast_registry_dirty_frame(const ashiato::RegistryDirtyFrame& frame);
+    void broadcast_registry_dirty_frame(
+        const ashiato::RegistryDirtyFrame& frame,
+        QueuedSyncCueView cues);
     void remove_unsubscribed_registry_dirty_frame_listeners();
     void broadcast_frame_batch(ashiato::Registry& registry, double dt_seconds, std::uint32_t completed_frames);
     void remove_unsubscribed_frame_batch_listeners();
     void rediscover_replicated_entities(ashiato::Registry& registry, ashiato::Registry::DirtyView dirty);
     void capture_dirty_generations(ashiato::Registry::DirtyView dirty, const SyncSettings& settings);
-    void capture_queued_cues(ashiato::Registry& registry, const SyncSettings& settings, CueDispatcher& cues);
+    void capture_queued_cues(
+        ashiato::Registry& registry,
+        const SyncSettings& settings,
+        QueuedSyncCueView cues);
     bool play_local_cue(ashiato::Registry& registry, const SyncSettings& settings, const QueuedSyncCue& cue);
     void attach_cue_to_clients(const ashiato::Registry& registry, const SyncSettings& settings, std::uint32_t slot, const QueuedSyncCue& cue);
     void mark_dirty_component(const SyncSettings& settings, std::uint32_t slot, ashiato::Entity component);
@@ -387,6 +392,7 @@ private:
     std::shared_ptr<ServerRegistryDirtyFrameSubscription::State> registry_dirty_frame_listeners_;
     std::shared_ptr<ServerFrameBatchListenerSubscription::State> frame_batch_listeners_;
     std::vector<PendingInboundPacket> inbound_packets_;
+    std::vector<QueuedSyncCue> frame_cues_;
     std::vector<ServerDestroyedReplicatedSlot> post_tick_destroyed_slots_;
     std::shared_ptr<spdlog::logger> logger_;
     ObservabilityStats observability_stats_;

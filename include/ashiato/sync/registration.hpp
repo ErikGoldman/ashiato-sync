@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ashiato/sync/component_traits.hpp"
+#include "ashiato/sync/assert.hpp"
 #include "ashiato/sync/components.hpp"
 #include "ashiato/sync/detail/component_trait_adapters.hpp"
 #include "ashiato/sync/detail/type_name.hpp"
@@ -276,7 +277,11 @@ bool CueDispatcher::emit(
     const T& cue,
     float relevance_seconds,
     bool only_replicate_to_owner) {
-    if (!entity || frame == 0U || relevance_seconds < 0.0f) {
+    if (!entity || frame == 0U) {
+        return false;
+    }
+    if (!detail::cue_relevance_fits_frame_range(frame, relevance_seconds, settings.fixed_dt_seconds)) {
+        ASHIATO_SYNC_ASSERT_FAIL("cue relevance must be finite, non-negative, and fit in the frame range");
         return false;
     }
 
@@ -312,7 +317,15 @@ inline bool CueDispatcher::emit_raw(
     std::vector<ashiato::SerializationTraceScope> payload_trace_scopes
 #endif
 ) {
-    if (!entity || frame == 0U || relevance_seconds < 0.0f) {
+    if (!entity || frame == 0U) {
+        return false;
+    }
+    if (!detail::cue_relevance_fits_frame_range(frame, relevance_seconds, settings.fixed_dt_seconds)) {
+        ASHIATO_SYNC_ASSERT_FAIL("cue relevance must be finite, non-negative, and fit in the frame range");
+        return false;
+    }
+    if (payload.bit_size() > protocol::max_cue_payload_bits) {
+        ASHIATO_SYNC_ASSERT_FAIL("cue payload exceeds the protocol limit");
         return false;
     }
     if (type >= settings.cue_ops.size() ||

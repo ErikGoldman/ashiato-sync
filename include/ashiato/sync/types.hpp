@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -36,6 +37,27 @@ using SyncCueTypeId = std::uint16_t;
 using ClientEntityNetworkId = std::uint64_t;
 using TransportFn = std::function<void(PeerId, const ashiato::BitBuffer&)>;
 using ConnectHandlerFn = std::function<bool(const std::string&, ClientId&, std::string&)>;
+
+namespace detail {
+
+inline bool valid_cue_relevance_value(float relevance_seconds) noexcept {
+    return relevance_seconds >= 0.0f && std::isfinite(relevance_seconds);
+}
+
+inline bool cue_relevance_fits_frame_range(
+    SyncFrame frame,
+    float relevance_seconds,
+    double fixed_dt_seconds) noexcept {
+    if (frame == 0U || !valid_cue_relevance_value(relevance_seconds) ||
+        fixed_dt_seconds <= 0.0 || !std::isfinite(fixed_dt_seconds)) {
+        return false;
+    }
+    const double relevance_frames = std::ceil(static_cast<double>(relevance_seconds) / fixed_dt_seconds);
+    return std::isfinite(relevance_frames) &&
+        relevance_frames <= static_cast<double>(std::numeric_limits<SyncFrame>::max() - frame);
+}
+
+}  // namespace detail
 
 struct SyncSettings;
 struct QueuedSyncCueView;
@@ -680,9 +702,8 @@ public:
 #endif
     );
 
-    QueuedSyncCueView view() const noexcept;
-    bool empty() const noexcept;
-    std::size_t size() const noexcept;
+    bool empty() const;
+    std::size_t size() const;
 
 private:
     friend class client_detail::ClientCueRuntime;
@@ -692,7 +713,7 @@ private:
 
     bool enqueue(QueuedSyncCue cue);
     std::vector<QueuedSyncCue> drain();
-    void clear();
+    void drain_into(std::vector<QueuedSyncCue>& drained);
     mutable std::mutex mutex_;
     std::vector<QueuedSyncCue> cues_;
 };

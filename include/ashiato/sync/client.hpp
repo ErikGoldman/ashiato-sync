@@ -956,9 +956,10 @@ struct SimulationJobCallbackAdapter {
         invoke_view_simulation_job_callback(*callback, view, context, entity, args...);
     }
 
-    template <bool DispatchHooks, typename ViewType, typename... StructuralComponents, typename... Args>
+    template <bool DispatchHooks, bool AnyEntity, typename ViewType, typename... StructuralComponents, typename... Args>
     void operator()(
-        ashiato::Registry::JobStructuralContext<DispatchHooks, ViewType, StructuralComponents...>& structural_context,
+        ashiato::Registry::JobStructuralContext<DispatchHooks, AnyEntity, ViewType, StructuralComponents...>&
+            structural_context,
         ashiato::Entity entity,
         Args&... args) {
         invoke_structural_simulation_job_callback(*callback, context, structural_context, entity, args...);

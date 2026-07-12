@@ -2,6 +2,57 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+namespace ashiato_sync_tests {
+
+struct OversizedReplayCue {};
+
+}  // namespace ashiato_sync_tests
+
+namespace ashiato::sync {
+
+template <>
+struct SyncCueTraits<ashiato_sync_tests::OversizedReplayCue> {
+    static void serialize(
+        const ashiato_sync_tests::OversizedReplayCue&,
+        ashiato::BitBuffer& out,
+        ashiato::ComponentSerializationContext&) {
+        for (std::size_t bit = 0; bit <= protocol::max_cue_payload_bits; ++bit) {
+            out.write_bool(false);
+        }
+    }
+
+    static bool deserialize(
+        ashiato::BitBuffer&,
+        ashiato_sync_tests::OversizedReplayCue&,
+        ashiato::ComponentSerializationContext&) {
+        return true;
+    }
+
+    static bool play(
+        ashiato::Registry&,
+        ashiato::Entity,
+        const ashiato_sync_tests::OversizedReplayCue&,
+        float,
+        SyncFrame) {
+        return true;
+    }
+
+    static bool rollback(
+        ashiato::Registry&,
+        ashiato::Entity,
+        const ashiato_sync_tests::OversizedReplayCue&) {
+        return true;
+    }
+
+    static bool equals_cue(
+        const ashiato_sync_tests::OversizedReplayCue&,
+        const ashiato_sync_tests::OversizedReplayCue&) {
+        return true;
+    }
+};
+
+}  // namespace ashiato::sync
+
 namespace {
 
 void skip_bits(ashiato::BitBuffer& buffer, std::size_t bits) {
@@ -179,4 +230,39 @@ TEST_CASE("replication replay writer records queued cues in the replay payload")
     REQUIRE(static_cast<std::uint16_t>(payload.read_bits(16U)) == 16U);
     REQUIRE(static_cast<std::int32_t>(payload.read_bits(16U)) == 42);
     REQUIRE_FALSE(payload.read_bool());
+}
+
+TEST_CASE("replication replay writer rejects oversized serialized cues") {
+#ifndef NDEBUG
+    SUCCEED("Debug builds enforce oversized serialized cues with assertions");
+#else
+    ashiato::Registry registry;
+    ashiato_sync_tests::configure_test_server_registry(registry);
+    const ashiato::sync::SyncArchetypeId archetype = ashiato_sync_tests::define_position_archetype(registry);
+    (void)ashiato::sync::register_sync_cue<ashiato_sync_tests::OversizedReplayCue>(registry);
+
+    const ashiato::Entity entity = registry.create();
+    registry.add<ashiato_sync_tests::Position>(entity, ashiato_sync_tests::Position{1.0f, 2.0f});
+    REQUIRE(ashiato_sync_tests::start_sync(registry, entity, archetype));
+
+    std::vector<ashiato::sync::ReplicationReplayFrame> frames;
+    ashiato::sync::ReplicationReplayWriter writer({60, [&](const ashiato::sync::ReplicationReplayFrame& frame) {
+        frames.push_back(frame);
+    }});
+    ashiato::sync::ReplicationServer server(registry);
+    writer.attach(server);
+
+    REQUIRE(ashiato_sync_tests::emit_test_cue(
+        registry,
+        entity,
+        ashiato::sync::SyncFrame{1},
+        ashiato_sync_tests::OversizedReplayCue{},
+        0.5f));
+    REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
+    REQUIRE(frames.size() == 1U);
+
+    ashiato::BitBuffer payload = frames[0].payload;
+    REQUIRE(skip_replay_records(payload) == 1U);
+    REQUIRE_FALSE(payload.read_bool());
+#endif
 }

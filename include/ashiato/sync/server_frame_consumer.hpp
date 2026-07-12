@@ -29,6 +29,7 @@ struct ServerRegistryDirtyFrame {
     ashiato::Registry& registry;
     ashiato::Registry::DirtyView dirty;
     SyncFrame frame = 0;
+    // Stable for this callback. Cues emitted during observation belong to the next frame.
     QueuedSyncCueView cues;
     ServerDestroyedReplicatedSlotView destroyed_slots;
 };
@@ -106,6 +107,7 @@ private:
     struct State {
         std::uint64_t next_id = 1;
         std::vector<Entry> listeners;
+        bool broadcasting = false;
     };
 
     ServerFrameBatchListenerSubscription(const std::shared_ptr<State>& state, std::uint64_t id);
