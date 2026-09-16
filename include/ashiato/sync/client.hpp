@@ -177,6 +177,11 @@ private:
 
 struct ReplicationClientNetworkOptions {
     std::size_t mtu_bytes = 1200;
+    // The most input frames one input packet carries, NEWEST FIRST. Every tick the client sends the newest
+    // frames the server does not yet have; this bounds how many, so a packet costs the same at any latency.
+    // What it buys is surviving that many lost packets in a row while the prediction lead has frames to spare.
+    // 1 to protocol::max_input_count.
+    SyncFrame input_frames_per_packet = 8;
     protocol::Descriptor protocol = protocol::default_descriptor;
 };
 
@@ -431,6 +436,11 @@ public:
         std::uint64_t client_errors = 0;
         std::uint64_t client_connects_accepted = 0;
         std::uint64_t client_connects_rejected = 0;
+        // Input packets the MTU or the input count cut short of the frames they were meant to carry
+        // (min(input_frames_per_packet, frames not yet acknowledged)), and how many frames were cut.
+        // Frames left out on purpose by input_frames_per_packet are not counted.
+        std::uint64_t input_packets_truncated = 0;
+        std::uint64_t input_frames_truncated = 0;
     };
 
     static constexpr std::size_t buffered_frame_capacity = 64;
@@ -732,6 +742,7 @@ private:
     void drain_ping_packets(std::vector<ashiato::BitBuffer>& packets);
     void drain_ack_packets_into(std::vector<ashiato::BitBuffer>& packets);
     void drain_input_packets_into(std::vector<ashiato::BitBuffer>& packets);
+    void report_input_truncation(std::uint64_t truncated_packets_before);
     void process_inbound_packets(ashiato::Registry& registry);
     void send_pending_packets();
     void log_info(const char* event, const std::string& fields) const;

@@ -291,6 +291,7 @@ ReplicationClient::ReplicationClient(
     set_trace_options(options_.trace);
 #endif
     session_transport_->adaptive_ping_active = true;
+    input_->set_max_frames_per_packet(options_.network.input_frames_per_packet);
     if (options_.session.connect_token.empty()) {
         set_connection_state(ReplicationClientConnectionState::Ready, client_id_);
         (void)clock_.maybe_bootstrap_from_first_server_update(0, false, true);
@@ -433,6 +434,33 @@ void ReplicationClient::log_server_packet_warning(
             message,
             reason_code,
             detail::log_token(reason_detail));
+    }
+}
+
+void ReplicationClient::report_input_truncation(std::uint64_t truncated_packets_before) {
+    observability_stats_.input_packets_truncated = input_->truncated_packets();
+    observability_stats_.input_frames_truncated = input_->truncated_frames();
+    if (input_->truncated_packets() == truncated_packets_before) {
+        return;
+    }
+    // The same budget as a rejected server packet, under a message id no server message uses.
+    constexpr std::uint8_t input_truncation_source = 0xFFU;
+    const std::uint32_t max_logs = options_.logging.max_warning_logs_per_source;
+    std::uint32_t& logged_count = warning_logs_by_message_[input_truncation_source];
+    if (max_logs != 0U && logged_count >= max_logs) {
+        return;
+    }
+    ++logged_count;
+    if (logger_ != nullptr && logger_->should_log(spdlog::level::warn)) {
+        logger_->warn(
+            "event=input_packet_truncated client={} predicted_frame={} mtu_bytes={} input_frames_per_packet={} "
+            "packets_truncated={} frames_truncated={}",
+            client_id_,
+            clock_.predicted_frame(),
+            options_.network.mtu_bytes,
+            options_.network.input_frames_per_packet,
+            input_->truncated_packets(),
+            input_->truncated_frames());
     }
 }
 

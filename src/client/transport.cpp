@@ -117,6 +117,7 @@ void ReplicationClient::drain_input_packets_into(std::vector<ashiato::BitBuffer>
     if (session_transport_->connection_state != ReplicationClientConnectionState::Ready || !clock_.bootstrapped()) {
         return;
     }
+    const std::uint64_t truncated_packets_before = input_->truncated_packets();
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
 #ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     client_detail::ClientInputPacketTrace trace;
@@ -151,6 +152,7 @@ void ReplicationClient::drain_input_packets_into(std::vector<ashiato::BitBuffer>
         packets,
         nullptr);
 #endif
+    report_input_truncation(truncated_packets_before);
 }
 
 std::size_t ReplicationClient::pending_ack_count() const noexcept {

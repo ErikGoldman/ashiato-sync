@@ -225,24 +225,35 @@ bool ClientInputBuffer::drain_packet(
         return false;
     }
 
-    SyncFrame first_input_frame = 0;
-    const InputFrameSlot* first_input = nullptr;
-    const std::uint8_t* first_input_bytes = nullptr;
-    if (!frames_.empty()) {
-        for (SyncFrame frame = transmit_floor + 1U; frame <= last_recorded_frame_; ++frame) {
-            const std::size_t slot = frames_.slot_for(frame);
-            const InputFrameSlot& input = frames_.metadata(slot);
-            if (input.valid && input.frame == frame && frames_.payload_stride() == ops_.serialization.quantized_size) {
-                first_input_frame = frame;
-                first_input = &input;
-                first_input_bytes = frame_bytes(slot);
+    // NEWEST FIRST. The frames the server may still want are transmit_floor + 1 .. last_recorded_frame_, and that
+    // window is the whole round trip: a frame stays in it until an acknowledgement a round trip old says it arrived.
+    // A packet carries the newest max_frames_per_packet_ of them, as one contiguous run ending at the newest, so what
+    // a packet costs does not grow with latency and no cap can leave the newest frame on the client. It used to carry
+    // the OLDEST frames and stop at the MTU or the input count, and past a round trip of about 30 frames the server
+    // simulated every frame on input it had already used (cockpit, 2026-09-16: 600 of 600 frames starved at a
+    // 16-tick link). An older frame left out is either already on the server or was lost in more packets in a row
+    // than a packet holds frames; the server takes a first frame that is not acked + 1 as a full frame, and gaps.
+    SyncFrame window_first = 0;
+    if (!frames_.empty() && frames_.payload_stride() == ops_.serialization.quantized_size) {
+        const SyncFrame cap = std::min<SyncFrame>(max_frames_per_packet_, protocol::max_input_count);
+        const SyncFrame oldest = last_recorded_frame_ - transmit_floor > cap
+            ? last_recorded_frame_ - cap + 1U
+            : transmit_floor + 1U;
+        for (SyncFrame frame = last_recorded_frame_; frame >= oldest; --frame) {
+            const InputFrameSlot& input = frames_.metadata(frames_.slot_for(frame));
+            if (!input.valid || input.frame != frame) {
                 break;
             }
+            window_first = frame;
         }
     }
+    const SyncFrame wanted_frames = window_first == 0U ? 0U : last_recorded_frame_ - window_first + 1U;
     const bool baseline_valid = acked_frame_ == 0U || has_acked_baseline_;
-    const bool first_input_full = first_input != nullptr &&
-        (history_discontinuous_ || first_input_frame != acked_frame_ + 1U || !baseline_valid);
+    const auto starts_full = [this, baseline_valid](SyncFrame frame) {
+        return history_discontinuous_ || frame != acked_frame_ + 1U || !baseline_valid;
+    };
+    SyncFrame first_input_frame = window_first;
+    bool first_input_full = first_input_frame != 0U && starts_full(first_input_frame);
 
     ashiato::BitBuffer packet;
     packet.reserve_bytes(mtu_bytes);
@@ -277,15 +288,19 @@ bool ClientInputBuffer::drain_packet(
     }
 
     std::size_t reserved_first_input_bits = 0;
-    if (first_input != nullptr) {
+    if (first_input_frame != 0U) {
         ashiato::BitBuffer first_input_payload;
         const std::uint8_t* previous = first_input_full || acked_baseline_.empty()
             ? nullptr
             : acked_baseline_.data();
         ashiato::ComponentSerializationContext serialization_context;
-        serialization_context.currentFrame = first_input->frame;
+        serialization_context.currentFrame = first_input_frame;
         serialization_context.previousFrame = previous != nullptr ? acked_frame_ : 0U;
-        ops_.serialization.serialize(previous, first_input_bytes, first_input_payload, serialization_context);
+        ops_.serialization.serialize(
+            previous,
+            frame_bytes(frames_.slot_for(first_input_frame)),
+            first_input_payload,
+            serialization_context);
         reserved_first_input_bits = first_input_payload.bit_size();
     }
 
@@ -315,74 +330,98 @@ bool ClientInputBuffer::drain_packet(
     }
     packet.overwrite_unsigned_bits(ack_count_offset, ack_count, protocol::ack_count_bits);
 
-    {
-        ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "input_header");
-        ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, packet, acked_frame_, 32U, "acked_frame");
-        {
-            ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "first_input_frame");
-            serialization::serialize_varint2_raw(
-                packet,
-                !first_input_full,
-                0U,
-                0U,
-                first_input_frame,
-                32U);
-        }
-    }
-
+    // WHEN THE MTU CUTS THE RUN SHORT, THE OLDEST FRAMES GO. The frames are written oldest to newest because each is
+    // encoded against the one before it, so a run that does not fit is written again starting as many frames later
+    // as were left off the end, until the newest frame is in. Only that rare packet serializes anything twice.
+    const std::size_t input_section_offset = packet.bit_size();
     std::size_t input_count_offset = 0;
-    {
-        ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "input_count");
-        input_count_offset = packet.bit_size();
-        ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, packet, 0, protocol::input_count_bits, "input_count");
-    }
-
     std::uint16_t input_count = 0;
     SyncFrame last_input_frame = 0;
-    const std::uint8_t* previous = first_input_full || acked_baseline_.empty()
-        ? nullptr
-        : acked_baseline_.data();
-    if (first_input_frame != 0U) {
-        for (SyncFrame frame = first_input_frame; frame <= last_recorded_frame_; ++frame) {
-            if (frames_.empty()) {
-                break;
-            }
-            const std::size_t slot = frames_.slot_for(frame);
-            const InputFrameSlot& input = frames_.metadata(slot);
-            if (!input.valid || input.frame != frame || frames_.payload_stride() != ops_.serialization.quantized_size) {
-                break;
-            }
-
-            const std::uint8_t* input_bytes = frame_bytes(slot);
-            const std::size_t rollback_bits = packet.bit_size();
-#ifdef ASHIATO_SYNC_ENABLE_TRACING
-            ashiato::ComponentSerializationContext serialization_context{nullptr, serialization_capture.payload_capture()};
-            serialization_context.currentFrame = frame;
-            serialization_context.previousFrame = previous != nullptr ? frame - 1U : 0U;
+    for (;;) {
+        {
+            ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "input_header");
+            ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, packet, acked_frame_, 32U, "acked_frame");
             {
-                ScopedSerializationTraceScope input_frame_scope(&serialization_capture, "input_frame");
-                ops_.serialization.serialize(previous, input_bytes, packet, serialization_context);
-            }
-#else
-            ashiato::ComponentSerializationContext serialization_context{nullptr};
-            serialization_context.currentFrame = frame;
-            serialization_context.previousFrame = previous != nullptr ? frame - 1U : 0U;
-            ops_.serialization.serialize(previous, input_bytes, packet, serialization_context);
-#endif
-            if (protocol::bytes_for_bits(packet.bit_size()) > mtu_bytes) {
-                packet.truncate_bits(rollback_bits);
-#ifdef ASHIATO_SYNC_ENABLE_TRACING
-                serialization_capture.truncate_to_bits(rollback_bits);
-#endif
-                break;
-            }
-            previous = input_bytes;
-            last_input_frame = frame;
-            ++input_count;
-            if (input_count == protocol::max_input_count) {
-                break;
+                ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "first_input_frame");
+                serialization::serialize_varint2_raw(
+                    packet,
+                    !first_input_full,
+                    0U,
+                    0U,
+                    first_input_frame,
+                    32U);
             }
         }
+
+        {
+            ASHIATO_SYNC_TRACE_SCOPE_WITH_CONTEXT(serialization_capture, "input_count");
+            input_count_offset = packet.bit_size();
+            ASHIATO_SERIALIZE_TRACE_WITH_CONTEXT(serialization_capture, packet, 0, protocol::input_count_bits, "input_count");
+        }
+
+        input_count = 0;
+        last_input_frame = 0;
+        const std::uint8_t* previous = first_input_full || acked_baseline_.empty()
+            ? nullptr
+            : acked_baseline_.data();
+        if (first_input_frame != 0U) {
+            for (SyncFrame frame = first_input_frame; frame <= last_recorded_frame_; ++frame) {
+                if (frames_.empty()) {
+                    break;
+                }
+                const std::size_t slot = frames_.slot_for(frame);
+                const InputFrameSlot& input = frames_.metadata(slot);
+                if (!input.valid || input.frame != frame || frames_.payload_stride() != ops_.serialization.quantized_size) {
+                    break;
+                }
+
+                const std::uint8_t* input_bytes = frame_bytes(slot);
+                const std::size_t rollback_bits = packet.bit_size();
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+                ashiato::ComponentSerializationContext serialization_context{nullptr, serialization_capture.payload_capture()};
+                serialization_context.currentFrame = frame;
+                serialization_context.previousFrame = previous != nullptr ? frame - 1U : 0U;
+                {
+                    ScopedSerializationTraceScope input_frame_scope(&serialization_capture, "input_frame");
+                    ops_.serialization.serialize(previous, input_bytes, packet, serialization_context);
+                }
+#else
+                ashiato::ComponentSerializationContext serialization_context{nullptr};
+                serialization_context.currentFrame = frame;
+                serialization_context.previousFrame = previous != nullptr ? frame - 1U : 0U;
+                ops_.serialization.serialize(previous, input_bytes, packet, serialization_context);
+#endif
+                if (protocol::bytes_for_bits(packet.bit_size()) > mtu_bytes) {
+                    packet.truncate_bits(rollback_bits);
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+                    serialization_capture.truncate_to_bits(rollback_bits);
+#endif
+                    break;
+                }
+                previous = input_bytes;
+                last_input_frame = frame;
+                ++input_count;
+                if (input_count == protocol::max_input_count) {
+                    break;
+                }
+            }
+        }
+        if (input_count == 0U || last_input_frame >= last_recorded_frame_) {
+            break;
+        }
+        first_input_frame += last_recorded_frame_ - last_input_frame;
+        first_input_full = starts_full(first_input_frame);
+        packet.truncate_bits(input_section_offset);
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+        serialization_capture.truncate_to_bits(input_section_offset);
+#endif
+    }
+
+    // COUNTED, because a cut here is silent on the wire and costs the server stale input: only the MTU or the input
+    // count cutting below the frames this packet meant to carry. Frames max_frames_per_packet_ leaves out are not.
+    if (input_count < wanted_frames) {
+        ++truncated_packets_;
+        truncated_frames_ += wanted_frames - input_count;
     }
 
     if (ack_count == 0U && input_count == 0U) {

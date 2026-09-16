@@ -35,7 +35,159 @@ ashiato::sync::SyncComponentOps byte_input_component_ops() {
     return ops;
 }
 
+// Four hundred bits a frame: wide enough that a small MTU, not the frame cap, decides how many fit.
+ashiato::sync::SyncComponentOps wide_input_component_ops() {
+    ashiato::sync::SyncComponentOps ops = byte_input_component_ops();
+    ops.serialization.serialize = [](
+        const std::uint8_t*,
+        const std::uint8_t* current,
+        ashiato::BitBuffer& out,
+        ashiato::ComponentSerializationContext&) {
+        for (int index = 0; index < 50; ++index) {
+            out.write_bits(current[0], 8U);
+        }
+    };
+    return ops;
+}
+
+// Records frames 1..last into a fresh buffer with nothing acknowledged, so every one of them is unacknowledged.
+void record_unacknowledged_frames(
+    ashiato::sync::client_detail::ClientInputBuffer& buffer,
+    ashiato::Registry& registry,
+    const ashiato::sync::SyncSettings& settings,
+    ashiato::sync::SyncFrame last) {
+    for (ashiato::sync::SyncFrame frame = 1U; frame <= last; ++frame) {
+        std::uint8_t input = static_cast<std::uint8_t>(frame);
+        REQUIRE(buffer.set_latest(registry, settings, settings.input_component, &input));
+        REQUIRE(buffer.record_frame(settings, 64U, frame, nullptr));
+    }
+}
+
+bool is_input_packet(ashiato::BitBuffer packet) {
+    return static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits)) ==
+        ashiato::sync::protocol::client_input_message;
+}
+
 }  // namespace
+
+// The input window is every frame the server has not acknowledged, which is the whole round trip. It was sent OLDEST
+// first and cut at the MTU or the input count, so past a round trip of about 30 frames the newest input never left the
+// client and the server simulated every frame on stale input (cockpit, 2026-09-16).
+TEST_CASE("client input packet carries the newest frames when the unacknowledged window is longer than a packet may hold") {
+    ashiato::Registry registry;
+    ashiato::sync::SyncSettings settings;
+    settings.input_component = ashiato::Entity{11};
+    settings.component_ops.emplace(settings.input_component.value, byte_input_component_ops());
+
+    ashiato::sync::client_detail::ClientInputBuffer buffer;
+    record_unacknowledged_frames(buffer, registry, settings, 40U);
+
+    std::vector<std::uint32_t> pending_acks;
+    std::vector<ashiato::BitBuffer> packets;
+    REQUIRE(buffer.drain_packet(1200U, ashiato::sync::protocol::server_packet_id_bits, pending_acks, packets, nullptr));
+    REQUIRE(packets.size() == 1);
+    const ClientInputPacket input = read_client_input_header(packets[0]);
+    CHECK(input.input_count == 8U);
+    CHECK(input.first_input_frame == 33U);
+    CHECK(input.first_input_frame + input.input_count - 1U == 40U);
+    CHECK(input.first_input_full);
+    CHECK(buffer.truncated_packets() == 0U);
+    CHECK(buffer.truncated_frames() == 0U);
+}
+
+TEST_CASE("client input packet the MTU cuts short still carries the newest frame, and the cut is counted") {
+    ashiato::Registry registry;
+    ashiato::sync::SyncSettings settings;
+    settings.input_component = ashiato::Entity{11};
+    settings.component_ops.emplace(settings.input_component.value, wide_input_component_ops());
+
+    ashiato::sync::client_detail::ClientInputBuffer buffer;
+    record_unacknowledged_frames(buffer, registry, settings, 40U);
+
+    // 200 bytes: 78 bits of header, then three 400-bit frames fit and a fourth does not.
+    std::vector<std::uint32_t> pending_acks;
+    std::vector<ashiato::BitBuffer> packets;
+    REQUIRE(buffer.drain_packet(200U, ashiato::sync::protocol::server_packet_id_bits, pending_acks, packets, nullptr));
+    REQUIRE(packets.size() == 1);
+    CHECK(ashiato::sync::protocol::bytes_for_bits(packets[0].bit_size()) <= 200U);
+    const ClientInputPacket input = read_client_input_header(packets[0]);
+    CHECK(input.input_count == 3U);
+    CHECK(input.first_input_frame + input.input_count - 1U == 40U);
+    CHECK(buffer.truncated_packets() == 1U);
+    CHECK(buffer.truncated_frames() == 5U);
+}
+
+TEST_CASE("client input packet holding every unacknowledged frame under the frame cap is not counted as cut") {
+    ashiato::Registry registry;
+    ashiato::sync::SyncSettings settings;
+    settings.input_component = ashiato::Entity{11};
+    settings.component_ops.emplace(settings.input_component.value, byte_input_component_ops());
+
+    ashiato::sync::client_detail::ClientInputBuffer buffer;
+    buffer.set_max_frames_per_packet(4U);
+    record_unacknowledged_frames(buffer, registry, settings, 3U);
+
+    std::vector<std::uint32_t> pending_acks;
+    std::vector<ashiato::BitBuffer> packets;
+    REQUIRE(buffer.drain_packet(1200U, ashiato::sync::protocol::server_packet_id_bits, pending_acks, packets, nullptr));
+    REQUIRE(packets.size() == 1);
+    const ClientInputPacket input = read_client_input_header(packets[0]);
+    CHECK(input.first_input_frame == 1U);
+    CHECK(input.input_count == 3U);
+    CHECK(buffer.truncated_packets() == 0U);
+}
+
+TEST_CASE("replication client input_frames_per_packet bounds the frames one input packet sends") {
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = ashiato_sync_tests::define_position_archetype(registry);
+    REQUIRE(archetype.value == 0);
+    ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+    REQUIRE(ashiato::sync::set_client_input_component<NetworkedPosition>(registry));
+
+    ashiato::sync::ReplicationClientOptions options;
+    options.network.input_frames_per_packet = 4U;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    for (int tick = 0; tick < 12; ++tick) {
+        REQUIRE(client.set_input(registry, NetworkedPosition{static_cast<float>(tick), 4.0f}));
+        REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    }
+
+    const std::vector<ashiato::BitBuffer> packets = client.drain_packets();
+    auto input_packet = std::find_if(packets.begin(), packets.end(), is_input_packet);
+    REQUIRE(input_packet != packets.end());
+    const ClientInputPacket input = read_client_input_header(*input_packet);
+    CHECK(input.input_count == 4U);
+    CHECK(input.first_input_frame + input.input_count - 1U == client.predicted_frame());
+    CHECK(client.observability_stats().input_packets_truncated == 0U);
+}
+
+TEST_CASE("replication client counts an input packet the MTU cuts short") {
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = ashiato_sync_tests::define_position_archetype(registry);
+    REQUIRE(archetype.value == 0);
+    ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+    REQUIRE(ashiato::sync::set_client_input_component<NetworkedPosition>(registry));
+
+    ashiato::sync::ReplicationClientOptions options;
+    options.network.mtu_bytes = 20U;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    for (int tick = 0; tick < 12; ++tick) {
+        REQUIRE(client.set_input(registry, NetworkedPosition{static_cast<float>(tick), 4.0f}));
+        REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    }
+
+    const std::vector<ashiato::BitBuffer> packets = client.drain_packets();
+    auto input_packet = std::find_if(packets.begin(), packets.end(), is_input_packet);
+    REQUIRE(input_packet != packets.end());
+    const ClientInputPacket input = read_client_input_header(*input_packet);
+    REQUIRE(input.input_count >= 1U);
+    CHECK(input.input_count < 8U);
+    CHECK(input.first_input_frame + input.input_count - 1U == client.predicted_frame());
+    CHECK(client.observability_stats().input_packets_truncated == 1U);
+    CHECK(client.observability_stats().input_frames_truncated == 8U - input.input_count);
+}
 
 TEST_CASE("client input records trace samples for acknowledged frames") {
     ashiato::Registry registry;
@@ -180,7 +332,10 @@ TEST_CASE("replication client acknowledges input using server input ack frame") 
     ashiato_sync_tests::configure_test_client_registry(registry, 1);
     REQUIRE(ashiato::sync::set_client_input_component<NetworkedPosition>(registry));
 
-    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, {}));
+    // Every unacknowledged frame in one packet, so the first is acked + 1 and goes relative to the acked baseline.
+    ashiato::sync::ReplicationClientOptions options;
+    options.network.input_frames_per_packet = ashiato::sync::protocol::max_input_count;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
     REQUIRE(client.set_input(registry, NetworkedPosition{3.0f, 4.0f}));
     for (int tick = 0; tick < 6; ++tick) {
         REQUIRE(client.tick(registry, client.fixed_dt_seconds()));

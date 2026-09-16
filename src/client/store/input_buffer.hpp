@@ -75,6 +75,19 @@ public:
         return acked_frame_;
     }
 
+    void set_max_frames_per_packet(SyncFrame frames) noexcept {
+        max_frames_per_packet_ = frames == 0U ? 1U : frames;
+    }
+    SyncFrame max_frames_per_packet() const noexcept {
+        return max_frames_per_packet_;
+    }
+    std::uint64_t truncated_packets() const noexcept {
+        return truncated_packets_;
+    }
+    std::uint64_t truncated_frames() const noexcept {
+        return truncated_frames_;
+    }
+
 private:
     bool ready_for(const SyncSettings& settings) const noexcept;
     void apply_quantized_to_owned_entities(
@@ -98,6 +111,9 @@ private:
     SyncFrame last_recorded_frame_ = 0;
     SyncFrame acked_frame_ = 0;
     SyncFrame retired_transmit_frame_ = 0;
+    SyncFrame max_frames_per_packet_ = 8;
+    std::uint64_t truncated_packets_ = 0;
+    std::uint64_t truncated_frames_ = 0;
     bool has_latest_ = false;
     bool has_ops_ = false;
     bool has_acked_baseline_ = true;
