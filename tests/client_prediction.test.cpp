@@ -801,6 +801,118 @@ TEST_CASE("predicted client keeps locally predicted cues replayed during resimul
     REQUIRE(registry.get<CuePlayback>(local).rollbacks == 0);
 }
 
+TEST_CASE("predicted client keeps a predicted cue older than the resimulation that follows it") {
+    // A cue predicted at frame 2, then a rollback that begins at frame 3: the replay runs frame 4 and never frame 2, so
+    // it cannot emit the cue again, and not emitting it is no evidence that it did not happen. Whether it did is the
+    // server's frame 2 to say. Found by reading, in the cockpit game (lane/weapons, 2026-09-16), while chasing a shell
+    // withdrawn for a different reason (the server acting on its trigger late); see the patch header.
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    registry.register_component<CuePlayback>("CuePlayback");
+    ashiato::sync::register_sync_cue<TestCue>(registry);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    options.prediction.rollback_policy = ashiato::sync::ReplicationRollbackPolicy::All;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    bool emitted = false;
+    client.simulation_job<
+        PredictedPosition,
+        ashiato::sync::SyncSettings,
+        ashiato::sync::FrameInfo,
+        ashiato::sync::CueDispatcher>(registry, 0).each(
+        [&](ashiato::Entity entity,
+            PredictedPosition& position,
+            ashiato::sync::SyncSettings& settings,
+            ashiato::sync::FrameInfo& frame,
+            ashiato::sync::CueDispatcher& cues) {
+            position.x += 1.0f;
+            if (frame.frame == 2U && !emitted) {
+                REQUIRE(cues.emit(settings, frame, entity, TestCue{9}, 1.0f));
+                emitted = true;
+            }
+        });
+
+    const ashiato::Entity server_entity = registry.create();
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, server_entity, PredictedPosition{0.0f, 0.0f})));
+    const ashiato::Entity local = client.local_entity(test_client_entity_network_id(1, server_entity));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(registry.get<CuePlayback>(local).plays == 1);
+    REQUIRE(registry.get<CuePlayback>(local).last_frame == 2U);
+
+    REQUIRE(client.receive(registry, make_predicted_position_packet(3, server_entity, PredictedPosition{10.0f, 0.0f})));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(registry.get<PredictedPosition>(local).x == 12.0f);
+    REQUIRE(registry.get<CuePlayback>(local).rollbacks == 0);
+    REQUIRE(registry.get<CuePlayback>(local).plays == 1);
+}
+
+TEST_CASE("predicted client keeps a predicted cue on an entity the resimulation did not touch") {
+    // ONLY_AFFECTED: the second entity is rolled back and replayed, the first is not, so the first's predicted cue is
+    // never asked for again -- and must not be withdrawn for not being emitted by a replay that did not run it.
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    registry.register_component<CuePlayback>("CuePlayback");
+    ashiato::sync::register_sync_cue<TestCue>(registry);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    options.prediction.rollback_policy = ashiato::sync::ReplicationRollbackPolicy::OnlyAffected;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    ashiato::Entity cue_owner{};
+    bool emitted = false;
+    client.simulation_job<
+        PredictedPosition,
+        ashiato::sync::SyncSettings,
+        ashiato::sync::FrameInfo,
+        ashiato::sync::CueDispatcher>(registry, 0).each(
+        [&](ashiato::Entity entity,
+            PredictedPosition& position,
+            ashiato::sync::SyncSettings& settings,
+            ashiato::sync::FrameInfo& frame,
+            ashiato::sync::CueDispatcher& cues) {
+            position.x += 1.0f;
+            if (entity == cue_owner && frame.frame == 3U && !emitted) {
+                REQUIRE(cues.emit(settings, frame, entity, TestCue{4}, 1.0f));
+                emitted = true;
+            }
+        });
+
+    const ashiato::Entity first_server = registry.create();
+    const ashiato::Entity second_server = registry.create();
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, first_server, PredictedPosition{0.0f, 0.0f}, 1)));
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, second_server, PredictedPosition{0.0f, 0.0f}, 2)));
+    cue_owner = client.local_entity(test_client_entity_network_id(1, first_server));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(registry.get<CuePlayback>(cue_owner).plays == 1);
+
+    // Frame 2: the first entity as predicted, the second not.
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, first_server, PredictedPosition{1.0f, 0.0f}, 3)));
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, second_server, PredictedPosition{5.0f, 0.0f}, 4)));
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(registry.get<PredictedPosition>(client.local_entity(test_client_entity_network_id(1, second_server))).x == 8.0f);
+    REQUIRE(registry.get<CuePlayback>(cue_owner).rollbacks == 0);
+    REQUIRE(registry.get<CuePlayback>(cue_owner).plays == 1);
+}
+
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
 
 TEST_CASE("predicted client traces rollback reason separately from rollback conflict") {

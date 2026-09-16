@@ -413,7 +413,8 @@ bool ClientPredictionRuntime::apply_pending_rollback(
     const SyncSettings& settings = registry.get<SyncSettings>();
     {
         ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientFinishCueResimulation");
-        if (!client.cue_runtime_->finish_resimulation(client, registry, settings)) {
+        if (!client.cue_runtime_->finish_resimulation(
+                client, registry, settings, begin_frame, current_frame, rollback_entity_indices_scratch_)) {
             return false;
         }
     }

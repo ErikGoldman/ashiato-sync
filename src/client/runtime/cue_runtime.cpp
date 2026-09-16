@@ -291,10 +291,26 @@ void ClientCueRuntime::drain_emitted_prediction(
 bool ClientCueRuntime::finish_resimulation(
     ReplicationClient& client,
     ashiato::Registry& registry,
-    const SyncSettings& settings) {
+    const SyncSettings& settings,
+    SyncFrame begin_frame,
+    SyncFrame current_frame,
+    const std::vector<std::uint32_t>& resimulated_entity_indices) {
     bool all_valid = true;
     for (auto cue = store_.played.begin(); cue != store_.played.end();) {
         if (cue->confirmed || cue->seen_resim_generation == store_.resim_generation) {
+            ++cue;
+            continue;
+        }
+        // ONLY A CUE THE REPLAY COULD HAVE EMITTED AGAIN IS TAKEN BACK FOR NOT BEING EMITTED: one on an entity that was
+        // resimulated, at a frame the replay ran (begin_frame + 1 .. current_frame). A cue at or before begin_frame, or
+        // on an entity left out of the replay, was never asked, and whether it happened is the server's frame to say --
+        // reconcile_authoritative_predicted confirms it or rolls it back ("server_mismatch") when that frame arrives.
+        const bool replayed_frame = cue->frame > begin_frame && cue->frame <= current_frame;
+        const bool replayed_entity = std::find(
+            resimulated_entity_indices.begin(),
+            resimulated_entity_indices.end(),
+            cue->entity_index) != resimulated_entity_indices.end();
+        if (!replayed_frame || !replayed_entity) {
             ++cue;
             continue;
         }
