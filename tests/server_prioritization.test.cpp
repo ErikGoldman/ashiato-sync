@@ -359,6 +359,73 @@ TEST_CASE("entity replication decider component mask transitions preserve baseli
     }
 }
 
+TEST_CASE("entity replication decider component masks hold between decision refreshes") {
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const ashiato::Entity health_component = ashiato::sync::register_sync_component<Health>(registry, "Health");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
+        registry,
+        "HiddenHealthActor",
+        {
+            {position_component, ashiato::sync::ReplicationAudience::All},
+            {health_component, ashiato::sync::ReplicationAudience::All},
+        });
+    const ashiato::Entity entity = registry.create();
+    REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
+    REQUIRE(registry.add<Health>(entity, Health{25}) != nullptr);
+    REQUIRE(start_sync(registry, entity, archetype));
+
+    std::size_t decision_calls = 0;
+    std::vector<ashiato::BitBuffer> payloads;
+    ashiato::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 1024;
+    options.entity_replication_decision_interval_frames = 8;
+    options.entity_replication_decider = [&](
+        ashiato::sync::ClientId,
+        ashiato::sync::EntityReplicationDecisionContext) {
+        ++decision_calls;
+        ashiato::sync::EntityReplicationDecision decision;
+        decision.priority = 1.0f;
+        decision.component_mask = std::uint64_t{1} << 0U;  // position only; health is never this client's
+        return decision;
+    };
+    options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& payload) {
+        payloads.push_back(payload);
+    };
+
+    ashiato::sync::ReplicationServer server(registry, options);
+    REQUIRE(server.add_client(1));
+    server.tick(registry, server.options().fixed_dt_seconds);
+    REQUIRE(payloads.size() == 1);
+    ServerUpdatePacket update = read_server_update(payloads.back(), 3U);
+    REQUIRE(update.entities.size() == 1);
+    REQUIRE(update.entities[0].components.size() == 1);
+    REQUIRE(update.entities[0].components[0].component_index == 1);
+    REQUIRE(server.acknowledge_entity(1, entity, update.frame));
+
+    // The acknowledged entity leaves the dirty queue. Changing only the hidden component
+    // re-queues it on a tick when its decision bucket is not due, so the cached decision,
+    // mask included, is the one that must apply.
+    registry.write<Health>(entity) = Health{99};
+    payloads.clear();
+    server.tick(registry, server.options().fixed_dt_seconds);
+    REQUIRE(decision_calls == 1);
+
+    std::size_t hidden_components_sent = 0;
+    for (const ashiato::BitBuffer& payload : payloads) {
+        update = read_server_update(payload, 3U);
+        for (const EntityRecord& record : update.entities) {
+            for (const ComponentRecord& component : record.components) {
+                if (component.component_index == 2) {
+                    ++hidden_components_sent;
+                }
+            }
+        }
+    }
+    REQUIRE(hidden_components_sent == 0U);
+}
+
 TEST_CASE("entity replication decider can emit an entity record with an all-zero component mask") {
     ashiato::Registry registry;
     const ashiato::Entity position_component =
