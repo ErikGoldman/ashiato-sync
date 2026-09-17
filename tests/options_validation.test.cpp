@@ -58,6 +58,7 @@ TEST_CASE("replication server rejects invalid option values") {
     require_invalid_server_options([](auto& options) { options.bandwidth.min_bytes_per_second = 0; });
     require_invalid_server_options([](auto& options) { options.bandwidth.initial_bytes_per_second = 0; });
     require_invalid_server_options([](auto& options) { options.bandwidth.max_bytes_per_second = 0; });
+    require_invalid_server_options([](auto& options) { options.max_budget_refusals_per_client_tick = 0; });
     require_invalid_server_options([](auto& options) { options.bandwidth.initial_bytes_per_second = options.bandwidth.min_bytes_per_second - 1U; });
     require_invalid_server_options([](auto& options) { options.bandwidth.max_bytes_per_second = options.bandwidth.initial_bytes_per_second - 1U; });
     require_invalid_server_options([](auto& options) { options.bandwidth.sample_window_frames = 0; });

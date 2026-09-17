@@ -260,6 +260,9 @@ ReplicationServerOptions validate_server_options(ReplicationServerOptions option
     if (!is_power_of_two(options.input_buffer_capacity_frames)) {
         throw std::invalid_argument("input buffer capacity must be a nonzero power of two");
     }
+    if (options.max_budget_refusals_per_client_tick == 0U) {
+        throw std::invalid_argument("maximum budget refusals per client tick must be greater than zero");
+    }
     if (!options.entity_replication_decider) {
         options.entity_replication_decider = [](ClientId, EntityReplicationDecisionContext) {
             EntityReplicationDecision decision;

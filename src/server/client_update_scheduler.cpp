@@ -79,6 +79,8 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
         ? options.bandwidth_limit_bytes_per_tick
         : replication.bandwidth->send_available_bytes();
     std::uint16_t packet_entities = 0;
+    // Number of records this client serialized but could not fit in its remaining bandwidth.
+    std::size_t budget_refusals = 0;
     candidates_.clear();
     candidates_.reserve(replication.dirty_queue.dirty_replicated_indices.size() + replication.destroys.size());
     update_candidates_.clear();
@@ -263,6 +265,10 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
         if (packet_bytes > options.mtu_bytes || charged_bytes > remaining) {
             if (packet_bytes <= options.mtu_bytes) {
                 result.stopped_for_budget = true;
+                ++budget_refusals;
+                if (budget_refusals >= options.max_budget_refusals_per_client_tick) {
+                    break;
+                }
             } else {
                 replication_server.log_entity_update_exceeds_mtu(
                     replication.peer,
