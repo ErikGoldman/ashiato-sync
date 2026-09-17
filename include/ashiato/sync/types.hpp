@@ -73,11 +73,41 @@ struct ReplicationPriorityObject {
     ashiato::Entity entity;
 };
 
+// One client's replication decision for one entity, returned by ReplicationPrioritizerFn.
 struct ReplicationPriorityDecision {
+    // A send-rate weight, not a filter. Each tick an entity has unsent changes for a client,
+    // this value is added to that entity's accumulator for the client. Candidates are tried in
+    // descending accumulator order until the tick's bandwidth and packet budget is spent, and
+    // sending an entity resets its accumulator to 0. A candidate that does not fit is skipped,
+    // not the end of the tick, so a smaller record further down can still use what is left.
+    // Pending destroys are tried before any update, and an entity referenced by another record
+    // or cue serialized for the client is boosted ahead of other candidates until it is sent.
+    //
+    // 0 is the lowest weight, not "never": the entity is still sent from budget left over
+    // after every positive-priority candidate, but it never accumulates, so under sustained
+    // bandwidth starvation it can go unsent indefinitely. Negative values sort below 0.
+    //
+    // NaN is the only value that withholds the entity from this client. It is skipped before
+    // serialization, so it is not written for the client and is not given a network id by the
+    // scheduler (a reference to it from another entity's record still assigns one).
+    //
+    // Defaults to 0.0, unlike the server's built-in prioritizer, which returns 1.0.
     float priority = 0.0f;
+    // Bit i selects component i of the entity's archetype, in definition order. A cleared bit
+    // omits that component from this client's records; the entity itself is still sent, and
+    // the client keeps the last value it received for the omitted component.
     std::uint64_t component_mask = std::numeric_limits<std::uint64_t>::max();
 };
 
+// Called on the server, per client, for an entity that has changes the client has not yet
+// acknowledged. It is not called for an entity whose latest state the client has already
+// acknowledged, so a new decision alone (an entity leaving a client's relevance, or a mask bit
+// reopening) takes effect only when that entity next changes.
+//
+// While changes are unsent, the last decision is cached per client and refreshed every
+// ReplicationServerOptions::prioritizer_interval_frames ticks, with entities spread across
+// those ticks by replicated slot. A cached NaN is refreshed every tick, so a withheld entity
+// with unsent changes is sent as soon as the prioritizer returns a number for it.
 using ReplicationPrioritizerFn = std::function<ReplicationPriorityDecision(ClientId, ReplicationPriorityObject)>;
 
 inline constexpr ClientId invalid_client_id = std::numeric_limits<ClientId>::max();
@@ -843,7 +873,10 @@ struct ReplicationServerOptions {
     double connect_resend_interval_seconds = 0.25;
     double idle_client_timeout_seconds = 0.0;
     std::size_t input_buffer_capacity_frames = 64;
+    // Ticks between prioritizer calls for an entity with unsent changes; 0 calls it every tick.
     SyncFrame prioritizer_interval_frames = 4;
+    // Empty uses a built-in prioritizer that returns priority 1.0 and every component for all
+    // entities and clients. Supplying one replaces it entirely; see ReplicationPriorityDecision.
     ReplicationPrioritizerFn prioritizer;
     ConnectHandlerFn connect_handler;
     TransportFn transport;
