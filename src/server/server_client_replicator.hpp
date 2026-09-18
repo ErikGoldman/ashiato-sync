@@ -41,7 +41,7 @@ struct ClientEntityState {
     };
 
     std::uint32_t baseline = invalid_quantized_frame_id;
-    std::uint32_t baseline_epoch = 0;
+    std::uint32_t baseline_epoch = 0;  // Blocks stale ACKs from restoring invalidated baselines.
     std::uint32_t network_id = 0;
     std::uint32_t network_version = 0;
     float last_priority = std::numeric_limits<float>::quiet_NaN();
