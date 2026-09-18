@@ -234,7 +234,7 @@ TEST_CASE("client and server input serialization contexts carry input frame numb
     std::vector<std::uint32_t> pending_acks;
     std::vector<ashiato::BitBuffer> packets;
     ashiato::sync::client_detail::ClientInputPacketTrace client_trace;
-    REQUIRE(client_buffer.drain_packet(
+    REQUIRE(client_buffer.append_input_packet(
         1200U,
         ashiato::sync::protocol::server_packet_id_bits,
         pending_acks,

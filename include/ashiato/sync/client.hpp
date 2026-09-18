@@ -431,6 +431,10 @@ public:
         std::uint64_t client_errors = 0;
         std::uint64_t client_connects_accepted = 0;
         std::uint64_t client_connects_rejected = 0;
+        // Input packets the MTU cut short of the protocol-sized window of newest unacknowledged frames,
+        // and how many frames were cut.
+        std::uint64_t input_packets_truncated = 0;
+        std::uint64_t input_frames_truncated = 0;
     };
 
     static constexpr std::size_t buffered_frame_capacity = 64;
@@ -732,6 +736,7 @@ private:
     void drain_ping_packets(std::vector<ashiato::BitBuffer>& packets);
     void drain_ack_packets_into(std::vector<ashiato::BitBuffer>& packets);
     void drain_input_packets_into(std::vector<ashiato::BitBuffer>& packets);
+    void report_input_truncation(std::uint64_t truncated_packets_before);
     void process_inbound_packets(ashiato::Registry& registry);
     void send_pending_packets();
     void log_info(const char* event, const std::string& fields) const;
