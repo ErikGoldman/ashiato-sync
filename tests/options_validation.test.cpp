@@ -82,7 +82,7 @@ TEST_CASE("replication server rejects invalid option values") {
 
     ashiato::sync::ReplicationServerOptions valid;
     valid.idle_client_timeout_seconds = 0.0;
-    valid.prioritizer_interval_frames = 0;
+    valid.entity_replication_decision_interval_frames = 0;
     ashiato::Registry registry;
     REQUIRE_NOTHROW(ashiato::sync::ReplicationServer(registry, valid));
 }

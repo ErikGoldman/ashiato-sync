@@ -914,16 +914,16 @@ inline void validate_config(const StressConfig& config) {
     }
 }
 
-inline ReplicationPrioritizerFn make_sphere_prioritizer(ashiato::Registry& registry) {
+inline EntityReplicationDecisionFn make_sphere_replication_decider(ashiato::Registry& registry) {
     static constexpr float inner_filter_radius_sq = 0.75f * 0.75f;
     static constexpr float priority_radius_sq = 12.0f * 12.0f;
     static constexpr float priority_scale = 1000.0f;
 
-    return [&registry](ClientId, ReplicationPriorityObject object) {
-        ReplicationPriorityDecision decision;
+    return [&registry](ClientId, EntityReplicationDecisionContext context) {
+        EntityReplicationDecision decision;
         decision.component_mask = std::numeric_limits<std::uint64_t>::max();
 
-        const BallPosition* position = registry.try_get<BallPosition>(object.entity);
+        const BallPosition* position = registry.try_get<BallPosition>(context.entity);
         if (position == nullptr) {
             decision.priority = 0.0f;
             return decision;
@@ -1182,7 +1182,7 @@ inline StressReport run_stress(const StressConfig& input_config) {
     server_options.bandwidth_limit_bytes_per_tick = config.bandwidth_limit;
     server_options.mtu_bytes = config.mtu;
     server_options.fixed_dt_seconds = 1.0 / config.tick_rate;
-    server_options.prioritizer = make_sphere_prioritizer(server_registry);
+    server_options.entity_replication_decider = make_sphere_replication_decider(server_registry);
     server_options.transport = [&](ClientId client, const ashiato::BitBuffer& packet) {
         enqueue_packet(
             server_to_clients,

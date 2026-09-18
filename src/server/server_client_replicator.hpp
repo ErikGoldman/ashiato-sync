@@ -272,7 +272,7 @@ struct ServerClientReplicator::UpdateScheduler {
 
 private:
     void cleanup_dirty_queue(ServerClientReplicator& replication);
-    void refresh_priority_if_due(
+    void refresh_replication_decision_if_due(
         ReplicationServer& replication_server,
         ServerClientReplicator& replication,
         std::uint32_t slot,

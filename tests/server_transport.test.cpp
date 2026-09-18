@@ -352,9 +352,11 @@ TEST_CASE("replication server prioritizes pending destroys over creates when ban
     std::vector<ashiato::BitBuffer> payloads;
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 21;
-    options.prioritizer_interval_frames = 1;
-    options.prioritizer = [](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject) {
-        ashiato::sync::ReplicationPriorityDecision decision;
+    options.entity_replication_decision_interval_frames = 1;
+    options.entity_replication_decider = [](
+        ashiato::sync::ClientId,
+        ashiato::sync::EntityReplicationDecisionContext) {
+        ashiato::sync::EntityReplicationDecision decision;
         decision.priority = 1000.0f;
         decision.component_mask = std::numeric_limits<std::uint64_t>::max();
         return decision;
@@ -397,9 +399,11 @@ TEST_CASE("replication server prioritizes pending destroys over creates per clie
     std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> payloads;
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 21;
-    options.prioritizer_interval_frames = 1;
-    options.prioritizer = [](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject) {
-        ashiato::sync::ReplicationPriorityDecision decision;
+    options.entity_replication_decision_interval_frames = 1;
+    options.entity_replication_decider = [](
+        ashiato::sync::ClientId,
+        ashiato::sync::EntityReplicationDecisionContext) {
+        ashiato::sync::EntityReplicationDecision decision;
         decision.priority = 1000.0f;
         decision.component_mask = std::numeric_limits<std::uint64_t>::max();
         return decision;
@@ -925,15 +929,17 @@ TEST_CASE("replication server applies sphere priorities and component LOD masks"
     REQUIRE(start_sync(registry, far, archetype));
 
     std::vector<ashiato::BitBuffer> payloads;
-    std::size_t prioritizer_calls = 0;
+    std::size_t decision_calls = 0;
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.prioritizer_interval_frames = 1;
-    options.prioritizer = [&](ashiato::sync::ClientId client, ashiato::sync::ReplicationPriorityObject object) {
+    options.entity_replication_decision_interval_frames = 1;
+    options.entity_replication_decider = [&](
+        ashiato::sync::ClientId client,
+        ashiato::sync::EntityReplicationDecisionContext context) {
         REQUIRE(client == 1);
-        ++prioritizer_calls;
-        const NetworkedPosition& position = registry.get<NetworkedPosition>(object.entity);
-        ashiato::sync::ReplicationPriorityDecision decision;
+        ++decision_calls;
+        const NetworkedPosition& position = registry.get<NetworkedPosition>(context.entity);
+        ashiato::sync::EntityReplicationDecision decision;
         decision.priority = position.x <= 2.0f ? 100.0f : 0.0f;
         decision.component_mask = std::uint64_t{1} << 0U;
         return decision;
@@ -946,10 +952,10 @@ TEST_CASE("replication server applies sphere priorities and component LOD masks"
     REQUIRE(server.add_client(1));
     server.tick(registry, server.options().fixed_dt_seconds);
 
-    REQUIRE(prioritizer_calls == 2);
+    REQUIRE(decision_calls == 2);
     REQUIRE(payloads.size() == 1);
     const ServerUpdatePacket update = read_server_update(payloads[0], 3U, sizeof(Health) * 8U);
-    REQUIRE(update.entities.size() == 2);
+    REQUIRE(update.entities.size() == 1);
     REQUIRE(update.entities[0].network_id != 0);
     REQUIRE(update.entities[0].components.size() == 1);
     REQUIRE(update.entities[0].components[0].component_index == 1);

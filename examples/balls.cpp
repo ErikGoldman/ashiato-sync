@@ -900,16 +900,18 @@ void update_entity_count_hotkeys(int& target_ball_count) {
     }
 }
 
-ashiato::sync::ReplicationPrioritizerFn make_sphere_prioritizer(ashiato::Registry& registry) {
+ashiato::sync::EntityReplicationDecisionFn make_sphere_replication_decider(ashiato::Registry& registry) {
     static constexpr float inner_filter_radius_sq = 0.75f * 0.75f;
     static constexpr float priority_radius_sq = 12.0f * 12.0f;
     static constexpr float priority_scale = 1000.0f;
 
-    return [&registry](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject object) {
-        ashiato::sync::ReplicationPriorityDecision decision;
+    return [&registry](
+        ashiato::sync::ClientId,
+        ashiato::sync::EntityReplicationDecisionContext context) {
+        ashiato::sync::EntityReplicationDecision decision;
         decision.component_mask = std::numeric_limits<std::uint64_t>::max();
 
-        const BallPosition* position = registry.try_get<BallPosition>(object.entity);
+        const BallPosition* position = registry.try_get<BallPosition>(context.entity);
         if (position == nullptr) {
             decision.priority = 0.0f;
             return decision;
@@ -1299,7 +1301,7 @@ int main(int argc, char** argv) {
         server_options.mtu_bytes * 4U,
         static_cast<std::size_t>(
             std::ceil(static_cast<double>(server_options.bandwidth.max_bytes_per_second) * server_fixed_dt_seconds)));
-    server_options.prioritizer = make_sphere_prioritizer(server_registry);
+    server_options.entity_replication_decider = make_sphere_replication_decider(server_registry);
     server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
         if (client_connected) {
             ++stats.server_packets;

@@ -12,9 +12,18 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 #include <string>
 
 namespace ashiato::sync {
+
+namespace {
+
+bool is_filtered_priority(float priority) noexcept {
+    return !(priority > 0.0f);
+}
+
+}  // namespace
 
 ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::UpdateScheduler::send_client(
     ReplicationServer& replication_server,
@@ -58,8 +67,8 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
             }
             continue;
         }
-        refresh_priority_if_due(replication_server, replication, slot, entry);
-        if (std::isnan(entry.last_priority)) {
+        refresh_replication_decision_if_due(replication_server, replication, slot, entry);
+        if (is_filtered_priority(entry.last_priority)) {
             continue;
         }
         if (std::numeric_limits<float>::max() - entry.priority_accumulator < entry.last_priority) {
@@ -304,19 +313,25 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
     return result;
 }
 
-void server_detail::ServerClientReplicator::UpdateScheduler::refresh_priority_if_due(
+void server_detail::ServerClientReplicator::UpdateScheduler::refresh_replication_decision_if_due(
     ReplicationServer& replication_server,
     ServerClientReplicator& replication,
     std::uint32_t slot,
     ClientDirtyQueue::Entry& entry) {
-    const SyncFrame interval = replication_server.options().prioritizer_interval_frames;
+    const SyncFrame interval = replication_server.options().entity_replication_decision_interval_frames;
     const bool bucket_due = interval == 0U || slot % interval == replication_server.frame() % interval;
-    if (!std::isnan(entry.last_priority) && !bucket_due) {
+    if (!is_filtered_priority(entry.last_priority) && !bucket_due) {
         return;
     }
 
-    const ReplicationPriorityDecision decision =
-        replication_server.options().prioritizer(replication.id, ReplicationPriorityObject{replication_server.replicated_slot_entity(slot)});
+    const EntityReplicationDecision decision = replication_server.options().entity_replication_decider(
+        replication.id,
+        EntityReplicationDecisionContext{replication_server.replicated_slot_entity(slot)});
+#if !defined(NDEBUG) || defined(ASHIATO_SYNC_ENABLE_ASSERT)
+    if (std::isnan(decision.priority)) {
+        throw std::invalid_argument("replication priority must not be NaN");
+    }
+#endif
     entry.last_priority = decision.priority;
     entry.component_mask = decision.component_mask;
     if (ClientEntityState* entity_state = replication.entities.try_get(slot)) {

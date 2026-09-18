@@ -69,16 +69,21 @@ class ReplicationServer;
 class SyncTracer;
 #endif
 
-struct ReplicationPriorityObject {
+struct EntityReplicationDecisionContext {
     ashiato::Entity entity;
 };
 
-struct ReplicationPriorityDecision {
-    float priority = 0.0f;
+// Controls whether and how an entity is replicated to one client.
+struct EntityReplicationDecision {
+    // Positive values are relative send-rate weights. Non-positive values filter the entity.
+    float priority = 1.0f;
+    // Bit i includes component i from the entity's archetype for this client.
     std::uint64_t component_mask = std::numeric_limits<std::uint64_t>::max();
 };
 
-using ReplicationPrioritizerFn = std::function<ReplicationPriorityDecision(ClientId, ReplicationPriorityObject)>;
+// Chooses replication priority and components for one client and changed entity.
+using EntityReplicationDecisionFn =
+    std::function<EntityReplicationDecision(ClientId, EntityReplicationDecisionContext)>;
 
 inline constexpr ClientId invalid_client_id = std::numeric_limits<ClientId>::max();
 inline constexpr PeerId invalid_peer_id = std::numeric_limits<PeerId>::max();
@@ -843,8 +848,10 @@ struct ReplicationServerOptions {
     double connect_resend_interval_seconds = 0.25;
     double idle_client_timeout_seconds = 0.0;
     std::size_t input_buffer_capacity_frames = 64;
-    SyncFrame prioritizer_interval_frames = 4;
-    ReplicationPrioritizerFn prioritizer;
+    // Ticks between decision calls for an entity with unsent changes. 0 checks every tick.
+    SyncFrame entity_replication_decision_interval_frames = 4;
+    // Empty replicates every component of every entity with priority 1.0.
+    EntityReplicationDecisionFn entity_replication_decider;
     ConnectHandlerFn connect_handler;
     TransportFn transport;
     ServerConnectionEventFn connection_event_handler;
