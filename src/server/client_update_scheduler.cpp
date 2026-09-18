@@ -53,6 +53,14 @@ private:
     bool owns_reference_ = true;
 };
 
+void invalidate_client_baseline(
+    ReplicationServer& replication_server,
+    server_detail::ClientEntityState& entity_state) {
+    replication_server.release_server_quantized_frame(entity_state.baseline);
+    entity_state.baseline = server_detail::invalid_quantized_frame_id;
+    ++entity_state.baseline_epoch;
+}
+
 }  // namespace
 
 ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::UpdateScheduler::send_client(
@@ -311,7 +319,10 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
         }
         ClientEntityState& entity_state = replication.entities.at(slot);
         entity_state.reference_priority_boost_pending = false;
-        entity_state.pending.push_back(ClientEntityState::PendingQuantizedFrame{serialized_.quantized_frame, replication_server.frame()});
+        entity_state.pending.push_back(ClientEntityState::PendingQuantizedFrame{
+            serialized_.quantized_frame,
+            replication_server.frame(),
+            entity_state.baseline_epoch});
         // The pending entry now owns the reference retained by the guard.
         frame_reference.transfer_to_pending();
         while (entity_state.pending.size() > server_detail::max_pending_quantized_frames_per_entity) {
@@ -354,11 +365,20 @@ void server_detail::ServerClientReplicator::UpdateScheduler::refresh_replication
         throw std::invalid_argument("replication priority must not be NaN");
     }
 #endif
+    // Entity state outlives rebuilt dirty-queue entries.
+    ClientEntityState* entity_state = replication.entities.try_get(slot);
+    const std::uint64_t previous_mask = entity_state != nullptr
+        ? entity_state->component_mask
+        : entry.component_mask;
     entry.last_priority = decision.priority;
     entry.component_mask = decision.component_mask;
-    if (ClientEntityState* entity_state = replication.entities.try_get(slot)) {
+    if (entity_state != nullptr) {
         entity_state->last_priority = entry.last_priority;
         entity_state->component_mask = entry.component_mask;
+        // Reopened components require a full update to restore a shared baseline.
+        if ((decision.component_mask & ~previous_mask) != 0U) {
+            invalidate_client_baseline(replication_server, *entity_state);
+        }
     }
 }
 

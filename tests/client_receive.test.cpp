@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -1002,6 +1003,87 @@ TEST_CASE("replication client reconciles components when owner visibility change
     REQUIRE(client_one_registry.contains<BandwidthProbe>(client_one_local));
     REQUIRE(client_one_registry.get<BandwidthProbe>(client_one_local).value == 7);
     REQUIRE_FALSE(client_two_registry.contains<BandwidthProbe>(client_two_local));
+}
+
+TEST_CASE("replication client receives current component values when a replication decision mask reopens") {
+    ashiato::Registry server_registry;
+    const ashiato::Entity server_position =
+        ashiato::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
+    const ashiato::Entity server_health =
+        ashiato::sync::register_sync_component<Health>(server_registry, "Health");
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato::sync::define_archetype(
+        server_registry,
+        "MaskedActor",
+        {
+            {server_position, ashiato::sync::ReplicationAudience::All},
+            {server_health, ashiato::sync::ReplicationAudience::All},
+        });
+    const ashiato::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<NetworkedPosition>(server_entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
+    REQUIRE(server_registry.add<Health>(server_entity, Health{25}) != nullptr);
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+    std::uint64_t component_mask = std::numeric_limits<std::uint64_t>::max();
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.entity_replication_decision_interval_frames = 1;
+    server_options.entity_replication_decider = [&](
+        ashiato::sync::ClientId,
+        ashiato::sync::EntityReplicationDecisionContext) {
+        ashiato::sync::EntityReplicationDecision decision;
+        decision.component_mask = component_mask;
+        return decision;
+    };
+    server_options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& packet) {
+        REQUIRE(client == 1);
+        packets.push_back(packet);
+    };
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
+    REQUIRE(server.add_client(1));
+
+    ashiato::Registry client_registry;
+    const ashiato::Entity client_position =
+        ashiato::sync::register_sync_component<NetworkedPosition>(client_registry, "NetworkedPosition");
+    const ashiato::Entity client_health =
+        ashiato::sync::register_sync_component<Health>(client_registry, "Health");
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato::sync::define_archetype(
+        client_registry,
+        "MaskedActor",
+        {
+            {client_position, ashiato::sync::ReplicationAudience::All},
+            {client_health, ashiato::sync::ReplicationAudience::All},
+        });
+    REQUIRE(client_archetype == server_archetype);
+    configure_test_client_registry(client_registry, 1);
+    ashiato::sync::ReplicationClient client(client_registry, make_test_client_options(client_registry, {}));
+    const auto receive_and_ack_update = [&]() {
+        REQUIRE(packets.size() == 1);
+        REQUIRE(client.receive(client_registry, packets.back()));
+        for (const ashiato::BitBuffer& ack : client.drain_ack_packets()) {
+            REQUIRE(server.process_packet(server_registry, 1, ack));
+        }
+    };
+
+    server.tick(server_registry, server.options().fixed_dt_seconds);
+    receive_and_ack_update();
+
+    const ashiato::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
+    REQUIRE(client_registry.get<Health>(local).value == 25);
+
+    component_mask = std::uint64_t{1} << 0U;
+    server_registry.write<NetworkedPosition>(server_entity) = NetworkedPosition{4.0f, 6.0f};
+    server_registry.write<Health>(server_entity) = Health{75};
+    packets.clear();
+    server.tick(server_registry, server.options().fixed_dt_seconds);
+    receive_and_ack_update();
+    REQUIRE(client_registry.get<Health>(local).value == 25);
+
+    component_mask = std::numeric_limits<std::uint64_t>::max();
+    server_registry.write<NetworkedPosition>(server_entity) = NetworkedPosition{7.0f, 8.0f};
+    packets.clear();
+    server.tick(server_registry, server.options().fixed_dt_seconds);
+    receive_and_ack_update();
+    REQUIRE(client_registry.get<Health>(local).value == 75);
 }
 
 TEST_CASE("replication client applies synced tags and owner-filtered tag visibility") {

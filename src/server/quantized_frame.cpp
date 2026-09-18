@@ -48,6 +48,7 @@ void ReplicationServer::clear_client_entity_state(ClientEntityState& state) {
         release_quantized_frame(pending.quantized_frame);
     }
     state.baseline = invalid_quantized_frame_id;
+    state.baseline_epoch = 0;
     state.pending.clear();
     state.network_id = 0;
     state.network_version = 0;

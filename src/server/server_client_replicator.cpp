@@ -399,17 +399,20 @@ bool server_detail::ServerClientReplicator::acknowledge_entity(
         return false;
     }
 
-    if (entity_state->baseline != acked_quantized_frame) {
-        replication_server.release_server_quantized_frame(entity_state->baseline);
-        entity_state->baseline = acked_quantized_frame;
-        replication_server.retain_server_quantized_frame(entity_state->baseline);
-    }
-    if (replicated_index < dirty_queue.entries.size()) {
-        ClientDirtyQueue::Entry& entry = dirty_queue.entries[replicated_index];
-        entry.baseline_frame = frame;
-        if (entry.baseline_frame >= entry.dirty_frame) {
-            entry.queued = false;
-            entry.priority_accumulator = 0.0f;
+    const bool baseline_eligible = found_pending->baseline_epoch_when_sent == entity_state->baseline_epoch;
+    if (baseline_eligible) {
+        if (entity_state->baseline != acked_quantized_frame) {
+            replication_server.release_server_quantized_frame(entity_state->baseline);
+            entity_state->baseline = acked_quantized_frame;
+            replication_server.retain_server_quantized_frame(entity_state->baseline);
+        }
+        if (replicated_index < dirty_queue.entries.size()) {
+            ClientDirtyQueue::Entry& entry = dirty_queue.entries[replicated_index];
+            entry.baseline_frame = frame;
+            if (entry.baseline_frame >= entry.dirty_frame) {
+                entry.queued = false;
+                entry.priority_accumulator = 0.0f;
+            }
         }
     }
 
