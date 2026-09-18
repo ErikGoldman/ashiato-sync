@@ -158,10 +158,6 @@ ReplicationClientOptions validate_client_options(
     std::size_t buffered_frame_capacity,
     std::size_t prediction_frame_capacity) {
     require_positive_bytes(options.network.mtu_bytes, "MTU bytes must be greater than zero");
-    if (options.network.input_frames_per_packet == 0U ||
-        options.network.input_frames_per_packet > protocol::max_input_count) {
-        throw std::invalid_argument("input frames per packet must be between 1 and the protocol's input count");
-    }
     validate_protocol_descriptor(options.network.protocol);
     validate_client_timing_options(
         options.clock.fixed_dt_seconds,

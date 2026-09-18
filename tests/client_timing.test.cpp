@@ -57,8 +57,6 @@ TEST_CASE("server update lag fast recovery pre-fills future input frames") {
     ashiato::sync::ReplicationClientOptions options;
     options.prediction.input_buffer_capacity_frames = 32;
     options.clock.auto_timing_warmup_samples = 3;
-    // Every pre-filled frame in one packet; by default a packet holds only the newest eight.
-    options.network.input_frames_per_packet = ashiato::sync::protocol::max_input_count;
     ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, options));
     const ashiato::Entity server_entity{42};
     REQUIRE(client.set_input(client_registry, NetworkedPosition{1.0f, 0.0f}));

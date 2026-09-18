@@ -89,10 +89,6 @@ TEST_CASE("replication server rejects invalid option values") {
 
 TEST_CASE("replication client rejects invalid option values") {
     require_invalid_client_options([](auto& options) { options.network.mtu_bytes = 0; });
-    require_invalid_client_options([](auto& options) { options.network.input_frames_per_packet = 0; });
-    require_invalid_client_options([](auto& options) {
-        options.network.input_frames_per_packet = ashiato::sync::protocol::max_input_count + 1U;
-    });
     require_invalid_client_options([](auto& options) { options.network.protocol.max_pending_packet_acks_per_client = 0; });
     require_invalid_client_options([](auto& options) {
         options.network.protocol.max_pending_packet_acks_per_client =

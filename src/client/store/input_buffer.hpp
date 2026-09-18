@@ -53,7 +53,7 @@ public:
     void retire_transmit_frames_through(SyncFrame frame) noexcept;
     void apply_latest_to_owned_entities(ashiato::Registry& registry, const SyncSettings& settings) const;
 
-    bool drain_packet(
+    bool append_input_packet(
         std::size_t mtu_bytes,
         std::size_t packet_id_bits,
         std::vector<std::uint32_t>& pending_acks,
@@ -75,12 +75,6 @@ public:
         return acked_frame_;
     }
 
-    void set_max_frames_per_packet(SyncFrame frames) noexcept {
-        max_frames_per_packet_ = frames == 0U ? 1U : frames;
-    }
-    SyncFrame max_frames_per_packet() const noexcept {
-        return max_frames_per_packet_;
-    }
     std::uint64_t truncated_packets() const noexcept {
         return truncated_packets_;
     }
@@ -89,7 +83,14 @@ public:
     }
 
 private:
+    struct InputFrameRange;
+    struct InputWriteResult;
+    class InputPacketWriter;
+
     bool ready_for(const SyncSettings& settings) const noexcept;
+    InputFrameRange find_newest_contiguous_input_range(SyncFrame transmit_floor) const;
+    bool must_encode_first_frame_in_full(SyncFrame frame) const noexcept;
+    void record_input_truncation(InputFrameRange desired, const InputWriteResult& written) noexcept;
     void apply_quantized_to_owned_entities(
         ashiato::Registry& registry,
         const SyncSettings& settings,
@@ -111,7 +112,6 @@ private:
     SyncFrame last_recorded_frame_ = 0;
     SyncFrame acked_frame_ = 0;
     SyncFrame retired_transmit_frame_ = 0;
-    SyncFrame max_frames_per_packet_ = 8;
     std::uint64_t truncated_packets_ = 0;
     std::uint64_t truncated_frames_ = 0;
     bool has_latest_ = false;

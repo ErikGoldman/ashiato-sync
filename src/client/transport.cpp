@@ -121,7 +121,7 @@ void ReplicationClient::drain_input_packets_into(std::vector<ashiato::BitBuffer>
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
 #ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
     client_detail::ClientInputPacketTrace trace;
-    const bool sent = input_->drain_packet(
+    const bool sent = input_->append_input_packet(
         options_.network.mtu_bytes,
         configured_packet_id_bits(options_),
         ack_queue_->pending(),
@@ -134,7 +134,7 @@ void ReplicationClient::drain_input_packets_into(std::vector<ashiato::BitBuffer>
         trace_outgoing_input_packet(trace.acks, trace.baseline_frame, trace.first_input_frame, trace.last_input_frame);
     }
 #else
-    (void)input_->drain_packet(
+    (void)input_->append_input_packet(
         options_.network.mtu_bytes,
         configured_packet_id_bits(options_),
         ack_queue_->pending(),
@@ -145,7 +145,7 @@ void ReplicationClient::drain_input_packets_into(std::vector<ashiato::BitBuffer>
         clock_.predicted_frame());
 #endif
 #else
-    (void)input_->drain_packet(
+    (void)input_->append_input_packet(
         options_.network.mtu_bytes,
         configured_packet_id_bits(options_),
         ack_queue_->pending(),

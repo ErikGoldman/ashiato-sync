@@ -291,7 +291,6 @@ ReplicationClient::ReplicationClient(
     set_trace_options(options_.trace);
 #endif
     session_transport_->adaptive_ping_active = true;
-    input_->set_max_frames_per_packet(options_.network.input_frames_per_packet);
     if (options_.session.connect_token.empty()) {
         set_connection_state(ReplicationClientConnectionState::Ready, client_id_);
         (void)clock_.maybe_bootstrap_from_first_server_update(0, false, true);
@@ -453,12 +452,11 @@ void ReplicationClient::report_input_truncation(std::uint64_t truncated_packets_
     ++logged_count;
     if (logger_ != nullptr && logger_->should_log(spdlog::level::warn)) {
         logger_->warn(
-            "event=input_packet_truncated client={} predicted_frame={} mtu_bytes={} input_frames_per_packet={} "
-            "packets_truncated={} frames_truncated={}",
+            "event=input_packet_truncated client={} predicted_frame={} mtu_bytes={} packets_truncated={} "
+            "frames_truncated={}",
             client_id_,
             clock_.predicted_frame(),
             options_.network.mtu_bytes,
-            options_.network.input_frames_per_packet,
             input_->truncated_packets(),
             input_->truncated_frames());
     }
