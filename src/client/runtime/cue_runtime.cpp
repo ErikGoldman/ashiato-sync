@@ -313,7 +313,12 @@ bool ClientCueRuntime::finish_resimulation(
     const SyncSettings& settings,
     SyncFrame begin_frame,
     SyncFrame current_frame,
-    const std::vector<std::uint32_t>& sorted_resimulated_entity_indices) {
+    std::vector<std::uint32_t>& resimulated_entity_indices) {
+    // Sort once so each cue can test entity membership with binary search instead of scanning every resimulated entity.
+    if (!store_.played.empty()) {
+        std::sort(resimulated_entity_indices.begin(), resimulated_entity_indices.end());
+    }
+
     bool all_valid = true;
     std::size_t write_index = 0;
     for (std::size_t read_index = 0; read_index < store_.played.size(); ++read_index) {
@@ -323,7 +328,7 @@ bool ClientCueRuntime::finish_resimulation(
                 cue,
                 begin_frame,
                 current_frame,
-                sorted_resimulated_entity_indices);
+                resimulated_entity_indices);
         if (keep) {
             if (write_index != read_index) {
                 store_.played[write_index] = std::move(cue);
