@@ -26,7 +26,7 @@ struct ClientEntityState {
     struct PendingQuantizedFrame {
         std::uint32_t quantized_frame = invalid_quantized_frame_id;
         SyncFrame frame = 0;
-        std::uint32_t baseline_epoch = 0;
+        std::uint32_t baseline_epoch_when_sent = 0;
     };
 
     struct PendingCue {
