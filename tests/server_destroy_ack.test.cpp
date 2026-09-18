@@ -542,3 +542,67 @@ TEST_CASE("replication server keeps a quantized frame a second client refuses fo
     // And the server can still honour client 1's ACK for the frame it really sent.
     REQUIRE(server.acknowledge_entity(1, shared, sent_frame));
 }
+
+TEST_CASE("replication server releases a quantized frame when its update exceeds the MTU") {
+    ashiato::Registry registry;
+    const ashiato::Entity probe_component =
+        ashiato::sync::register_sync_component<BandwidthProbe>(registry, "BandwidthProbe");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
+        registry,
+        "Probed",
+        {{probe_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity entity = registry.create();
+    REQUIRE(registry.add<BandwidthProbe>(entity, BandwidthProbe{1}) != nullptr);
+
+    std::size_t sends = 0;
+    ashiato::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 1024;
+    options.mtu_bytes = 21;
+    options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer&) {
+        ++sends;
+    };
+
+    ashiato::sync::ReplicationServer server(registry, options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(registry, entity, archetype));
+
+    server.tick(registry, server.options().fixed_dt_seconds);
+
+    REQUIRE(sends == 0);
+    REQUIRE(server.retained_quantized_frame_count() == 0);
+    REQUIRE(server.retained_quantized_frame_bytes() == 0);
+}
+
+TEST_CASE("replication server releases the current frame when packet transport throws") {
+    ashiato::Registry registry;
+    const ashiato::Entity probe_component =
+        ashiato::sync::register_sync_component<BandwidthProbe>(registry, "BandwidthProbe");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
+        registry,
+        "Probed",
+        {{probe_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity first = registry.create();
+    const ashiato::Entity second = registry.create();
+    REQUIRE(registry.add<BandwidthProbe>(first, BandwidthProbe{1}) != nullptr);
+    REQUIRE(registry.add<BandwidthProbe>(second, BandwidthProbe{2}) != nullptr);
+
+    ashiato::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 1024;
+    options.mtu_bytes = 22;
+    options.transport = [](ashiato::sync::ClientId, const ashiato::BitBuffer&) {
+        throw std::runtime_error("transport failed");
+    };
+
+    ashiato::sync::ReplicationServer server(registry, options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(registry, first, archetype));
+    REQUIRE(start_sync(registry, second, archetype));
+
+    REQUIRE_THROWS_AS(
+        server.tick(registry, server.options().fixed_dt_seconds),
+        std::runtime_error);
+
+    REQUIRE(server.retained_quantized_frame_count() == 1);
+    REQUIRE(server.acknowledge_entity(1, first, server.frame()));
+    REQUIRE_FALSE(server.acknowledge_entity(1, second, server.frame()));
+}

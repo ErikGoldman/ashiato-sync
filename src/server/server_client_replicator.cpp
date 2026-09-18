@@ -63,6 +63,16 @@ std::size_t server_detail::ServerClientReplicator::EntityStates::size() const no
     return states.size();
 }
 
+server_detail::ClientEntityState&
+server_detail::ServerClientReplicator::EntityStates::at(std::uint32_t slot) {
+    return states.at(slot);
+}
+
+const server_detail::ClientEntityState&
+server_detail::ServerClientReplicator::EntityStates::at(std::uint32_t slot) const {
+    return states.at(slot);
+}
+
 server_detail::ClientEntityState*
 server_detail::ServerClientReplicator::EntityStates::try_get(std::uint32_t slot) noexcept {
     return slot < states.size() ? &states[slot] : nullptr;
