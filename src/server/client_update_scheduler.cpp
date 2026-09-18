@@ -189,7 +189,7 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
         serialized_.payload.clear();
         serialized_.quantized_frame = server_detail::invalid_quantized_frame_id;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
-        serialized_.serialization_events.clear();
+        serialized_.deferred_trace_events.clear();
 #endif
         if (!writer_.serialize_entity(
                 replication_server,
@@ -266,7 +266,7 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
         records_.write_buffer_bits(serialized_.payload);
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
         if (SyncTracer* tracer = replication_server.server_tracer()) {
-            for (const SyncTraceEvent& event : serialized_.serialization_events) {
+            for (const SyncTraceEvent& event : serialized_.deferred_trace_events) {
                 tracer->trace(event);
             }
         }
