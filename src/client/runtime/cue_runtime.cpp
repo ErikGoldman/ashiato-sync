@@ -12,6 +12,23 @@
 #include <algorithm>
 
 namespace ashiato::sync::client_detail {
+namespace {
+
+bool cue_was_touched_in_resimulation(
+    const EntityPlayedCue& cue,
+    SyncFrame begin_frame,
+    SyncFrame current_frame,
+    const std::vector<std::uint32_t>& sorted_resimulated_entity_indices) {
+    if (cue.frame <= begin_frame || cue.frame > current_frame) {
+        return false;
+    }
+    return std::binary_search(
+        sorted_resimulated_entity_indices.begin(),
+        sorted_resimulated_entity_indices.end(),
+        cue.entity_index);
+}
+
+}  // namespace
 
 void ClientCueRuntime::erase_for_entity(std::uint32_t entity_index) {
     store_.erase_for_entity(entity_index);
@@ -294,23 +311,18 @@ bool ClientCueRuntime::finish_resimulation(
     const SyncSettings& settings,
     SyncFrame begin_frame,
     SyncFrame current_frame,
-    const std::vector<std::uint32_t>& resimulated_entity_indices) {
+    const std::vector<std::uint32_t>& sorted_resimulated_entity_indices) {
     bool all_valid = true;
     for (auto cue = store_.played.begin(); cue != store_.played.end();) {
         if (cue->confirmed || cue->seen_resim_generation == store_.resim_generation) {
             ++cue;
             continue;
         }
-        // ONLY A CUE THE REPLAY COULD HAVE EMITTED AGAIN IS TAKEN BACK FOR NOT BEING EMITTED: one on an entity that was
-        // resimulated, at a frame the replay ran (begin_frame + 1 .. current_frame). A cue at or before begin_frame, or
-        // on an entity left out of the replay, was never asked, and whether it happened is the server's frame to say --
-        // reconcile_authoritative_predicted confirms it or rolls it back ("server_mismatch") when that frame arrives.
-        const bool replayed_frame = cue->frame > begin_frame && cue->frame <= current_frame;
-        const bool replayed_entity = std::find(
-            resimulated_entity_indices.begin(),
-            resimulated_entity_indices.end(),
-            cue->entity_index) != resimulated_entity_indices.end();
-        if (!replayed_frame || !replayed_entity) {
+        if (!cue_was_touched_in_resimulation(
+                *cue,
+                begin_frame,
+                current_frame,
+                sorted_resimulated_entity_indices)) {
             ++cue;
             continue;
         }

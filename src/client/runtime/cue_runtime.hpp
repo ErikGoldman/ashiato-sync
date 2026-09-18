@@ -73,7 +73,7 @@ public:
         const SyncSettings& settings,
         SyncFrame begin_frame,
         SyncFrame current_frame,
-        const std::vector<std::uint32_t>& resimulated_entity_indices);
+        const std::vector<std::uint32_t>& sorted_resimulated_entity_indices);
     void play_buffered_for_frame(
         ReplicationClient& client,
         ashiato::Registry& registry,
