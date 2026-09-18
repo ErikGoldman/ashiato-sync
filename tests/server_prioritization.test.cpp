@@ -16,6 +16,73 @@
 
 using namespace ashiato_sync_tests;
 
+TEST_CASE("replication prioritizer filters non-positive priorities") {
+    const auto require_filtered_priority = [](float priority) {
+        ashiato::Registry registry;
+        const ashiato::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+        const ashiato::Entity entity = registry.create();
+        REQUIRE(registry.add<ashiato_sync_tests::Position>(entity, ashiato_sync_tests::Position{}) != nullptr);
+        REQUIRE(start_sync(registry, entity, archetype));
+
+        std::size_t prioritizer_calls = 0;
+        std::vector<ashiato::BitBuffer> payloads;
+        ashiato::sync::ReplicationServerOptions options;
+        options.prioritizer = [&](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject) {
+            ++prioritizer_calls;
+            ashiato::sync::ReplicationPriorityDecision decision;
+            decision.priority = priority;
+            return decision;
+        };
+        options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& payload) {
+            payloads.push_back(payload);
+        };
+
+        ashiato::sync::ReplicationServer server(registry, options);
+        REQUIRE(server.add_client(1));
+        REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
+        REQUIRE(prioritizer_calls == 1);
+        REQUIRE(payloads.empty());
+
+        REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
+        REQUIRE(prioritizer_calls == 2);
+        REQUIRE(payloads.empty());
+
+        priority = 1.0f;
+        REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
+        REQUIRE(prioritizer_calls == 3);
+        REQUIRE(payloads.size() == 1);
+    };
+
+    require_filtered_priority(0.0f);
+    require_filtered_priority(-1.0f);
+}
+
+TEST_CASE("replication prioritizer rejects NaN priority in non-shipping builds") {
+#if !defined(NDEBUG) || defined(ASHIATO_SYNC_ENABLE_ASSERT)
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+    const ashiato::Entity entity = registry.create();
+    REQUIRE(registry.add<ashiato_sync_tests::Position>(entity, ashiato_sync_tests::Position{}) != nullptr);
+    REQUIRE(start_sync(registry, entity, archetype));
+
+    ashiato::sync::ReplicationServerOptions options;
+    options.prioritizer = [](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject) {
+        ashiato::sync::ReplicationPriorityDecision decision;
+        decision.priority = std::numeric_limits<float>::quiet_NaN();
+        return decision;
+    };
+    options.transport = [](ashiato::sync::ClientId, const ashiato::BitBuffer&) {};
+
+    ashiato::sync::ReplicationServer server(registry, options);
+    REQUIRE(server.add_client(1));
+    REQUIRE_THROWS_AS(
+        server.tick(registry, server.options().fixed_dt_seconds),
+        std::invalid_argument);
+#else
+    SUCCEED("NaN priority validation is disabled in shipping builds");
+#endif
+}
+
 TEST_CASE("replication prioritizer refreshes cached decisions by replicated slot bucket") {
     ashiato::Registry registry;
     const ashiato::sync::SyncArchetypeId archetype = define_position_archetype(registry);

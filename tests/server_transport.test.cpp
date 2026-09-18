@@ -949,7 +949,7 @@ TEST_CASE("replication server applies sphere priorities and component LOD masks"
     REQUIRE(prioritizer_calls == 2);
     REQUIRE(payloads.size() == 1);
     const ServerUpdatePacket update = read_server_update(payloads[0], 3U, sizeof(Health) * 8U);
-    REQUIRE(update.entities.size() == 2);
+    REQUIRE(update.entities.size() == 1);
     REQUIRE(update.entities[0].network_id != 0);
     REQUIRE(update.entities[0].components.size() == 1);
     REQUIRE(update.entities[0].components[0].component_index == 1);

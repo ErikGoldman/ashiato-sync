@@ -227,6 +227,49 @@ naturally receive older unsent state first.
 Set `ReplicationServerOptions::max_fixed_steps_per_tick` to cap continuous
 fixed-step catch-up work; `0` keeps the default unlimited behavior.
 
+## Replication Filters and Priorities
+
+By default, the server replicates every component of every changed entity to
+every client with priority `1.0`. Set `ReplicationServerOptions::prioritizer`
+to make that decision per client and entity:
+
+```cpp
+server_options.prioritizer =
+    [&registry](ashiato::sync::ClientId client,
+                ashiato::sync::ReplicationPriorityObject object) {
+        ashiato::sync::ReplicationPriorityDecision decision;
+        const Position* position = registry.try_get<Position>(object.entity);
+
+        if (position == nullptr || !is_relevant(client, *position)) {
+            decision.priority = 0.0f;
+            return decision;
+        }
+
+        decision.priority = priority_for(client, *position);
+        decision.component_mask = components_for(client, object.entity);
+        return decision;
+    };
+```
+
+Return zero or a negative priority to filter an entity from a client. Positive
+values give an entity a larger share of sends when bandwidth is constrained.
+They are relative weights, so a priority of `10.0` receives about ten times the
+scheduling weight of `1.0`, rather than selecting a fixed update rate. `NaN` is
+invalid and throws `std::invalid_argument` in non-shipping builds.
+
+`component_mask` selects which archetype components are sent to that client.
+Bit 0 corresponds to the first component passed to `define_archetype`, bit 1 to
+the second, and so on. Clearing a bit leaves the client's last received value
+for that component unchanged.
+
+The server calls the prioritizer only for entities with unacknowledged changes
+and caches each decision. `prioritizer_interval_frames` controls how often a
+cached decision is refreshed while changes remain unsent; set it to `0` to
+recheck every tick. Filtered entities are rechecked every tick so they can
+become relevant without another component change. Once a client acknowledges
+the latest state, changing external relevance or mask state does not invoke the
+prioritizer until the entity changes again.
+
 ## API Notes
 
 - Every replicated component must explicitly specialize `SyncComponentTraits<T>`
