@@ -485,3 +485,124 @@ TEST_CASE("replication server records bandwidth savings for ACKed delta updates"
         (1U + ashiato::sync::protocol::baseline_frame_delta_bits) + 1U + 9U;
     REQUIRE(payloads.back().byte_size() == ashiato::sync::protocol::bytes_for_bits(expected_delta_bits));
 }
+
+TEST_CASE("replication server keeps a quantized frame a second client refuses for budget") {
+    ashiato::Registry registry;
+    const ashiato::Entity probe_component =
+        ashiato::sync::register_sync_component<BandwidthProbe>(registry, "BandwidthProbe");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
+        registry,
+        "Probed",
+        {{probe_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity shared = registry.create();
+    const ashiato::Entity filler = registry.create();
+    REQUIRE(registry.add<BandwidthProbe>(shared, BandwidthProbe{1}) != nullptr);
+    REQUIRE(registry.add<BandwidthProbe>(filler, BandwidthProbe{2}) != nullptr);
+
+    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> payloads;
+    ashiato::sync::ReplicationServerOptions options;
+    // A budget that carries exactly one entity record per client per tick, and an MTU large
+    // enough that a refused record is refused for budget and never for size.
+    options.bandwidth_limit_bytes_per_tick = 22;
+    options.mtu_bytes = 4096;
+    options.entity_replication_decision_interval_frames = 0;
+    // Client 1 serializes `shared` first and has budget for it. Client 2 spends its budget on
+    // `filler`, so it serializes `shared` second and cannot fit it. Both clients quantize the
+    // same entity on the same frame, so both see the same quantized frame.
+    options.entity_replication_decider = [&](
+        ashiato::sync::ClientId client,
+        ashiato::sync::EntityReplicationDecisionContext context) {
+        ashiato::sync::EntityReplicationDecision decision;
+        const ashiato::Entity wanted_first = client == 1 ? shared : filler;
+        decision.priority = context.entity == wanted_first ? 100.0f : 1.0f;
+        return decision;
+    };
+    options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
+        payloads.push_back({client, payload});
+    };
+
+    ashiato::sync::ReplicationServer server(registry, options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(server.add_client(2));
+    REQUIRE(start_sync(registry, shared, archetype));
+    REQUIRE(start_sync(registry, filler, archetype));
+
+    server.tick(registry, server.options().fixed_dt_seconds);
+
+    REQUIRE(payloads.size() == 2);
+    REQUIRE(payloads[0].first == 1);
+    REQUIRE(payloads[1].first == 2);
+    const ashiato::sync::SyncFrame sent_frame = read_server_update(payloads[0].second).frame;
+    REQUIRE(read_server_update(payloads[0].second).entities.size() == 1);
+    REQUIRE(read_server_update(payloads[1].second).entities.size() == 1);
+
+    // Client 1 holds the quantized frame it was sent; client 2 holds the one it was sent.
+    REQUIRE(server.retained_quantized_frame_count() == 2);
+
+    // And the server can still honour client 1's ACK for the frame it really sent.
+    REQUIRE(server.acknowledge_entity(1, shared, sent_frame));
+}
+
+TEST_CASE("replication server releases a quantized frame when its update exceeds the MTU") {
+    ashiato::Registry registry;
+    const ashiato::Entity probe_component =
+        ashiato::sync::register_sync_component<BandwidthProbe>(registry, "BandwidthProbe");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
+        registry,
+        "Probed",
+        {{probe_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity entity = registry.create();
+    REQUIRE(registry.add<BandwidthProbe>(entity, BandwidthProbe{1}) != nullptr);
+
+    std::size_t sends = 0;
+    ashiato::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 1024;
+    options.mtu_bytes = 21;
+    options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer&) {
+        ++sends;
+    };
+
+    ashiato::sync::ReplicationServer server(registry, options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(registry, entity, archetype));
+
+    server.tick(registry, server.options().fixed_dt_seconds);
+
+    REQUIRE(sends == 0);
+    REQUIRE(server.retained_quantized_frame_count() == 0);
+    REQUIRE(server.retained_quantized_frame_bytes() == 0);
+}
+
+TEST_CASE("replication server releases the current frame when packet transport throws") {
+    ashiato::Registry registry;
+    const ashiato::Entity probe_component =
+        ashiato::sync::register_sync_component<BandwidthProbe>(registry, "BandwidthProbe");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
+        registry,
+        "Probed",
+        {{probe_component, ashiato::sync::ReplicationAudience::All}});
+    const ashiato::Entity first = registry.create();
+    const ashiato::Entity second = registry.create();
+    REQUIRE(registry.add<BandwidthProbe>(first, BandwidthProbe{1}) != nullptr);
+    REQUIRE(registry.add<BandwidthProbe>(second, BandwidthProbe{2}) != nullptr);
+
+    ashiato::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 1024;
+    options.mtu_bytes = 22;
+    options.transport = [](ashiato::sync::ClientId, const ashiato::BitBuffer&) {
+        throw std::runtime_error("transport failed");
+    };
+
+    ashiato::sync::ReplicationServer server(registry, options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(registry, first, archetype));
+    REQUIRE(start_sync(registry, second, archetype));
+
+    REQUIRE_THROWS_AS(
+        server.tick(registry, server.options().fixed_dt_seconds),
+        std::runtime_error);
+
+    REQUIRE(server.retained_quantized_frame_count() == 1);
+    REQUIRE(server.acknowledge_entity(1, first, server.frame()));
+    REQUIRE_FALSE(server.acknowledge_entity(1, second, server.frame()));
+}

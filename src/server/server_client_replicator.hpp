@@ -124,6 +124,8 @@ struct ServerClientReplicator final : ServerRegistryDirtyFrameListener, ServerFr
 
         void ensure_capacity(std::size_t size);
         std::size_t size() const noexcept;
+        ClientEntityState& at(std::uint32_t slot);
+        const ClientEntityState& at(std::uint32_t slot) const;
         ClientEntityState* try_get(std::uint32_t slot) noexcept;
         const ClientEntityState* try_get(std::uint32_t slot) const noexcept;
         void clear(ReplicationServer& replication_server, std::uint32_t slot);

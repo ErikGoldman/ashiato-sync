@@ -4,6 +4,7 @@
 #include "server/packet.hpp"
 #include "server/state.hpp"
 
+#include "ashiato/sync/assert.hpp"
 #include "ashiato/sync/protocol.hpp"
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
 #include "ashiato/sync/tracing.hpp"
@@ -22,6 +23,35 @@ namespace {
 bool is_filtered_priority(float priority) noexcept {
     return !(priority > 0.0f);
 }
+
+class QuantizedFrameReferenceGuard {
+public:
+    QuantizedFrameReferenceGuard(ReplicationServer& server, std::uint32_t frame)
+        : server_(server),
+          frame_(frame) {
+        // Serialization may reuse a frame owned by another pending entry or baseline,
+        // so this send attempt needs its own reference before any rejection path.
+        server_.retain_server_quantized_frame(frame_);
+    }
+
+    ~QuantizedFrameReferenceGuard() {
+        if (owns_reference_) {
+            server_.release_server_quantized_frame(frame_);
+        }
+    }
+
+    QuantizedFrameReferenceGuard(const QuantizedFrameReferenceGuard&) = delete;
+    QuantizedFrameReferenceGuard& operator=(const QuantizedFrameReferenceGuard&) = delete;
+
+    void transfer_to_pending() noexcept {
+        owns_reference_ = false;
+    }
+
+private:
+    ReplicationServer& server_;
+    std::uint32_t frame_;
+    bool owns_reference_ = true;
+};
 
 }  // namespace
 
@@ -144,10 +174,7 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
                 const std::size_t packet_bytes =
                     protocol::bytes_for_bits(update_header_bits + records_.bit_size());
                 const std::size_t charged_bytes = replication_server.charged_packet_bytes(packet_bytes);
-                if (charged_bytes > remaining) {
-                    result.stopped_for_budget = true;
-                    break;
-                }
+                ASHIATO_SYNC_ASSERT(charged_bytes <= remaining);
                 replication_server.send_server_update_packet(replication, replication_server.frame(), packet_entities, records_, packet_ack_records_);
                 remaining -= charged_bytes;
                 result.charged_bytes += charged_bytes;
@@ -202,6 +229,9 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
                 serialized_)) {
             continue;
         }
+        QuantizedFrameReferenceGuard frame_reference{
+            replication_server,
+            serialized_.quantized_frame};
 
         const std::size_t next_packet_bits =
             update_header_bits + records_.bit_size() + 1U + serialized_.payload.bit_size();
@@ -209,11 +239,7 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
             const std::size_t packet_bytes =
                 protocol::bytes_for_bits(update_header_bits + records_.bit_size());
             const std::size_t charged_bytes = replication_server.charged_packet_bytes(packet_bytes);
-            if (charged_bytes > remaining) {
-                replication_server.release_server_quantized_frame(serialized_.quantized_frame);
-                result.stopped_for_budget = true;
-                continue;
-            }
+            ASHIATO_SYNC_ASSERT(charged_bytes <= remaining);
             replication_server.send_server_update_packet(replication, replication_server.frame(), packet_entities, records_, packet_ack_records_);
             remaining -= charged_bytes;
             result.charged_bytes += charged_bytes;
@@ -227,7 +253,6 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
         const std::size_t packet_bytes = protocol::bytes_for_bits(single_packet_bits);
         const std::size_t charged_bytes = replication_server.charged_packet_bytes(packet_bytes);
         if (packet_bytes > options.mtu_bytes || charged_bytes > remaining) {
-            replication_server.release_server_quantized_frame(serialized_.quantized_frame);
             if (packet_bytes <= options.mtu_bytes) {
                 result.stopped_for_budget = true;
             } else {
@@ -284,17 +309,14 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
             entry.dirty_frame = replication_server.frame();
             entry.priority_accumulator = 0.0f;
         }
-        ClientEntityState* entity_state = replication.entities.try_get(slot);
-        if (entity_state == nullptr) {
-            replication_server.release_server_quantized_frame(serialized_.quantized_frame);
-            continue;
-        }
-        entity_state->reference_priority_boost_pending = false;
-        entity_state->pending.push_back(ClientEntityState::PendingQuantizedFrame{serialized_.quantized_frame, replication_server.frame()});
-        replication_server.retain_server_quantized_frame(serialized_.quantized_frame);
-        while (entity_state->pending.size() > server_detail::max_pending_quantized_frames_per_entity) {
-            replication_server.release_server_quantized_frame(entity_state->pending.front().quantized_frame);
-            entity_state->pending.erase(entity_state->pending.begin());
+        ClientEntityState& entity_state = replication.entities.at(slot);
+        entity_state.reference_priority_boost_pending = false;
+        entity_state.pending.push_back(ClientEntityState::PendingQuantizedFrame{serialized_.quantized_frame, replication_server.frame()});
+        // The pending entry now owns the reference retained by the guard.
+        frame_reference.transfer_to_pending();
+        while (entity_state.pending.size() > server_detail::max_pending_quantized_frames_per_entity) {
+            replication_server.release_server_quantized_frame(entity_state.pending.front().quantized_frame);
+            entity_state.pending.erase(entity_state.pending.begin());
         }
     }
 
