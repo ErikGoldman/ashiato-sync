@@ -260,7 +260,7 @@ TEST_CASE("entity references boost visible low priority targets on the next tick
     REQUIRE(update.entities[0].network_id == referenced_network_id);
 }
 
-TEST_CASE("entity replication decider component masks apply to delta updates") {
+TEST_CASE("entity replication decider component mask transitions preserve baselines") {
     ashiato::Registry registry;
     const ashiato::Entity position_component =
         ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
@@ -320,18 +320,43 @@ TEST_CASE("entity replication decider component masks apply to delta updates") {
     REQUIRE(fields.x == 30);
     REQUIRE(fields.y == 40);
 
-    // Re-opening a component invalidates this client's whole-frame baseline:
-    // it never received Health=75 while that bit was masked out.
-    REQUIRE(server.acknowledge_entity(1, entity, update.frame));
-    component_mask = std::numeric_limits<std::uint64_t>::max();
-    registry.write<NetworkedPosition>(entity) = NetworkedPosition{7.0f, 8.0f};
-    payloads.clear();
-    server.tick(registry, server.options().fixed_dt_seconds);
-    REQUIRE(payloads.size() == 1);
-    update = read_server_update(payloads.back(), 3U);
-    REQUIRE(update.entities.size() == 1);
-    REQUIRE(update.entities[0].full);
-    REQUIRE(update.entities[0].components.size() == 2);
+    SECTION("reopening a component releases the invalidated baseline") {
+        REQUIRE(server.acknowledge_entity(1, entity, update.frame));
+        component_mask = std::numeric_limits<std::uint64_t>::max();
+        registry.write<NetworkedPosition>(entity) = NetworkedPosition{7.0f, 8.0f};
+        payloads.clear();
+        server.tick(registry, server.options().fixed_dt_seconds);
+        REQUIRE(payloads.size() == 1);
+        update = read_server_update(payloads.back(), 3U);
+        REQUIRE(update.entities.size() == 1);
+        REQUIRE(update.entities[0].full);
+        REQUIRE(update.entities[0].components.size() == 2);
+        REQUIRE(server.acknowledge_entity(1, entity, update.frame));
+        REQUIRE(server.retained_quantized_frame_count() == 1U);
+        REQUIRE(server.remove_client(registry, 1));
+        REQUIRE(server.retained_quantized_frame_count() == 0U);
+    }
+
+    SECTION("a delayed masked ACK does not restore the invalidated baseline") {
+        const ashiato::sync::SyncFrame masked_frame = update.frame;
+        component_mask = std::numeric_limits<std::uint64_t>::max();
+        registry.write<NetworkedPosition>(entity) = NetworkedPosition{7.0f, 8.0f};
+        payloads.clear();
+        server.tick(registry, server.options().fixed_dt_seconds);
+        REQUIRE(payloads.size() == 1);
+        update = read_server_update(payloads.back(), 3U);
+        REQUIRE(update.entities.size() == 1);
+        REQUIRE(update.entities[0].full);
+
+        REQUIRE(server.acknowledge_entity(1, entity, masked_frame));
+        registry.write<NetworkedPosition>(entity) = NetworkedPosition{9.0f, 10.0f};
+        payloads.clear();
+        server.tick(registry, server.options().fixed_dt_seconds);
+        REQUIRE(payloads.size() == 1);
+        update = read_server_update(payloads.back(), 3U);
+        REQUIRE(update.entities.size() == 1);
+        REQUIRE(update.entities[0].full);
+    }
 }
 
 TEST_CASE("entity replication decider can emit an entity record with an all-zero component mask") {

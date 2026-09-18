@@ -26,6 +26,7 @@ struct ClientEntityState {
     struct PendingQuantizedFrame {
         std::uint32_t quantized_frame = invalid_quantized_frame_id;
         SyncFrame frame = 0;
+        std::uint32_t baseline_epoch = 0;
     };
 
     struct PendingCue {
@@ -40,6 +41,7 @@ struct ClientEntityState {
     };
 
     std::uint32_t baseline = invalid_quantized_frame_id;
+    std::uint32_t baseline_epoch = 0;
     std::uint32_t network_id = 0;
     std::uint32_t network_version = 0;
     float last_priority = std::numeric_limits<float>::quiet_NaN();
