@@ -10,8 +10,27 @@
 #include "ashiato/sync/tracing.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <utility>
 
 namespace ashiato::sync::client_detail {
+namespace {
+
+bool cue_was_touched_in_resimulation(
+    const EntityPlayedCue& cue,
+    SyncFrame begin_frame,
+    SyncFrame current_frame,
+    const std::vector<std::uint32_t>& sorted_resimulated_entity_indices) {
+    if (cue.frame <= begin_frame || cue.frame > current_frame) {
+        return false;
+    }
+    return std::binary_search(
+        sorted_resimulated_entity_indices.begin(),
+        sorted_resimulated_entity_indices.end(),
+        cue.entity_index);
+}
+
+}  // namespace
 
 void ClientCueRuntime::erase_for_entity(std::uint32_t entity_index) {
     store_.erase_for_entity(entity_index);
@@ -291,21 +310,40 @@ void ClientCueRuntime::drain_emitted_prediction(
 bool ClientCueRuntime::finish_resimulation(
     ReplicationClient& client,
     ashiato::Registry& registry,
-    const SyncSettings& settings) {
-    bool all_valid = true;
-    for (auto cue = store_.played.begin(); cue != store_.played.end();) {
-        if (cue->confirmed || cue->seen_resim_generation == store_.resim_generation) {
-            ++cue;
-            continue;
-        }
-        if (cue->entity_index >= client.entity_store_->entity_count()) {
-            cue = store_.played.erase(cue);
-            continue;
-        }
-        EntityState& state = client.entity_store_->state_unchecked(cue->entity_index);
-        all_valid = rollback_played(client, registry, settings, state, *cue, "resim_not_replayed") && all_valid;
-        cue = store_.played.erase(cue);
+    const SyncSettings& settings,
+    SyncFrame begin_frame,
+    SyncFrame current_frame,
+    std::vector<std::uint32_t>& resimulated_entity_indices) {
+    // Sort once so each cue can test entity membership with binary search instead of scanning every resimulated entity.
+    if (!store_.played.empty()) {
+        std::sort(resimulated_entity_indices.begin(), resimulated_entity_indices.end());
     }
+
+    bool all_valid = true;
+    std::size_t write_index = 0;
+    for (std::size_t read_index = 0; read_index < store_.played.size(); ++read_index) {
+        EntityPlayedCue& cue = store_.played[read_index];
+        const bool keep = cue.confirmed || cue.seen_resim_generation == store_.resim_generation ||
+            !cue_was_touched_in_resimulation(
+                cue,
+                begin_frame,
+                current_frame,
+                resimulated_entity_indices);
+        if (keep) {
+            if (write_index != read_index) {
+                store_.played[write_index] = std::move(cue);
+            }
+            ++write_index;
+            continue;
+        }
+
+        if (cue.entity_index >= client.entity_store_->entity_count()) {
+            continue;
+        }
+        EntityState& state = client.entity_store_->state_unchecked(cue.entity_index);
+        all_valid = rollback_played(client, registry, settings, state, cue, "resim_not_replayed") && all_valid;
+    }
+    store_.played.resize(write_index);
     return all_valid;
 }
 
