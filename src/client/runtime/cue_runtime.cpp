@@ -10,6 +10,8 @@
 #include "ashiato/sync/tracing.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <utility>
 
 namespace ashiato::sync::client_detail {
 namespace {
@@ -313,27 +315,30 @@ bool ClientCueRuntime::finish_resimulation(
     SyncFrame current_frame,
     const std::vector<std::uint32_t>& sorted_resimulated_entity_indices) {
     bool all_valid = true;
-    for (auto cue = store_.played.begin(); cue != store_.played.end();) {
-        if (cue->confirmed || cue->seen_resim_generation == store_.resim_generation) {
-            ++cue;
-            continue;
-        }
-        if (!cue_was_touched_in_resimulation(
-                *cue,
+    std::size_t write_index = 0;
+    for (std::size_t read_index = 0; read_index < store_.played.size(); ++read_index) {
+        EntityPlayedCue& cue = store_.played[read_index];
+        const bool keep = cue.confirmed || cue.seen_resim_generation == store_.resim_generation ||
+            !cue_was_touched_in_resimulation(
+                cue,
                 begin_frame,
                 current_frame,
-                sorted_resimulated_entity_indices)) {
-            ++cue;
+                sorted_resimulated_entity_indices);
+        if (keep) {
+            if (write_index != read_index) {
+                store_.played[write_index] = std::move(cue);
+            }
+            ++write_index;
             continue;
         }
-        if (cue->entity_index >= client.entity_store_->entity_count()) {
-            cue = store_.played.erase(cue);
+
+        if (cue.entity_index >= client.entity_store_->entity_count()) {
             continue;
         }
-        EntityState& state = client.entity_store_->state_unchecked(cue->entity_index);
-        all_valid = rollback_played(client, registry, settings, state, *cue, "resim_not_replayed") && all_valid;
-        cue = store_.played.erase(cue);
+        EntityState& state = client.entity_store_->state_unchecked(cue.entity_index);
+        all_valid = rollback_played(client, registry, settings, state, cue, "resim_not_replayed") && all_valid;
     }
+    store_.played.resize(write_index);
     return all_valid;
 }
 
