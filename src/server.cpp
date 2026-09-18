@@ -2610,7 +2610,7 @@ bool server_detail::ServerClientReplicator::UpdateWriter::serialize_entity(
         out.payload
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
         ,
-        &out.serialization_events
+        out.deferred_trace_events
 #endif
     );
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
@@ -2765,7 +2765,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
     ashiato::BitBuffer& out
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     ,
-    std::vector<SyncTraceEvent>* serialization_events
+    std::vector<SyncTraceEvent>& deferred_trace_events
 #endif
 ) {
     const ClientEntityState* entity_state = client.entities.try_get(slot);
@@ -2810,10 +2810,13 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
         add_sync_trace_payload_tag(event, sync_trace_payload_tag_outgoing);
         event.data = "message=server_update_record";
     }
-    auto store_serialization_event = [&]() {
-        if (serialization_capture.active() && serialization_events != nullptr) {
-            serialization_events->push_back(serialization_capture.release_event());
+    auto defer_serialization_event = [&]() {
+        if (serialization_capture.active()) {
+            deferred_trace_events.push_back(serialization_capture.release_event());
         }
+    };
+    auto defer_sent_event = [&](SyncTraceEvent&& event) {
+        deferred_trace_events.push_back(std::move(event));
     };
 #endif
     struct ReferenceContextData {
@@ -2857,7 +2860,8 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
         slot,
         network_id,
         quantized_archetype,
-        &settings]
+        &settings,
+        &defer_sent_event]
 #else
     [
         entity_state,
@@ -2911,7 +2915,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
                 append_trace_data_field(event, "payload_bytes", static_cast<std::uint64_t>(cue.payload.byte_size()));
                 append_trace_data_field(event, "wire_bits", static_cast<std::uint64_t>(wire_bits));
                 append_trace_data_field(event, "wire_bytes", static_cast<std::uint64_t>(protocol::bytes_for_bits(wire_bits)));
-                replication_server.server_tracer()->trace(event);
+                defer_sent_event(std::move(event));
             }
 #endif
         }
@@ -3004,7 +3008,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
                     event.archetype = quantized_archetype;
                     event.tag = archetype.tags[tag_index].tag;
                     event.remove = ((*quantized_data).tag_mask & (std::uint64_t{1} << tag_index)) == 0U;
-                    replication_server.server_tracer()->trace(event);
+                    defer_sent_event(std::move(event));
                 }
             }
 #endif
@@ -3056,14 +3060,14 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
                 append_trace_data_field(event, "payload_kind", "component");
                 append_trace_data_field(event, "wire_bits", static_cast<std::uint64_t>(wire_bits));
                 append_trace_data_field(event, "wire_bytes", static_cast<std::uint64_t>(protocol::bytes_for_bits(wire_bits)));
-                replication_server.server_tracer()->trace(event);
+                defer_sent_event(std::move(event));
             }
 #endif
         }
         write_pending_cues();
         (void)registry;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
-        store_serialization_event();
+        defer_serialization_event();
 #endif
         return;
     }
@@ -3125,7 +3129,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
                 event.archetype = quantized_archetype;
                 event.tag = archetype.tags[tag_index].tag;
                 event.remove = ((*quantized_data).tag_mask & (std::uint64_t{1} << tag_index)) == 0U;
-                replication_server.server_tracer()->trace(event);
+                defer_sent_event(std::move(event));
             }
         }
 #endif
@@ -3185,7 +3189,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
             append_trace_data_field(event, "payload_kind", "component");
             append_trace_data_field(event, "wire_bits", static_cast<std::uint64_t>(wire_bits));
             append_trace_data_field(event, "wire_bytes", static_cast<std::uint64_t>(protocol::bytes_for_bits(wire_bits)));
-            replication_server.server_tracer()->trace(event);
+            defer_sent_event(std::move(event));
         }
 #endif
     }
@@ -3194,7 +3198,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
 
     (void)registry;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
-    store_serialization_event();
+    defer_serialization_event();
 #endif
 }
 

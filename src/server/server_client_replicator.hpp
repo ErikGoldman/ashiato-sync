@@ -99,7 +99,7 @@ struct SerializedEntity {
     std::uint32_t quantized_frame = invalid_quantized_frame_id;
     ashiato::BitBuffer payload;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
-    std::vector<SyncTraceEvent> serialization_events;
+    std::vector<SyncTraceEvent> deferred_trace_events;
 #endif
 };
 
@@ -256,7 +256,7 @@ private:
         ashiato::BitBuffer& out
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
         ,
-        std::vector<SyncTraceEvent>* serialization_events
+        std::vector<SyncTraceEvent>& deferred_trace_events
 #endif
     );
 
