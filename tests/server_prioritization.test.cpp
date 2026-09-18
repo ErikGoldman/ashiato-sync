@@ -16,7 +16,7 @@
 
 using namespace ashiato_sync_tests;
 
-TEST_CASE("replication prioritizer filters non-positive priorities") {
+TEST_CASE("entity replication decider filters non-positive priorities") {
     const auto require_filtered_priority = [](float priority) {
         ashiato::Registry registry;
         const ashiato::sync::SyncArchetypeId archetype = define_position_archetype(registry);
@@ -24,12 +24,14 @@ TEST_CASE("replication prioritizer filters non-positive priorities") {
         REQUIRE(registry.add<ashiato_sync_tests::Position>(entity, ashiato_sync_tests::Position{}) != nullptr);
         REQUIRE(start_sync(registry, entity, archetype));
 
-        std::size_t prioritizer_calls = 0;
+        std::size_t decision_calls = 0;
         std::vector<ashiato::BitBuffer> payloads;
         ashiato::sync::ReplicationServerOptions options;
-        options.prioritizer = [&](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject) {
-            ++prioritizer_calls;
-            ashiato::sync::ReplicationPriorityDecision decision;
+        options.entity_replication_decider = [&](
+            ashiato::sync::ClientId,
+            ashiato::sync::EntityReplicationDecisionContext) {
+            ++decision_calls;
+            ashiato::sync::EntityReplicationDecision decision;
             decision.priority = priority;
             return decision;
         };
@@ -40,16 +42,16 @@ TEST_CASE("replication prioritizer filters non-positive priorities") {
         ashiato::sync::ReplicationServer server(registry, options);
         REQUIRE(server.add_client(1));
         REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
-        REQUIRE(prioritizer_calls == 1);
+        REQUIRE(decision_calls == 1);
         REQUIRE(payloads.empty());
 
         REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
-        REQUIRE(prioritizer_calls == 2);
+        REQUIRE(decision_calls == 2);
         REQUIRE(payloads.empty());
 
         priority = 1.0f;
         REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
-        REQUIRE(prioritizer_calls == 3);
+        REQUIRE(decision_calls == 3);
         REQUIRE(payloads.size() == 1);
     };
 
@@ -57,7 +59,7 @@ TEST_CASE("replication prioritizer filters non-positive priorities") {
     require_filtered_priority(-1.0f);
 }
 
-TEST_CASE("replication prioritizer rejects NaN priority in non-shipping builds") {
+TEST_CASE("entity replication decider rejects NaN priority in non-shipping builds") {
 #if !defined(NDEBUG) || defined(ASHIATO_SYNC_ENABLE_ASSERT)
     ashiato::Registry registry;
     const ashiato::sync::SyncArchetypeId archetype = define_position_archetype(registry);
@@ -66,8 +68,10 @@ TEST_CASE("replication prioritizer rejects NaN priority in non-shipping builds")
     REQUIRE(start_sync(registry, entity, archetype));
 
     ashiato::sync::ReplicationServerOptions options;
-    options.prioritizer = [](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject) {
-        ashiato::sync::ReplicationPriorityDecision decision;
+    options.entity_replication_decider = [](
+        ashiato::sync::ClientId,
+        ashiato::sync::EntityReplicationDecisionContext) {
+        ashiato::sync::EntityReplicationDecision decision;
         decision.priority = std::numeric_limits<float>::quiet_NaN();
         return decision;
     };
@@ -83,22 +87,24 @@ TEST_CASE("replication prioritizer rejects NaN priority in non-shipping builds")
 #endif
 }
 
-TEST_CASE("replication prioritizer refreshes cached decisions by replicated slot bucket") {
+TEST_CASE("entity replication decider refreshes cached decisions by replicated slot bucket") {
     ashiato::Registry registry;
     const ashiato::sync::SyncArchetypeId archetype = define_position_archetype(registry);
     const ashiato::Entity entity = registry.create();
     REQUIRE(registry.add<ashiato_sync_tests::Position>(entity, ashiato_sync_tests::Position{1.0f, 1.0f}) != nullptr);
     REQUIRE(start_sync(registry, entity, archetype));
 
-    std::size_t prioritizer_calls = 0;
+    std::size_t decision_calls = 0;
     std::vector<ashiato::BitBuffer> payloads;
     ashiato::sync::ReplicationServerOptions options;
-    options.prioritizer_interval_frames = 3;
-    options.prioritizer = [&](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject object) {
-        ++prioritizer_calls;
-        REQUIRE(object.entity == entity);
-        ashiato::sync::ReplicationPriorityDecision decision;
-        decision.priority = prioritizer_calls == 1 ? 10.0f : 100.0f;
+    options.entity_replication_decision_interval_frames = 3;
+    options.entity_replication_decider = [&](
+        ashiato::sync::ClientId,
+        ashiato::sync::EntityReplicationDecisionContext context) {
+        ++decision_calls;
+        REQUIRE(context.entity == entity);
+        ashiato::sync::EntityReplicationDecision decision;
+        decision.priority = decision_calls == 1 ? 10.0f : 100.0f;
         return decision;
     };
     options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& payload) {
@@ -109,27 +115,27 @@ TEST_CASE("replication prioritizer refreshes cached decisions by replicated slot
     REQUIRE(server.add_client(1));
 
     server.tick(registry, server.options().fixed_dt_seconds);
-    REQUIRE(prioritizer_calls == 1);
+    REQUIRE(decision_calls == 1);
     REQUIRE(payloads.size() == 1);
 
     server.tick(registry, server.options().fixed_dt_seconds);
-    REQUIRE(prioritizer_calls == 1);
+    REQUIRE(decision_calls == 1);
 
     server.tick(registry, server.options().fixed_dt_seconds);
-    REQUIRE(prioritizer_calls == 2);
+    REQUIRE(decision_calls == 2);
 
     server.tick(registry, server.options().fixed_dt_seconds);
-    REQUIRE(prioritizer_calls == 2);
+    REQUIRE(decision_calls == 2);
 
     server.tick(registry, server.options().fixed_dt_seconds);
-    REQUIRE(prioritizer_calls == 2);
+    REQUIRE(decision_calls == 2);
 
     server.tick(registry, server.options().fixed_dt_seconds);
-    REQUIRE(prioritizer_calls == 3);
+    REQUIRE(decision_calls == 3);
     REQUIRE(read_server_update(payloads.back(), 2U, sizeof(ashiato_sync_tests::Position) * 8U).entities.size() == 1);
 }
 
-TEST_CASE("replication prioritizer priority affects serialized send order") {
+TEST_CASE("entity replication decider priority affects serialized send order") {
     ashiato::Registry registry;
     const ashiato::Entity position_component =
         ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
@@ -151,12 +157,14 @@ TEST_CASE("replication prioritizer priority affects serialized send order") {
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
     options.mtu_bytes = 21;
-    options.prioritizer_interval_frames = 1;
-    options.prioritizer = [&](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject object) {
-        ashiato::sync::ReplicationPriorityDecision decision;
-        if (object.entity == high) {
+    options.entity_replication_decision_interval_frames = 1;
+    options.entity_replication_decider = [&](
+        ashiato::sync::ClientId,
+        ashiato::sync::EntityReplicationDecisionContext context) {
+        ashiato::sync::EntityReplicationDecision decision;
+        if (context.entity == high) {
             decision.priority = 100.0f;
-        } else if (object.entity == middle) {
+        } else if (context.entity == middle) {
             decision.priority = 50.0f;
         }
         return decision;
@@ -207,12 +215,14 @@ TEST_CASE("entity references boost visible low priority targets on the next tick
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 21;
     options.mtu_bytes = 21;
-    options.prioritizer_interval_frames = 1;
-    options.prioritizer = [&](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject object) {
-        ashiato::sync::ReplicationPriorityDecision decision;
-        if (object.entity == source) {
+    options.entity_replication_decision_interval_frames = 1;
+    options.entity_replication_decider = [&](
+        ashiato::sync::ClientId,
+        ashiato::sync::EntityReplicationDecisionContext context) {
+        ashiato::sync::EntityReplicationDecision decision;
+        if (context.entity == source) {
             decision.priority = 100.0f;
-        } else if (object.entity == medium) {
+        } else if (context.entity == medium) {
             decision.priority = 50.0f;
         }
         return decision;
@@ -250,7 +260,7 @@ TEST_CASE("entity references boost visible low priority targets on the next tick
     REQUIRE(update.entities[0].network_id == referenced_network_id);
 }
 
-TEST_CASE("replication prioritizer component masks apply to delta updates") {
+TEST_CASE("entity replication decider component masks apply to delta updates") {
     ashiato::Registry registry;
     const ashiato::Entity position_component =
         ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
@@ -271,9 +281,11 @@ TEST_CASE("replication prioritizer component masks apply to delta updates") {
     std::vector<ashiato::BitBuffer> payloads;
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.prioritizer_interval_frames = 1;
-    options.prioritizer = [&](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject) {
-        ashiato::sync::ReplicationPriorityDecision decision;
+    options.entity_replication_decision_interval_frames = 1;
+    options.entity_replication_decider = [&](
+        ashiato::sync::ClientId,
+        ashiato::sync::EntityReplicationDecisionContext) {
+        ashiato::sync::EntityReplicationDecision decision;
         decision.component_mask = component_mask;
         return decision;
     };
@@ -309,7 +321,7 @@ TEST_CASE("replication prioritizer component masks apply to delta updates") {
     REQUIRE(fields.y == 40);
 }
 
-TEST_CASE("replication prioritizer can emit an entity record with an all-zero component mask") {
+TEST_CASE("entity replication decider can emit an entity record with an all-zero component mask") {
     ashiato::Registry registry;
     const ashiato::Entity position_component =
         ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
@@ -324,9 +336,11 @@ TEST_CASE("replication prioritizer can emit an entity record with an all-zero co
     std::vector<ashiato::BitBuffer> payloads;
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.prioritizer_interval_frames = 1;
-    options.prioritizer = [&](ashiato::sync::ClientId, ashiato::sync::ReplicationPriorityObject) {
-        ashiato::sync::ReplicationPriorityDecision decision;
+    options.entity_replication_decision_interval_frames = 1;
+    options.entity_replication_decider = [&](
+        ashiato::sync::ClientId,
+        ashiato::sync::EntityReplicationDecisionContext) {
+        ashiato::sync::EntityReplicationDecision decision;
         decision.component_mask = 0;
         return decision;
     };
@@ -345,7 +359,7 @@ TEST_CASE("replication prioritizer can emit an entity record with an all-zero co
     REQUIRE(update.entities[0].components.empty());
 }
 
-TEST_CASE("replication prioritizer applies independent decisions per client") {
+TEST_CASE("entity replication decider applies independent decisions per client") {
     ashiato::Registry registry;
     const ashiato::Entity position_component =
         ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
@@ -363,13 +377,15 @@ TEST_CASE("replication prioritizer applies independent decisions per client") {
     std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> payloads;
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.prioritizer_interval_frames = 1;
-    options.prioritizer = [&](ashiato::sync::ClientId client, ashiato::sync::ReplicationPriorityObject object) {
-        ashiato::sync::ReplicationPriorityDecision decision;
+    options.entity_replication_decision_interval_frames = 1;
+    options.entity_replication_decider = [&](
+        ashiato::sync::ClientId client,
+        ashiato::sync::EntityReplicationDecisionContext context) {
+        ashiato::sync::EntityReplicationDecision decision;
         decision.priority =
             client == 1
-            ? (object.entity == first ? 100.0f : 10.0f)
-            : (object.entity == second ? 100.0f : 10.0f);
+            ? (context.entity == first ? 100.0f : 10.0f)
+            : (context.entity == second ? 100.0f : 10.0f);
         return decision;
     };
     options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
@@ -397,7 +413,7 @@ TEST_CASE("replication prioritizer applies independent decisions per client") {
     }
 }
 
-TEST_CASE("replication prioritizer decisions are honored by serialized updates") {
+TEST_CASE("entity replication decider decisions are honored by serialized updates") {
     ashiato::Registry registry;
     const ashiato::Entity position_component =
         ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
@@ -415,13 +431,15 @@ TEST_CASE("replication prioritizer decisions are honored by serialized updates")
     std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> payloads;
     ashiato::sync::ReplicationServerOptions options;
     options.bandwidth_limit_bytes_per_tick = 1024;
-    options.prioritizer_interval_frames = 1;
-    options.prioritizer = [&](ashiato::sync::ClientId client, ashiato::sync::ReplicationPriorityObject object) {
-        ashiato::sync::ReplicationPriorityDecision decision;
+    options.entity_replication_decision_interval_frames = 1;
+    options.entity_replication_decider = [&](
+        ashiato::sync::ClientId client,
+        ashiato::sync::EntityReplicationDecisionContext context) {
+        ashiato::sync::EntityReplicationDecision decision;
         decision.priority =
             client == 1
-            ? (object.entity == first ? 100.0f : 10.0f)
-            : (object.entity == second ? 100.0f : 10.0f);
+            ? (context.entity == first ? 100.0f : 10.0f)
+            : (context.entity == second ? 100.0f : 10.0f);
         return decision;
     };
     options.transport = [&](ashiato::sync::ClientId client, const ashiato::BitBuffer& payload) {
