@@ -51,6 +51,10 @@ set_target_properties(ashiato_sync PROPERTIES
     CXX_STANDARD_REQUIRED YES
 )
 
+# The public headers need C++17, so consumers must compile with it too. CXX_STANDARD only
+# applies to this target; MSVC otherwise builds consumers such as ashiato_sync_tests as C++14.
+target_compile_features(ashiato_sync PUBLIC cxx_std_17)
+
 target_include_directories(ashiato_sync
     PUBLIC
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>

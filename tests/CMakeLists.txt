@@ -62,6 +62,13 @@ if(WIN32)
     target_link_libraries(ashiato_sync_tests PRIVATE ws2_32)
 endif()
 
+# MSVC's legacy lambda processor fails to implicitly capture locals used inside generic
+# lambdas passed to simulation jobs (C2065 in client_prediction.test.cpp). C++20 mode turns
+# the conforming processor on by default; C++17 needs it requested.
+if(MSVC)
+    target_compile_options(ashiato_sync_tests PRIVATE /Zc:lambda)
+endif()
+
 if(ASHIATO_SYNC_ENABLE_COVERAGE)
     ashiato_sync_enable_coverage(ashiato_sync_tests)
 endif()
