@@ -2,18 +2,84 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#ifdef ASHIATO_SYNC_ENABLE_TRACING
+// Every test here enables packet logs, which exist only with ASHIATO_SYNC_TRACE_PACKET_LOGS.
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <string>
 #include <utility>
 #include <vector>
 
 using namespace ashiato_sync_tests;
+
+namespace {
+
+struct CuePacketLogEvents {
+    std::vector<ashiato::sync::SyncTraceEvent> server;
+    std::vector<ashiato::sync::SyncTraceEvent> client;
+};
+
+CuePacketLogEvents trace_test_cue_packet() {
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = define_position_archetype(server_registry);
+    ashiato::sync::register_sync_cue<TestCue>(server_registry);
+    const ashiato::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
+
+    std::vector<ashiato::BitBuffer> packets;
+    CuePacketLogEvents events;
+    ashiato::sync::SyncTracer server_tracer;
+    server_tracer.set_packet_logs_enabled(true);
+    server_tracer.set_frame_data_enabled(true);
+    server_tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { events.server.push_back(event); }});
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
+    server.set_tracer(&server_tracer);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+    REQUIRE(emit_test_cue(server_registry, server_entity, 1, TestCue{7}, 1.0f));
+    server.tick(server_registry, server.options().fixed_dt_seconds);
+    REQUIRE(packets.size() == 1);
+
+    ashiato::Registry client_registry;
+    REQUIRE(define_position_archetype(client_registry) == server_archetype);
+    client_registry.register_component<CuePlayback>("CuePlayback");
+    ashiato::sync::register_sync_cue<TestCue>(client_registry);
+    configure_test_client_registry(client_registry, 1);
+    ashiato::sync::SyncTracer client_tracer;
+    client_tracer.set_packet_logs_enabled(true);
+    client_tracer.set_frame_data_enabled(true);
+    client_tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { events.client.push_back(event); }});
+    ashiato::sync::ReplicationClient client(client_registry, make_test_client_options(client_registry, {}));
+    client.set_tracer(&client_tracer);
+    REQUIRE(client.receive(client_registry, packets[0]));
+    return events;
+}
+
+bool contains_packet_log(
+    const std::vector<ashiato::sync::SyncTraceEvent>& events,
+    ashiato::sync::SyncTraceRole role,
+    std::initializer_list<const char*> fields) {
+    return std::any_of(events.begin(), events.end(), [&](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::PacketLog &&
+            event.role == role &&
+            std::all_of(fields.begin(), fields.end(), [&](const char* field) {
+                return event.data.find(field) != std::string::npos;
+            });
+    });
+}
+
+}  // namespace
 
 TEST_CASE("packet log tracing is opt-in and records client and server packet details") {
     std::vector<ashiato::sync::SyncTraceEvent> gated_events;
@@ -262,65 +328,30 @@ TEST_CASE("packet log tracing records ping and pong traffic") {
 }
 #endif
 
-TEST_CASE("packet log tracing records cue summaries and cue payload data") {
-    ashiato::Registry server_registry;
-    const ashiato::sync::SyncArchetypeId server_archetype =
-        ashiato_sync_tests::define_position_archetype(server_registry);
-    ashiato::sync::register_sync_cue<ashiato_sync_tests::TestCue>(server_registry);
-    const ashiato::Entity server_entity = server_registry.create();
-    REQUIRE(server_registry.add<ashiato_sync_tests::Position>(
-        server_entity,
-        ashiato_sync_tests::Position{1.0f, 2.0f}) != nullptr);
-
-    std::vector<ashiato::BitBuffer> packets;
-    std::vector<ashiato::sync::SyncTraceEvent> server_events;
-    ashiato::sync::SyncTracer server_tracer;
-    server_tracer.set_packet_logs_enabled(true);
-    server_tracer.set_frame_data_enabled(true);
-    server_tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
-        [&](const ashiato::sync::SyncTraceEvent& event) { server_events.push_back(event); }});
-    ashiato::sync::ReplicationServerOptions server_options;
-    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
-        packets.push_back(packet);
-    };
-    ashiato::sync::ReplicationServer server(server_registry, server_options);
-    server.set_tracer(&server_tracer);
-    REQUIRE(server.add_client(1));
-    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
-    REQUIRE(ashiato_sync_tests::emit_test_cue(server_registry, server_entity, 1, ashiato_sync_tests::TestCue{7}, 1.0f));
-    server.tick(server_registry, server.options().fixed_dt_seconds);
-    REQUIRE(packets.size() == 1);
-    REQUIRE(std::any_of(server_events.begin(), server_events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
-        return event.type == ashiato::sync::SyncTraceEventType::PacketLog &&
-            event.role == ashiato::sync::SyncTraceRole::Server &&
-            event.data.find("message=server_update") != std::string::npos &&
-            event.data.find("cues=[{") != std::string::npos &&
-            event.data.find("type=0") != std::string::npos &&
-            event.data.find("data=id=7") != std::string::npos;
-    }));
-
-    ashiato::Registry client_registry;
-    REQUIRE(ashiato_sync_tests::define_position_archetype(client_registry) == server_archetype);
-    client_registry.register_component<ashiato_sync_tests::CuePlayback>("CuePlayback");
-    ashiato::sync::register_sync_cue<ashiato_sync_tests::TestCue>(client_registry);
-    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
-    std::vector<ashiato::sync::SyncTraceEvent> client_events;
-    ashiato::sync::SyncTracer client_tracer;
-    client_tracer.set_packet_logs_enabled(true);
-    client_tracer.set_frame_data_enabled(true);
-    client_tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
-        [&](const ashiato::sync::SyncTraceEvent& event) { client_events.push_back(event); }});
-    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, {}));
-    client.set_tracer(&client_tracer);
-    REQUIRE(client.receive(client_registry, packets[0]));
-    REQUIRE(std::any_of(client_events.begin(), client_events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
-        return event.type == ashiato::sync::SyncTraceEventType::PacketLog &&
-            event.role == ashiato::sync::SyncTraceRole::Client &&
-            event.data.find("message=server_update") != std::string::npos &&
-            event.data.find("cues=[{") != std::string::npos &&
-            event.data.find("type=0") != std::string::npos &&
-            event.data.find("data=id=7") != std::string::npos;
-    }));
+TEST_CASE("packet log tracing records cue summaries") {
+    const CuePacketLogEvents events = trace_test_cue_packet();
+    REQUIRE(contains_packet_log(
+        events.server,
+        ashiato::sync::SyncTraceRole::Server,
+        {"message=server_update", "cues=[{", "type=0"}));
+    REQUIRE(contains_packet_log(
+        events.client,
+        ashiato::sync::SyncTraceRole::Client,
+        {"message=server_update", "cues=[{", "type=0"}));
 }
+
+#ifdef ASHIATO_SYNC_TRACE_COMPONENT_DATA
+TEST_CASE("packet log tracing includes cue payload data") {
+    const CuePacketLogEvents events = trace_test_cue_packet();
+    REQUIRE(contains_packet_log(
+        events.server,
+        ashiato::sync::SyncTraceRole::Server,
+        {"message=server_update", "data=id=7"}));
+    REQUIRE(contains_packet_log(
+        events.client,
+        ashiato::sync::SyncTraceRole::Client,
+        {"message=server_update", "data=id=7"}));
+}
+#endif
 
 #endif
