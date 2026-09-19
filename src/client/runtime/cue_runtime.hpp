@@ -81,6 +81,12 @@ public:
         std::uint32_t entity_index,
         EntityState& state,
         SyncFrame buffered_frame);
+    void play_buffered_on_mode_transition(
+        ReplicationClient& client,
+        ashiato::Registry& registry,
+        const SyncSettings& settings,
+        std::uint32_t entity_index,
+        EntityState& state);
     void discard_applied_buffered(ReplicationClient& client, SyncFrame buffered_frame);
     void store_authoritative_buffered(
         ReplicationClient& client,

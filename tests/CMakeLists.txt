@@ -12,6 +12,7 @@ add_executable(ashiato_sync_tests
     client_frame_ring_store.test.cpp
     client_frame_data.test.cpp
     client_input.test.cpp
+    client_mode_transition_stress.test.cpp
     client_timing_stats.test.cpp
     client_prediction.test.cpp
     client_receive.test.cpp

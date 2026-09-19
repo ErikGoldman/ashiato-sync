@@ -298,6 +298,108 @@ TEST_CASE("buffered cues play once when their target frame applies") {
     REQUIRE(client_registry.get<CuePlayback>(applied).plays == 1);
 }
 
+TEST_CASE("queued buffered cues survive a switch to an immediate mode exactly once", "[cue-mode-transition]") {
+    using Mode = ashiato::sync::ReplicationClientMode;
+
+    for (const Mode destination : {Mode::Snap, Mode::Predict}) {
+        DYNAMIC_SECTION("BufferedInterpolation -> " << static_cast<int>(destination)) {
+            ashiato::Registry server_registry;
+            const ashiato::sync::SyncArchetypeId server_archetype = define_predicted_archetype(server_registry);
+            ashiato::sync::register_sync_cue<TestCue>(server_registry);
+            const ashiato::Entity server_entity = server_registry.create();
+            REQUIRE(server_registry.add<PredictedPosition>(server_entity, PredictedPosition{1.0f, 2.0f}) != nullptr);
+            REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+            std::vector<ashiato::BitBuffer> packets;
+            ashiato::sync::ReplicationServerOptions server_options;
+            server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
+                packets.push_back(packet);
+            };
+            ashiato::sync::ReplicationServer server(server_registry, server_options);
+            REQUIRE(server.add_client(1));
+            REQUIRE(emit_test_cue(server_registry, server_entity, 1U, TestCue{31}, 1.0f));
+            REQUIRE(server.tick(server_registry, server.options().fixed_dt_seconds));
+            REQUIRE(emit_test_cue(server_registry, server_entity, 2U, TestCue{32}, 1.0f));
+            REQUIRE(server.tick(server_registry, server.options().fixed_dt_seconds));
+            REQUIRE(packets.size() == 2U);
+
+            ashiato::Registry client_registry;
+            REQUIRE(define_predicted_archetype(client_registry) == server_archetype);
+            client_registry.register_component<CuePlayback>("CuePlayback");
+            ashiato::sync::register_sync_cue<TestCue>(client_registry);
+            REQUIRE(configure_test_client_registry(client_registry, 1));
+            ashiato::sync::ReplicationClientOptions client_options;
+            client_options.entities.default_mode = Mode::BufferedInterpolation;
+            client_options.buffered.auto_buffered_frame_lag = false;
+            client_options.buffered.buffered_frame_lag = 3U;
+            ashiato::sync::ReplicationClient client(
+                client_registry,
+                make_test_client_options(client_registry, client_options));
+
+            REQUIRE(client.receive(client_registry, packets.front()));
+            REQUIRE(client.receive(client_registry, packets.back()));
+            const auto network_id = first_allocated_client_entity_network_id(1);
+            REQUIRE_FALSE(client.local_entity(network_id));
+
+            client.set_entity_mode(client_registry, network_id, destination);
+            const ashiato::Entity local = client.local_entity(network_id);
+            REQUIRE(local);
+            REQUIRE(client_registry.contains<CuePlayback>(local));
+            CHECK(client_registry.get<CuePlayback>(local).plays == 2);
+            CHECK(client_registry.get<CuePlayback>(local).last_id == 32);
+
+            client.set_entity_mode(client_registry, network_id, Mode::BufferedInterpolation);
+            REQUIRE(client.apply_frame(client_registry, 2U));
+            client.set_entity_mode(client_registry, network_id, Mode::Snap);
+            client.set_entity_mode(client_registry, network_id, Mode::Predict);
+            CHECK(client_registry.get<CuePlayback>(local).plays == 2);
+        }
+    }
+}
+
+TEST_CASE("a server-expired cue stays absent across a buffered mode switch", "[cue-mode-transition]") {
+    using Mode = ashiato::sync::ReplicationClientMode;
+
+    ashiato::Registry server_registry;
+    const ashiato::sync::SyncArchetypeId server_archetype = define_predicted_archetype(server_registry);
+    ashiato::sync::register_sync_cue<TestCue>(server_registry);
+    const ashiato::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<PredictedPosition>(server_entity, PredictedPosition{1.0f, 2.0f}) != nullptr);
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(emit_test_cue(server_registry, server_entity, 1U, TestCue{32}, 0.0f));
+    REQUIRE(server.tick(server_registry, server.options().fixed_dt_seconds));
+    REQUIRE(server.tick(server_registry, server.options().fixed_dt_seconds));
+    REQUIRE(packets.size() == 2U);
+
+    ashiato::Registry client_registry;
+    REQUIRE(define_predicted_archetype(client_registry) == server_archetype);
+    client_registry.register_component<CuePlayback>("CuePlayback");
+    ashiato::sync::register_sync_cue<TestCue>(client_registry);
+    REQUIRE(configure_test_client_registry(client_registry, 1));
+    ashiato::sync::ReplicationClientOptions client_options;
+    client_options.entities.default_mode = Mode::BufferedInterpolation;
+    client_options.buffered.auto_buffered_frame_lag = false;
+    client_options.buffered.buffered_frame_lag = 3U;
+    ashiato::sync::ReplicationClient client(
+        client_registry,
+        make_test_client_options(client_registry, client_options));
+
+    REQUIRE(client.receive(client_registry, packets.back()));
+    const auto network_id = first_allocated_client_entity_network_id(1);
+    client.set_entity_mode(client_registry, network_id, Mode::Snap);
+    const ashiato::Entity local = client.local_entity(network_id);
+    REQUIRE(local);
+    CHECK_FALSE(client_registry.contains<CuePlayback>(local));
+}
+
 TEST_CASE("late buffered cues for already applied frames play immediately") {
     ashiato::Registry server_registry;
     const ashiato::sync::SyncArchetypeId server_archetype = ashiato_sync_tests::define_position_archetype(server_registry);

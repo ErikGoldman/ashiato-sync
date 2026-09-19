@@ -713,6 +713,11 @@ private:
     bool transition_to_snap(ashiato::Registry& registry, const SyncSettings& settings, EntityState& state);
     bool transition_to_buffered(const SyncSettings& settings, EntityState& state);
     bool transition_to_predict(ashiato::Registry& registry, const SyncSettings& settings, EntityState& state);
+    void finish_immediate_mode_transition(
+        ashiato::Registry& registry,
+        const SyncSettings& settings,
+        EntityState& state,
+        ReplicationClientMode previous_mode);
     bool has_buffered_entities() const noexcept;
     bool has_predicted_entities() const noexcept;
     void blend_snap_errors(const SyncSettings& settings, float dt_seconds);
