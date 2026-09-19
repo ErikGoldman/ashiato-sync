@@ -709,6 +709,7 @@ private:
         QuantizedFrameData baseline,
         BaselineUpdate baseline_update);
     void record_authoritative_absent(EntityState& state, SyncFrame frame);
+    void protect_referenced_baseline(EntityState& state, SyncFrame frame) noexcept;
     bool transition_to_snap(ashiato::Registry& registry, const SyncSettings& settings, EntityState& state);
     bool transition_to_buffered(const SyncSettings& settings, EntityState& state);
     bool transition_to_predict(ashiato::Registry& registry, const SyncSettings& settings, EntityState& state);

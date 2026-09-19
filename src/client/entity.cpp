@@ -107,23 +107,28 @@ void ReplicationClient::record_destroy_tombstone(std::uint32_t wire_network_id, 
 const QuantizedFrameData* ReplicationClient::find_baseline(
     const EntityState& state,
     SyncFrame frame) const noexcept {
-    if (state.replication.history.empty()) {
-        return nullptr;
-    }
-
-    const std::size_t count = state.replication.history.size();
-    if (count == client_detail::max_baseline_history_per_entity) {
-        const client_detail::EntityFrameBaseline& baseline =
-            state.replication.history[frame & (client_detail::max_baseline_history_per_entity - 1U)];
-        return baseline.valid && baseline.frame == frame ? &baseline.baseline : nullptr;
-    }
-
-    for (std::size_t offset = 0; offset < count; ++offset) {
-        const std::size_t index = (state.replication.history_next + count - 1U - offset) % count;
-        const client_detail::EntityFrameBaseline& baseline = state.replication.history[index];
-        if (baseline.valid && baseline.frame == frame) {
-            return &baseline.baseline;
+    if (!state.replication.history.empty()) {
+        const std::size_t count = state.replication.history.size();
+        if (count == client_detail::max_baseline_history_per_entity) {
+            const client_detail::EntityFrameBaseline& baseline =
+                state.replication.history[frame & (client_detail::max_baseline_history_per_entity - 1U)];
+            if (baseline.valid && baseline.frame == frame) {
+                return &baseline.baseline;
+            }
+        } else {
+            for (std::size_t offset = 0; offset < count; ++offset) {
+                const std::size_t index = (state.replication.history_next + count - 1U - offset) % count;
+                const client_detail::EntityFrameBaseline& baseline = state.replication.history[index];
+                if (baseline.valid && baseline.frame == frame) {
+                    return &baseline.baseline;
+                }
+            }
         }
+    }
+
+    const client_detail::EntityFrameBaseline& pinned = state.replication.pinned_wire_baseline;
+    if (pinned.valid && pinned.frame == frame) {
+        return &pinned.baseline;
     }
     return nullptr;
 }

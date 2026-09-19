@@ -10,7 +10,10 @@
 namespace ashiato::sync::client_detail {
 
 inline constexpr std::uint32_t invalid_entity_index = std::numeric_limits<std::uint32_t>::max();
-inline constexpr std::size_t max_baseline_history_per_entity = 64;
+inline constexpr std::size_t max_baseline_history_per_entity = protocol::baseline_retention_count;
+static_assert(
+    max_baseline_history_per_entity > 0U &&
+    (max_baseline_history_per_entity & (max_baseline_history_per_entity - 1U)) == 0U);
 
 struct EntityCue {
     SyncFrame frame = 0;
@@ -60,6 +63,9 @@ struct EntityState {
         QuantizedFrameData baseline;
         std::vector<EntityFrameBaseline> history;
         std::size_t history_next = 0;
+        EntityFrameBaseline pinned_wire_baseline;
+        SyncFrame referenced_baseline_frame = 0;
+        bool has_referenced_baseline = false;
         std::uint64_t applied_present_mask = 0;
     } replication;
 

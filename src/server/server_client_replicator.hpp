@@ -100,6 +100,7 @@ struct PendingPacketAck {
 struct SerializedEntity {
     std::uint32_t quantized_frame = invalid_quantized_frame_id;
     ashiato::BitBuffer payload;
+    bool full_state = false;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     std::vector<SyncTraceEvent> deferred_trace_events;
 #endif
@@ -233,6 +234,7 @@ struct ServerClientReplicator final : ServerRegistryDirtyFrameListener, ServerFr
         ashiato::Entity entity,
         SyncFrame frame);
     bool acknowledge_entity(ReplicationServer& replication_server, std::uint32_t replicated_index, SyncFrame frame);
+    void invalidate_entity_baseline(ReplicationServer& replication_server, ClientEntityState& entity_state);
 };
 
 struct ServerClientReplicator::UpdateWriter {
@@ -255,7 +257,8 @@ private:
         std::uint32_t slot,
         std::uint32_t quantized_frame,
         std::uint64_t component_mask,
-        ashiato::BitBuffer& out
+        ashiato::BitBuffer& out,
+        bool& full_state
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
         ,
         std::vector<SyncTraceEvent>& deferred_trace_events

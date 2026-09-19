@@ -10,6 +10,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -1392,4 +1393,104 @@ TEST_CASE("replication client evicts destroy tombstones by deterministic age") {
         client_registry,
         make_position_packet(1, {{retained_server_entity, Position{3.0f, 4.0f}}}, 2U, 4U)));
     REQUIRE_FALSE(client.local_entity(test_client_entity_network_id(1, retained_wire_id, 1U)));
+}
+
+TEST_CASE("replication client keeps receiving an entity through processing and ACK stalls") {
+    // A client that stops processing for a while -- its main thread blocked, say -- sends no ACKs, so the server
+    // keeps delta-encoding a changing entity against the last baseline the client ACKed. When the client catches
+    // up it applies the queued packets in one burst. Its per-entity baseline history is a ring indexed by frame
+    // (client/state.hpp, max_baseline_history_per_entity), so once it applies a record 64 or more frames newer than
+    // that baseline, the baseline's slot is overwritten and every later delta against it fails.
+    const int stalled_ticks = GENERATE(40, 150, 512);
+    const bool process_during_stall = GENERATE(false, true);
+    INFO("stalled for " << stalled_ticks << " ticks; process packets: " << process_during_stall);
+    {
+        {
+            ashiato::Registry server_registry;
+            const ashiato::Entity position_component =
+                ashiato::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
+            const ashiato::sync::SyncArchetypeId server_archetype = ashiato::sync::define_archetype(
+                server_registry,
+                "NetworkedActor",
+                {{position_component, ashiato::sync::ReplicationAudience::All}});
+            const ashiato::Entity server_entity = server_registry.create();
+            REQUIRE(server_registry.add<NetworkedPosition>(server_entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
+
+            std::vector<ashiato::BitBuffer> packets;
+            ashiato::sync::ReplicationServerOptions server_options;
+            server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
+                packets.push_back(packet);
+            };
+            ashiato::sync::ReplicationServer server(server_registry, server_options);
+            REQUIRE(server.add_client(1));
+            REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+            ashiato::Registry client_registry;
+            const ashiato::Entity client_position =
+                ashiato::sync::register_sync_component<NetworkedPosition>(client_registry, "NetworkedPosition");
+            const ashiato::sync::SyncArchetypeId client_archetype = ashiato::sync::define_archetype(
+                client_registry,
+                "NetworkedActor",
+                {{client_position, ashiato::sync::ReplicationAudience::All}});
+            REQUIRE(client_archetype == server_archetype);
+            ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
+            ashiato::sync::ReplicationClient client(
+                client_registry,
+                ashiato_sync_tests::make_test_client_options(client_registry, {}));
+
+            auto deliver_acks = [&]() {
+                // Not REQUIREd: after a long stall the server rightly ignores ACKs for sends it has stopped tracking.
+                for (const ashiato::BitBuffer& ack : client.drain_ack_packets()) {
+                    (void)server.process_packet(server_registry, 1, ack);
+                }
+            };
+
+            // A shared baseline, ACKed.
+            server.tick(server_registry, server.options().fixed_dt_seconds);
+            REQUIRE(client.receive(client_registry, packets.back()));
+            deliver_acks();
+            packets.clear();
+
+            // In a processing stall, packets queue without reaching the client. In an ACK stall, the client
+            // applies every packet but its outgoing ACKs are lost. Keep the values within the test codec's
+            // 8-bit fields even when the outage spans several baseline-history rotations.
+            float x = 1.0f;
+            for (int tick = 0; tick < stalled_ticks; ++tick) {
+                x += 0.01f;
+                server_registry.write<NetworkedPosition>(server_entity) = NetworkedPosition{x, 2.0f};
+                server.tick(server_registry, server.options().fixed_dt_seconds);
+                if (process_during_stall) {
+                    REQUIRE(packets.size() == 1);
+                    REQUIRE(client.receive(client_registry, packets.back()));
+                    (void)client.drain_ack_packets();
+                    packets.clear();
+                }
+            }
+
+            // A processing stall catches up in one burst. An ACK stall has already applied the same stream.
+            for (const ashiato::BitBuffer& packet : packets) {
+                REQUIRE(client.receive(client_registry, packet));
+            }
+            deliver_acks();
+            packets.clear();
+
+            // Normal service again, with no loss at all.
+            std::size_t applied = 0;
+            for (int tick = 0; tick < 20; ++tick) {
+                x += 0.01f;
+                server_registry.write<NetworkedPosition>(server_entity) = NetworkedPosition{x, 2.0f};
+                server.tick(server_registry, server.options().fixed_dt_seconds);
+                if (client.receive(client_registry, packets.back())) {
+                    ++applied;
+                }
+                deliver_acks();
+                packets.clear();
+            }
+
+            const ashiato::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
+            REQUIRE(local);
+            CHECK(applied == 20U);
+            REQUIRE(client_registry.get<NetworkedPosition>(local).x == Catch::Approx(x).margin(0.11));
+        }
+    }
 }

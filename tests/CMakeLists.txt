@@ -1,6 +1,7 @@
 ashiato_sync_fetch_catch2()
 
 add_executable(ashiato_sync_tests
+    baseline_recovery_stress.test.cpp
     ball_stress.test.cpp
     bit_buffer.test.cpp
     client_ack_queue.test.cpp

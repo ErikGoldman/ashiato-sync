@@ -19,6 +19,8 @@ inline constexpr std::size_t ack_count_bits = 5U;
 inline constexpr std::uint16_t max_ack_count = (std::uint16_t{1} << ack_count_bits) - 1U;
 inline constexpr std::size_t input_count_bits = 5U;
 inline constexpr std::uint16_t max_input_count = (std::uint16_t{1} << input_count_bits) - 1U;
+// Matching capacities ensure every server-selectable ACK still has a client-side baseline candidate.
+inline constexpr std::size_t baseline_retention_count = 64;
 inline constexpr std::size_t max_cue_payload_bits = std::size_t{64U} * 8U;
 inline constexpr std::size_t max_cue_value_bytes = 64U;
 

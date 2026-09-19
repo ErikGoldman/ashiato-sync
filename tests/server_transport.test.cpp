@@ -907,6 +907,78 @@ TEST_CASE("replication server serializes compact synced tag masks per client") {
     }
 }
 
+TEST_CASE("a sent full record retires older baselines and their delayed ACKs") {
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<NetworkedPosition>(registry, "NetworkedPosition");
+    const ashiato::Entity health_component = ashiato::sync::register_sync_component<Health>(registry, "Health");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
+        registry,
+        "NetworkedActor",
+        {
+            {position_component, ashiato::sync::ReplicationAudience::All},
+            {health_component, ashiato::sync::ReplicationAudience::All},
+        });
+    const ashiato::Entity entity = registry.create();
+    REQUIRE(registry.add<NetworkedPosition>(entity, NetworkedPosition{1.0f, 2.0f}) != nullptr);
+    REQUIRE(registry.add<Health>(entity, Health{100}) != nullptr);
+    REQUIRE(start_sync(registry, entity, archetype));
+
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions options;
+    options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    ashiato::sync::ReplicationServer server(registry, options);
+    REQUIRE(server.add_client(1));
+
+    run_server_tick(server, registry);
+    REQUIRE(packets.size() == 1);
+    ServerUpdatePacket update = read_server_update(packets.back(), 3U);
+    REQUIRE(update.entities.size() == 1);
+    REQUIRE(update.entities[0].full);
+    REQUIRE(server.acknowledge_entity(1, entity, update.frame));
+
+    packets.clear();
+    registry.write<NetworkedPosition>(entity) = NetworkedPosition{2.0f, 2.0f};
+    run_server_tick(server, registry);
+    REQUIRE(packets.size() == 1);
+    update = read_server_update(packets.back(), 3U);
+    REQUIRE(update.entities.size() == 1);
+    REQUIRE_FALSE(update.entities[0].full);
+    const ashiato::sync::SyncFrame delayed_delta_frame = update.frame;
+
+    packets.clear();
+    REQUIRE(registry.remove<Health>(entity));
+    run_server_tick(server, registry);
+    REQUIRE(packets.size() == 1);
+    update = read_server_update(packets.back(), 3U);
+    REQUIRE(update.entities.size() == 1);
+    REQUIRE(update.entities[0].full);
+
+    REQUIRE(server.acknowledge_entity(1, entity, delayed_delta_frame));
+
+    packets.clear();
+    REQUIRE(registry.add<Health>(entity, Health{75}) != nullptr);
+    registry.write<NetworkedPosition>(entity) = NetworkedPosition{3.0f, 2.0f};
+    run_server_tick(server, registry);
+    REQUIRE(packets.size() == 1);
+    update = read_server_update(packets.back(), 3U);
+    REQUIRE(update.entities.size() == 1);
+    REQUIRE(update.entities[0].full);
+    const ashiato::sync::SyncFrame recovery_frame = update.frame;
+    REQUIRE(server.acknowledge_entity(1, entity, recovery_frame));
+
+    packets.clear();
+    registry.write<NetworkedPosition>(entity) = NetworkedPosition{4.0f, 2.0f};
+    run_server_tick(server, registry);
+    REQUIRE(packets.size() == 1);
+    update = read_server_update(packets.back(), 3U);
+    REQUIRE(update.entities.size() == 1);
+    REQUIRE_FALSE(update.entities[0].full);
+    REQUIRE(update.entities[0].baseline_frame == recovery_frame);
+}
+
 TEST_CASE("replication server applies sphere priorities and component LOD masks") {
     ashiato::Registry registry;
     const ashiato::Entity health_component = ashiato::sync::register_sync_component<Health>(registry, "Health");

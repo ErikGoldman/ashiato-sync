@@ -429,4 +429,12 @@ bool server_detail::ServerClientReplicator::acknowledge_entity(
     return true;
 }
 
+void server_detail::ServerClientReplicator::invalidate_entity_baseline(
+    ReplicationServer& replication_server,
+    ClientEntityState& entity_state) {
+    replication_server.release_server_quantized_frame(entity_state.baseline);
+    entity_state.baseline = server_detail::invalid_quantized_frame_id;
+    ++entity_state.baseline_epoch;
+}
+
 }  // namespace ashiato::sync

@@ -53,14 +53,6 @@ private:
     bool owns_reference_ = true;
 };
 
-void invalidate_client_baseline(
-    ReplicationServer& replication_server,
-    server_detail::ClientEntityState& entity_state) {
-    replication_server.release_server_quantized_frame(entity_state.baseline);
-    entity_state.baseline = server_detail::invalid_quantized_frame_id;
-    ++entity_state.baseline_epoch;
-}
-
 }  // namespace
 
 ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::UpdateScheduler::send_client(
@@ -225,6 +217,7 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
 
         serialized_.payload.clear();
         serialized_.quantized_frame = server_detail::invalid_quantized_frame_id;
+        serialized_.full_state = false;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
         serialized_.deferred_trace_events.clear();
 #endif
@@ -324,6 +317,10 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
             entry.priority_accumulator = 0.0f;
         }
         ClientEntityState& entity_state = replication.entities.at(slot);
+        if (serialized_.full_state &&
+            entity_state.baseline != server_detail::invalid_quantized_frame_id) {
+            replication.invalidate_entity_baseline(replication_server, entity_state);
+        }
         entity_state.reference_priority_boost_pending = false;
         entity_state.pending.push_back(ClientEntityState::PendingQuantizedFrame{
             serialized_.quantized_frame,
@@ -383,7 +380,7 @@ void server_detail::ServerClientReplicator::UpdateScheduler::refresh_replication
         entity_state->component_mask = entry.component_mask;
         // Reopened components require a full update to restore a shared baseline.
         if ((decision.component_mask & ~previous_mask) != 0U) {
-            invalidate_client_baseline(replication_server, *entity_state);
+            replication.invalidate_entity_baseline(replication_server, *entity_state);
         }
     }
 }

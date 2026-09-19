@@ -2607,7 +2607,8 @@ bool server_detail::ServerClientReplicator::UpdateWriter::serialize_entity(
         slot,
         quantized_frame,
         component_mask,
-        out.payload
+        out.payload,
+        out.full_state
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
         ,
         out.deferred_trace_events
@@ -2762,7 +2763,8 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
     std::uint32_t slot,
     std::uint32_t quantized_frame_id,
     std::uint64_t component_mask,
-    ashiato::BitBuffer& out
+    ashiato::BitBuffer& out,
+    bool& full_state
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
     ,
     std::vector<SyncTraceEvent>& deferred_trace_events
@@ -2785,6 +2787,7 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
         const QuantizedFrameData* baseline_data = replication_server.quantized_frame_data(entity_state->baseline);
         delta = baseline_data != nullptr && baseline_data->present_mask == quantized_data->present_mask;
     }
+    full_state = !delta;
 
     const std::uint32_t network_id = client.network_id_for(replication_server, slot);
     if (network_id == 0U) {

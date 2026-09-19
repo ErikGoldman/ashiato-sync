@@ -167,6 +167,9 @@ bool ClientUpdateRuntime::apply_upsert(
     }
     trace_cues_received(client, settings, metadata, *record.received_cues);
     trace_received_upsert_record(client, settings, metadata, record, *state);
+    if (!metadata.is_full_upsert) {
+        client.protect_referenced_baseline(*state, metadata.baseline_frame);
+    }
     if (!apply_upsert_record(client, registry, settings, *state, metadata, record)) {
         return fail_apply_if_empty("mode_apply_failed");
     }
