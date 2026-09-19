@@ -10,7 +10,7 @@
 namespace ashiato::sync::client_detail {
 
 inline constexpr std::uint32_t invalid_entity_index = std::numeric_limits<std::uint32_t>::max();
-inline constexpr std::size_t max_baseline_history_per_entity = 64;
+inline constexpr std::size_t max_baseline_history_per_entity = protocol::max_baseline_history_frames;
 
 struct EntityCue {
     SyncFrame frame = 0;

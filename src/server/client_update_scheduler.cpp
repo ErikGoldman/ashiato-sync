@@ -223,6 +223,20 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
             continue;
         }
 
+        // A client only remembers the last max_baseline_history_frames of an entity's baselines. If the ACKed
+        // baseline is that old -- the client stopped ACKing for a while and then caught up on a burst of
+        // deltas -- the client may have overwritten it, and every delta against it would be rejected with
+        // its whole packet, unACKed, for ever. Send a full record instead.
+        if (ClientEntityState* entity_state = replication.entities.try_get(slot);
+            entity_state != nullptr &&
+            entity_state->baseline != server_detail::invalid_quantized_frame_id &&
+            replication_server.quantized_frame_active(entity_state->baseline) &&
+            static_cast<std::size_t>(
+                replication_server.frame() - replication_server.quantized_frame_frame(entity_state->baseline)) >=
+                protocol::max_baseline_history_frames) {
+            invalidate_client_baseline(replication_server, *entity_state);
+        }
+
         serialized_.payload.clear();
         serialized_.quantized_frame = server_detail::invalid_quantized_frame_id;
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
