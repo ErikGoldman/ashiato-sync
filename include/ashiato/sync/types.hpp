@@ -852,6 +852,9 @@ struct ReplicationServerOptions {
     SyncFrame entity_replication_decision_interval_frames = 4;
     // Empty replicates every component of every entity with priority 1.0.
     EntityReplicationDecisionFn entity_replication_decider;
+    // If an update cannot fit in the remaining bandwidth, skip it so a smaller update can
+    // still fill the packet. After this many skips, stop and send what fits.
+    std::size_t max_budget_refusals_per_client_tick = 2;
     ConnectHandlerFn connect_handler;
     TransportFn transport;
     ServerConnectionEventFn connection_event_handler;
