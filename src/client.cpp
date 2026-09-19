@@ -1425,6 +1425,9 @@ void ReplicationClient::reset_absent_entity_state(EntityState& state, SyncArchet
     state.replication.baseline.clear();
     state.replication.history.clear();
     state.replication.history_next = 0;
+    state.replication.pinned_wire_baseline = {};
+    state.replication.referenced_baseline_frame = 0;
+    state.replication.has_referenced_baseline = false;
     state.replication.applied_present_mask = 0;
     sync_entity_memberships(state);
 }
@@ -1453,6 +1456,11 @@ void ReplicationClient::record_authoritative_absent(EntityState& state, SyncFram
     state.replication.entity_present = false;
     remember_baseline(state);
     sync_entity_memberships(state);
+}
+
+void ReplicationClient::protect_referenced_baseline(EntityState& state, SyncFrame frame) noexcept {
+    state.replication.referenced_baseline_frame = frame;
+    state.replication.has_referenced_baseline = true;
 }
 
 bool ReplicationClient::transition_to_buffered(const SyncSettings& settings, EntityState& state) {
@@ -1628,6 +1636,11 @@ void ReplicationClient::remember_baseline(EntityState& state) {
 
     client_detail::EntityFrameBaseline& baseline =
         state.replication.history[state.replication.frame & (client_detail::max_baseline_history_per_entity - 1U)];
+    if (state.replication.has_referenced_baseline &&
+        baseline.valid &&
+        baseline.frame == state.replication.referenced_baseline_frame) {
+        std::swap(baseline, state.replication.pinned_wire_baseline);
+    }
     baseline.frame = state.replication.frame;
     baseline.valid = true;
     baseline.baseline = state.replication.baseline;

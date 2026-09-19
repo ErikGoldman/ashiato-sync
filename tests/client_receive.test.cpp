@@ -1395,14 +1395,15 @@ TEST_CASE("replication client evicts destroy tombstones by deterministic age") {
     REQUIRE_FALSE(client.local_entity(test_client_entity_network_id(1, retained_wire_id, 1U)));
 }
 
-TEST_CASE("replication client keeps receiving an entity after a stall longer than its baseline history") {
+TEST_CASE("replication client keeps receiving an entity through processing and ACK stalls") {
     // A client that stops processing for a while -- its main thread blocked, say -- sends no ACKs, so the server
     // keeps delta-encoding a changing entity against the last baseline the client ACKed. When the client catches
     // up it applies the queued packets in one burst. Its per-entity baseline history is a ring indexed by frame
     // (client/state.hpp, max_baseline_history_per_entity), so once it applies a record 64 or more frames newer than
     // that baseline, the baseline's slot is overwritten and every later delta against it fails.
-    const int stalled_ticks = GENERATE(40, 150);
-    INFO("stalled for " << stalled_ticks << " ticks");
+    const int stalled_ticks = GENERATE(40, 150, 512);
+    const bool process_during_stall = GENERATE(false, true);
+    INFO("stalled for " << stalled_ticks << " ticks; process packets: " << process_during_stall);
     {
         {
             ashiato::Registry server_registry;
@@ -1450,18 +1451,25 @@ TEST_CASE("replication client keeps receiving an entity after a stall longer tha
             deliver_acks();
             packets.clear();
 
-            // The stall: the entity changes every tick, nothing reaches the client and nothing comes back.
-            // Tenths, in steps the test codec's 8-bit fields hold across the whole stall.
+            // In a processing stall, packets queue without reaching the client. In an ACK stall, the client
+            // applies every packet but its outgoing ACKs are lost. Keep the values within the test codec's
+            // 8-bit fields even when the outage spans several baseline-history rotations.
             float x = 1.0f;
             for (int tick = 0; tick < stalled_ticks; ++tick) {
-                x += 0.1f;
+                x += 0.01f;
                 server_registry.write<NetworkedPosition>(server_entity) = NetworkedPosition{x, 2.0f};
                 server.tick(server_registry, server.options().fixed_dt_seconds);
+                if (process_during_stall) {
+                    REQUIRE(packets.size() == 1);
+                    REQUIRE(client.receive(client_registry, packets.back()));
+                    (void)client.drain_ack_packets();
+                    packets.clear();
+                }
             }
 
-            // The catch-up: every queued packet at once, then the ACKs for what applied.
+            // A processing stall catches up in one burst. An ACK stall has already applied the same stream.
             for (const ashiato::BitBuffer& packet : packets) {
-                (void)client.receive(client_registry, packet);
+                REQUIRE(client.receive(client_registry, packet));
             }
             deliver_acks();
             packets.clear();
@@ -1469,7 +1477,7 @@ TEST_CASE("replication client keeps receiving an entity after a stall longer tha
             // Normal service again, with no loss at all.
             std::size_t applied = 0;
             for (int tick = 0; tick < 20; ++tick) {
-                x += 0.1f;
+                x += 0.01f;
                 server_registry.write<NetworkedPosition>(server_entity) = NetworkedPosition{x, 2.0f};
                 server.tick(server_registry, server.options().fixed_dt_seconds);
                 if (client.receive(client_registry, packets.back())) {
