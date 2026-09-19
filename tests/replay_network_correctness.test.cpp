@@ -28,6 +28,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
@@ -215,6 +216,23 @@ bool receive_packet(SocketHandle socket, ashiato::BitBuffer& packet, sockaddr_in
     return true;
 }
 
+bool wait_for_packet(SocketHandle socket) {
+    fd_set readable;
+    FD_ZERO(&readable);
+    FD_SET(socket, &readable);
+    timeval timeout{};
+    timeout.tv_usec = 10'000;
+#ifdef _WIN32
+    const int result = select(0, &readable, nullptr, nullptr, &timeout);
+#else
+    const int result = select(socket + 1, &readable, nullptr, nullptr, &timeout);
+#endif
+    if (result < 0) {
+        throw std::runtime_error("failed to wait for UDP packet");
+    }
+    return result > 0 && FD_ISSET(socket, &readable) != 0;
+}
+
 std::uint8_t packet_message(ashiato::BitBuffer packet) {
     return packet.remaining_bits() >= ashiato::sync::protocol::message_bits
         ? static_cast<std::uint8_t>(packet.read_bits(ashiato::sync::protocol::message_bits))
@@ -397,6 +415,9 @@ struct ReplayNetworkHarness {
     bool ready = false;
 
     void receive_client_packets() {
+        if (!wait_for_packet(socket)) {
+            return;
+        }
         ashiato::BitBuffer packet;
         sockaddr_in sender{};
         while (receive_packet(socket, packet, &sender)) {
@@ -583,12 +604,14 @@ TEST_CASE("network replay smoke streams correct movement and cue frames") {
         harness.tick();
 
         ashiato::BitBuffer packet;
-        while (receive_packet(client_socket, packet)) {
-            const ashiato::sync::SyncFrame update_frame = update_packet_frame(packet);
-            if (update_frame != 0U) {
-                received_update_frames.push_back(update_frame);
+        if (wait_for_packet(client_socket)) {
+            while (receive_packet(client_socket, packet)) {
+                const ashiato::sync::SyncFrame update_frame = update_packet_frame(packet);
+                if (update_frame != 0U) {
+                    received_update_frames.push_back(update_frame);
+                }
+                client.receive_packet(std::move(packet));
             }
-            client.receive_packet(std::move(packet));
         }
 
         REQUIRE(client.tick(client_registry, 0.0));
