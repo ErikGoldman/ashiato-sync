@@ -301,7 +301,7 @@ TEST_CASE(
     constexpr std::array<std::size_t, 6> cadences{1U, 2U, 3U, 7U, 16U, 31U};
     entities.reserve(cadences.size());
     for (std::size_t index = 0; index < cadences.size(); ++index) {
-        entities.push_back(harness.add_entity(NetworkedPosition{static_cast<float>(index), 0.0f}));
+        entities.push_back(harness.add_entity());
     }
     harness.establish_initial_baseline(entities);
 
