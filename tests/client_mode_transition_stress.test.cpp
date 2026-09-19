@@ -431,7 +431,7 @@ TEST_CASE(
 
 TEST_CASE(
     "switching away from buffered mode neither loses nor replays queued cues",
-    "[client][mode-transition][stress][!mayfail]") {
+    "[client][mode-transition][stress]") {
     using Mode = ashiato::sync::ReplicationClientMode;
 
     ashiato::Registry server_registry;

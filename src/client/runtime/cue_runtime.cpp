@@ -374,6 +374,48 @@ void ClientCueRuntime::play_buffered_for_frame(
     }
 }
 
+void ClientCueRuntime::play_buffered_on_mode_transition(
+    ReplicationClient& client,
+    ashiato::Registry& registry,
+    const SyncSettings& settings,
+    std::uint32_t entity_index,
+    EntityState& state) {
+    std::vector<BufferedEntityCue> pending_cues;
+    std::size_t write_index = 0;
+    for (std::size_t read_index = 0; read_index < store_.buffered.size(); ++read_index) {
+        BufferedEntityCue& buffered = store_.buffered[read_index];
+        if (buffered.entity_index == entity_index) {
+            pending_cues.push_back(std::move(buffered));
+            continue;
+        }
+        if (write_index != read_index) {
+            store_.buffered[write_index] = std::move(buffered);
+        }
+        ++write_index;
+    }
+    store_.buffered.resize(write_index);
+
+    std::stable_sort(
+        pending_cues.begin(),
+        pending_cues.end(),
+        [](const BufferedEntityCue& left, const BufferedEntityCue& right) {
+            return left.cue.frame < right.cue.frame;
+        });
+    const double server_frame = client.clock_.estimated_server_frame();
+    for (const BufferedEntityCue& buffered : pending_cues) {
+        const double late_frames = std::max(0.0, server_frame - static_cast<double>(buffered.cue.frame));
+        (void)play(
+            client,
+            registry,
+            settings,
+            entity_index,
+            state,
+            buffered.cue,
+            static_cast<float>(late_frames * client.fixed_dt_seconds_),
+            true);
+    }
+}
+
 void ClientCueRuntime::discard_applied_buffered(ReplicationClient& client, SyncFrame buffered_frame) {
     (void)client;
     store_.buffered.erase(

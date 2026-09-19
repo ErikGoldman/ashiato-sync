@@ -1488,6 +1488,7 @@ bool ReplicationClient::transition_to_predict(
     if (!validate_predicted_archetype(settings, state.identity.archetype)) {
         return false;
     }
+    const ReplicationClientMode previous = state.mode.current;
     mark_mode_user_selected(state, ReplicationClientMode::Predict);
     state.visual.snap_errors.clear();
     const std::uint32_t entity_index = entity_store_->index_of(state);
@@ -1521,8 +1522,7 @@ bool ReplicationClient::transition_to_predict(
             }
         }
     }
-    buffered_runtime_->clear_entity(entity_index);
-    cue_runtime_->erase_buffered_for_entity(entity_index);
+    finish_immediate_mode_transition(registry, settings, state, previous);
     sync_entity_memberships(state);
     return true;
 }
@@ -1534,11 +1534,27 @@ bool ReplicationClient::transition_to_snap(ashiato::Registry& registry, const Sy
         state.mode.current = previous;
         return false;
     }
-    const std::uint32_t entity_index = entity_store_->index_of(state);
-    buffered_runtime_->clear_entity(entity_index);
-    cue_runtime_->erase_buffered_for_entity(entity_index);
+    finish_immediate_mode_transition(registry, settings, state, previous);
     sync_entity_memberships(state);
     return true;
+}
+
+void ReplicationClient::finish_immediate_mode_transition(
+    ashiato::Registry& registry,
+    const SyncSettings& settings,
+    EntityState& state,
+    ReplicationClientMode previous_mode) {
+    const std::uint32_t entity_index = entity_store_->index_of(state);
+    if (previous_mode == ReplicationClientMode::BufferedInterpolation) {
+        cue_runtime_->play_buffered_on_mode_transition(
+            *this,
+            registry,
+            settings,
+            entity_index,
+            state);
+    }
+    buffered_runtime_->clear_entity(entity_index);
+    cue_runtime_->erase_buffered_for_entity(entity_index);
 }
 
 bool ReplicationClient::has_buffered_entities() const noexcept {

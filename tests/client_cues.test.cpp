@@ -319,7 +319,9 @@ TEST_CASE("queued buffered cues survive a switch to an immediate mode exactly on
             REQUIRE(server.add_client(1));
             REQUIRE(emit_test_cue(server_registry, server_entity, 1U, TestCue{31}, 1.0f));
             REQUIRE(server.tick(server_registry, server.options().fixed_dt_seconds));
-            REQUIRE(packets.size() == 1U);
+            REQUIRE(emit_test_cue(server_registry, server_entity, 2U, TestCue{32}, 1.0f));
+            REQUIRE(server.tick(server_registry, server.options().fixed_dt_seconds));
+            REQUIRE(packets.size() == 2U);
 
             ashiato::Registry client_registry;
             REQUIRE(define_predicted_archetype(client_registry) == server_archetype);
@@ -335,6 +337,7 @@ TEST_CASE("queued buffered cues survive a switch to an immediate mode exactly on
                 make_test_client_options(client_registry, client_options));
 
             REQUIRE(client.receive(client_registry, packets.front()));
+            REQUIRE(client.receive(client_registry, packets.back()));
             const auto network_id = first_allocated_client_entity_network_id(1);
             REQUIRE_FALSE(client.local_entity(network_id));
 
@@ -342,13 +345,14 @@ TEST_CASE("queued buffered cues survive a switch to an immediate mode exactly on
             const ashiato::Entity local = client.local_entity(network_id);
             REQUIRE(local);
             REQUIRE(client_registry.contains<CuePlayback>(local));
-            CHECK(client_registry.get<CuePlayback>(local).plays == 1);
+            CHECK(client_registry.get<CuePlayback>(local).plays == 2);
+            CHECK(client_registry.get<CuePlayback>(local).last_id == 32);
 
             client.set_entity_mode(client_registry, network_id, Mode::BufferedInterpolation);
-            REQUIRE(client.apply_frame(client_registry, 1U));
+            REQUIRE(client.apply_frame(client_registry, 2U));
             client.set_entity_mode(client_registry, network_id, Mode::Snap);
             client.set_entity_mode(client_registry, network_id, Mode::Predict);
-            CHECK(client_registry.get<CuePlayback>(local).plays == 1);
+            CHECK(client_registry.get<CuePlayback>(local).plays == 2);
         }
     }
 }
