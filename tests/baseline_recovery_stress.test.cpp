@@ -293,6 +293,33 @@ TEST_CASE("out-of-order ACKs do not regress the selected server baseline", "[bas
     require_position(harness.client_position(entity), 3.0f);
 }
 
+TEST_CASE("an ACK candidate is retired before its client baseline can be evicted", "[baseline-recovery]") {
+    BaselineRecoveryHarness harness;
+    TrackedEntity entity = harness.add_entity();
+    const ashiato::sync::SyncFrame baseline_frame = harness.establish_initial_baseline(entity).frame;
+    std::vector<ashiato::BitBuffer> delayed_acks;
+
+    for (std::size_t update = 1; update <= baseline_history_size + 1U; ++update) {
+        harness.set_position(entity, alternating_position(update));
+        harness.tick_server();
+        REQUIRE(harness.receive(harness.take_single_packet()));
+        harness.collect_client_acks(delayed_acks);
+    }
+    REQUIRE(delayed_acks.size() == baseline_history_size + 1U);
+
+    REQUIRE_FALSE(harness.forward_ack(delayed_acks.front()));
+    harness.set_position(entity, 3.0f);
+    harness.tick_server();
+    const ashiato::BitBuffer recovery_packet = harness.take_single_packet();
+    const ServerUpdatePacket recovery = harness.read_update(recovery_packet);
+    REQUIRE(recovery.entities.size() == 1U);
+    REQUIRE_FALSE(recovery.entities.front().full);
+    REQUIRE(recovery.entities.front().baseline_frame == baseline_frame);
+    REQUIRE(harness.receive(recovery_packet));
+    harness.forward_all_client_acks();
+    require_position(harness.client_position(entity), 3.0f);
+}
+
 TEST_CASE(
     "correlated multi-entity ACK blackout recovers entities with different update cadences",
     "[baseline-recovery]") {

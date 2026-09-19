@@ -234,6 +234,7 @@ struct ServerClientReplicator final : ServerRegistryDirtyFrameListener, ServerFr
         ashiato::Entity entity,
         SyncFrame frame);
     bool acknowledge_entity(ReplicationServer& replication_server, std::uint32_t replicated_index, SyncFrame frame);
+    void invalidate_entity_baseline(ReplicationServer& replication_server, ClientEntityState& entity_state);
 };
 
 struct ServerClientReplicator::UpdateWriter {

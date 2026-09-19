@@ -53,14 +53,6 @@ private:
     bool owns_reference_ = true;
 };
 
-void invalidate_client_baseline(
-    ReplicationServer& replication_server,
-    server_detail::ClientEntityState& entity_state) {
-    replication_server.release_server_quantized_frame(entity_state.baseline);
-    entity_state.baseline = server_detail::invalid_quantized_frame_id;
-    ++entity_state.baseline_epoch;
-}
-
 }  // namespace
 
 ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::UpdateScheduler::send_client(
@@ -327,7 +319,7 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
         ClientEntityState& entity_state = replication.entities.at(slot);
         if (serialized_.full_state &&
             entity_state.baseline != server_detail::invalid_quantized_frame_id) {
-            invalidate_client_baseline(replication_server, entity_state);
+            replication.invalidate_entity_baseline(replication_server, entity_state);
         }
         entity_state.reference_priority_boost_pending = false;
         entity_state.pending.push_back(ClientEntityState::PendingQuantizedFrame{
@@ -388,7 +380,7 @@ void server_detail::ServerClientReplicator::UpdateScheduler::refresh_replication
         entity_state->component_mask = entry.component_mask;
         // Reopened components require a full update to restore a shared baseline.
         if ((decision.component_mask & ~previous_mask) != 0U) {
-            invalidate_client_baseline(replication_server, *entity_state);
+            replication.invalidate_entity_baseline(replication_server, *entity_state);
         }
     }
 }
