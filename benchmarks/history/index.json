@@ -2,6 +2,126 @@
   "schema_version": 1,
   "runs": [
     {
+      "commit": "5597d3381599038d06c8c5b23e07063f578cdeec",
+      "short_commit": "5597d3381599",
+      "ref": "main",
+      "run_id": "35457062886",
+      "run_attempt": "1",
+      "started_at": "2026-09-19T17:08:15.780148+00:00",
+      "finished_at": "2026-09-19T17:08:34.616531+00:00",
+      "subset": "characteristic",
+      "path": "commits/5597d3381599038d06c8c5b23e07063f578cdeec/result.json",
+      "cpu": [
+        {
+          "name": "BM_ClientReceivePredict/4096/16",
+          "real_time": 27307238.80769185,
+          "cpu_time": 27301039.076923072,
+          "time_unit": "ns",
+          "items_per_second": 12929.910799563033,
+          "bytes_per_second": null,
+          "iterations": 26
+        },
+        {
+          "name": "BM_ClientApplyBufferedInterpolation/4096/16",
+          "real_time": 10159774.941176761,
+          "cpu_time": 10156647.705882382,
+          "time_unit": "ns",
+          "items_per_second": 1575.3229277346452,
+          "bytes_per_second": null,
+          "iterations": 68
+        },
+        {
+          "name": "BM_ServerTickBudgetLimited/16384/8/64",
+          "real_time": 15188133.18181826,
+          "cpu_time": 15181465.79545454,
+          "time_unit": "ns",
+          "items_per_second": 33725.33369954943,
+          "bytes_per_second": null,
+          "iterations": 44
+        },
+        {
+          "name": "BM_ServerTickSerializedDelta/16384/8",
+          "real_time": 73736206.33333328,
+          "cpu_time": 73728158.33333331,
+          "time_unit": "ns",
+          "items_per_second": 1777773.9599490426,
+          "bytes_per_second": null,
+          "iterations": 9
+        },
+        {
+          "name": "BM_ServerTickPackedAckedDeltaShared/16384/8",
+          "real_time": 544620.7262658237,
+          "cpu_time": 544563.3979430379,
+          "time_unit": "ns",
+          "items_per_second": 240691901.98073193,
+          "bytes_per_second": null,
+          "iterations": 1264
+        },
+        {
+          "name": "BM_ServerTickMutatingAckedDelta/16384/8",
+          "real_time": 180983144.99999902,
+          "cpu_time": 180957914.33333316,
+          "time_unit": "ns",
+          "items_per_second": 724323.1139289056,
+          "bytes_per_second": null,
+          "iterations": 3
+        },
+        {
+          "name": "BM_BitBufferAppendBits/131072",
+          "real_time": 236.58364871672276,
+          "cpu_time": 236.57664836953748,
+          "time_unit": "ns",
+          "items_per_second": 554036084724.9087,
+          "bytes_per_second": null,
+          "iterations": 2963853
+        }
+      ],
+      "bandwidth": [
+        {
+          "scenario": "ball_snap_baseline",
+          "wall_seconds": 0.663698228,
+          "server_replication_seconds": 0.410003644,
+          "client_receive_seconds": 0.221459302,
+          "server_to_clients_bytes": 6616500,
+          "server_to_clients_packets": 5868,
+          "clients_to_server_bytes": 6484,
+          "clients_to_server_packets": 604,
+          "server_bytes": null,
+          "server_packets": null,
+          "client_bytes": null,
+          "client_packets": null
+        },
+        {
+          "scenario": "ball_buffered_latency",
+          "wall_seconds": 0.938495248,
+          "server_replication_seconds": 0.505425795,
+          "client_receive_seconds": 0.372904922,
+          "server_to_clients_bytes": 8070523,
+          "server_to_clients_packets": 7102,
+          "clients_to_server_bytes": 7379,
+          "clients_to_server_packets": 601,
+          "server_bytes": null,
+          "server_packets": null,
+          "client_bytes": null,
+          "client_packets": null
+        },
+        {
+          "scenario": "prediction_rollback_mixed",
+          "wall_seconds": 7.451033,
+          "server_replication_seconds": 2.436944,
+          "client_receive_seconds": 2.155848,
+          "server_to_clients_bytes": null,
+          "server_to_clients_packets": null,
+          "clients_to_server_bytes": null,
+          "clients_to_server_packets": null,
+          "server_bytes": 30579612,
+          "server_packets": 25950,
+          "client_bytes": 27188,
+          "client_packets": 1217
+        }
+      ]
+    },
+    {
       "commit": "8fa08cf8de573c8bd6a81a62268a978e6f187d68",
       "short_commit": "8fa08cf8de57",
       "ref": "main",
