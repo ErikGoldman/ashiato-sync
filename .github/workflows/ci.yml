@@ -131,6 +131,40 @@ jobs:
           COVERAGE_OUTCOME: ${{ steps.coverage.outcome }}
           COVERAGE_BADGE_OUTCOME: ${{ steps.coverage-badge.outcome }}
 
+  stateful-chaos-stress:
+    name: Stateful chaos stress
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ashiato-sync
+
+    steps:
+      - name: Check out ashiato-sync
+        uses: actions/checkout@v6
+        with:
+          path: ashiato-sync
+
+      - name: Check out Ashiato ECS
+        uses: actions/checkout@v6
+        with:
+          repository: ErikGoldman/ashiato
+          path: main
+          token: ${{ secrets.ASHIATO_CHECKOUT_TOKEN || github.token }}
+
+      - name: Configure stress tests
+        run: >
+          cmake -S . -B build-stress
+          -DCMAKE_BUILD_TYPE=Debug
+          -DBUILD_TESTING=ON
+          -DASHIATO_SYNC_BUILD_BENCHMARKS=OFF
+          -DASHIATO_SYNC_BUILD_EXAMPLES=OFF
+          -DASHIATO_SYNC_BUILD_TRACE_VIEWER=OFF
+          -DASHIATO_SYNC_ASHIATO_SOURCE_DIR=${{ github.workspace }}/main
+
+      - name: Run PR stress tier
+        run: ./scripts/run_stress.sh pr build-stress
+
   memory-smoke:
     name: End-to-end memory smoke
     runs-on: ubuntu-latest
