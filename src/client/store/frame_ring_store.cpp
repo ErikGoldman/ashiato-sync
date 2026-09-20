@@ -19,6 +19,7 @@ EntityFrameView make_view(
         sample.frame,
         sample.valid,
         sample.entity_present,
+        sample.component_apply_mask,
         sample.write_generation,
         sample.write_source,
         false,
@@ -61,6 +62,7 @@ void ClientFrameRingStore::clear(std::uint32_t entity_index) noexcept {
         frame.frame = 0;
         frame.valid = false;
         frame.entity_present = false;
+        frame.component_apply_mask = 0;
         frame.tag_mask = 0;
         frame.present_mask = 0;
         frame.write_generation = 0;
@@ -137,6 +139,7 @@ bool ClientFrameRingStore::read(std::uint32_t entity_index, SyncFrame frame, Ent
     out.frame = frame_view.frame;
     out.valid = frame_view.valid;
     out.entity_present = frame_view.entity_present;
+    out.component_apply_mask = frame_view.component_apply_mask;
     out.baseline.tag_mask = frame_view.baseline.tag_mask;
     out.baseline.present_mask = frame_view.baseline.present_mask;
     out.baseline.bytes.resize(frame_view.baseline.byte_count);
@@ -161,6 +164,7 @@ void ClientFrameRingStore::write(
         source);
     *frame.valid = sample.valid;
     *frame.entity_present = sample.entity_present;
+    *frame.component_apply_mask = sample.component_apply_mask;
     *frame.presentation_origin_valid = presentation_origin.valid;
     *frame.presentation_origin_generation = presentation_origin.write_generation;
     *frame.presentation_origin_write_source = presentation_origin.write_source;
@@ -191,6 +195,7 @@ MutableEntityFrameView ClientFrameRingStore::begin_write(
     metadata.frame = frame;
     metadata.valid = true;
     metadata.entity_present = false;
+    metadata.component_apply_mask = 0;
     metadata.tag_mask = 0;
     metadata.present_mask = 0;
     metadata.write_generation = ++write_generation_counter_;
@@ -208,6 +213,7 @@ MutableEntityFrameView ClientFrameRingStore::begin_write(
         frame,
         &metadata.valid,
         &metadata.entity_present,
+        &metadata.component_apply_mask,
         &metadata.write_generation,
         &metadata.write_source,
         &metadata.presentation_origin_valid,

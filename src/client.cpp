@@ -192,6 +192,7 @@ struct ReplicationClient::RegistryFrameApplyInfo {
     SyncFrame frame = 0;
     detail::FrameDataView frame_data;
     std::uint64_t previous_present_mask = 0;
+    std::uint64_t next_present_mask = 0;
     bool remove_missing_components = false;
     bool verify_tag_apply = false;
 };
@@ -895,7 +896,7 @@ bool ReplicationClient::apply_registry_frame(
             state,
             input.frame,
             input.previous_present_mask,
-            input.frame_data.present_mask)) {
+            input.next_present_mask)) {
         return false;
     }
 
@@ -1001,6 +1002,25 @@ bool ReplicationClient::write_buffered_frame(
     *sample.valid = true;
     *sample.entity_present = entity_present;
 
+    const auto finish_buffered_frame = [&]() {
+        const detail::FrameDataView current{
+            *sample.baseline.tag_mask,
+            *sample.baseline.present_mask,
+            sample.baseline.bytes,
+            sample.baseline.byte_count};
+        EntityFrameView previous;
+        if (frame != 0U &&
+            buffered_runtime_->frames().view(entity_index, frame - 1U, previous) &&
+            previous.entity_present) {
+            *sample.component_apply_mask = detail::changed_present_component_mask(
+                archetype,
+                previous.baseline,
+                current);
+        } else {
+            *sample.component_apply_mask = current.present_mask;
+        }
+    };
+
     if (!entity_present) {
         return true;
     }
@@ -1015,9 +1035,11 @@ bool ReplicationClient::write_buffered_frame(
         if (!to->bytes.empty()) {
             std::memcpy(sample.baseline.bytes, to->bytes.data(), to->bytes.size());
         }
+        finish_buffered_frame();
         return true;
     }
     if (from == nullptr) {
+        finish_buffered_frame();
         return true;
     }
     *sample.baseline.tag_mask = from->tag_mask;
@@ -1053,6 +1075,7 @@ bool ReplicationClient::write_buffered_frame(
         }
     }
 
+    finish_buffered_frame();
     return true;
 }
 
@@ -1071,20 +1094,37 @@ bool ReplicationClient::apply_buffered_sample(
         state.identity.local = ashiato::Entity{};
         state.replication.applied_present_mask = 0;
         state.visual.snap_errors.clear();
+        if (sample.write_source == FrameWriteSource::BufferedFrame) {
+            state.mode.last_applied_buffered_frame = sample.frame;
+        }
         return true;
     }
 
     const SyncArchetype& archetype = settings.archetypes[state.identity.archetype.value];
+    std::uint64_t component_apply_mask = sample.baseline.present_mask;
+    if (sample.write_source == FrameWriteSource::BufferedFrame &&
+        state.mode.last_applied_buffered_frame + 1U == sample.frame) {
+        component_apply_mask = sample.component_apply_mask;
+    }
+    const detail::FrameDataView frame{
+        sample.baseline.tag_mask,
+        sample.baseline.present_mask & component_apply_mask,
+        sample.baseline.bytes,
+        sample.baseline.byte_count};
     const RegistryFrameApplyInfo input{
         sample.frame,
-        sample.baseline,
+        frame,
         state.replication.applied_present_mask,
+        sample.baseline.present_mask,
         true,
         true};
     if (!apply_registry_frame(registry, archetype, state, input)) {
         return false;
     }
     state.replication.applied_present_mask = sample.baseline.present_mask;
+    if (sample.write_source == FrameWriteSource::BufferedFrame) {
+        state.mode.last_applied_buffered_frame = sample.frame;
+    }
     return true;
 }
 
@@ -1273,53 +1313,52 @@ bool ReplicationClient::apply_snap_sample(
     ashiato::Registry& registry,
     const SyncSettings& settings,
     EntityState& state,
-    const QuantizedFrameData& decoded,
-    bool full) {
+    const QuantizedFrameData& authoritative,
+    std::uint64_t component_apply_mask) {
     const SyncArchetype& archetype = settings.archetypes[state.identity.archetype.value];
     if (state.replication.baseline.bytes.size() != archetype.total_quantized_bytes &&
         !init_frame_data(archetype, state.replication.baseline)) {
         return false;
     }
     const detail::FrameDataView frame{
-        decoded.tag_mask,
-        decoded.present_mask,
-        decoded.bytes.empty() ? nullptr : decoded.bytes.data(),
-        decoded.bytes.size()};
+        authoritative.tag_mask,
+        authoritative.present_mask & component_apply_mask,
+        authoritative.bytes.empty() ? nullptr : authoritative.bytes.data(),
+        authoritative.bytes.size()};
     const RegistryFrameApplyInfo input{
         state.replication.frame,
         frame,
-        state.replication.baseline.present_mask,
-        full,
+        state.replication.applied_present_mask,
+        authoritative.present_mask,
+        true,
         false};
     if (!apply_registry_frame(registry, archetype, state, input)) {
         return false;
     }
 
-    if (full) {
-        state.visual.snap_errors.erase(
-            std::remove_if(
-                state.visual.snap_errors.begin(),
-                state.visual.snap_errors.end(),
-                [&](const client_detail::EntityComponentError& existing) {
-                    const auto found_component = std::find_if(
-                        archetype.components.begin(),
-                        archetype.components.end(),
-                        [&](const ComponentReplication& replication) {
-                            return replication.component == existing.component;
-                        });
-                    if (found_component == archetype.components.end()) {
-                        return true;
-                    }
-                    const std::size_t component_index =
-                        static_cast<std::size_t>(found_component - archetype.components.begin());
-                    return (decoded.present_mask & (std::uint64_t{1} << component_index)) == 0U;
-                }),
-            state.visual.snap_errors.end());
-    }
+    state.visual.snap_errors.erase(
+        std::remove_if(
+            state.visual.snap_errors.begin(),
+            state.visual.snap_errors.end(),
+            [&](const client_detail::EntityComponentError& existing) {
+                const auto found_component = std::find_if(
+                    archetype.components.begin(),
+                    archetype.components.end(),
+                    [&](const ComponentReplication& replication) {
+                        return replication.component == existing.component;
+                    });
+                if (found_component == archetype.components.end()) {
+                    return true;
+                }
+                const std::size_t component_index =
+                    static_cast<std::size_t>(found_component - archetype.components.begin());
+                return (authoritative.present_mask & (std::uint64_t{1} << component_index)) == 0U;
+            }),
+        state.visual.snap_errors.end());
 
     if (!client_detail::for_each_present_component(
             archetype,
-            decoded,
+            frame,
             [&](std::size_t component_index,
                 const ComponentReplication& replication,
                 const SyncComponentOps& ops,
@@ -1362,8 +1401,9 @@ bool ReplicationClient::apply_snap_sample(
     }
 
     state.replication.entity_present = true;
-    state.replication.baseline.tag_mask = decoded.tag_mask;
-    state.replication.applied_present_mask = state.replication.baseline.present_mask;
+    state.replication.baseline.tag_mask = authoritative.tag_mask;
+    state.replication.baseline.present_mask = authoritative.present_mask;
+    state.replication.applied_present_mask = authoritative.present_mask;
     sync_entity_memberships(state);
     return true;
 }
@@ -1386,7 +1426,12 @@ bool ReplicationClient::apply_latest_snap(
         return true;
     }
 
-    return apply_snap_sample(registry, settings, state, state.replication.baseline, true);
+    return apply_snap_sample(
+        registry,
+        settings,
+        state,
+        state.replication.baseline,
+        state.replication.baseline.present_mask);
 }
 
 bool ReplicationClient::switch_entity_mode(
@@ -1421,6 +1466,7 @@ void ReplicationClient::reset_absent_entity_state(EntityState& state, SyncArchet
     state.identity.archetype = archetype;
     state.mode.current = ReplicationClientMode::Snap;
     state.mode.selected = false;
+    state.mode.last_applied_buffered_frame = 0;
     state.replication.entity_present = false;
     state.replication.baseline.clear();
     state.replication.history.clear();
@@ -1468,6 +1514,7 @@ bool ReplicationClient::transition_to_buffered(const SyncSettings& settings, Ent
         return false;
     }
     mark_mode_user_selected(state, ReplicationClientMode::BufferedInterpolation);
+    state.mode.last_applied_buffered_frame = 0;
     state.visual.snap_errors.clear();
     const std::uint32_t entity_index = entity_store_->index_of(state);
     buffered_runtime_->ensure_entity(entity_index);

@@ -16,6 +16,7 @@ ashiato::sync::client_detail::EntityBufferedFrame make_sample(
     sample.frame = frame;
     sample.valid = true;
     sample.entity_present = entity_present;
+    sample.component_apply_mask = 6;
     sample.baseline.tag_mask = 3;
     sample.baseline.present_mask = 5;
     sample.baseline.bytes.assign(bytes.begin(), bytes.end());
@@ -51,6 +52,7 @@ TEST_CASE("ClientFrameRingStore lazily creates independent entity rings") {
     REQUIRE_FALSE(store.contains(0, 10));
     REQUIRE(store.read(7, 10, found));
     REQUIRE(found.entity_present);
+    REQUIRE(found.component_apply_mask == 6);
     REQUIRE(found.baseline.tag_mask == 3);
     REQUIRE(found.baseline.present_mask == 5);
     REQUIRE(found.baseline.bytes == std::vector<std::uint8_t>{1, 2, 3, 4});
@@ -147,6 +149,7 @@ TEST_CASE("ClientFrameRingStore writes and reads non-owning frame views") {
     ashiato::sync::client_detail::MutableEntityFrameView writable = store.begin_write(3, 12, 4);
     *writable.valid = true;
     *writable.entity_present = true;
+    *writable.component_apply_mask = 5;
     *writable.baseline.tag_mask = 11;
     *writable.baseline.present_mask = 1;
     writable.baseline.bytes[0] = 7;
@@ -158,6 +161,7 @@ TEST_CASE("ClientFrameRingStore writes and reads non-owning frame views") {
     REQUIRE(store.view(3, 12, view));
     REQUIRE(view.frame == 12);
     REQUIRE(view.entity_present);
+    REQUIRE(view.component_apply_mask == 5);
     REQUIRE(view.baseline.tag_mask == 11);
     REQUIRE(view.baseline.present_mask == 1);
     REQUIRE(view.baseline.byte_count == 4);

@@ -650,6 +650,93 @@ TEST_CASE("buffered interpolation delays component removal and entity destroy") 
     REQUIRE_FALSE(client_registry.alive(local));
 }
 
+TEST_CASE("buffered interpolation only pushes changed components to the registry") {
+    ashiato::Registry server_registry;
+    const ashiato::Entity server_position =
+        ashiato::sync::register_sync_component<Position>(server_registry, "Position");
+    const ashiato::Entity server_health =
+        ashiato::sync::register_sync_component<Health>(server_registry, "Health");
+    const ashiato::sync::SyncArchetypeId server_archetype = ashiato::sync::define_archetype(
+        server_registry,
+        "Actor",
+        {
+            {server_position, ashiato::sync::ReplicationAudience::All},
+            {server_health, ashiato::sync::ReplicationAudience::All},
+        });
+    const ashiato::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<Position>(server_entity, Position{1.0f, 2.0f}) != nullptr);
+    REQUIRE(server_registry.add<Health>(server_entity, Health{10}) != nullptr);
+
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::ClientId, const ashiato::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
+    REQUIRE(server.add_client(1));
+    REQUIRE(start_sync(server_registry, server_entity, server_archetype));
+
+    ashiato::Registry client_registry;
+    const ashiato::Entity client_position =
+        ashiato::sync::register_sync_component<Position>(client_registry, "Position");
+    const ashiato::Entity client_health =
+        ashiato::sync::register_sync_component<Health>(client_registry, "Health");
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato::sync::define_archetype(
+        client_registry,
+        "Actor",
+        {
+            {client_position, ashiato::sync::ReplicationAudience::All},
+            {client_health, ashiato::sync::ReplicationAudience::All},
+        });
+    REQUIRE(client_archetype == server_archetype);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
+
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::BufferedInterpolation;
+    options.buffered.buffered_frame_lag = 1;
+    ashiato::sync::ReplicationClient client(
+        client_registry,
+        ashiato_sync_tests::make_test_client_options(client_registry, options));
+
+    REQUIRE(server.tick(server_registry, server.options().fixed_dt_seconds));
+    REQUIRE(client.receive(client_registry, packets.back()));
+    REQUIRE(apply_estimated_server_frame(client, client_registry, 2));
+    const ashiato::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
+    REQUIRE(local);
+    for (const ashiato::BitBuffer& ack : client.drain_ack_packets()) {
+        REQUIRE(server.process_packet(server_registry, 1, ack));
+    }
+    REQUIRE(client_registry.clear_dirty<Position>(local));
+    REQUIRE(client_registry.clear_dirty<Health>(local));
+
+    server_registry.write<Position>(server_entity) = Position{2.0f, 2.0f};
+    REQUIRE(server.tick(server_registry, server.options().fixed_dt_seconds));
+    REQUIRE(client.receive(client_registry, packets.back()));
+    REQUIRE(apply_estimated_server_frame(client, client_registry, 3));
+
+    CHECK(client_registry.is_dirty<Position>(local));
+    CHECK_FALSE(client_registry.is_dirty<Health>(local));
+    CHECK(client_registry.get<Health>(local).value == 10);
+
+    REQUIRE(client_registry.clear_dirty<Position>(local));
+    for (const ashiato::BitBuffer& ack : client.drain_ack_packets()) {
+        REQUIRE(server.process_packet(server_registry, 1, ack));
+    }
+    server_registry.write<Health>(server_entity) = Health{20};
+    REQUIRE(server.tick(server_registry, server.options().fixed_dt_seconds));
+    REQUIRE(client.receive(client_registry, packets.back()));
+    for (const ashiato::BitBuffer& ack : client.drain_ack_packets()) {
+        REQUIRE(server.process_packet(server_registry, 1, ack));
+    }
+    server_registry.write<Position>(server_entity) = Position{3.0f, 2.0f};
+    REQUIRE(server.tick(server_registry, server.options().fixed_dt_seconds));
+    REQUIRE(client.receive(client_registry, packets.back()));
+
+    REQUIRE(client.apply_frame(client_registry, 4));
+    CHECK(client_registry.get<Health>(local).value == 20);
+    CHECK(client_registry.is_dirty<Health>(local));
+}
+
 TEST_CASE("buffered interpolation rejects interpolated components without trait hooks") {
     ashiato::Registry server_registry;
     const ashiato::Entity server_position = ashiato::sync::register_sync_component<Position>(server_registry, "Position");

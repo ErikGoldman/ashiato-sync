@@ -24,6 +24,7 @@ struct EntityFrameView {
     SyncFrame frame = 0;
     bool valid = false;
     bool entity_present = false;
+    std::uint64_t component_apply_mask = 0;
     std::uint64_t write_generation = 0;
     FrameWriteSource write_source = FrameWriteSource::Unknown;
     bool presentation_cache_hit = false;
@@ -39,6 +40,7 @@ struct MutableEntityFrameView {
     SyncFrame frame = 0;
     bool* valid = nullptr;
     bool* entity_present = nullptr;
+    std::uint64_t* component_apply_mask = nullptr;
     std::uint64_t* write_generation = nullptr;
     FrameWriteSource* write_source = nullptr;
     bool* presentation_origin_valid = nullptr;
@@ -89,6 +91,7 @@ public:
         SyncFrame frame = 0;
         bool valid = false;
         bool entity_present = false;
+        std::uint64_t component_apply_mask = 0;
         std::uint64_t tag_mask = 0;
         std::uint64_t present_mask = 0;
         std::uint64_t write_generation = 0;

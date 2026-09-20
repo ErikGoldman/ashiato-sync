@@ -1,5 +1,7 @@
 #include "detail/frame_data.hpp"
 
+#include <cstring>
+
 namespace ashiato::sync::detail {
 
 bool init_frame_data(const SyncArchetype& archetype, QuantizedFrameData& frame) {
@@ -33,6 +35,47 @@ bool frame_has_component(const QuantizedFrameData& frame, std::size_t component_
 
 bool frame_has_component(const FrameDataView& frame, std::size_t component_index) {
     return component_index < 64U && (frame.present_mask & (std::uint64_t{1} << component_index)) != 0U;
+}
+
+std::uint64_t changed_present_component_mask(
+    const SyncArchetype& archetype,
+    const FrameDataView& current,
+    const FrameDataView& next) {
+    std::uint64_t result = 0;
+    for (std::size_t component_index = 0; component_index < archetype.components.size(); ++component_index) {
+        const std::uint64_t bit = std::uint64_t{1} << component_index;
+        if ((next.present_mask & bit) == 0U) {
+            continue;
+        }
+        const std::uint8_t* current_bytes = frame_component_data(archetype, current, component_index);
+        const std::uint8_t* next_bytes = frame_component_data(archetype, next, component_index);
+        if (current_bytes == nullptr || next_bytes == nullptr ||
+            std::memcmp(
+                current_bytes,
+                next_bytes,
+                archetype.component_ops[component_index].serialization.quantized_size) != 0) {
+            result |= bit;
+        }
+    }
+    return result;
+}
+
+std::uint64_t changed_present_component_mask(
+    const SyncArchetype& archetype,
+    const QuantizedFrameData& current,
+    const QuantizedFrameData& next) {
+    return changed_present_component_mask(
+        archetype,
+        FrameDataView{
+            current.tag_mask,
+            current.present_mask,
+            current.bytes.empty() ? nullptr : current.bytes.data(),
+            current.bytes.size()},
+        FrameDataView{
+            next.tag_mask,
+            next.present_mask,
+            next.bytes.empty() ? nullptr : next.bytes.data(),
+            next.bytes.size()});
 }
 
 const std::uint8_t* frame_component_data(

@@ -189,6 +189,72 @@ TEST_CASE("sync tracing reports sent events only for records written to a packet
     REQUIRE(server_cue_sent == client_cue_received);
 }
 
+TEST_CASE("trace events match wire records across client id encoding boundaries", "[.stress][tracing]") {
+    constexpr std::array<ashiato::sync::ClientId, 8> client_ids{1U, 9U, 48U, 49U, 57U, 127U, 128U, 254U};
+    ashiato::Registry registry;
+    const ashiato::sync::SyncArchetypeId archetype = define_position_archetype(registry);
+    std::vector<ashiato::Entity> entities;
+    for (std::uint32_t index = 0; index < 6U; ++index) {
+        const ashiato::Entity entity = registry.create();
+        REQUIRE(registry.add<Position>(
+                    entity,
+                    Position{static_cast<float>(index), static_cast<float>(index)}) != nullptr);
+        REQUIRE(start_sync(registry, entity, archetype));
+        entities.push_back(entity);
+    }
+
+    std::vector<std::pair<ashiato::sync::ClientId, ashiato::BitBuffer>> packets;
+    ashiato::sync::ReplicationServerOptions options;
+    options.bandwidth_limit_bytes_per_tick = 40U;
+    options.mtu_bytes = 40U;
+    options.transport = [&](ashiato::sync::PeerId client, const ashiato::BitBuffer& packet) {
+        packets.push_back({static_cast<ashiato::sync::ClientId>(client), packet});
+    };
+    ashiato::sync::ReplicationServer server(registry, options);
+    std::vector<ashiato::sync::SyncTraceEvent> events;
+    ashiato::sync::SyncTracer tracer;
+    tracer.set_callbacks(ashiato::sync::SyncTraceCallbacks{
+        [&](const ashiato::sync::SyncTraceEvent& event) { events.push_back(event); }});
+    server.set_tracer(&tracer);
+    for (const ashiato::sync::ClientId client : client_ids) {
+        REQUIRE(server.add_client(client));
+    }
+
+    for (std::uint32_t tick = 0; tick < 12U; ++tick) {
+        CAPTURE(tick);
+        for (const ashiato::Entity entity : entities) {
+            registry.write<Position>(entity).x += 1.0F;
+        }
+        packets.clear();
+        events.clear();
+        REQUIRE(server.tick(registry, server.options().fixed_dt_seconds));
+
+        std::array<std::size_t, 256> wire_components{};
+        for (const auto& sent : packets) {
+            const ServerUpdatePacket update = read_server_update(
+                sent.second,
+                2U,
+                sizeof(Position) * 8U);
+            for (const EntityRecord& record : update.entities) {
+                wire_components[sent.first] += record.components.size();
+            }
+        }
+
+        std::array<std::size_t, 256> traced_components{};
+        for (const ashiato::sync::SyncTraceEvent& event : events) {
+            if (event.type != ashiato::sync::SyncTraceEventType::ComponentSent) {
+                continue;
+            }
+            REQUIRE(event.client != ashiato::sync::invalid_client_id);
+            REQUIRE(ashiato::sync::client_entity_network_id_client(event.client_network_id) == event.client);
+            ++traced_components[event.client];
+        }
+        for (const ashiato::sync::ClientId client : client_ids) {
+            CHECK(traced_components[client] == wire_components[client]);
+        }
+    }
+}
+
 TEST_CASE("serialization payload tracing is opt-in scoped and client-filtered") {
     std::vector<ashiato::sync::SyncTraceEvent> events;
     ashiato::sync::SyncTracer tracer;

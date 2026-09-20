@@ -664,8 +664,8 @@ private:
         ashiato::Registry& registry,
         const SyncSettings& settings,
         EntityState& state,
-        const QuantizedFrameData& decoded,
-        bool full);
+        const QuantizedFrameData& authoritative,
+        std::uint64_t component_apply_mask);
     bool validate_predicted_archetype(const SyncSettings& settings, SyncArchetypeId archetype) const;
     bool quantize_predicted_entity(
         const ashiato::Registry& registry,

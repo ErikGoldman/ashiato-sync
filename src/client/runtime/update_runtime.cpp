@@ -16,7 +16,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <cstring>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -730,29 +729,19 @@ bool ClientUpdateRuntime::apply_upsert_record(
     if (record.received_cues == nullptr) {
         return fail_apply("received_cues_missing");
     }
-    QuantizedFrameData decoded_delta;
-    QuantizedFrameData* decoded = &record.authoritative;
-    if (!metadata.is_full_upsert && state.mode.current == ReplicationClientMode::Snap) {
+    std::uint64_t component_apply_mask = record.authoritative.present_mask;
+    if (state.mode.current == ReplicationClientMode::Snap &&
+        state.replication.frame != 0U &&
+        state.identity.archetype == metadata.archetype) {
         const SyncArchetype& definition = settings.archetypes[metadata.archetype.value];
-        if (!init_frame_data(definition, decoded_delta)) {
-            return fail_apply("snap_delta_frame_init_failed");
+        if (!metadata.is_full_upsert && metadata.baseline_frame == state.replication.frame) {
+            component_apply_mask = record.changed_sync_slots >> 1U;
+        } else {
+            component_apply_mask = detail::changed_present_component_mask(
+                definition,
+                state.replication.baseline,
+                record.authoritative);
         }
-        decoded_delta.tag_mask = record.authoritative.tag_mask;
-        for (std::size_t component_index = 0; component_index < definition.components.size(); ++component_index) {
-            if ((record.changed_sync_slots & sync_slot_bit(component_index + 1U)) == 0U ||
-                component_index >= definition.component_ops.size()) {
-                continue;
-            }
-            const SyncComponentOps& ops = definition.component_ops[component_index];
-            const std::uint8_t* authoritative_bytes =
-                frame_component_data(definition, record.authoritative, component_index);
-            std::uint8_t* decoded_bytes = mutable_frame_component_data(definition, decoded_delta, component_index);
-            if (authoritative_bytes == nullptr || decoded_bytes == nullptr) {
-                return fail_apply("snap_delta_component_storage_missing");
-            }
-            std::memcpy(decoded_bytes, authoritative_bytes, ops.serialization.quantized_size);
-        }
-        decoded = &decoded_delta;
     }
     UpsertModeApplyContext mode_context{
         client.entity_store_->index_of(state),
@@ -760,7 +749,7 @@ bool ClientUpdateRuntime::apply_upsert_record(
         metadata.client_entity_network_id,
         metadata.archetype,
         record.authoritative,
-        *decoded,
+        component_apply_mask,
         metadata.is_full_upsert,
         *record.received_cues};
     return apply_upsert_for_mode(client, registry, settings, state, mode_context);
@@ -918,7 +907,12 @@ bool ClientUpdateRuntime::apply_snap_upsert(
         remove_archetype_tags(registry, state.identity.local, settings.archetypes[state.identity.archetype.value]);
     }
     state.identity.archetype = context.archetype;
-    if (!client.apply_snap_sample(registry, settings, state, context.decoded, context.full)) {
+    if (!client.apply_snap_sample(
+            registry,
+            settings,
+            state,
+            context.authoritative,
+            context.snap_component_apply_mask)) {
         return fail_apply("snap_apply_sample_failed");
     }
     client.cue_runtime_->play_snap(client, registry, settings, state, context.received_cues);
