@@ -47,6 +47,10 @@ CMake fetches Ashiato from GitHub at the pinned `ASHIATO_SYNC_ASHIATO_GIT_TAG`.
 For local ECS development, pass
 `-DASHIATO_SYNC_ASHIATO_SOURCE_DIR=/path/to/Ashiato` to use a checkout instead.
 
+`scripts/lint.sh` also uses the pinned dependencies by default. Set
+`ASHIATO_SYNC_ASHIATO_SOURCE_DIR` and `FETCHCONTENT_SOURCE_DIR_SPDLOG` explicitly
+when linting against local or plugin-bundled checkouts.
+
 ## Examples
 
 The optional examples target fetches raylib and is disabled by default:

@@ -41,4 +41,4 @@ There's a trace viewer in tools/ that can visually debug a trace capture. If you
 
 - Ashiato Sync CMake targets compile with strict warnings: `-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Werror` on GCC/Clang and `/W4 /WX` on MSVC.
 - Run `scripts/lint.sh` before changing sync code. It configures a lint build with `ASHIATO_SYNC_ENABLE_CLANG_TIDY=ON` and `ASHIATO_SYNC_ENABLE_CPPCHECK=ON`, then builds the `ashiato_sync` target so both tools run through CMake.
-- When linting from the plugin checkout, the script uses the bundled `../ashiato` and `../spdlog` sources to avoid fetching dependencies.
+- The lint script uses the project's pinned dependencies by default. To lint against sources bundled in the plugin checkout, run `ASHIATO_SYNC_ASHIATO_SOURCE_DIR=../ashiato FETCHCONTENT_SOURCE_DIR_SPDLOG=../spdlog scripts/lint.sh`.
