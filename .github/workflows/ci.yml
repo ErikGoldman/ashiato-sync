@@ -37,6 +37,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ashiato-sync
+
+    steps:
+      - name: Check out ashiato-sync
+        uses: actions/checkout@v6
+        with:
+          path: ashiato-sync
+
+      - name: Install lint tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang-tidy cppcheck
+
+      - name: Run clang-tidy and cppcheck
+        run: scripts/lint.sh
+
   test-and-coverage:
     name: Test and coverage
     runs-on: ubuntu-latest
@@ -275,6 +297,7 @@ jobs:
     name: Publish Pages
     runs-on: ubuntu-latest
     needs:
+      - lint
       - test-and-coverage
       - memory-smoke
       - benchmarks
@@ -311,7 +334,7 @@ jobs:
         run: |
           ci_message="${CI_MESSAGE:-failing}"
           ci_color="${CI_COLOR:-red}"
-          if [[ "${TEST_RESULT}" != "success" || "${MEMORY_SMOKE_RESULT}" != "success" ]]; then
+          if [[ "${LINT_RESULT}" != "success" || "${TEST_RESULT}" != "success" || "${MEMORY_SMOKE_RESULT}" != "success" ]]; then
             ci_message="failing"
             ci_color="red"
           fi
@@ -327,6 +350,7 @@ jobs:
           COLOR: ${{ needs.test-and-coverage.outputs.color }}
           CI_MESSAGE: ${{ needs.test-and-coverage.outputs.ci_message }}
           CI_COLOR: ${{ needs.test-and-coverage.outputs.ci_color }}
+          LINT_RESULT: ${{ needs.lint.result }}
           TEST_RESULT: ${{ needs.test-and-coverage.result }}
           MEMORY_SMOKE_RESULT: ${{ needs.memory-smoke.result }}
 
