@@ -15,6 +15,7 @@ on:
         options:
           - characteristic
           - cpu
+          - memory
           - bandwidth
           - all
       cpu_benchmark_filter:
@@ -248,7 +249,7 @@ jobs:
           -DASHIATO_SYNC_ASHIATO_SOURCE_DIR=${{ github.workspace }}/main
 
       - name: Build benchmarks
-        run: cmake --build build-benchmarks --parallel --target ashiato_sync_benchmark ashiato_sync_ball_stress ashiato_sync_prediction_stress
+        run: cmake --build build-benchmarks --parallel --target ashiato_sync_benchmark ashiato_sync_memory_benchmark ashiato_sync_ball_stress ashiato_sync_prediction_stress
 
       - name: Run benchmarks
         run: >
