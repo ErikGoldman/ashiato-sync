@@ -729,12 +729,19 @@ bool ClientUpdateRuntime::apply_upsert_record(
     if (record.received_cues == nullptr) {
         return fail_apply("received_cues_missing");
     }
+    // A full upsert is the server's statement that the client's baseline cannot be
+    // relied on, so it carries every component and every one of them is written.
+    // Narrowing it against that same baseline would filter it with the thing it was
+    // sent to replace, and any component whose quantized bytes happen to match would
+    // never reach the registry. Deltas are narrowed, because the server derived them
+    // from a baseline the client holds.
     std::uint64_t component_apply_mask = record.authoritative.present_mask;
-    if (state.mode.current == ReplicationClientMode::Snap &&
+    if (!metadata.is_full_upsert &&
+        state.mode.current == ReplicationClientMode::Snap &&
         state.replication.frame != 0U &&
         state.identity.archetype == metadata.archetype) {
         const SyncArchetype& definition = settings.archetypes[metadata.archetype.value];
-        if (!metadata.is_full_upsert && metadata.baseline_frame == state.replication.frame) {
+        if (metadata.baseline_frame == state.replication.frame) {
             component_apply_mask = record.changed_sync_slots >> 1U;
         } else {
             component_apply_mask = detail::changed_present_component_mask(

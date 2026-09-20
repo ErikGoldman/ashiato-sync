@@ -1576,3 +1576,85 @@ TEST_CASE("replication client keeps receiving an entity through processing and A
         }
     }
 }
+
+TEST_CASE("replication client writes every component a full upsert carries") {
+    // A full upsert is the server's statement that the client's baseline cannot be
+    // relied on. It carries the entity's whole state, and every component of it has
+    // to reach the registry -- including the ones whose quantized bytes happen to
+    // match what the client already holds. Filtering a full upsert against the very
+    // baseline it was sent to replace leaves a diverged registry diverged.
+    ashiato::Registry server_registry;
+    const ashiato::Entity server_position =
+        ashiato::sync::register_sync_component<NetworkedPosition>(server_registry, "NetworkedPosition");
+    const ashiato::Entity server_health =
+        ashiato::sync::register_sync_component<Health>(server_registry, "Health");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
+        server_registry,
+        "FullUpsertActor",
+        {
+            {server_position, ashiato::sync::ReplicationAudience::All},
+            {server_health, ashiato::sync::ReplicationAudience::All},
+        });
+    REQUIRE(configure_test_server_registry(server_registry));
+
+    std::vector<ashiato::BitBuffer> packets;
+    ashiato::sync::ReplicationServerOptions server_options;
+    server_options.transport = [&](ashiato::sync::PeerId, const ashiato::BitBuffer& packet) {
+        packets.push_back(packet);
+    };
+    ashiato::sync::ReplicationServer server(server_registry, server_options);
+    REQUIRE(server.add_client(1));
+
+    const ashiato::Entity server_entity = server_registry.create();
+    REQUIRE(server_registry.add<NetworkedPosition>(server_entity, NetworkedPosition{10.0f, 20.0f}) != nullptr);
+    REQUIRE(server_registry.add<Health>(server_entity, Health{100}) != nullptr);
+    REQUIRE(start_sync(server_registry, server_entity, archetype));
+
+    ashiato::Registry client_registry;
+    const ashiato::Entity client_position =
+        ashiato::sync::register_sync_component<NetworkedPosition>(client_registry, "NetworkedPosition");
+    const ashiato::Entity client_health =
+        ashiato::sync::register_sync_component<Health>(client_registry, "Health");
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato::sync::define_archetype(
+        client_registry,
+        "FullUpsertActor",
+        {
+            {client_position, ashiato::sync::ReplicationAudience::All},
+            {client_health, ashiato::sync::ReplicationAudience::All},
+        });
+    REQUIRE(client_archetype == archetype);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
+    ashiato::sync::ReplicationClient client(
+        client_registry,
+        ashiato_sync_tests::make_test_client_options(client_registry, {}));
+
+    // The first update creates the entity on the client. Its ACK is never delivered,
+    // so the server keeps no baseline for this client and every later update is full.
+    server.tick(server_registry, server.options().fixed_dt_seconds);
+    REQUIRE(packets.size() == 1);
+    REQUIRE(client.receive(client_registry, packets[0]));
+    packets.clear();
+    (void)client.drain_packets();
+
+    const ashiato::Entity local = client.local_entity(first_allocated_client_entity_network_id(1));
+    REQUIRE(local);
+    REQUIRE(client_registry.contains<Health>(local));
+    REQUIRE(client_registry.get<Health>(local).value == 100);
+
+    // Something on the client writes a replicated component, so the registry no
+    // longer agrees with the client's quantized baseline. In snap mode the next
+    // authoritative state is meant to win.
+    client_registry.write<Health>(local).value = 55;
+
+    // Only the position moves. The full upsert still carries both components.
+    server_registry.write<NetworkedPosition>(server_entity).x = 11.0f;
+    server.tick(server_registry, server.options().fixed_dt_seconds);
+    REQUIRE(packets.size() == 1);
+    const ashiato_sync_tests::ClientUpdatePacket parsed = ashiato_sync_tests::read_update(packets[0], 3U);
+    REQUIRE(parsed.records.size() == 1);
+    REQUIRE(parsed.records[0].full);
+    REQUIRE(client.receive(client_registry, packets[0]));
+
+    CHECK(client_registry.get<NetworkedPosition>(local).x == 11.0f);
+    CHECK(client_registry.get<Health>(local).value == 100);
+}
