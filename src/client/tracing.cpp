@@ -184,6 +184,10 @@ void append_trace_data_field(SyncTraceEvent& event, const char* key, const char*
     event.data += value;
 }
 
+void append_trace_data_field(SyncTraceEvent& event, const char* key, std::uint64_t value) {
+    append_trace_data_field(event, key, std::to_string(value).c_str());
+}
+
 void append_trace_cue_name(const SyncSettings& settings, SyncCueTypeId cue_type, SyncTraceEvent& event) {
     if (cue_type < settings.cue_ops.size()) {
         event.component_name = settings.cue_ops[cue_type].name;
@@ -502,7 +506,9 @@ void ReplicationClient::trace_incoming_update_packet(
         << ",server_frame=" << server_frame
         << ",input_ack=" << input_ack_frame
         << ",record_count=" << record_count
-        << ",applied=" << (applied ? "true" : "false");
+        << ",applied=" << (applied ? "true" : "false")
+        << ",ack_queued=" << (applied ? "true" : "false")
+        << ",pending_ack_count=" << pending_ack_count();
     if (!applied && apply_failure_reason != nullptr && apply_failure_reason[0] != '\0') {
         out << ",apply_failure=" << apply_failure_reason;
     }

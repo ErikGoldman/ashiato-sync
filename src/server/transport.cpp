@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <string>
 
 namespace ashiato::sync {
 
@@ -14,7 +15,12 @@ void ReplicationServer::send_packet(
     SyncFrame frame,
     std::uint16_t entity_count,
     const ashiato::BitBuffer& records,
-    const std::vector<PacketAckRecord>& ack_records) {
+    const std::vector<PacketAckRecord>& ack_records
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    ,
+    const std::vector<SyncTraceEvent>& trace_events
+#endif
+) {
     if (!options_.transport || entity_count == 0) {
         return;
     }
@@ -35,6 +41,19 @@ void ReplicationServer::send_packet(
         client.bandwidth->spend(charged_bytes);
     }
     client.ack_tracker.enforce_pending_packet_ack_limit(*this, client);
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    if (tracer_ != nullptr && tracer_->enabled()) {
+        for (SyncTraceEvent event : trace_events) {
+            if (!event.data.empty()) {
+                event.data += ",";
+            }
+            event.data += "packet_id=" + std::to_string(packet_id) +
+                ",packet_frame=" + std::to_string(frame) +
+                ",stage=transport_submit";
+            tracer_->trace(event);
+        }
+    }
+#endif
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     trace_outgoing_update_packet(client, frame, packet_id, client.input_ack_frame, ack_records);
 #endif
@@ -44,6 +63,18 @@ void ReplicationServer::send_packet(
         log_server_error(client.peer, "transport_error_server_update", ex.what());
         throw;
     }
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+    if (tracer_ != nullptr && tracer_->enabled() && tracer_->packet_logs_enabled()) {
+        SyncTraceEvent event;
+        event.type = SyncTraceEventType::PacketLog;
+        event.role = SyncTraceRole::Server;
+        event.client = client.id;
+        event.frame = frame;
+        event.data = "direction=meta,message=server_update_transport_returned,client=" +
+            std::to_string(client.id) + ",sequence=" + std::to_string(packet_id);
+        tracer_->trace(event);
+    }
+#endif
 }
 
 void ReplicationServer::send_connect_response(ClientState& client) {

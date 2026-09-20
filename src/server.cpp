@@ -331,6 +331,18 @@ std::string packet_ack_list(const std::vector<std::uint32_t>& acks) {
     out << "]";
     return out.str();
 }
+
+const char* packet_ack_result_name(std::uint8_t result) {
+    switch (static_cast<server_detail::PacketAcknowledgementResult>(result)) {
+    case server_detail::PacketAcknowledgementResult::Accepted:
+        return "accepted";
+    case server_detail::PacketAcknowledgementResult::PacketNotPending:
+        return "packet_not_pending";
+    case server_detail::PacketAcknowledgementResult::RecordRejected:
+        return "record_rejected";
+    }
+    return "unknown";
+}
 #endif
 
 #endif
@@ -785,13 +797,28 @@ void ReplicationServer::trace_input_starved(
 }
 
 #ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
-void ReplicationServer::trace_incoming_ack_packet(ServerClientReplicator& client, const std::vector<std::uint32_t>& acks) const {
+void ReplicationServer::trace_incoming_ack_packet(
+    ServerClientReplicator& client,
+    const std::vector<std::uint32_t>& acks,
+    const std::vector<std::uint8_t>& ack_results) const {
     if (tracer_ == nullptr || !tracer_->enabled() || !tracer_->packet_logs_enabled()) {
         return;
     }
     SyncTraceEvent event = make_server_trace_event(SyncTraceEventType::PacketLog, client.id, frame_);
-    event.data = "direction=in,message=client_ack,client=" + std::to_string(client.id) +
-        ",acks=" + packet_ack_list(acks);
+    std::ostringstream out;
+    out << "direction=in,message=client_ack,client=" << static_cast<unsigned>(client.id)
+        << ",acks=" << packet_ack_list(acks)
+        << ",ack_results=[";
+    for (std::size_t index = 0; index < acks.size(); ++index) {
+        if (index != 0U) {
+            out << ";";
+        }
+        out << "{sequence=" << acks[index]
+            << ",result=" << (index < ack_results.size() ? packet_ack_result_name(ack_results[index]) : "missing") << "}";
+    }
+    out << "]";
+    out << ",pending_packet_acks=" << client.ack_tracker.pending_packet_acks.size();
+    event.data = out.str();
     tracer_->trace(event);
 }
 
@@ -827,6 +854,7 @@ void ReplicationServer::trace_outgoing_pong_packet(
 void ReplicationServer::trace_incoming_input_packet(
     ClientState& client,
     const std::vector<std::uint32_t>& acks,
+    const std::vector<std::uint8_t>& ack_results,
     SyncFrame baseline_frame,
     SyncFrame first_input_frame,
     SyncFrame last_input_frame) const {
@@ -837,6 +865,16 @@ void ReplicationServer::trace_incoming_input_packet(
     std::ostringstream out;
     out << "direction=in,message=client_input,client=" << static_cast<unsigned>(client.id)
         << ",acks=" << packet_ack_list(acks)
+        << ",ack_results=[";
+    for (std::size_t index = 0; index < acks.size(); ++index) {
+        if (index != 0U) {
+            out << ";";
+        }
+        out << "{sequence=" << acks[index]
+            << ",result=" << (index < ack_results.size() ? packet_ack_result_name(ack_results[index]) : "missing") << "}";
+    }
+    out << "]"
+        << ",pending_packet_acks=" << client.replication->ack_tracker.pending_packet_acks.size()
         << ",input_frames=";
     if (first_input_frame != 0U && last_input_frame >= first_input_frame) {
         out << first_input_frame << "-" << last_input_frame;
@@ -864,6 +902,7 @@ void ReplicationServer::trace_outgoing_update_packet(
         << ",server_frame=" << frame
         << ",input_ack=" << input_ack_frame
         << ",record_count=" << records.size()
+        << ",pending_packet_acks=" << client.ack_tracker.pending_packet_acks.size()
         << ",replicated_count=" << active_replicated_count_
         << ",client_count=" << client_count()
         << ",updated_server_entities=[";
@@ -1315,8 +1354,23 @@ void ReplicationServer::send_server_update_packet(
     SyncFrame frame,
     std::uint16_t entity_count,
     const ashiato::BitBuffer& records,
-    const std::vector<server_detail::PacketAckRecord>& ack_records) {
-    send_packet(client, frame, entity_count, records, ack_records);
+    const std::vector<server_detail::PacketAckRecord>& ack_records
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    ,
+    const std::vector<SyncTraceEvent>& trace_events
+#endif
+) {
+    send_packet(
+        client,
+        frame,
+        entity_count,
+        records,
+        ack_records
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+        ,
+        trace_events
+#endif
+    );
 }
 
 bool ReplicationServer::prepare_client_update_send(server_detail::ServerClientReplicator& replication) {
@@ -1657,13 +1711,15 @@ bool ReplicationServer::process_ping_packet(ClientState& client, ashiato::BitBuf
 bool ReplicationServer::process_client_ack_packet(ServerClientReplicator& replication, ashiato::BitBuffer& packet) {
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     std::vector<std::uint32_t> acks;
+    std::vector<std::uint8_t> ack_results;
 #endif
     const ClientUpdateAckResult ack_result = process_client_acks_from_packet(
         replication,
         packet
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
         ,
-        acks
+        acks,
+        ack_results
 #endif
     );
     if (!ack_result.packet_valid) {
@@ -1671,7 +1727,7 @@ bool ReplicationServer::process_client_ack_packet(ServerClientReplicator& replic
         return false;
     }
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
-    trace_incoming_ack_packet(replication, acks);
+    trace_incoming_ack_packet(replication, acks, ack_results);
 #endif
     return ack_result.all_acknowledged;
 }
@@ -1711,7 +1767,8 @@ ReplicationServer::ClientUpdateAckResult ReplicationServer::process_client_acks_
     ashiato::BitBuffer& packet
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     ,
-    std::vector<std::uint32_t>& trace_acks
+    std::vector<std::uint32_t>& trace_acks,
+    std::vector<std::uint8_t>& trace_ack_results
 #endif
 ) {
     const std::size_t packet_id_bits = configured_packet_id_bits(options_);
@@ -1722,6 +1779,7 @@ ReplicationServer::ClientUpdateAckResult ReplicationServer::process_client_acks_
     }
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     trace_acks.reserve(trace_acks.size() + ack_count);
+    trace_ack_results.reserve(trace_ack_results.size() + ack_count);
 #endif
 
     bool all_acknowledged = true;
@@ -1733,8 +1791,12 @@ ReplicationServer::ClientUpdateAckResult ReplicationServer::process_client_acks_
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
         trace_acks.push_back(packet_id);
 #endif
-        all_acknowledged =
-            replication.ack_tracker.acknowledge_packet(*this, replication, packet_id) && all_acknowledged;
+        const server_detail::PacketAcknowledgementResult result =
+            replication.ack_tracker.acknowledge_packet(*this, replication, packet_id);
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+        trace_ack_results.push_back(static_cast<std::uint8_t>(result));
+#endif
+        all_acknowledged = result == server_detail::PacketAcknowledgementResult::Accepted && all_acknowledged;
     }
     replication.ack_tracker.cleanup_packet_acks(*this, replication);
     return ClientUpdateAckResult{true, all_acknowledged};
@@ -1766,13 +1828,15 @@ bool ReplicationServer::process_input_with_acks_packet(
     ServerClientReplicator& replication = *client.replication;
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
     std::vector<std::uint32_t> acks;
+    std::vector<std::uint8_t> ack_results;
 #endif
     const ClientUpdateAckResult ack_result = process_client_acks_from_packet(
         replication,
         packet
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
         ,
-        acks
+        acks,
+        ack_results
 #endif
     );
     if (!ack_result.packet_valid) {
@@ -1786,7 +1850,13 @@ bool ReplicationServer::process_input_with_acks_packet(
         return false;
     }
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
-    trace_incoming_input_packet(client, acks, trace.baseline_frame, trace.first_input_frame, trace.last_input_frame);
+    trace_incoming_input_packet(
+        client,
+        acks,
+        ack_results,
+        trace.baseline_frame,
+        trace.first_input_frame,
+        trace.last_input_frame);
 #endif
     return true;
 }
@@ -3061,6 +3131,8 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
                 event.payload_bits = wire_bits;
                 append_trace_component_data(replication_server.server_tracer(), archetype, component_index, current, event);
                 append_trace_data_field(event, "payload_kind", "component");
+                append_trace_data_field(event, "record_kind", "delta");
+                append_trace_data_field(event, "baseline_frame", static_cast<std::uint64_t>(baseline_frame));
                 append_trace_data_field(event, "wire_bits", static_cast<std::uint64_t>(wire_bits));
                 append_trace_data_field(event, "wire_bytes", static_cast<std::uint64_t>(protocol::bytes_for_bits(wire_bits)));
                 defer_sent_event(std::move(event));
@@ -3190,6 +3262,8 @@ void server_detail::ServerClientReplicator::UpdateWriter::write_entity_record(
             event.payload_bits = wire_bits;
             append_trace_component_data(replication_server.server_tracer(), archetype, component_index, current, event);
             append_trace_data_field(event, "payload_kind", "component");
+            append_trace_data_field(event, "record_kind", "full");
+            append_trace_data_field(event, "baseline_frame", std::uint64_t{0});
             append_trace_data_field(event, "wire_bits", static_cast<std::uint64_t>(wire_bits));
             append_trace_data_field(event, "wire_bytes", static_cast<std::uint64_t>(protocol::bytes_for_bits(wire_bits)));
             defer_sent_event(std::move(event));

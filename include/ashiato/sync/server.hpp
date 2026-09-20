@@ -17,6 +17,9 @@ namespace ashiato::sync {
 class SyncTracer;
 class KTraceDirectoryWriter;
 class FractionalTickSampler;
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+struct SyncTraceEvent;
+#endif
 
 namespace server_detail {
 struct ClientDirtyQueue;
@@ -189,7 +192,12 @@ public:
         SyncFrame frame,
         std::uint16_t entity_count,
         const ashiato::BitBuffer& records,
-        const std::vector<server_detail::PacketAckRecord>& ack_records);
+        const std::vector<server_detail::PacketAckRecord>& ack_records
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+        ,
+        const std::vector<SyncTraceEvent>& trace_events
+#endif
+    );
     bool prepare_client_update_send(server_detail::ServerClientReplicator& client);
     std::size_t begin_client_bandwidth_tick(server_detail::ServerClientReplicator& client);
     ReplicationSendResult flush_client_updates(ashiato::Registry& registry, server_detail::ServerClientReplicator& client);
@@ -303,7 +311,8 @@ private:
         ashiato::BitBuffer& packet
 #if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
         ,
-        std::vector<std::uint32_t>& trace_acks
+        std::vector<std::uint32_t>& trace_acks,
+        std::vector<std::uint8_t>& trace_ack_results
 #endif
     );
     bool process_input_with_acks_packet(ashiato::Registry& registry, ClientState& client, ashiato::BitBuffer& packet);
@@ -322,7 +331,12 @@ private:
         SyncFrame frame,
         std::uint16_t entity_count,
         const ashiato::BitBuffer& records,
-        const std::vector<PacketAckRecord>& ack_records);
+        const std::vector<PacketAckRecord>& ack_records
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+        ,
+        const std::vector<SyncTraceEvent>& trace_events
+#endif
+    );
     bool add_client_for_peer(PeerId peer, ClientId client, bool ready_for_updates);
     bool add_client_state(ClientState state);
     ClientId find_next_available_client_id() const;
@@ -351,7 +365,10 @@ private:
         ashiato::Entity component,
         const SyncComponentOps& ops);
 #ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS
-    void trace_incoming_ack_packet(ServerClientReplicator& client, const std::vector<std::uint32_t>& acks) const;
+    void trace_incoming_ack_packet(
+        ServerClientReplicator& client,
+        const std::vector<std::uint32_t>& acks,
+        const std::vector<std::uint8_t>& ack_results) const;
     void trace_incoming_ping_packet(ClientState& client, std::uint32_t sequence) const;
     void trace_outgoing_pong_packet(
         ClientState& client,
@@ -361,6 +378,7 @@ private:
     void trace_incoming_input_packet(
         ClientState& client,
         const std::vector<std::uint32_t>& acks,
+        const std::vector<std::uint8_t>& ack_results,
         SyncFrame baseline_frame,
         SyncFrame first_input_frame,
         SyncFrame last_input_frame) const;

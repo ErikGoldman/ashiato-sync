@@ -119,6 +119,13 @@ TEST_CASE("packet log tracing is opt-in and records client and server packet det
     REQUIRE(start_sync(server_registry, server_entity, server_archetype));
     server.tick(server_registry, server.options().fixed_dt_seconds);
     REQUIRE(server_packets.size() == 1);
+    REQUIRE(std::any_of(server_events.begin(), server_events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::ComponentSent &&
+            event.data.find("packet_id=1") != std::string::npos &&
+            event.data.find("record_index=0") != std::string::npos &&
+            event.data.find("record_kind=full") != std::string::npos &&
+            event.data.find("stage=transport_submit") != std::string::npos;
+    }));
     REQUIRE(std::any_of(server_events.begin(), server_events.end(), [&](const ashiato::sync::SyncTraceEvent& event) {
         return event.type == ashiato::sync::SyncTraceEventType::PacketLog &&
             event.role == ashiato::sync::SyncTraceRole::Server &&
@@ -143,6 +150,22 @@ TEST_CASE("packet log tracing is opt-in and records client and server packet det
     client.set_tracer(&client_tracer);
     REQUIRE(client.receive(client_registry, server_packets[0]));
     REQUIRE(std::any_of(client_events.begin(), client_events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::ComponentReceived &&
+            event.data.find("packet_id=1") != std::string::npos &&
+            event.data.find("record_index=0") != std::string::npos &&
+            event.data.find("record_kind=full") != std::string::npos &&
+            event.data.find("changed_sync_slots=2") != std::string::npos &&
+            event.data.find("component_apply_mask=1") != std::string::npos;
+    }));
+    REQUIRE(contains_packet_log(
+        client_events,
+        ashiato::sync::SyncTraceRole::Client,
+        {"message=server_update_record", "stage=decoded", "sequence=1", "record_index=0"}));
+    REQUIRE(contains_packet_log(
+        client_events,
+        ashiato::sync::SyncTraceRole::Client,
+        {"message=server_update_record", "stage=applied", "sequence=1", "record_index=0"}));
+    REQUIRE(std::any_of(client_events.begin(), client_events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
         return event.type == ashiato::sync::SyncTraceEventType::PacketLog &&
             event.role == ashiato::sync::SyncTraceRole::Client &&
             event.data.find("message=server_update") != std::string::npos &&
@@ -163,7 +186,16 @@ TEST_CASE("packet log tracing is opt-in and records client and server packet det
         return event.type == ashiato::sync::SyncTraceEventType::PacketLog &&
             event.role == ashiato::sync::SyncTraceRole::Server &&
             event.data.find("message=client_ack") != std::string::npos &&
-            event.data.find("acks=[1]") != std::string::npos;
+            event.data.find("acks=[1]") != std::string::npos &&
+            event.data.find("{sequence=1,result=accepted}") != std::string::npos;
+    }));
+
+    REQUIRE_FALSE(server.process_packet(server_registry, 1, ack_packets[0]));
+    REQUIRE(std::any_of(server_events.begin(), server_events.end(), [](const ashiato::sync::SyncTraceEvent& event) {
+        return event.type == ashiato::sync::SyncTraceEventType::PacketLog &&
+            event.role == ashiato::sync::SyncTraceRole::Server &&
+            event.data.find("message=client_ack") != std::string::npos &&
+            event.data.find("{sequence=1,result=packet_not_pending}") != std::string::npos;
     }));
 }
 

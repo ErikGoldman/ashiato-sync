@@ -65,7 +65,7 @@ bool ClientUpdateRuntime::apply_update(
 
         const bool applied = destroy
             ? apply_destroy(client, registry, frame, wire_network_id)
-            : apply_upsert(client, registry, settings, frame, wire_network_id, packet);
+            : apply_upsert(client, registry, settings, packet_id, record, frame, wire_network_id, packet);
         if (!applied) {
             return fail_apply_if_empty(destroy ? "destroy_failed" : "upsert_failed");
         }
@@ -137,6 +137,8 @@ bool ClientUpdateRuntime::apply_upsert(
     ReplicationClient& client,
     ashiato::Registry& registry,
     const SyncSettings& settings,
+    std::uint32_t packet_id,
+    std::uint16_t record_index,
     SyncFrame frame,
     std::uint32_t wire_network_id,
     detail::BitReader& packet) {
@@ -146,6 +148,8 @@ bool ClientUpdateRuntime::apply_upsert(
     if (!read_upsert_metadata(client, settings, frame, wire_network_id, packet, metadata)) {
         return fail_apply_if_empty("metadata_read_failed");
     }
+    metadata.packet_id = packet_id;
+    metadata.record_index = record_index;
 
     AuthoritativeUpsertRecord record;
     if (!decode_upsert_record(client, settings, metadata, packet, record)) {
@@ -164,14 +168,17 @@ bool ClientUpdateRuntime::apply_upsert(
     if (state == nullptr) {
         return fail_apply("ensure_entity_state_failed");
     }
+    record.component_apply_mask = component_apply_mask(settings, *state, metadata, record);
     trace_cues_received(client, settings, metadata, *record.received_cues);
     trace_received_upsert_record(client, settings, metadata, record, *state);
+    trace_update_record_stage(client, metadata, record, *state, "decoded");
     if (!metadata.is_full_upsert) {
         client.protect_referenced_baseline(*state, metadata.baseline_frame);
     }
     if (!apply_upsert_record(client, registry, settings, *state, metadata, record)) {
         return fail_apply_if_empty("mode_apply_failed");
     }
+    trace_update_record_stage(client, metadata, record, *state, "applied");
 
     finish_upsert(client, metadata);
     return true;
@@ -708,6 +715,13 @@ void ClientUpdateRuntime::trace_received_upsert_record(
         event.mode = state.mode.current;
         event.component = definition.components[component_index].component;
         append_trace_component_data(client.tracer_, definition, component_index, bytes, event);
+        append_trace_data_field(event, "packet_id", static_cast<std::uint64_t>(metadata.packet_id));
+        append_trace_data_field(event, "record_index", static_cast<std::uint64_t>(metadata.record_index));
+        append_trace_data_field(event, "packet_frame", static_cast<std::uint64_t>(metadata.frame));
+        append_trace_data_field(event, "record_kind", metadata.is_full_upsert ? "full" : "delta");
+        append_trace_data_field(event, "baseline_frame", static_cast<std::uint64_t>(metadata.baseline_frame));
+        append_trace_data_field(event, "changed_sync_slots", record.changed_sync_slots);
+        append_trace_data_field(event, "component_apply_mask", record.component_apply_mask);
         client.tracer_->trace(event);
     }
 #else
@@ -729,30 +743,81 @@ bool ClientUpdateRuntime::apply_upsert_record(
     if (record.received_cues == nullptr) {
         return fail_apply("received_cues_missing");
     }
-    std::uint64_t component_apply_mask = record.authoritative.present_mask;
-    if (state.mode.current == ReplicationClientMode::Snap &&
-        state.replication.frame != 0U &&
-        state.identity.archetype == metadata.archetype) {
-        const SyncArchetype& definition = settings.archetypes[metadata.archetype.value];
-        if (!metadata.is_full_upsert && metadata.baseline_frame == state.replication.frame) {
-            component_apply_mask = record.changed_sync_slots >> 1U;
-        } else {
-            component_apply_mask = detail::changed_present_component_mask(
-                definition,
-                state.replication.baseline,
-                record.authoritative);
-        }
-    }
     UpsertModeApplyContext mode_context{
         client.entity_store_->index_of(state),
         metadata.frame,
         metadata.client_entity_network_id,
         metadata.archetype,
         record.authoritative,
-        component_apply_mask,
+        record.component_apply_mask,
         metadata.is_full_upsert,
         *record.received_cues};
     return apply_upsert_for_mode(client, registry, settings, state, mode_context);
+}
+
+std::uint64_t ClientUpdateRuntime::component_apply_mask(
+    const SyncSettings& settings,
+    const EntityState& state,
+    const UpsertMetadata& metadata,
+    const AuthoritativeUpsertRecord& record) const {
+    std::uint64_t apply_mask = record.authoritative.present_mask;
+    if (state.mode.current == ReplicationClientMode::Snap &&
+        state.replication.frame != 0U &&
+        state.identity.archetype == metadata.archetype) {
+        const SyncArchetype& definition = settings.archetypes[metadata.archetype.value];
+        if (!metadata.is_full_upsert && metadata.baseline_frame == state.replication.frame) {
+            apply_mask = record.changed_sync_slots >> 1U;
+        } else {
+            apply_mask = detail::changed_present_component_mask(
+                definition,
+                state.replication.baseline,
+                record.authoritative);
+        }
+    }
+    return apply_mask;
+}
+
+void ClientUpdateRuntime::trace_update_record_stage(
+    ReplicationClient& client,
+    const UpsertMetadata& metadata,
+    const AuthoritativeUpsertRecord& record,
+    const EntityState& state,
+    const char* stage) const {
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+    if (client.tracer_ == nullptr || !client.tracer_->enabled() || !client.tracer_->packet_logs_enabled()) {
+        return;
+    }
+    SyncTraceEvent event = make_client_trace_event(SyncTraceEventType::PacketLog, client.client_id_, metadata.frame);
+    event.local_entity = state.identity.local;
+    event.client_network_id = metadata.client_entity_network_id;
+    event.wire_network_id = metadata.wire_network_id;
+    event.network_version = client_entity_network_id_version(metadata.client_entity_network_id);
+    event.archetype = metadata.archetype;
+    event.mode = state.mode.current;
+    std::ostringstream out;
+    out << "direction=in,message=server_update_record"
+        << ",stage=" << stage
+        << ",sequence=" << metadata.packet_id
+        << ",record_index=" << metadata.record_index
+        << ",server_frame=" << metadata.frame
+        << ",wire_network_id=" << metadata.wire_network_id
+        << ",client_network_id=" << metadata.client_entity_network_id
+        << ",local_entity=" << state.identity.local.value
+        << ",archetype=" << metadata.archetype.value
+        << ",record_kind=" << (metadata.is_full_upsert ? "full" : "delta")
+        << ",baseline_frame=" << metadata.baseline_frame
+        << ",changed_sync_slots=" << record.changed_sync_slots
+        << ",component_apply_mask=" << record.component_apply_mask
+        << ",mode=" << static_cast<unsigned>(state.mode.current);
+    event.data = out.str();
+    client.tracer_->trace(event);
+#else
+    (void)client;
+    (void)metadata;
+    (void)record;
+    (void)state;
+    (void)stage;
+#endif
 }
 
 void ClientUpdateRuntime::finish_upsert(ReplicationClient& client, const UpsertMetadata& metadata) {

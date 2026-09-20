@@ -68,6 +68,7 @@ void append_trace_cue_value(
     const CueValue& value,
     SyncTraceEvent& event);
 void append_trace_data_field(SyncTraceEvent& event, const char* key, const char* value);
+void append_trace_data_field(SyncTraceEvent& event, const char* key, std::uint64_t value);
 void append_trace_cue_name(const SyncSettings& settings, SyncCueTypeId cue_type, SyncTraceEvent& event);
 
 #ifdef ASHIATO_SYNC_TRACE_PACKET_LOGS

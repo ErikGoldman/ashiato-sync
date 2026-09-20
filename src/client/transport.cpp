@@ -253,6 +253,16 @@ bool ReplicationClient::receive_entity_update(
         !reader.read_bits(configured_packet_id_bits(options_), packet_id) ||
         !reader.read_bits(32U, input_ack_frame) ||
         !reader.read_bits(16U, record_count)) {
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+        if (tracer_ != nullptr && tracer_->enabled() && tracer_->packet_logs_enabled()) {
+            SyncTraceEvent event = make_client_trace_event(
+                SyncTraceEventType::PacketLog,
+                client_id_,
+                static_cast<SyncFrame>(std::max(0.0, context.estimated_server_frame)));
+            event.data = "direction=in,message=server_update,stage=header_decode,applied=false,apply_failure=header_read_failed";
+            tracer_->trace(event);
+        }
+#endif
         return false;
     }
 

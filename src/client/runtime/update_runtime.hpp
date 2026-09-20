@@ -35,6 +35,8 @@ private:
 
     struct UpsertMetadata {
         bool is_full_upsert = false;
+        std::uint32_t packet_id = 0;
+        std::uint16_t record_index = 0;
         SyncFrame frame = 0;
         SyncFrame baseline_frame = 0;
         std::uint32_t wire_network_id = 0;
@@ -49,6 +51,7 @@ private:
     struct AuthoritativeUpsertRecord {
         QuantizedFrameData authoritative;
         std::uint64_t changed_sync_slots = 0;
+        std::uint64_t component_apply_mask = 0;
         std::vector<EntityCue>* received_cues = nullptr;
     };
 
@@ -67,6 +70,8 @@ private:
         ReplicationClient& client,
         ashiato::Registry& registry,
         const SyncSettings& settings,
+        std::uint32_t packet_id,
+        std::uint16_t record_index,
         SyncFrame frame,
         std::uint32_t wire_network_id,
         detail::BitReader& packet);
@@ -133,6 +138,17 @@ private:
         EntityState& state,
         const UpsertMetadata& metadata,
         AuthoritativeUpsertRecord& record);
+    std::uint64_t component_apply_mask(
+        const SyncSettings& settings,
+        const EntityState& state,
+        const UpsertMetadata& metadata,
+        const AuthoritativeUpsertRecord& record) const;
+    void trace_update_record_stage(
+        ReplicationClient& client,
+        const UpsertMetadata& metadata,
+        const AuthoritativeUpsertRecord& record,
+        const EntityState& state,
+        const char* stage) const;
     void finish_upsert(ReplicationClient& client, const UpsertMetadata& metadata);
     void reset_previously_absent_entity(ReplicationClient& client, EntityState& state, SyncArchetypeId archetype);
     ReplicationClientMode select_entity_mode(

@@ -97,6 +97,12 @@ struct PendingPacketAck {
     std::vector<PacketAckRecord> records;
 };
 
+enum class PacketAcknowledgementResult : std::uint8_t {
+    Accepted,
+    PacketNotPending,
+    RecordRejected
+};
+
 struct SerializedEntity {
     std::uint32_t quantized_frame = invalid_quantized_frame_id;
     ashiato::BitBuffer payload;
@@ -172,7 +178,10 @@ struct ServerClientReplicator final : ServerRegistryDirtyFrameListener, ServerFr
         std::uint32_t next_packet_id = 1;
         std::vector<PendingPacketAck> pending_packet_acks;
 
-        bool acknowledge_packet(ReplicationServer& replication_server, ServerClientReplicator& client, std::uint32_t packet_id);
+        PacketAcknowledgementResult acknowledge_packet(
+            ReplicationServer& replication_server,
+            ServerClientReplicator& client,
+            std::uint32_t packet_id);
         void cleanup_packet_acks(ReplicationServer& replication_server, ServerClientReplicator& client);
         std::uint32_t allocate_packet_id(ReplicationServer& replication_server, ServerClientReplicator& client);
         void enforce_pending_packet_ack_limit(ReplicationServer& replication_server, ServerClientReplicator& client);
@@ -290,6 +299,9 @@ private:
     std::vector<std::size_t> destroy_order_;
     ashiato::BitBuffer records_;
     std::vector<PacketAckRecord> packet_ack_records_;
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    std::vector<SyncTraceEvent> packet_trace_events_;
+#endif
     SerializedEntity serialized_;
     UpdateWriter writer_;
 };

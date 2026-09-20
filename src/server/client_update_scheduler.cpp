@@ -83,6 +83,10 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
     records_.reserve_bytes(options.mtu_bytes);
     packet_ack_records_.clear();
     packet_ack_records_.reserve(options.mtu_bytes / 8U);
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+    packet_trace_events_.clear();
+    packet_trace_events_.reserve(options.mtu_bytes / 8U);
+#endif
 
     replication.ensure_capacity(replication_server.replicated_slot_count());
     for (const std::uint32_t slot : replication.dirty_queue.dirty_replicated_indices) {
@@ -177,11 +181,24 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
                     protocol::bytes_for_bits(update_header_bits + records_.bit_size());
                 const std::size_t charged_bytes = replication_server.charged_packet_bytes(packet_bytes);
                 ASHIATO_SYNC_ASSERT(charged_bytes <= remaining);
-                replication_server.send_server_update_packet(replication, replication_server.frame(), packet_entities, records_, packet_ack_records_);
+                replication_server.send_server_update_packet(
+                    replication,
+                    replication_server.frame(),
+                    packet_entities,
+                    records_,
+                    packet_ack_records_
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+                    ,
+                    packet_trace_events_
+#endif
+                );
                 remaining -= charged_bytes;
                 result.charged_bytes += charged_bytes;
                 records_.clear();
                 packet_ack_records_.clear();
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+                packet_trace_events_.clear();
+#endif
                 packet_entities = 0;
             }
 
@@ -243,11 +260,24 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
                 protocol::bytes_for_bits(update_header_bits + records_.bit_size());
             const std::size_t charged_bytes = replication_server.charged_packet_bytes(packet_bytes);
             ASHIATO_SYNC_ASSERT(charged_bytes <= remaining);
-            replication_server.send_server_update_packet(replication, replication_server.frame(), packet_entities, records_, packet_ack_records_);
+            replication_server.send_server_update_packet(
+                replication,
+                replication_server.frame(),
+                packet_entities,
+                records_,
+                packet_ack_records_
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+                ,
+                packet_trace_events_
+#endif
+            );
             remaining -= charged_bytes;
             result.charged_bytes += charged_bytes;
             records_.clear();
             packet_ack_records_.clear();
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+            packet_trace_events_.clear();
+#endif
             packet_entities = 0;
         }
 
@@ -297,10 +327,12 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
         records_.write_bool(false);
         records_.write_buffer_bits(serialized_.payload);
 #ifdef ASHIATO_SYNC_ENABLE_TRACING
-        if (SyncTracer* tracer = replication_server.server_tracer()) {
-            for (const SyncTraceEvent& event : serialized_.deferred_trace_events) {
-                tracer->trace(event);
+        for (SyncTraceEvent& event : serialized_.deferred_trace_events) {
+            if (!event.data.empty()) {
+                event.data += ",";
             }
+            event.data += "record_index=" + std::to_string(packet_entities);
+            packet_trace_events_.push_back(std::move(event));
         }
 #endif
         PacketAckRecord ack_record{replication_server.replicated_slot_entity(slot), replication_server.frame(), false};
@@ -339,7 +371,17 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
             protocol::bytes_for_bits(update_header_bits + records_.bit_size());
         const std::size_t charged_bytes = replication_server.charged_packet_bytes(packet_bytes);
         if (charged_bytes <= remaining) {
-            replication_server.send_server_update_packet(replication, replication_server.frame(), packet_entities, records_, packet_ack_records_);
+            replication_server.send_server_update_packet(
+                replication,
+                replication_server.frame(),
+                packet_entities,
+                records_,
+                packet_ack_records_
+#ifdef ASHIATO_SYNC_ENABLE_TRACING
+                ,
+                packet_trace_events_
+#endif
+            );
             result.charged_bytes += charged_bytes;
         } else {
             result.stopped_for_budget = true;

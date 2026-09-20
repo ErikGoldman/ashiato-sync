@@ -4,11 +4,54 @@
 #include "server/packet.hpp"
 #include "server/packet_ack_tracker.hpp"
 #include "server/state.hpp"
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+#include "ashiato/sync/tracing.hpp"
+#endif
 
 #include <algorithm>
+#include <sstream>
 #include <vector>
 
 namespace ashiato::sync {
+namespace {
+
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+void trace_pending_packet_ack_removed(
+    ReplicationServer& server,
+    const server_detail::ServerClientReplicator& client,
+    const server_detail::PendingPacketAck& pending,
+    const char* reason) {
+    SyncTracer* tracer = server.server_tracer();
+    if (tracer == nullptr || !tracer->enabled() || !tracer->packet_logs_enabled()) {
+        return;
+    }
+    SyncTraceEvent event;
+    event.type = SyncTraceEventType::PacketLog;
+    event.role = SyncTraceRole::Server;
+    event.client = client.id;
+    event.frame = server.frame();
+    std::ostringstream out;
+    out << "direction=meta,message=server_pending_ack_removed"
+        << ",client=" << static_cast<unsigned>(client.id)
+        << ",sequence=" << pending.packet_id
+        << ",sent_frame=" << pending.sent_frame
+        << ",reason=" << reason
+        << ",records=[";
+    for (std::size_t index = 0; index < pending.records.size(); ++index) {
+        if (index != 0U) {
+            out << ";";
+        }
+        out << "{entity=" << pending.records[index].entity.value
+            << ",frame=" << pending.records[index].frame
+            << ",destroy=" << (pending.records[index].destroy ? "true" : "false") << "}";
+    }
+    out << "]";
+    event.data = out.str();
+    tracer->trace(event);
+}
+#endif
+
+}  // namespace
 
 bool server_detail::ServerClientReplicator::AckTracker::client_acknowledged_destroy(
     ReplicationServer& server,
@@ -19,7 +62,7 @@ bool server_detail::ServerClientReplicator::AckTracker::client_acknowledged_dest
     return client.destroys.acknowledge(client, entity, frame);
 }
 
-bool server_detail::ServerClientReplicator::AckTracker::acknowledge_packet(
+server_detail::PacketAcknowledgementResult server_detail::ServerClientReplicator::AckTracker::acknowledge_packet(
     ReplicationServer& server,
     ServerClientReplicator& client,
     std::uint32_t packet_id) {
@@ -30,7 +73,7 @@ bool server_detail::ServerClientReplicator::AckTracker::acknowledge_packet(
             return pending.packet_id == packet_id;
         });
     if (found == pending_packet_acks.end()) {
-        return false;
+        return PacketAcknowledgementResult::PacketNotPending;
     }
 
     bool all_valid = true;
@@ -44,7 +87,9 @@ bool server_detail::ServerClientReplicator::AckTracker::acknowledge_packet(
         client.bandwidth->packet_acked(server.options().bandwidth, found->sent_frame, server.frame(), found->charged_bytes);
     }
     pending_packet_acks.erase(found);
-    return all_valid;
+    return all_valid
+        ? PacketAcknowledgementResult::Accepted
+        : PacketAcknowledgementResult::RecordRejected;
 }
 
 bool server_detail::ServerClientReplicator::AckTracker::packet_ack_record_pending(
@@ -88,6 +133,11 @@ void server_detail::ServerClientReplicator::AckTracker::cleanup_packet_acks(
                 if (stale && server.options().bandwidth.enabled && client.bandwidth != nullptr) {
                     client.bandwidth->packet_lost(server.options().bandwidth, server.frame(), pending_packet.charged_bytes);
                 }
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+                if (stale) {
+                    trace_pending_packet_ack_removed(server, client, pending_packet, "records_no_longer_pending");
+                }
+#endif
                 return stale;
             }),
         pending_packet_acks.end());
@@ -110,6 +160,9 @@ std::uint32_t server_detail::ServerClientReplicator::AckTracker::allocate_packet
                 if (options.bandwidth.enabled && client.bandwidth != nullptr) {
                     client.bandwidth->packet_lost(options.bandwidth, server.frame(), pending.charged_bytes);
                 }
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+                trace_pending_packet_ack_removed(server, client, pending, "packet_id_reused");
+#endif
                 return true;
             }),
         pending_packet_acks.end());
@@ -133,6 +186,11 @@ void server_detail::ServerClientReplicator::AckTracker::enforce_pending_packet_a
                 pending_packet_acks[index].charged_bytes);
         }
     }
+#if defined(ASHIATO_SYNC_ENABLE_TRACING) && defined(ASHIATO_SYNC_TRACE_PACKET_LOGS)
+    for (std::size_t index = 0; index < drop_count; ++index) {
+        trace_pending_packet_ack_removed(server, client, pending_packet_acks[index], "pending_limit");
+    }
+#endif
     pending_packet_acks.erase(
         pending_packet_acks.begin(),
         pending_packet_acks.begin() +
