@@ -27,6 +27,14 @@ bool has_tag_slot(const SyncArchetype& archetype) noexcept;
 std::uint64_t sync_slot_bit(std::size_t slot) noexcept;
 bool frame_has_component(const QuantizedFrameData& frame, std::size_t component_index);
 bool frame_has_component(const FrameDataView& frame, std::size_t component_index);
+std::uint64_t changed_present_component_mask(
+    const SyncArchetype& archetype,
+    const QuantizedFrameData& current,
+    const QuantizedFrameData& next);
+std::uint64_t changed_present_component_mask(
+    const SyncArchetype& archetype,
+    const FrameDataView& current,
+    const FrameDataView& next);
 const std::uint8_t* frame_component_data(
     const SyncArchetype& archetype,
     const QuantizedFrameData& frame,

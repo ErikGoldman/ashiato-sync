@@ -46,6 +46,7 @@ struct EntityBufferedFrame {
     SyncFrame frame = 0;
     bool valid = false;
     bool entity_present = false;
+    std::uint64_t component_apply_mask = 0;
     QuantizedFrameData baseline;
 };
 
@@ -72,6 +73,7 @@ struct EntityState {
     struct Mode {
         ReplicationClientMode current = ReplicationClientMode::Snap;
         bool selected = false;
+        SyncFrame last_applied_buffered_frame = 0;
     } mode;
 
     struct VisualCorrection {

@@ -12,6 +12,7 @@ add_executable(ashiato_sync_tests
     client_frame_ring_store.test.cpp
     client_frame_data.test.cpp
     client_input.test.cpp
+    client_mode_chaos.test.cpp
     client_mode_transition_stress.test.cpp
     client_timing_stats.test.cpp
     client_prediction.test.cpp
@@ -40,6 +41,7 @@ add_executable(ashiato_sync_tests
     server_prioritization.test.cpp
     server_transport.test.cpp
     serialization_context.test.cpp
+    stateful_stress.test.cpp
     tracing_component_rows.test.cpp
     tracing_events.test.cpp
     tracing_packet_log.test.cpp

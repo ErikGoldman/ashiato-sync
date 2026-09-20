@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
+#include <limits>
+#include <memory>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -186,6 +188,227 @@ void fuzz_server_connect(ashiato::BitBuffer packet) {
     (void)server.process_packet(registry, fuzz_peer, std::move(packet));
 }
 
+class StatefulProtocolHarness {
+public:
+    StatefulProtocolHarness() {
+        const ashiato::sync::SyncArchetypeId server_archetype = define_schema(server_registry_);
+        (void)define_schema(client_registry_);
+        setup_server_registry(server_registry_);
+        setup_client_registry(client_registry_);
+
+        ashiato::sync::ReplicationServerOptions server_options;
+        server_options.bandwidth_limit_bytes_per_tick = 96U;
+        server_options.mtu_bytes = 96U;
+        server_options.protocol.max_pending_packet_acks_per_client = 7U;
+        server_options.transport = [this](ashiato::sync::PeerId, const ashiato::BitBuffer& packet) {
+            server_packets_.push_back(packet);
+        };
+        server_ = std::make_unique<ashiato::sync::ReplicationServer>(server_registry_, server_options);
+        (void)server_->add_client(fuzz_peer);
+
+        ashiato::sync::ReplicationClientOptions client_options;
+        client_options.session.local_client = fuzz_peer;
+        client_options.network.mtu_bytes = 96U;
+        client_options.network.protocol.max_pending_packet_acks_per_client = 7U;
+        client_ = std::make_unique<ashiato::sync::ReplicationClient>(client_registry_, client_options);
+        spawn_entity(server_archetype);
+    }
+
+    void run(const std::uint8_t* data, std::size_t size) {
+        std::size_t cursor = 0;
+        std::size_t actions = 0;
+        while (cursor < size && actions < 256U) {
+            const std::uint8_t opcode = data[cursor++];
+            apply(opcode, data, size, cursor);
+            ++actions;
+        }
+
+        for (std::size_t drain = 0; drain < 16U; ++drain) {
+            deliver_all_server_packets();
+            (void)client_->tick(client_registry_, client_->fixed_dt_seconds());
+            collect_client_packets();
+            deliver_all_client_packets();
+            (void)server_->tick(server_registry_, server_->options().fixed_dt_seconds);
+        }
+    }
+
+private:
+    static ashiato::sync::SyncArchetypeId define_schema(ashiato::Registry& registry) {
+        const ashiato::Entity position =
+            ashiato::sync::register_sync_component<ashiato_sync_tests::NetworkedPosition>(
+                registry,
+                "NetworkedPosition");
+        return ashiato::sync::define_archetype(
+            registry,
+            "StatefulFuzzActor",
+            {{position, ashiato::sync::ReplicationAudience::All}});
+    }
+
+    void spawn_entity(ashiato::sync::SyncArchetypeId archetype) {
+        entity_ = server_registry_.create();
+        (void)server_registry_.add<ashiato_sync_tests::NetworkedPosition>(
+            entity_,
+            ashiato_sync_tests::NetworkedPosition{});
+        (void)server_registry_.add<ashiato::sync::Replicated>(
+            entity_,
+            ashiato::sync::Replicated{archetype});
+        archetype_ = archetype;
+    }
+
+    void apply(
+        std::uint8_t opcode,
+        const std::uint8_t* data,
+        std::size_t size,
+        std::size_t& cursor) {
+        switch (opcode % 10U) {
+        case 0:
+            (void)server_->tick(server_registry_, server_->options().fixed_dt_seconds);
+            break;
+        case 1:
+            (void)client_->tick(client_registry_, client_->fixed_dt_seconds());
+            collect_client_packets();
+            break;
+        case 2:
+            deliver_selected(server_packets_, [&](ashiato::BitBuffer packet) {
+                (void)client_->receive(client_registry_, std::move(packet));
+            }, data, size, cursor);
+            break;
+        case 3:
+            collect_client_packets();
+            deliver_selected(client_packets_, [&](ashiato::BitBuffer packet) {
+                (void)server_->process_packet(server_registry_, fuzz_peer, std::move(packet));
+            }, data, size, cursor);
+            break;
+        case 4:
+            mutate_entity(opcode);
+            break;
+        case 5:
+            churn_entity();
+            break;
+        case 6:
+            inject_packet(true, data, size, cursor);
+            break;
+        case 7:
+            inject_packet(false, data, size, cursor);
+            break;
+        case 8:
+            duplicate_selected_server_packet(data, size, cursor);
+            break;
+        default:
+            deliver_all_server_packets();
+            collect_client_packets();
+            deliver_all_client_packets();
+            break;
+        }
+    }
+
+    template <typename Fn>
+    static void deliver_selected(
+        std::vector<ashiato::BitBuffer>& packets,
+        Fn&& deliver,
+        const std::uint8_t* data,
+        std::size_t size,
+        std::size_t& cursor) {
+        if (packets.empty() || cursor >= size) {
+            return;
+        }
+        const std::size_t index = static_cast<std::size_t>(data[cursor++]) % packets.size();
+        ashiato::BitBuffer packet = std::move(packets[index]);
+        packets.erase(packets.begin() + static_cast<std::ptrdiff_t>(index));
+        deliver(std::move(packet));
+    }
+
+    void mutate_entity(std::uint8_t value) {
+        if (!server_registry_.alive(entity_)) {
+            return;
+        }
+        ashiato_sync_tests::NetworkedPosition& position =
+            server_registry_.write<ashiato_sync_tests::NetworkedPosition>(entity_);
+        position.x += static_cast<float>(value & 0x0fU) / 10.0F;
+        position.y -= static_cast<float>((value >> 4U) & 0x0fU) / 10.0F;
+    }
+
+    void churn_entity() {
+        if (server_registry_.alive(entity_)) {
+            (void)server_registry_.destroy(entity_);
+            return;
+        }
+        spawn_entity(archetype_);
+    }
+
+    void inject_packet(
+        bool into_client,
+        const std::uint8_t* data,
+        std::size_t size,
+        std::size_t& cursor) {
+        if (cursor >= size) {
+            return;
+        }
+        const std::size_t requested = static_cast<std::size_t>(data[cursor++]);
+        const std::size_t packet_size = std::min({requested, size - cursor, max_packet_bytes});
+        ashiato::BitBuffer packet;
+        packet.assign_bytes(
+            std::vector<std::uint8_t>(data + cursor, data + cursor + packet_size),
+            packet_size * 8U);
+        cursor += packet_size;
+        if (into_client) {
+            (void)client_->receive(client_registry_, std::move(packet));
+        } else {
+            (void)server_->process_packet(server_registry_, fuzz_peer, std::move(packet));
+        }
+    }
+
+    void duplicate_selected_server_packet(
+        const std::uint8_t* data,
+        std::size_t size,
+        std::size_t& cursor) {
+        if (server_packets_.empty() || cursor >= size) {
+            return;
+        }
+        const std::size_t index = static_cast<std::size_t>(data[cursor++]) % server_packets_.size();
+        (void)client_->receive(client_registry_, server_packets_[index]);
+        (void)client_->receive(client_registry_, server_packets_[index]);
+    }
+
+    void collect_client_packets() {
+        std::vector<ashiato::BitBuffer> drained = client_->drain_packets();
+        client_packets_.insert(
+            client_packets_.end(),
+            std::make_move_iterator(drained.begin()),
+            std::make_move_iterator(drained.end()));
+    }
+
+    void deliver_all_server_packets() {
+        std::vector<ashiato::BitBuffer> packets = std::move(server_packets_);
+        server_packets_.clear();
+        for (ashiato::BitBuffer& packet : packets) {
+            (void)client_->receive(client_registry_, std::move(packet));
+        }
+    }
+
+    void deliver_all_client_packets() {
+        std::vector<ashiato::BitBuffer> packets = std::move(client_packets_);
+        client_packets_.clear();
+        for (ashiato::BitBuffer& packet : packets) {
+            (void)server_->process_packet(server_registry_, fuzz_peer, std::move(packet));
+        }
+    }
+
+    ashiato::Registry server_registry_;
+    ashiato::Registry client_registry_;
+    std::unique_ptr<ashiato::sync::ReplicationServer> server_;
+    std::unique_ptr<ashiato::sync::ReplicationClient> client_;
+    ashiato::Entity entity_;
+    ashiato::sync::SyncArchetypeId archetype_;
+    std::vector<ashiato::BitBuffer> server_packets_;
+    std::vector<ashiato::BitBuffer> client_packets_;
+};
+
+void fuzz_stateful_sequence(const std::uint8_t* data, std::size_t size) {
+    StatefulProtocolHarness harness;
+    harness.run(data, size);
+}
+
 std::string_view trimmed_seed_name(const std::uint8_t* data, std::size_t size) {
     std::string_view seed(reinterpret_cast<const char*>(data), size);
     while (!seed.empty() && (seed.back() == '\n' || seed.back() == '\r' || seed.back() == ' ' || seed.back() == '\t')) {
@@ -267,7 +490,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         ashiato::sync::protocol::client_input_message,
     };
 
-    switch (scenario % 5U) {
+    switch (scenario % 6U) {
     case 0:
         fuzz_client_receive(
             make_selected_packet(selector, packet_data, packet_size, client_messages, std::size(client_messages)),
@@ -287,10 +510,13 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
             make_selected_packet(selector, packet_data, packet_size, server_messages, std::size(server_messages)),
             false);
         break;
-    default:
+    case 4:
         fuzz_server_connected(
             make_selected_packet(selector, packet_data, packet_size, server_messages, std::size(server_messages)),
             true);
+        break;
+    default:
+        fuzz_stateful_sequence(packet_data, packet_size);
         break;
     }
 

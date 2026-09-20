@@ -58,7 +58,7 @@ private:
         ClientEntityNetworkId client_entity_network_id;
         SyncArchetypeId archetype;
         QuantizedFrameData& authoritative;
-        QuantizedFrameData& decoded;
+        std::uint64_t snap_component_apply_mask;
         bool full;
         const std::vector<EntityCue>& received_cues;
     };
