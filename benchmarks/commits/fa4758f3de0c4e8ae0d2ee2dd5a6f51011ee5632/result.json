@@ -1,0 +1,168 @@
+{
+  "schema_version": 2,
+  "commit": "fa4758f3de0c4e8ae0d2ee2dd5a6f51011ee5632",
+  "ref": "main",
+  "repository": "ErikGoldman/ashiato-sync",
+  "run_id": "35485457151",
+  "run_attempt": "1",
+  "started_at": "2026-09-20T03:02:15.747102+00:00",
+  "finished_at": "2026-09-20T03:02:35.806723+00:00",
+  "subset": "characteristic",
+  "cpu_filter": "^(BM_ServerTickSerializedDelta/16384/8|BM_ServerTickPackedAckedDeltaShared/16384/8|BM_ServerTickMutatingAckedDelta/16384/8|BM_ServerTickBudgetLimited/16384/8/64|BM_ClientReceivePredict/4096/16|BM_ClientApplyBufferedInterpolation/4096/16|BM_ClientSampleFractionalTickLargePayload/1024/16|BM_BitBufferAppendBits/131072)$",
+  "bandwidth_scenarios": [
+    "ball_snap_baseline",
+    "ball_buffered_latency",
+    "prediction_rollback_mixed"
+  ],
+  "cpu": [
+    {
+      "name": "BM_ClientReceivePredict/4096/16",
+      "real_time": 27007981.439999186,
+      "cpu_time": 27006567.08000001,
+      "time_unit": "ns",
+      "items_per_second": 13070.894903240693,
+      "bytes_per_second": null,
+      "iterations": 25
+    },
+    {
+      "name": "BM_ClientApplyBufferedInterpolation/4096/16",
+      "real_time": 10361518.833335025,
+      "cpu_time": 10359926.00000003,
+      "time_unit": "ns",
+      "items_per_second": 1544.4125759199394,
+      "bytes_per_second": null,
+      "iterations": 66
+    },
+    {
+      "name": "BM_ServerTickBudgetLimited/16384/8/64",
+      "real_time": 15854097.045454616,
+      "cpu_time": 15851668.272727275,
+      "time_unit": "ns",
+      "items_per_second": 32299.43947798187,
+      "bytes_per_second": null,
+      "iterations": 44
+    },
+    {
+      "name": "BM_ServerTickSerializedDelta/16384/8",
+      "real_time": 73872418.3333343,
+      "cpu_time": 73857254.44444448,
+      "time_unit": "ns",
+      "items_per_second": 1774666.5643872877,
+      "bytes_per_second": null,
+      "iterations": 9
+    },
+    {
+      "name": "BM_ServerTickPackedAckedDeltaShared/16384/8",
+      "real_time": 546156.8756137491,
+      "cpu_time": 546105.9304418978,
+      "time_unit": "ns",
+      "items_per_second": 240012042.89054173,
+      "bytes_per_second": null,
+      "iterations": 1222
+    },
+    {
+      "name": "BM_ServerTickMutatingAckedDelta/16384/8",
+      "real_time": 177134920.66666466,
+      "cpu_time": 177106403.33333376,
+      "time_unit": "ns",
+      "items_per_second": 740074.8789037744,
+      "bytes_per_second": null,
+      "iterations": 3
+    },
+    {
+      "name": "BM_BitBufferAppendBits/131072",
+      "real_time": 302.8077404436614,
+      "cpu_time": 302.77590224905214,
+      "time_unit": "ns",
+      "items_per_second": 432901030188.9385,
+      "bytes_per_second": null,
+      "iterations": 2317154
+    }
+  ],
+  "memory": [
+    {
+      "name": "BM_MemoryServerSteadyState/16384/8/iterations:1",
+      "allocation_calls": 234178.0,
+      "allocated_bytes": 65868805.0,
+      "peak_live_allocations": 231544.0,
+      "peak_live_bytes": 37722443.0,
+      "retained_allocations": 231542.0,
+      "retained_bytes": 37526303.0,
+      "retained_bytes_per_entity": 2290.4237670898438
+    },
+    {
+      "name": "BM_MemoryClientSnapSteadyState/4096/16/iterations:1",
+      "allocation_calls": 152401.0,
+      "allocated_bytes": 17696413.0,
+      "peak_live_allocations": 86261.0,
+      "peak_live_bytes": 15274525.0,
+      "retained_allocations": 86260.0,
+      "retained_bytes": 15273707.0,
+      "retained_bytes_per_entity": 3728.932373046875
+    },
+    {
+      "name": "BM_MemoryClientBufferedSteadyState/4096/16/iterations:1",
+      "allocation_calls": 213759.0,
+      "allocated_bytes": 40669092.0,
+      "peak_live_allocations": 86252.0,
+      "peak_live_bytes": 37784525.0,
+      "retained_allocations": 86250.0,
+      "retained_bytes": 37783699.0,
+      "retained_bytes_per_entity": 9224.535888671875
+    },
+    {
+      "name": "BM_MemoryClientPredictSteadyState/4096/16/iterations:1",
+      "allocation_calls": 217963.0,
+      "allocated_bytes": 60622381.0,
+      "peak_live_allocations": 90360.0,
+      "peak_live_bytes": 57250341.0,
+      "retained_allocations": 90358.0,
+      "retained_bytes": 57249515.0,
+      "retained_bytes_per_entity": 13976.932373046875
+    }
+  ],
+  "bandwidth": [
+    {
+      "scenario": "ball_snap_baseline",
+      "wall_seconds": 0.66894566,
+      "server_replication_seconds": 0.412862708,
+      "client_receive_seconds": 0.223088883,
+      "server_to_clients_bytes": 6616500,
+      "server_to_clients_packets": 5868,
+      "clients_to_server_bytes": 6484,
+      "clients_to_server_packets": 604,
+      "server_bytes": null,
+      "server_packets": null,
+      "client_bytes": null,
+      "client_packets": null
+    },
+    {
+      "scenario": "ball_buffered_latency",
+      "wall_seconds": 0.967575731,
+      "server_replication_seconds": 0.508776402,
+      "client_receive_seconds": 0.395969418,
+      "server_to_clients_bytes": 8070523,
+      "server_to_clients_packets": 7102,
+      "clients_to_server_bytes": 7379,
+      "clients_to_server_packets": 601,
+      "server_bytes": null,
+      "server_packets": null,
+      "client_bytes": null,
+      "client_packets": null
+    },
+    {
+      "scenario": "prediction_rollback_mixed",
+      "wall_seconds": 7.945716,
+      "server_replication_seconds": 2.546986,
+      "client_receive_seconds": 2.465712,
+      "server_to_clients_bytes": null,
+      "server_to_clients_packets": null,
+      "clients_to_server_bytes": null,
+      "clients_to_server_packets": null,
+      "server_bytes": 30579612,
+      "server_packets": 25950,
+      "client_bytes": 27188,
+      "client_packets": 1217
+    }
+  ]
+}
