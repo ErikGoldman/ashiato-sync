@@ -3,8 +3,8 @@ set -euo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 build_dir="${ASHIATO_SYNC_LINT_BUILD_DIR:-${project_dir}/build-lint}"
-ashiato_source_dir="${ASHIATO_SYNC_ASHIATO_SOURCE_DIR:-${project_dir}/../ashiato}"
-spdlog_source_dir="${FETCHCONTENT_SOURCE_DIR_SPDLOG:-${project_dir}/../spdlog}"
+ashiato_source_dir="${ASHIATO_SYNC_ASHIATO_SOURCE_DIR:-}"
+spdlog_source_dir="${FETCHCONTENT_SOURCE_DIR_SPDLOG:-}"
 
 cmake -S "${project_dir}" -B "${build_dir}" \
     -DCMAKE_BUILD_TYPE=Debug \
