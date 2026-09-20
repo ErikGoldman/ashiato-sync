@@ -463,6 +463,26 @@ Run focused benchmark filters serially when collecting numbers:
 ./build-bench/ashiato_sync_benchmark --benchmark_filter=BM_ServerTick
 ```
 
+The dedicated memory benchmark reports requested heap bytes retained at steady
+state, peak live bytes during setup, and total allocation churn. Its input
+packets and the benchmark framework itself are outside the tracked region. Save
+JSON output as a versioned artifact to compare results over time:
+
+```sh
+cmake --build build-bench --target ashiato_sync_memory_benchmark
+./build-bench/benchmarks/ashiato_sync_memory_benchmark \
+  --benchmark_out=build-bench/memory-benchmark.json \
+  --benchmark_out_format=json
+```
+
+Run the memory benchmark serially. The allocation tracker is intentionally
+linked only into this executable so its per-allocation metadata cannot perturb
+the timing benchmarks. `retained_bytes/entity` includes the registry, schema,
+and replication state and is useful for comparing scale points; it is not the
+replication layer's memory in isolation. The tracked configurations are a
+16,384-entity server with eight clients and Snap, Buffered, and Predict clients
+with 4,096 entities over 16 received frames.
+
 Current benchmark coverage includes full-budget server ticks, budget-limited
 server ticks, replicated component refresh churn, adding clients after entities
 are already configured for replication, and client receive/apply paths for snap
@@ -605,6 +625,8 @@ benchmarks/server_benchmark.cpp
                              Google Benchmark server-side benchmarks
 benchmarks/client_benchmark.cpp
                              Google Benchmark client-side benchmarks
+benchmarks/memory_benchmark.cpp
+                             Retained and peak heap-memory benchmarks
 benchmarks/prediction_stress.cpp
                              Prediction rollback/resimulation stress harness
 benchmarks/benchmark_helpers.hpp

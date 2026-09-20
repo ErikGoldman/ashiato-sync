@@ -50,6 +50,7 @@ def compact_run(result: dict) -> dict:
         "subset": result.get("subset", ""),
         "path": f"commits/{commit}/result.json",
         "cpu": result.get("cpu", []),
+        "memory": result.get("memory", []),
         "bandwidth": result.get("bandwidth", []),
     }
 
@@ -152,7 +153,7 @@ a {{ color: var(--accent); }}
 <body>
 <main>
 <h1>Ashiato Sync Benchmarks</h1>
-<p>CPU and bandwidth results are stored per commit and summarized here over time.</p>
+<p>CPU, memory, and bandwidth results are stored per commit and summarized here over time.</p>
 <div class="toolbar">
   <label>Filter <input id="filter" type="search" placeholder="benchmark or scenario"></label>
 </div>
@@ -161,6 +162,11 @@ a {{ color: var(--accent); }}
     <h2>CPU Time Over Time</h2>
     <div id="cpu-charts" class="chart-grid"></div>
     <div id="cpu"></div>
+  </section>
+  <section>
+    <h2>Memory Over Time</h2>
+    <div id="memory-charts" class="chart-grid"></div>
+    <div id="memory"></div>
   </section>
   <section>
     <h2>Bandwidth Over Time</h2>
@@ -212,9 +218,9 @@ function seriesFrom(kind, metric, filter) {{
   const runs = [...history.runs].reverse();
   for (let runIndex = 0; runIndex < runs.length; ++runIndex) {{
     const run = runs[runIndex];
-    const items = kind === 'cpu' ? (run.cpu || []) : (run.bandwidth || []);
+    const items = kind === 'cpu' ? (run.cpu || []) : kind === 'memory' ? (run.memory || []) : (run.bandwidth || []);
     for (const item of items) {{
-      const name = kind === 'cpu' ? item.name : item.scenario;
+      const name = kind === 'bandwidth' ? item.scenario : item.name;
       if (filter && !String(name).toLowerCase().includes(filter)) continue;
       const value = Number(metricValue(item, metric));
       if (!Number.isFinite(value)) continue;
@@ -323,11 +329,25 @@ function renderBandwidth() {{
   }}
   document.getElementById('bandwidth').innerHTML = table(['Commit', 'Started', 'Scenario', 'S2C bytes', 'C2S bytes'], rows);
 }}
+function renderMemory() {{
+  const filter = filterInput.value.toLowerCase();
+  const series = seriesFrom('memory', 'retained_bytes', filter);
+  const charts = series.map(item => `<div><h3 class="chart-title">${{html(item.name)}}</h3><div class="chart">${{chartMarkup([item], item.name + ' retained memory chart', 'Retained bytes')}}</div></div>`);
+  document.getElementById('memory-charts').innerHTML = charts.length ? charts.join('') : '<div class="empty">No matching memory benchmarks.</div>';
+  const rows = [];
+  for (const run of history.runs) {{
+    for (const bench of run.memory || []) {{
+      if (filter && !String(bench.name).toLowerCase().includes(filter)) continue;
+      rows.push(`<tr><td><a href="${{run.path}}">${{html(run.short_commit)}}</a></td><td>${{html(run.started_at)}}</td><td>${{html(bench.name)}}</td><td class="num">${{fmt(bench.retained_bytes)}}</td><td class="num">${{fmt(bench.peak_live_bytes)}}</td><td class="num">${{fmt(bench.allocated_bytes)}}</td><td class="num">${{fmt(bench.retained_bytes_per_entity)}}</td></tr>`);
+    }}
+  }}
+  document.getElementById('memory').innerHTML = table(['Commit', 'Started', 'Benchmark', 'Retained bytes', 'Peak live bytes', 'Allocated bytes', 'Retained bytes/entity'], rows);
+}}
 function renderRuns() {{
   const rows = history.runs.map(run => `<tr><td><a href="${{run.path}}">${{html(run.short_commit)}}</a></td><td>${{html(run.ref)}}</td><td>${{html(run.started_at)}}</td><td>${{html(run.subset)}}</td></tr>`);
   document.getElementById('runs').innerHTML = table(['Commit', 'Ref', 'Started', 'Subset'], rows);
 }}
-function render() {{ renderCpu(); renderBandwidth(); renderRuns(); }}
+function render() {{ renderCpu(); renderMemory(); renderBandwidth(); renderRuns(); }}
 filterInput.addEventListener('input', render);
 render();
 </script>
@@ -360,7 +380,7 @@ def main() -> int:
 
     current = compact_run(result)
     runs = merge_history(fetch_existing_history(args.history_url), current)
-    history = {"schema_version": 1, "runs": runs}
+    history = {"schema_version": 2, "runs": runs}
     (history_dir / "index.json").write_text(json.dumps(history, indent=2) + "\n", encoding="utf-8")
     write_index_html(benchmark_dir / "index.html", history)
     return 0

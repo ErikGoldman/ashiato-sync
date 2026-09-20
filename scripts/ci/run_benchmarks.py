@@ -98,7 +98,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--subset",
         default="characteristic",
-        choices=("characteristic", "cpu", "bandwidth", "all"),
+        choices=("characteristic", "cpu", "memory", "bandwidth", "all"),
     )
     parser.add_argument("--cpu-filter", default="")
     parser.add_argument("--bandwidth-scenarios", default="")
@@ -171,6 +171,27 @@ def summarize_cpu(cpu_json_path: Path) -> list[dict[str, object]]:
     return benchmarks
 
 
+def summarize_memory(memory_json_path: Path) -> list[dict[str, object]]:
+    data = json.loads(memory_json_path.read_text(encoding="utf-8"))
+    benchmarks = []
+    for item in data.get("benchmarks", []):
+        if item.get("run_type") != "iteration":
+            continue
+        benchmarks.append(
+            {
+                "name": item.get("name"),
+                "allocation_calls": item.get("allocation_calls"),
+                "allocated_bytes": item.get("allocated_bytes"),
+                "peak_live_allocations": item.get("peak_live_allocations"),
+                "peak_live_bytes": item.get("peak_live_bytes"),
+                "retained_allocations": item.get("retained_allocations"),
+                "retained_bytes": item.get("retained_bytes"),
+                "retained_bytes_per_entity": item.get("retained_bytes/entity"),
+            }
+        )
+    return benchmarks
+
+
 def summarize_bandwidth(scenario: str, data: dict[str, object]) -> dict[str, object]:
     timing = data.get("timing", {})
     bandwidth = data.get("bandwidth", {})
@@ -202,13 +223,16 @@ def main() -> int:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "cpu").mkdir(exist_ok=True)
+    (args.output_dir / "memory").mkdir(exist_ok=True)
     (args.output_dir / "bandwidth").mkdir(exist_ok=True)
 
     started_at = datetime.now(timezone.utc).isoformat()
     cpu_summary: list[dict[str, object]] = []
+    memory_summary: list[dict[str, object]] = []
     bandwidth_summary: list[dict[str, object]] = []
 
     run_cpu = args.subset in ("characteristic", "cpu", "all") or bool(args.cpu_filter)
+    run_memory = args.subset in ("characteristic", "memory", "all")
     run_bandwidth = args.subset in ("characteristic", "bandwidth", "all") or bool(args.bandwidth_scenarios)
 
     if run_cpu:
@@ -229,6 +253,23 @@ def main() -> int:
             encoding="utf-8",
         )
 
+    if run_memory:
+        benchmark = executable_path(args.build_dir, "ashiato_sync_memory_benchmark")
+        memory_json = args.output_dir / "memory" / "google-benchmark.json"
+        run_command(
+            [
+                str(benchmark),
+                "--benchmark_format=json",
+                f"--benchmark_out={memory_json}",
+                "--benchmark_out_format=json",
+            ]
+        )
+        memory_summary = summarize_memory(memory_json)
+        (args.output_dir / "memory" / "summary.json").write_text(
+            json.dumps(memory_summary, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
     if run_bandwidth:
         for scenario in selected_bandwidth_scenarios(args):
             config = BANDWIDTH_SCENARIOS[scenario]
@@ -239,7 +280,7 @@ def main() -> int:
             bandwidth_summary.append(summarize_bandwidth(scenario, data))
 
     result = {
-        "schema_version": 1,
+        "schema_version": 2,
         "commit": args.commit,
         "ref": args.ref,
         "repository": args.repository,
@@ -251,6 +292,7 @@ def main() -> int:
         "cpu_filter": cpu_filter(args) if run_cpu else "",
         "bandwidth_scenarios": [item["scenario"] for item in bandwidth_summary],
         "cpu": cpu_summary,
+        "memory": memory_summary,
         "bandwidth": bandwidth_summary,
     }
     (args.output_dir / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

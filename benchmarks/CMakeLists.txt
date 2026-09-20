@@ -6,6 +6,11 @@ add_executable(ashiato_sync_benchmark
     server_benchmark.cpp
 )
 
+add_executable(ashiato_sync_memory_benchmark
+    memory_allocation_tracker.cpp
+    memory_benchmark.cpp
+)
+
 add_executable(ashiato_sync_ball_stress
     ball_stress.cpp
 )
@@ -15,6 +20,12 @@ add_executable(ashiato_sync_prediction_stress
 )
 
 target_link_libraries(ashiato_sync_benchmark
+    PRIVATE
+        ashiato::sync
+        benchmark::benchmark_main
+)
+
+target_link_libraries(ashiato_sync_memory_benchmark
     PRIVATE
         ashiato::sync
         benchmark::benchmark_main
@@ -31,6 +42,7 @@ target_link_libraries(ashiato_sync_prediction_stress
 )
 
 target_compile_features(ashiato_sync_benchmark PRIVATE cxx_std_17)
+target_compile_features(ashiato_sync_memory_benchmark PRIVATE cxx_std_17)
 target_compile_features(ashiato_sync_ball_stress PRIVATE cxx_std_17)
 target_compile_features(ashiato_sync_prediction_stress PRIVATE cxx_std_17)
 
