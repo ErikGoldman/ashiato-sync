@@ -309,6 +309,10 @@ not invoke the decider until the entity changes again.
   a decoded `ReplicatedEntityUpdateView`. The view exposes
   `client_entity_network_id`, `local_entity`, `archetype`, `frame`, and typed
   `try_get<T>` accessors for the received component data.
+- Treat replicated components on snap and buffered entities as server-owned. 
+  Client-side writes are not prediction and may persist until that component 
+  changes on the server; use prediction mode for locally simulated replicated
+  state, or a separate non-replicated component for presentation-only state.
 - Components can serialize entity references by storing
   `ashiato::sync::EntityReference` and defining context-aware
   `SyncComponentTraits<T>::serialize(..., EntityReferenceContext&)` and
