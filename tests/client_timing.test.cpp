@@ -193,6 +193,48 @@ TEST_CASE("buffered playback applies a lone record whose frame a clock re-estima
     REQUIRE(client_registry.get<Position>(made).y == 6.0f);
 }
 
+TEST_CASE("buffered playback applies a lone record a clock re-estimate jumps over before the first frame is applied") {
+    // The same loss at the start of a session: the first update bootstraps the clock and its records wait in the ring,
+    // and a time-sync sample re-anchors the buffered frame past them before playback has applied any frame at all.
+    ashiato::Registry client_registry;
+    const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
+    REQUIRE(client_archetype.value == 0);
+    ashiato_sync_tests::configure_test_client_registry(client_registry, 1);
+
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::BufferedInterpolation;
+    options.buffered.auto_buffered_frame_lag_smoothing = 1.0f;
+    options.prediction.input_buffer_capacity_frames = 64;
+    options.clock.auto_timing_warmup_samples = 1;
+    options.session.ping_interval_seconds = options.clock.fixed_dt_seconds;
+    options.session.adaptive_ping_interval_seconds = options.clock.fixed_dt_seconds;
+    options.session.connect_token = "token";
+    ashiato::sync::ReplicationClient client(client_registry, ashiato_sync_tests::make_test_client_options(client_registry, options));
+    const ashiato::Entity lone{43};
+
+    ashiato::BitBuffer accepted;
+    accepted.write_bits(ashiato::sync::protocol::server_connect_response_message, ashiato::sync::protocol::message_bits);
+    accepted.write_bool(true);
+    accepted.write_unsigned_bits(1, 64U);
+    REQUIRE(client.receive(client_registry, accepted));
+    REQUIRE(client.receive(client_registry, make_position_packet(11, {{lone, Position{5.0f, 6.0f}}})));
+    REQUIRE_FALSE(client.has_applied_buffered_frame());
+
+    PingPacket ping;
+    REQUIRE(drain_ping(client, client_registry, 0.0, ping));
+    const auto local_now = static_cast<ashiato::sync::SyncFrame>(
+        std::floor(client.local_time_seconds() / client.fixed_dt_seconds()));
+    REQUIRE(receive_pong_with_server_frame(client, client_registry, ping, local_now, local_now + 30U));
+    REQUIRE_FALSE(client.has_applied_buffered_frame());
+    tick_client_fixed_frames(client, client_registry, 3);
+    REQUIRE(client.has_applied_buffered_frame());
+    REQUIRE(client.last_applied_buffered_frame() > 11U);
+
+    const ashiato::Entity made = client.local_entity(test_client_entity_network_id(1, lone));
+    REQUIRE(made);
+    REQUIRE(client_registry.get<Position>(made).x == 5.0f);
+}
+
 TEST_CASE("auto buffered frame lag default minimum preserves two buffered frames") {
     ashiato::Registry client_registry;
     const ashiato::sync::SyncArchetypeId client_archetype = ashiato_sync_tests::define_position_archetype(client_registry);
