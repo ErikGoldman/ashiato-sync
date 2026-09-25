@@ -40,13 +40,23 @@ public:
         return last_applied_buffered_frame_;
     }
 
+    // A record was written into the ring for `frame`. Before the first frame is applied, the earliest such frame is
+    // where playback starts if the clock has been re-anchored past it (`frames_owed`).
+    void note_written(SyncFrame frame) noexcept {
+        if (!has_applied_buffered_frame_ && (!has_unapplied_write_ || frame < earliest_unapplied_write_)) {
+            earliest_unapplied_write_ = frame;
+            has_unapplied_write_ = true;
+        }
+    }
+
     void reset_entity(std::uint32_t entity_index) noexcept;
     void ensure_entity(std::uint32_t entity_index);
     void clear_entity(std::uint32_t entity_index) noexcept;
 
     // The frames playback owes when the clock stands at `buffered_frame`: `advanced` as the clock gave it, unless the
     // clock was re-anchored forward past frames never applied (a time-sync re-estimate), in which case playback resumes
-    // from the frame after the last one applied, as far back as the ring still holds.
+    // from the frame after the last one applied -- or, before any frame has been applied, from the earliest frame a
+    // record was written for -- as far back as the ring still holds.
     ReplicationClientClock::FrameRange frames_owed(
         const ReplicationClientClock::FrameRange& advanced,
         SyncFrame buffered_frame) const noexcept;
@@ -64,6 +74,8 @@ private:
     ClientFrameRingStore buffered_frames_;
     SyncFrame last_applied_buffered_frame_ = 0;
     bool has_applied_buffered_frame_ = false;
+    SyncFrame earliest_unapplied_write_ = 0;
+    bool has_unapplied_write_ = false;
 };
 
 }  // namespace client_detail

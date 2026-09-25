@@ -995,6 +995,7 @@ bool ReplicationClient::write_buffered_frame(
     if (!client_detail::valid_frame_archetype(archetype)) {
         return false;
     }
+    buffered_runtime_->note_written(frame);
     MutableEntityFrameView sample =
         buffered_runtime_->frames().begin_write(
             entity_index,

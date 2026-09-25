@@ -29,10 +29,19 @@ void ClientBufferedRuntime::clear_entity(std::uint32_t entity_index) noexcept {
 ReplicationClientClock::FrameRange ClientBufferedRuntime::frames_owed(
     const ReplicationClientClock::FrameRange& advanced,
     SyncFrame buffered_frame) const noexcept {
-    if (!has_applied_buffered_frame_ || buffered_frame <= last_applied_buffered_frame_) {
-        return advanced;
+    SyncFrame next = 0;
+    if (has_applied_buffered_frame_) {
+        if (buffered_frame <= last_applied_buffered_frame_) {
+            return advanced;
+        }
+        next = last_applied_buffered_frame_ + 1U;
+    } else {
+        // Nothing applied yet: only a re-anchor past records already written owes anything more than `advanced`.
+        if (advanced.empty() || !has_unapplied_write_ || earliest_unapplied_write_ > buffered_frame) {
+            return advanced;
+        }
+        next = std::max<SyncFrame>(earliest_unapplied_write_, 1U);
     }
-    const SyncFrame next = last_applied_buffered_frame_ + 1U;
     if (!advanced.empty() && advanced.first <= next) {
         return advanced;
     }
