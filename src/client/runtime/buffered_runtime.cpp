@@ -6,6 +6,7 @@
 
 #include "ashiato/sync/client.hpp"
 
+#include <algorithm>
 #include <vector>
 
 namespace ashiato::sync::client_detail {
@@ -23,6 +24,27 @@ void ClientBufferedRuntime::ensure_entity(std::uint32_t entity_index) {
 
 void ClientBufferedRuntime::clear_entity(std::uint32_t entity_index) noexcept {
     buffered_frames_.clear(entity_index);
+}
+
+ReplicationClientClock::FrameRange ClientBufferedRuntime::frames_owed(
+    const ReplicationClientClock::FrameRange& advanced,
+    SyncFrame buffered_frame) const noexcept {
+    if (!has_applied_buffered_frame_ || buffered_frame <= last_applied_buffered_frame_) {
+        return advanced;
+    }
+    const SyncFrame next = last_applied_buffered_frame_ + 1U;
+    if (!advanced.empty() && advanced.first <= next) {
+        return advanced;
+    }
+    // A record for a frame playback has not reached is held in the ring at that frame and applied only when playback
+    // applies exactly that frame, and its packet was acked when it decoded. An entity that sends one record and then
+    // nothing (a parked vehicle) is never made if that frame is skipped.
+    const auto capacity = static_cast<SyncFrame>(buffered_frames_.capacity());
+    const SyncFrame oldest_held = buffered_frame >= capacity ? buffered_frame - capacity + 1U : 0U;
+    ReplicationClientClock::FrameRange owed;
+    owed.first = std::max(next, oldest_held);
+    owed.last = buffered_frame;
+    return owed;
 }
 
 bool ClientBufferedRuntime::apply_frames(

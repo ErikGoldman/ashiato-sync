@@ -44,6 +44,12 @@ public:
     void ensure_entity(std::uint32_t entity_index);
     void clear_entity(std::uint32_t entity_index) noexcept;
 
+    // The frames playback owes when the clock stands at `buffered_frame`: `advanced` as the clock gave it, unless the
+    // clock was re-anchored forward past frames never applied (a time-sync re-estimate), in which case playback resumes
+    // from the frame after the last one applied, as far back as the ring still holds.
+    ReplicationClientClock::FrameRange frames_owed(
+        const ReplicationClientClock::FrameRange& advanced,
+        SyncFrame buffered_frame) const noexcept;
     bool apply_frames(
         ReplicationClient& client,
         ashiato::Registry& registry,
