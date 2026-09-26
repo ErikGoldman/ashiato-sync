@@ -313,7 +313,6 @@ ReplicationServer::ReplicationSendResult server_detail::ServerClientReplicator::
         ++packet_entities;
         if (slot < replication.dirty_queue.entries.size()) {
             ClientDirtyQueue::Entry& entry = replication.dirty_queue.entries[slot];
-            entry.dirty_frame = replication_server.frame();
             entry.priority_accumulator = 0.0f;
         }
         ClientEntityState& entity_state = replication.entities.at(slot);
