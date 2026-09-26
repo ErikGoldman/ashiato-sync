@@ -632,7 +632,9 @@ bool ReplicationClient::tick(
         ASHIATO_SYNC_PROFILE_SCOPE("AshiatoSync_ClientAdvanceFrameNumbers");
         current_frame_numbers = clock_.advance_client_frame_numbers(dt_seconds);
     }
-    apply_buffered_frames_to_ashiato(registry, current_frame_numbers.buffered);
+    apply_buffered_frames_to_ashiato(
+        registry,
+        buffered_runtime_->frames_owed(current_frame_numbers.buffered, clock_.buffered_frame()));
     if (!run_predicted_frames(registry, current_frame_numbers.predicted, prediction_options)) {
         return false;
     }
@@ -993,6 +995,7 @@ bool ReplicationClient::write_buffered_frame(
     if (!client_detail::valid_frame_archetype(archetype)) {
         return false;
     }
+    buffered_runtime_->note_written(frame);
     MutableEntityFrameView sample =
         buffered_runtime_->frames().begin_write(
             entity_index,
