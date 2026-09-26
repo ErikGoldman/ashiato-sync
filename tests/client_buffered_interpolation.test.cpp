@@ -288,6 +288,52 @@ TEST_CASE("set entity mode switches buffered entities to predict and seeds predi
     REQUIRE(registry.get<PredictedPosition>(local).x == 2.0f);
 }
 
+TEST_CASE("set entity mode settles a buffered entity switched to predict behind the prediction forward to it") {
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+
+    const ashiato::Entity predicted_server_entity = registry.create();
+    const ashiato::Entity switched_server_entity = registry.create();
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::BufferedInterpolation;
+    options.buffered.buffered_frame_lag = 1;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    client.simulation_job<PredictedPosition>(registry, 0).each([](ashiato::Entity, PredictedPosition& position) {
+        position.x += 1.0f;
+    });
+
+    const ashiato::sync::ClientEntityNetworkId predicted_id = test_client_entity_network_id(1, predicted_server_entity);
+    const ashiato::sync::ClientEntityNetworkId switched_id = test_client_entity_network_id(1, switched_server_entity);
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, predicted_server_entity, PredictedPosition{0.0f, 0.0f})));
+    client.set_entity_mode(registry, predicted_id, ashiato::sync::ReplicationClientMode::Predict);
+    const ashiato::Entity predicted = client.local_entity(predicted_id);
+    REQUIRE(predicted);
+    for (int tick = 0; tick < 4; ++tick) {
+        REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    }
+    const float predicted_before = registry.get<PredictedPosition>(predicted).x;
+
+    // A buffered entity whose latest authoritative record is for frame 2 is switched to Predict while the client
+    // predicts a later frame.
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, switched_server_entity, PredictedPosition{10.0f, 0.0f})));
+    client.set_entity_mode(registry, switched_id, ashiato::sync::ReplicationClientMode::Predict);
+    const ashiato::Entity switched = client.local_entity(switched_id);
+    REQUIRE(switched);
+
+    // The next tick steps both entities to the same frame: the switched one from frame 2, the other from frame 1.
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    const float predicted_after = registry.get<PredictedPosition>(predicted).x;
+    REQUIRE(predicted_after == predicted_before + 1.0f);
+    REQUIRE(registry.get<PredictedPosition>(switched).x == 10.0f + (predicted_after - 1.0f));
+}
+
 TEST_CASE("set entity mode switches unmaterialized buffered entities to predict") {
     ashiato::Registry registry;
     const ashiato::Entity position_component =

@@ -157,6 +157,44 @@ TEST_CASE("predicted client rolls back and resimulates mismatched frames") {
     REQUIRE(registry.get<PredictedPosition>(local).x == 3.0f);
 }
 
+TEST_CASE("predicted client settles an entity that first arrives behind the prediction forward to it") {
+    ashiato::Registry registry;
+    const ashiato::Entity position_component =
+        ashiato::sync::register_sync_component<PredictedPosition>(registry, "PredictedPosition");
+    const ashiato::sync::SyncArchetypeId archetype = ashiato::sync::define_archetype(
+        registry,
+        "PredictedActor",
+        {{position_component, ashiato::sync::ReplicationAudience::All}});
+    REQUIRE(archetype.value == 0);
+    ashiato_sync_tests::configure_test_client_registry(registry, 1);
+    ashiato::sync::ReplicationClientOptions options;
+    options.entities.default_mode = ashiato::sync::ReplicationClientMode::Predict;
+    ashiato::sync::ReplicationClient client(registry, ashiato_sync_tests::make_test_client_options(registry, options));
+    client.simulation_job<PredictedPosition>(registry, 0).each([](ashiato::Entity, PredictedPosition& position) {
+        position.x += 1.0f;
+    });
+
+    const ashiato::Entity first_server_entity = registry.create();
+    const ashiato::Entity later_server_entity = registry.create();
+    REQUIRE(client.receive(registry, make_predicted_position_packet(1, first_server_entity, PredictedPosition{0.0f, 0.0f})));
+    const ashiato::Entity first = client.local_entity(test_client_entity_network_id(1, first_server_entity));
+    REQUIRE(first);
+    for (int tick = 0; tick < 4; ++tick) {
+        REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    }
+    REQUIRE(registry.get<PredictedPosition>(first).x == 4.0f);
+
+    // A second entity's first record is for frame 2, while the client already predicts frame 5.
+    REQUIRE(client.receive(registry, make_predicted_position_packet(2, later_server_entity, PredictedPosition{10.0f, 0.0f})));
+    const ashiato::Entity later = client.local_entity(test_client_entity_network_id(1, later_server_entity));
+    REQUIRE(later);
+
+    // The next tick predicts frame 6: the new entity is stepped from frame 2 through frames 3-6, as the first was.
+    REQUIRE(client.tick(registry, client.fixed_dt_seconds()));
+    REQUIRE(registry.get<PredictedPosition>(first).x == 5.0f);
+    REQUIRE(registry.get<PredictedPosition>(later).x == 14.0f);
+}
+
 TEST_CASE("predicted client notifies after rollback state is restored before resimulation") {
     ashiato::Registry registry;
     const ashiato::Entity position_component =
